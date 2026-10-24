@@ -16,8 +16,25 @@ internal static class FileWriteHandler
             return FileToolResult.Error(request.ToolId, error!, "files-arguments-invalid");
         }
 
-        var result = await WriteAsync(target, context, args.Path, args.Content, overwrite: true, cancellationToken);
-        return ToToolResult(request.ToolId, target, result);
+        var resource = await target.Service.ResolveFileAsync(new() { Context = context, Path = args.Path }, cancellationToken);
+        string? expectedHash = null;
+        string? previous = null;
+        if (resource.Exists)
+        {
+            var snapshot = await target.Service.ReadFileAsync(new() { Context = context, Request = new() { Path = args.Path, Offset = null, Limit = null } }, cancellationToken);
+            if (snapshot.IsError) return FileToolResult.ReadError(request.ToolId, snapshot);
+            if (snapshot.IsDirectory || snapshot.WasTruncated)
+                return FileToolResult.Error(request.ToolId, "Overwriting requires a complete regular text-file snapshot. No mutation was attempted.", "write-incomplete-snapshot");
+            previous = snapshot.Content;
+            expectedHash = FileOperation.ComputeContentHash(previous);
+        }
+        var result = await WriteAsync(target, context, args.Path, args.Content, overwrite: resource.Exists, cancellationToken, expectedHash);
+        return ToToolResult(request.ToolId, target, result) with
+        {
+            PresentationPayloadJson = result.IsError ? null : FileDiffPresentation.BuildPayload([
+                previous is null ? FileDiffPresentation.AddedFile(args.Path, args.Content)
+                    : FileDiffPresentation.ReplacedFile(args.Path, previous, args.Content)]),
+        };
     }
 
     public static async Task<AgentToolResult> ExecuteEditAsync(
@@ -42,12 +59,13 @@ internal static class FileWriteHandler
             return FileToolResult.Error(request.ToolId, "The edit target must be a file.", "edit-target-not-file");
         }
 
-        var next = args.ReplaceAll
-            ? current.Content.Replace(args.OldString, args.NewString, StringComparison.Ordinal)
-            : ReplaceOnce(current.Content, args.OldString, args.NewString);
-        if (string.Equals(current.Content, next, StringComparison.Ordinal))
+        if (current.WasTruncated)
+            return FileToolResult.Error(request.ToolId, "The full edit target could not be read. No mutation was attempted.", "edit-incomplete-snapshot");
+        FileTextEditPlan plan;
+        try { plan = FileTextEditPlanner.Edit(current.Content, args.OldString, args.NewString, args.ReplaceAll); }
+        catch (InvalidOperationException exception)
         {
-            return FileToolResult.Error(request.ToolId, "oldString was not found.", "edit-old-string-not-found");
+            return FileToolResult.Error(request.ToolId, exception.Message, "edit-match-invalid");
         }
 
         var mutationResource = await target.Service.ResolveFileAsync(new() { Context = context, Path = args.Path }, cancellationToken);
@@ -59,12 +77,20 @@ internal static class FileWriteHandler
             target,
             mutationContext,
             args.Path,
-            next,
+            plan.Content,
             overwrite: true,
             cancellationToken,
             FileOperation.ComputeContentHash(current.Content));
-        return ToToolResult(request.ToolId, target, result) with
-        { PresentationPayloadJson = result.IsError ? null : FileDiffPresentation.BuildEditPayload(args, current.Content) };
+        var outcome = ToToolResult(request.ToolId, target, result);
+        if (result.IsError) return outcome;
+        var diff = FileDiffPresentation.EditedFile(args.Path, plan);
+        var summary = $"Edited {args.Path}: {plan.Replacements.Count} replacement(s), +{diff.AddedLineCount}/-{diff.DeletedLineCount} lines.";
+        return outcome with
+        {
+            Summary = summary,
+            Content = summary,
+            PresentationPayloadJson = FileDiffPresentation.BuildPayload([diff]),
+        };
     }
 
     public static ValueTask<AgentFileMutationResult> WriteAsync(
@@ -82,9 +108,4 @@ internal static class FileWriteHandler
         => FileToolResult.Success(toolId, result.Summary, result.Summary, FileToolResult.BackendId(target)) with
         { IsError = result.IsError, ErrorCode = result.ErrorCode };
 
-    private static string ReplaceOnce(string current, string oldString, string newString)
-    {
-        var index = current.IndexOf(oldString, StringComparison.Ordinal);
-        return index < 0 ? current : current[..index] + newString + current[(index + oldString.Length)..];
-    }
 }

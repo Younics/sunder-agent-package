@@ -50,7 +50,7 @@ public sealed class BuilderJobManager : IAsyncDisposable
             if (running.Length >= options.MaximumConcurrentJobs) throw new BuilderJobBusyException("Builder is at its concurrent job limit. Finish or cancel another job, then retry.");
             var project = ProjectKey(request);
             if (project is not null && running.Any(job => ProjectKey(job.Request) is { } other && BuilderJobValidation.Overlaps(project, other)))
-                throw new BuilderJobBusyException("A build, watch, setup, or metadata operation already owns this project. Stop it before starting another project mutation.");
+                throw new BuilderJobBusyException("A build, setup, archive, or metadata operation already owns this project. Stop it before starting another project mutation.");
             var job = new Job(request, fingerprint, clock.GetTimestamp(), options.MaximumOutputCharacters);
             jobs.Add(request.Id!, job);
             // The RPC cancellation token only controls acceptance. Accepted jobs are governed by
@@ -144,7 +144,7 @@ public sealed class BuilderJobManager : IAsyncDisposable
                     var now = clock.GetTimestamp();
                     expired = jobs.Values.Where(job => !job.Finished && !job.Cancel.IsCancellationRequested &&
                         (clock.GetElapsedTime(job.Heartbeat, now) >= options.OrphanTimeout ||
-                         job.Request.Operation != "watch" && clock.GetElapsedTime(job.Started, now) >= options.FiniteOperationTimeout)).ToArray();
+                         clock.GetElapsedTime(job.Started, now) >= options.FiniteOperationTimeout)).ToArray();
                     foreach (var job in expired) job.CancelReason ??= clock.GetElapsedTime(job.Heartbeat, now) >= options.OrphanTimeout
                         ? "Cancelled because Builder stopped receiving job heartbeats. Reopen the project and retry."
                         : "Cancelled because the finite operation exceeded its deadline. Inspect the output and retry.";
@@ -175,7 +175,7 @@ public sealed class BuilderJobManager : IAsyncDisposable
         }
     }
 
-    private static string? ProjectKey(BuilderJobRequest request) => request.Operation is "create" or "setup" or "build" or "archive" or "watch" or "save-metadata"
+    private static string? ProjectKey(BuilderJobRequest request) => request.Operation is "create" or "setup" or "build" or "archive" or "save-metadata"
         ? request.ProjectFolder : null;
 
     private sealed class Job(BuilderJobRequest request, string fingerprint, long timestamp, int maximumOutput) : IBuilderJobReporter
@@ -216,6 +216,7 @@ public sealed class BuilderJobManager : IAsyncDisposable
                 LastSuccessfulBuildAtUtc = update.LastSuccessfulBuildAtUtc ?? snapshot.LastSuccessfulBuildAtUtc,
                 Message = update.Message ?? snapshot.Message, Project = update.Project ?? snapshot.Project,
                 DevelopmentFolder = update.DevelopmentFolder ?? snapshot.DevelopmentFolder,
+                DevelopmentContentIdentity = update.DevelopmentContentIdentity ?? snapshot.DevelopmentContentIdentity,
                 Installation = update.Installation ?? snapshot.Installation, ArchivePath = update.ArchivePath ?? snapshot.ArchivePath,
             };
         }
@@ -243,7 +244,6 @@ public sealed class BuilderJobManager : IAsyncDisposable
             "setup" => "Preparing the project…",
             "build" => "Preparing to build the project…",
             "archive" => "Preparing a package archive…",
-            "watch" => "Starting source watch…",
             "save-metadata" => "Preparing metadata changes…",
             _ => "Starting operation…",
         };

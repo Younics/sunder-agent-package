@@ -70,6 +70,40 @@ public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(
 
 Model `Variants`, `SpeedOptions`, and `ModeOptions` are persisted as `AgentChatModelSettings`. Do not encode a UI-only option into a transient model id. Chat calls carry the selected options in `AgentChatStreamRequest`; provider-specific middleware translates them to upstream request options. Imported records use init properties and support `with` updates.
 
+### Model, Processing Speed, And Reasoning
+
+These are independent choices. Chat model pickers show **Model · Normal** and,
+only where supported, **Model · Fast**. Both retain the same base `ModelId`;
+`SpeedOptionId` stores the processing choice. Embedding pickers do not add speed
+rows. Changing speed preserves the selected reasoning effort.
+
+The common reasoning labels are **Default, Low, Medium, High, Extra high, Max**.
+Unsupported levels are disabled, not approximated. Native None/Minimal choices
+appear only for models that expose them. Default omits an explicit effort;
+`DefaultReasoningVariantId` describes the provider's known default without
+turning it into a caller override. Max is passed as the exact `max` identifier,
+never translated to High or Extra high. Local MEAI adapters carry exact ids in
+`AgentChatModelOptionKeys.ReasoningVariantId`; conflicting legacy effort hints
+or unsupported settings fail before inference.
+
+| Provider | Processing and capability boundary |
+| --- | --- |
+| OpenAI | Normal requests Default processing; Fast requests Priority. API and connected catalogs have separate availability and context limits. Unsupported connected models/Pro selections are rejected rather than rewritten. |
+| Anthropic | Fast accelerates the same eligible Opus model. Opus 5.5 uses stable Fast; supported older preview models retain their beta transport. Adaptive-thinking default output budgets grow with effort; explicit caller caps remain authoritative. |
+| Gemini | Normal requests Standard; eligible models can request Priority. Argon's advertised output cap is the conservative tools-enabled transport cap, not the larger deferred long-decode limit. |
+| LM Studio | Native `/api/v1/models` discovery supplies model keys, loaded context, vision/tool support and supported reasoning options. Only supported Low/Medium/High efforts are translated; on/off is not relabeled as an effort level. There is no fabricated Fast mode. Legacy `/v1/models` fallback is limited to HTTP 404/405/501. |
+
+Fast can cost more and depends on account, region, entitlement and capacity.
+Selecting it is a request, not proof it was used: processing-tier telemetry reports
+only known values returned by the provider. Local catalog and fake-HTTP tests do
+not establish live account entitlement or server conformance.
+
+Advanced operating modes remain separate. Invalid, unavailable or malformed saved
+bindings stay visible for repair, including during provider catalog failures;
+they are not silently replaced by a different model or default. Ultrafast,
+chat-local overrides, unrestricted remote catalog refresh and Gemini long decode
+are not implemented.
+
 ### Chat Client Behavior
 
 First-party providers retain their local `CreateChatClientAsync` vendor integration

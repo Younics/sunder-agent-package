@@ -55,10 +55,18 @@ public sealed class AgentRunProviderResolver(
         var model = await ResolveModelDescriptorAsync(provider, chatBinding.ModelId, cancellationToken).ConfigureAwait(false);
         await selection.Provider!.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
         runCapabilities = EnrichRunCapabilities(runCapabilities, model);
-        var settings = AgentChatModelSettingsJson.Parse(chatBinding.SettingsJson);
+        if (!AgentChatModelSettingsJson.TryParse(chatBinding.SettingsJson, out var settings))
+            throw new InvalidOperationException("The selected model settings are invalid. Repair the model binding before starting a run.");
+        if (model is null)
+            throw new InvalidOperationException($"The selected model '{chatBinding.ModelId}' is unavailable. Choose a supported model before starting a run.");
         var modelModeOption = ResolveModelModeOption(model, settings);
+        RequireKnown("mode", settings.ModeOptionId, modelModeOption);
+        if (modelModeOption?.DisablesReasoning == true && !string.IsNullOrWhiteSpace(settings.ReasoningVariantId))
+            throw new InvalidOperationException("The selected operating mode does not support an explicit reasoning selection.");
         var modelVariant = modelModeOption?.DisablesReasoning == true ? null : ResolveModelVariant(model, settings);
         var modelSpeedOption = ResolveModelSpeedOption(model, settings);
+        RequireKnown("reasoning", settings.ReasoningVariantId, modelVariant);
+        RequireKnown("speed", settings.SpeedOptionId, modelSpeedOption);
         return new AgentRunProviderMetadata(runCapabilities, modelVariant, modelSpeedOption, modelModeOption);
     }
 
@@ -118,6 +126,12 @@ public sealed class AgentRunProviderResolver(
 
         return model?.Variants?.FirstOrDefault(variant =>
             string.Equals(variant.VariantId, settings.ReasoningVariantId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void RequireKnown(string kind, string? id, object? resolved)
+    {
+        if (!string.IsNullOrWhiteSpace(id) && resolved is null)
+            throw new InvalidOperationException($"The selected {kind} option '{id}' is unavailable for this model. Repair the model binding before starting a run.");
     }
 
     private static AgentModelSpeedOptionDescriptor? ResolveModelSpeedOption(

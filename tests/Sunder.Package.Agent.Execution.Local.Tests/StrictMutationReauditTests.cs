@@ -172,13 +172,13 @@ public sealed class StrictMutationReauditTests : IDisposable
             CancellationToken.None);
         var grep = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "secret" },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "secret", Literal = false, Hidden = true },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
         var glob = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*", Literal = false, Hidden = true },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -335,7 +335,7 @@ public sealed class StrictMutationReauditTests : IDisposable
         await File.WriteAllTextAsync(Path.Combine(workspace, "value.txt"), "aa");
         var result = await LocalSecureFileSearch.ExecuteAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "(a)\\1" },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "(a)\\1", Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -356,7 +356,7 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "????-" + new string('?', 199) },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "????-" + new string('?', 199), Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -500,7 +500,7 @@ public sealed class StrictMutationReauditTests : IDisposable
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "NEW-SECRET" },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "NEW-SECRET", Literal = false, Hidden = true },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -549,7 +549,7 @@ public sealed class StrictMutationReauditTests : IDisposable
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "FATAL-NEW-SECRET|old-recoverable" },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "FATAL-NEW-SECRET|old-recoverable", Literal = false, Hidden = true },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);

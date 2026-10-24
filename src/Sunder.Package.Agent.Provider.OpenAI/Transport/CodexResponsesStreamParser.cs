@@ -156,6 +156,8 @@ internal static class CodexResponsesStreamParser
                     case "response.completed":
                         EnsureCompletedStatus(root, partialTextCharacters, emittedToolCalls);
                         toolCalls.EnsureAllCompleted();
+                        await new ProviderStreamTelemetry(context).ProcessingTierAsync(
+                            TryGetNestedString(root, "response", "service_tier"), cancellationToken);
                         if (TryGetUsage(root, out var usage)
                             && ProviderResponseUpdates.CreateUsage(
                                 modelId,

@@ -87,7 +87,7 @@ internal sealed record CodexFunctionCallInput(
 
 internal sealed record CodexFunctionCallOutputInput(
     [property: JsonPropertyName("call_id")] string CallId,
-    [property: JsonPropertyName("output")] string Output)
+    [property: JsonPropertyName("output")] object Output)
 {
     [JsonPropertyName("type")]
     public string Type { get; } = "function_call_output";

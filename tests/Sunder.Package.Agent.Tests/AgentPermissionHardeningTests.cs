@@ -343,6 +343,100 @@ public sealed class AgentPermissionHardeningTests
     }
 
     [Fact]
+    public async Task ArgumentValidationFailure_ReturnsCorrectiveResultWithoutPermissionOrDispatch()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate")
+        {
+            ArgumentValidationResult = new("mutate", "Missing replacement text.",
+                Content: "Supply oldString and newString; read arguments cannot be used for an edit.",
+                IsError: true, ErrorCode: "files-arguments-invalid"),
+        };
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+
+        var outcome = await runtime.Host.InvokeToolAsync(new("call-invalid", source.ToolId, "{\"path\":\"file\"}"), null);
+
+        Assert.Equal(AgentToolCallOutcomeKind.Executed, outcome.Kind);
+        Assert.True(outcome.Result?.IsError);
+        Assert.Equal("files-arguments-invalid", outcome.Result?.ErrorCode);
+        Assert.Equal(0, source.PermissionResolutionCount);
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(runtime.Session.SessionId));
+        var execution = Assert.Single(runtime.Store.ListToolExecutions(runtime.Session.SessionId));
+        Assert.Null(execution.StartedAtUtc);
+        Assert.Equal(AgentToolExecutionStatus.Failed, execution.Status);
+    }
+
+    [Fact]
+    public async Task ArgumentValidationFailure_PairsRemainingCallsWithoutClaimingTheRunTerminated()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate")
+        {
+            ArgumentValidationResult = new("mutate", "Missing replacement text.",
+                Content: "Supply oldString and newString.", IsError: true, ErrorCode: "files-arguments-invalid"),
+        };
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var outcomes = await runtime.Host.InvokeToolsAsync(
+            [new("invalid-call", source.ToolId, "{}"), new("remaining-call", source.ToolId, "{\"other\":true}")], null);
+
+        Assert.Equal(2, outcomes.Count);
+        Assert.All(outcomes, outcome => Assert.Equal(AgentToolCallOutcomeKind.Executed, outcome.Kind));
+        Assert.Equal("files-arguments-invalid", outcomes[0].Result?.ErrorCode);
+        Assert.Contains("corrective", outcomes[1].Result?.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("terminated the run", outcomes[1].Result?.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(AgentRunStatus.Running, runtime.SessionService.GetLatestCheckpoint(runtime.Session.SessionId)?.Status);
+        Assert.Equal(0, source.PermissionResolutionCount);
+        Assert.Equal(0, source.ExecutionCount);
+        var ledger = runtime.Store.ListToolExecutions(runtime.Session.SessionId);
+        Assert.Equal(2, ledger.Count);
+        Assert.All(ledger, execution => Assert.Null(execution.StartedAtUtc));
+        Assert.Empty(runtime.PermissionService.ListPendingRequests(runtime.Session.SessionId));
+    }
+
+    [Fact]
+    public async Task ApprovalIntent_SurvivesClaimRecoveryWithoutGrantingPermissionEarly()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        var actions = await runtime.PermissionService.ListActionsAsync();
+        var (first, _) = runtime.PermissionService.TryClaimPendingRequestForApproval(
+            runtime.Session.SessionId, pending.RequestId, actions, approveForSession: true);
+        Assert.True(first.Request?.ApproveForSession);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+        using (var connection = new SqliteConnection($"Data Source={runtime.Store.DatabasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE AgentPendingPermissionRequests SET ClaimLeaseExpiresAtUtc = $past WHERE RequestId = $id;";
+            command.Parameters.AddWithValue("$past", DateTimeOffset.UtcNow.AddMinutes(-10).ToString("O"));
+            command.Parameters.AddWithValue("$id", pending.RequestId);
+            command.ExecuteNonQuery();
+        }
+        var (recovered, _) = runtime.PermissionService.TryClaimPendingRequestForApproval(
+            runtime.Session.SessionId, pending.RequestId, actions);
+        Assert.True(recovered.Request?.ApproveForSession);
+        Assert.NotEqual(first.Request?.ClaimToken, recovered.Request?.ClaimToken);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(runtime.Session.SessionId));
+    }
+
+    [Fact]
+    public async Task SessionApproval_IsReusedForEquivalentRequestsButNeverOverridesDeny()
+    {
+        var source = new PermissionAwareMutationToolSource("mutate");
+        await using var runtime = await PermissionHardeningRuntime.CreateAsync(source);
+        var pending = await runtime.CreatePendingRequestAsync();
+        await runtime.ResumeCoordinator.ApproveAsync(runtime.Session.SessionId, pending.RequestId, approveForSession: true);
+
+        var equivalent = new AgentPermissionRequest(pending.ActionId, pending.BoundaryId, "Another invocation", ToolId: source.ToolId);
+        var evaluation = await runtime.PermissionService.EvaluateAsync(runtime.Session.SessionId, equivalent);
+        Assert.Equal(AgentPermissionDecision.Allow, evaluation.Decision);
+        Assert.Equal(AgentPermissionDecisionSource.SessionApproval, evaluation.Source);
+        runtime.PermissionService.SaveOverride(pending.ActionId, pending.BoundaryId, AgentPermissionDecision.Deny);
+        Assert.Equal(AgentPermissionDecision.Deny,
+            (await runtime.PermissionService.EvaluateAsync(runtime.Session.SessionId, equivalent)).Decision);
+    }
+
+    [Fact]
     public async Task SessionApprovalInsertFailure_RollsBackExecutionStart()
     {
         var source = new PermissionAwareMutationToolSource("mutate");
@@ -530,7 +624,7 @@ public sealed class AgentPermissionHardeningTests
         var duplicate = await runtime.Host.HandleApprovedToolCallAsync(
             pending,
             CancellationToken.None,
-            _ =>
+            (_, _) =>
             {
                 Interlocked.Increment(ref beginCount);
                 return ValueTask.FromResult(true);
@@ -978,7 +1072,7 @@ internal sealed class PermissionHardeningRuntime : IAsyncDisposable
     }
 }
 
-internal class MutationToolSource(string toolId) : IAgentToolSource
+internal class MutationToolSource(string toolId) : IAgentToolSource, IRegressionTestArgumentValidator
 {
     private int _executionCount;
     private int _readinessCount;
@@ -992,6 +1086,16 @@ internal class MutationToolSource(string toolId) : IAgentToolSource
     public int ReadinessCount => Volatile.Read(ref _readinessCount);
 
     public bool ThrowOnExecution { get; init; }
+
+    public AgentToolResult? ArgumentValidationResult { get; init; }
+
+    public Func<AgentToolRequest, AgentToolResult?>? ArgumentValidator { get; init; }
+
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(ArgumentValidator is { } validator ? validator(request) : ArgumentValidationResult);
+    }
 
     public string SourceId => "permission-hardening-source";
 
@@ -1071,6 +1175,10 @@ internal sealed class PermissionAwareMutationToolSource(
 
     public bool ThrowOnPermissionRevalidation { get; init; }
 
+    public bool OmitPermissionRequest { get; set; }
+
+    public AgentPermissionRequest? PermissionOverride { get; set; }
+
     public Task PermissionResolutionStarted =>
         _permissionResolutionStarted?.Task ?? Task.CompletedTask;
 
@@ -1102,6 +1210,8 @@ internal sealed class PermissionAwareMutationToolSource(
             await _permissionResolutionRelease.Task.WaitAsync(cancellationToken);
         }
 
+        if (OmitPermissionRequest) return null;
+        if (PermissionOverride is { } permissionOverride) return permissionOverride;
         var permission = new AgentPermissionRequest(
             "test.mutate",
             boundaryId,

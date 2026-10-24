@@ -67,6 +67,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     private void OnLoadClicked(object? sender, RoutedEventArgs e) => Submit("builder.load", model => model.LoadSelectedProjectAsync());
     private void OnUnloadClicked(object? sender, RoutedEventArgs e) => Submit("builder.unload", model => model.UnloadSelectedProjectAsync());
     private void OnBuildClicked(object? sender, RoutedEventArgs e) => Submit("builder.build", model => model.BuildSelectedProjectAsync());
+    private void OnHotreloadClicked(object? sender, RoutedEventArgs e) => Submit("builder.hotreload", model => model.HotreloadSelectedProjectAsync());
     private void OnArchiveClicked(object? sender, RoutedEventArgs e) => Submit("builder.archive", model => model.CreatePackageArchiveAsync());
     private void OnRetrySetupClicked(object? sender, RoutedEventArgs e) => Submit("builder.setup", model => model.RetrySelectedSetupAsync());
     private void OnSaveMetadataClicked(object? sender, RoutedEventArgs e) => Submit("builder.save-metadata", model => model.SaveSelectedMetadataAsync());
@@ -79,10 +80,6 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     private void OnDiscardClicked(object? sender, RoutedEventArgs e) => Model?.DiscardSelectedMetadata();
     private void OnCancelCreationClicked(object? sender, RoutedEventArgs e) => Model?.CancelCreation();
     private void OnCancelOperationClicked(object? sender, RoutedEventArgs e) => Model?.CancelCurrentOperation();
-    private void OnWatchClicked(object? sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox check) Submit("builder.watch", model => model.SetSelectedWatchAsync(check.IsChecked == true));
-    }
     private void OnProjectItemTapped(object? sender, TappedEventArgs e)
     {
         if (sender is Control { DataContext: BuilderProjectViewModel row }) Model?.ActivateProject(row);

@@ -3,7 +3,7 @@ using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
-internal sealed class RegressionTestPackageContext(string rootPath) : IPackageContext
+internal sealed class RegressionTestPackageContext(string rootPath, Sunder.Sdk.Logging.IPackageLogging? logging = null) : IPackageContext
 {
     public string PackageId => "test.package.agent";
 
@@ -18,7 +18,7 @@ internal sealed class RegressionTestPackageContext(string rootPath) : IPackageCo
     public IPackageSecrets Secrets { get; } = new RegressionTestSecrets();
 
     public Sunder.Sdk.Logging.IPackageLogging Logging { get; } =
-        Sunder.Sdk.Logging.NullPackageLogging.Instance;
+        logging ?? Sunder.Sdk.Logging.NullPackageLogging.Instance;
 }
 
 internal sealed class RegressionTestStorageContext : IPackageStorageContext

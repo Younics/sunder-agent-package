@@ -608,6 +608,8 @@ public sealed partial class McpToolSource(
         finally { SelectableCapabilitiesChanged -= Changed; channel.Writer.TryComplete(); }
     }
 
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)

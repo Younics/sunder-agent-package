@@ -68,6 +68,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         private readonly string _packageId;
         private readonly string _packageVersion;
         private readonly JsonElement[] _providers;
+        private readonly IReadOnlyDictionary<string, string?>? _settings;
+        private readonly IReadOnlySet<string>? _allowedSecretReads;
         private readonly HashSet<string> _streams = new(StringComparer.Ordinal);
         private readonly HashSet<string> _scopes = new(StringComparer.Ordinal);
         private readonly CancellationTokenSource _deadline = new(TimeSpan.FromSeconds(90));
@@ -76,13 +78,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
         internal JsonElement Contributions { get; private set; }
         internal int StateReads { get; private set; }
+        internal List<string> SecretReads { get; } = [];
 
-        internal PackageWorkerPeer(string root, string runtimeRoot, string workspace, JsonElement manifest)
+        internal PackageWorkerPeer(string root, string runtimeRoot, string workspace, JsonElement manifest,
+            IReadOnlyDictionary<string, string?>? settings = null, IReadOnlySet<string>? allowedSecretReads = null)
         {
             _workspace = workspace;
             _packageId = manifest.GetProperty("id").GetString()!;
             _packageVersion = manifest.GetProperty("version").GetString()!;
             _providers = manifest.GetProperty("provides").EnumerateArray().Select(value => value.Clone()).ToArray();
+            _settings = settings;
+            _allowedSecretReads = allowedSecretReads;
             var temporary = Directory.CreateDirectory(Path.Combine(root, "process-" + _activation)).FullName;
             var start = new ProcessStartInfo("dotnet")
             {
@@ -190,6 +196,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
                         await Send(new { type = "host.result", id, value = new { revision = 1, sequence = 0, providers = Array.Empty<object>(), resetRequired = false } });
                         break;
                     case "worker.settings-get":
+                        await Send(new { type = "host.result", id, value = new { kind = "inline",
+                            value = _settings?.GetValueOrDefault(message.GetProperty("key").GetString()!) } });
+                        break;
+                    case "worker.secrets-get":
+                        var key = message.GetProperty("key").GetString()!;
+                        Assert.True(_allowedSecretReads?.Contains(key) == true,
+                            $"Worker '{_packageId}' requested an unapproved secret key: {key}");
+                        SecretReads.Add(key);
                         await Send(new { type = "host.result", id, value = new { kind = "inline", value = (string?)null } });
                         break;
                     case "worker.state-get":

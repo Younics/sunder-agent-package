@@ -10,7 +10,8 @@ namespace Sunder.Package.Agent.Provider.LMStudio;
 
 internal sealed class LMStudioChatClient(
     AgentChatClientContext context,
-    LMStudioConnection connection) : IChatClient
+    LMStudioConnection connection,
+    LMStudioModelCatalogService? catalog = null) : IChatClient
 {
     private readonly AgentChatClientContext _context = context;
     private readonly LMStudioConnection _connection = connection;
@@ -41,6 +42,14 @@ internal sealed class LMStudioChatClient(
         }
 
         var modelId = options?.ModelId ?? _context.ModelId;
+        if (catalog is not null)
+        {
+            var inventory = await catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);
+            var model = inventory.Models.FirstOrDefault(item => string.Equals(item.Id, ProviderModelId.RemovePrefix(modelId, "lmstudio"), StringComparison.OrdinalIgnoreCase));
+            AgentChatModelOptions.Validate(options, modelId, model?.ReasoningOptions?.Where(id => id is "low" or "medium" or "high"), null);
+            if (model?.SupportsTools == false && options?.Tools is { Count: > 0 })
+                throw new AgentChatProviderException("The selected local model is not trained for tool use.", "Choose a tool-capable local model or disable tools.", "lmstudio-tools-unsupported");
+        }
         var sdkMessages = LMStudioOpenAIMessageTranslator.Translate(messages, options?.Instructions);
         var sdkOptions = LMStudioOpenAIOptionsTranslator.Translate(options);
         var responseId = Guid.NewGuid().ToString("N");

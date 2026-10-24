@@ -41,11 +41,11 @@ public static partial class FileOperation
         => ReadResult(path, string.Empty) with { IsError = true, ErrorCode = errorCode, ErrorMessage = errorMessage };
 
     /// <summary>Creates a structured search result with its truncation state.</summary>
-    public static AgentFileSearchResult SearchResult(IReadOnlyList<AgentFileSearchMatch> matches, bool wasTruncated = false)
+    public static AgentFileSearchResult SearchResult(IReadOnlyList<AgentFileSearchMatch> matches, bool wasTruncated = false, string? truncationReason = null)
 #if SUNDER_AGENT_PACKAGE_MODELS
-        => new() { Matches = matches, WasTruncated = wasTruncated, IsError = false, ErrorCode = null, ErrorMessage = null };
+        => new() { Matches = matches, WasTruncated = wasTruncated, IsError = false, ErrorCode = null, ErrorMessage = null, TruncationReason = truncationReason };
 #else
-        => new(matches, wasTruncated);
+        => new(matches, wasTruncated) { TruncationReason = truncationReason };
 #endif
 
     /// <summary>Creates a failed search with no consumable matches.</summary>

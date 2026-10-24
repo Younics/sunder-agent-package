@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson, ToolExecutionId, ResourceClaimSetVersion, ResourceClaimsJson";
+    private const string PendingPermissionColumns = "RequestId, SessionId, RunId, RunRevision, ProfileId, UserTurnId, UserMessage, CallId, ActionId, BoundaryId, Summary, ToolId, ArgumentsJson, Command, Path, WorkspaceId, BindingId, ResourceDisplayName, ResourceReference, IsMutation, CreatedAtUtc, ParentSessionId, RootSessionId, Status, ClaimToken, ClaimedAtUtc, DecidedAtUtc, DecisionSummary, ExecutionFingerprint, ContinuationToken, ClaimLeaseExpiresAtUtc, ContinuationConsumedAtUtc, ExecutionStartedAtUtc, ExecutionSnapshotJson, ToolExecutionId, ResourceClaimSetVersion, ResourceClaimsJson, ApproveForSession";
 
     private static readonly TimeSpan PermissionClaimLeaseDuration = TimeSpan.FromMinutes(5);
 
@@ -336,7 +336,7 @@ public sealed partial class AgentLocalStore
         return GetPermissionRequest(connection, sessionId, requestId);
     }
 
-    internal AgentPendingPermissionClaimResult TryClaimPendingPermissionRequest(Guid sessionId, string requestId)
+    internal AgentPendingPermissionClaimResult TryClaimPendingPermissionRequest(Guid sessionId, string requestId, bool approveForSession = false)
     {
         using var connection = CreateConnection();
         connection.Open();
@@ -353,7 +353,8 @@ public sealed partial class AgentLocalStore
             SET Status = 'Claimed',
                 ClaimToken = $claimToken,
                 ClaimedAtUtc = $claimedAtUtc,
-                ClaimLeaseExpiresAtUtc = $claimLeaseExpiresAtUtc
+                ClaimLeaseExpiresAtUtc = $claimLeaseExpiresAtUtc,
+                ApproveForSession = CASE WHEN ApproveForSession = 1 OR $approveForSession = 1 THEN 1 ELSE 0 END
             WHERE SessionId = $sessionId
               AND RequestId = $requestId
               AND (
@@ -382,6 +383,7 @@ public sealed partial class AgentLocalStore
             ;
             """;
         command.Parameters.AddWithValue("$claimToken", claimToken);
+        command.Parameters.AddWithValue("$approveForSession", approveForSession ? 1 : 0);
         command.Parameters.AddWithValue("$claimedAtUtc", claimedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$claimLeaseExpiresAtUtc", leaseExpiresAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());

@@ -868,6 +868,48 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
+    public async Task UserInputReleasesAnchorRestorationWhileMarkdownParserIsStillBlocked()
+    {
+        using var releaseParser = new ManualResetEventSlim();
+        var parserStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var presenter = new StreamingMarkdownPresenter(() => StableMarkdownRenderer.Create(source =>
+        {
+            parserStarted.TrySetResult();
+            releaseParser.Wait(TimeSpan.FromSeconds(10));
+            return Markdig.Markdown.Parse(source);
+        })) { MarkdownBuilder = new ObservableStringBuilder("Pending response.") };
+        var row = new TranscriptRowPresenter { AnchorKey = "row", Content = presenter };
+        var rows = new StackPanel { Children = { new Border { Height = 600 }, row, new Border { Height = 600 } } };
+        var host = new TranscriptScrollAnchorHost { Children = { rows } };
+        var viewer = new ScrollViewer { Content = host };
+        var window = new Window { Width = 320, Height = 240, Content = viewer };
+        window.Show();
+        try
+        {
+            await parserStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            viewer.Offset = new Vector(0, 500);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            using var coordinator = CreateCoordinator(viewer, rows, host, isFollowingLatest: false);
+            coordinator.RestoreViewportAnchor(new TranscriptViewportAnchorData("row", 500, 0, 100));
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+            Assert.True(coordinator.DiagnosticSnapshot.IsRestoringAnchor);
+            window.MouseWheel(new Point(120, 120), new Vector(0, 1), RawInputModifiers.None);
+            var writesAfterInput = coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites;
+            // Handoff must not wait for either the parser or the two-second watchdog.
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.False(coordinator.DiagnosticSnapshot.IsRestoringAnchor);
+            Assert.False(host.IsAnchoringSuspended);
+            Assert.False(releaseParser.IsSet);
+            releaseParser.Set();
+            await presenter.PendingRenderOperations.WaitAsync(TimeSpan.FromSeconds(3));
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            Assert.Equal(writesAfterInput, coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites);
+        }
+        finally { releaseParser.Set(); window.Close(); }
+    }
+
+    [AvaloniaFact]
     public async Task FollowingTailRenderPassCapReleasesAnchorSuspensionAndTrailingCompensator()
     {
         var builder = new ObservableStringBuilder("Initial response.");

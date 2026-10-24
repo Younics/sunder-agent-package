@@ -599,6 +599,12 @@ public sealed partial class AgentLocalStore
 
     internal const string BaselineChecksum = "4dc0cc925c4f25e7ba9cff537d434a733c017953042d97c8ab55ee9624ab5028";
 
+    internal const int ApprovalIntentVersion = 2;
+    internal const string ApprovalIntentName = "durable-permission-approval-intent";
+    private const string ApprovalIntentSql = "ALTER TABLE AgentPendingPermissionRequests ADD COLUMN ApproveForSession INTEGER NOT NULL DEFAULT 0 CHECK (ApproveForSession IN (0, 1));";
+    internal static readonly string ApprovalIntentChecksum = Convert.ToHexStringLower(
+        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(ApprovalIntentSql)));
+
     private void ApplySchemaMigrations()
     {
         using var connection = CreateConnection();
@@ -612,6 +618,7 @@ public sealed partial class AgentLocalStore
             ValidateCurrentLedger(connection);
         }
 
+        ApplyApprovalIntentMigration(connection);
         EnableWriteAheadLogging(connection);
         EnableSecureDelete(connection);
     }
@@ -682,12 +689,19 @@ public sealed partial class AgentLocalStore
             var version = reader.GetInt32(0);
             var name = reader.GetString(1);
             var checksum = reader.GetString(2);
-            if (reader.Read()) throw InvalidLedger("the ledger contains more than one entry");
             if (version != BaselineVersion
                 || !string.Equals(name, BaselineName, StringComparison.Ordinal)
                 || !string.Equals(checksum, BaselineChecksum, StringComparison.OrdinalIgnoreCase))
             {
                 throw InvalidLedger("the baseline identity or checksum does not match this build");
+            }
+            if (reader.Read()
+                && (reader.GetInt32(0) != ApprovalIntentVersion
+                    || reader.GetString(1) != ApprovalIntentName
+                    || reader.GetString(2) != ApprovalIntentChecksum
+                    || reader.Read()))
+            {
+                throw InvalidLedger("the approval-intent migration identity or checksum does not match this build");
             }
         }
         catch (InvalidOperationException exception) when (!exception.Message.StartsWith(
@@ -705,7 +719,28 @@ public sealed partial class AgentLocalStore
     private static InvalidOperationException InvalidLedger(string reason, Exception? innerException = null)
         => new(
             $"Agent schema migration ledger validation failed: {reason}. "
-            + "Only an absent or empty database, or the exact current one-entry ledger, is supported; "
+            + "Only an absent or empty database, or the reviewed baseline with known additive migrations, is supported; "
             + "do not edit or delete migration ledger rows.",
             innerException);
+
+    private static void ApplyApprovalIntentMigration(SqliteConnection connection)
+    {
+        using var transaction = connection.BeginTransaction(deferred: false);
+        ValidateCurrentLedger(connection, transaction);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM SchemaMigrations WHERE Version = $version;";
+        command.Parameters.AddWithValue("$version", ApprovalIntentVersion);
+        if (command.ExecuteScalar() is null)
+        {
+            command.CommandText = ApprovalIntentSql;
+            command.ExecuteNonQuery();
+            command.CommandText = "INSERT INTO SchemaMigrations (Version, Name, Checksum, AppliedAtUtc) VALUES ($version, $name, $checksum, $now);";
+            command.Parameters.AddWithValue("$name", ApprovalIntentName);
+            command.Parameters.AddWithValue("$checksum", ApprovalIntentChecksum);
+            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            command.ExecuteNonQuery();
+        }
+        transaction.Commit();
+    }
 }

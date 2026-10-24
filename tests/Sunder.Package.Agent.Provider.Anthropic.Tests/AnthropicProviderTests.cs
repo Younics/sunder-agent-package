@@ -12,9 +12,30 @@ using AgentReasoningEffort = Sunder.Generated.Packages.Younics_Ai_Agent_Models.A
 
 namespace Sunder.Package.Agent.Provider.Anthropic.Tests;
 
-public sealed class AnthropicProviderTests
+public sealed partial class AnthropicProviderTests
 {
     private const string ModelId = "anthropic/claude-opus-4-8";
+
+    [Fact]
+    public async Task ToolImageReachesTheHttpBodyAsImageContent()
+    {
+        var handler = new CapturingHandler(_ => JsonResponse(TextResponse("Accepted")));
+        var client = CreateChatClient(handler);
+        using var schema = JsonDocument.Parse("""{"type":"object","properties":{}}""");
+        var tool = AIFunctionFactory.CreateDeclaration("maker_screenshot", "Capture a package view", schema.RootElement);
+        await ReadUpdatesAsync(client,
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("capture-1", "maker_screenshot", new Dictionary<string, object?>())]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("capture-1", new List<AIContent>
+                { new TextContent("Untrusted package pixels"), new DataContent(new byte[] { 1, 2, 3 }, "image/png") })]),
+        ], new ChatOptions { MaxOutputTokens = 100, Tools = [tool] });
+        using var body = JsonDocument.Parse(Assert.Single(handler.RequestBodies));
+        var result = body.RootElement.GetProperty("messages")[1].GetProperty("content")[0];
+        Assert.Equal("tool_result", result.GetProperty("type").GetString());
+        Assert.Equal("capture-1", result.GetProperty("tool_use_id").GetString());
+        Assert.Equal("image", result.GetProperty("content")[1].GetProperty("type").GetString());
+        Assert.Equal("AQID", result.GetProperty("content")[1].GetProperty("source").GetProperty("data").GetString());
+    }
 
     [Fact]
     public async Task StandardRequest_WritesRolesMixedContentToolsAndAttachmentsToWire()
@@ -364,7 +385,7 @@ public sealed class AnthropicProviderTests
     }
 
     [Fact]
-    public void ReasoningEffortWithoutRequestedOutput_DoesNotAllocateThinkingTokens()
+    public void ReasoningEffortWithoutOutputPreference_EnablesAdaptiveThinkingWithoutFixedBudget()
     {
         var request = AnthropicOptionsTranslator.Translate(
             AnthropicMessageTranslator.TranslateMessages([new ChatMessage(ChatRole.User, "Think.")]),
@@ -376,7 +397,8 @@ public sealed class AnthropicProviderTests
             "claude-opus-4-8");
 
         Assert.Equal(4096, request.Parameters.MaxTokens);
-        Assert.Null(request.Parameters.Thinking);
+        Assert.NotNull(request.Parameters.Thinking);
+        Assert.Null(request.TokenBudget.ThinkingTokens);
         Assert.Equal(
             global::Anthropic.Models.Messages.Effort.Xhigh,
             request.Parameters.OutputConfig!.Effort!.Value());
@@ -865,9 +887,10 @@ public sealed class AnthropicProviderTests
 
     private static AnthropicChatClient CreateChatClient(
         HttpMessageHandler handler,
-        IPackageEventLogger? eventLogger = null)
+        IPackageEventLogger? eventLogger = null,
+        string modelId = ModelId)
     {
-        var context = new AgentChatClientContext("anthropic", ModelId, eventLogger);
+        var context = new AgentChatClientContext("anthropic", modelId, eventLogger);
         return new AnthropicChatClient(
             context,
             new ProviderCredentialAccessor(

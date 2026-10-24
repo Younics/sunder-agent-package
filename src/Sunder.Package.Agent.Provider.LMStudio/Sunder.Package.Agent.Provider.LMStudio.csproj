@@ -27,6 +27,7 @@
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderErrorDiagnosticExtractor.cs" Link="Provider.Shared\ProviderErrorDiagnosticExtractor.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderJson.cs" Link="Provider.Shared\ProviderJson.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelCatalog.cs" Link="Provider.Shared\ProviderModelCatalog.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelReasoning.cs" Link="Provider.Shared\ProviderModelReasoning.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderModelId.cs" Link="Provider.Shared\ProviderModelId.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderResponseUpdates.cs" Link="Provider.Shared\ProviderResponseUpdates.cs" />
     <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderStreamTelemetry.cs" Link="Provider.Shared\ProviderStreamTelemetry.cs" />

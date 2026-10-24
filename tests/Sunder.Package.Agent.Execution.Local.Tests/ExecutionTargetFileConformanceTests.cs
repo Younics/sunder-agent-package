@@ -268,6 +268,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             CreateDockerConfig(hostRoot),
             new DockerModels.AgentFileSearchRequest
             {
+                Hidden = false, Literal = false,
                 Path = "/workspace/" + pathName,
                 Kind = DockerModels.AgentFileSearchKind.Glob,
                 Pattern = "**/*.txt",
@@ -381,7 +382,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         File.CreateSymbolicLink(link, outsideTarget);
         var config = new LocalExecutionRuntimeConfig([fixture.Root], fixture.Root);
 
-        Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
+        Assert.Throws<LocalSecureSymbolicLinkException>(() => LocalResourceResolver.ResolveFileResource(
             config,
             "link.txt",
             allowOutsideConfiguredScope: true));

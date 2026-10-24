@@ -8,7 +8,7 @@ internal static class OpenAiStrictToolSchemaNormalizer
     private const string SunderMcpArgumentsSchemaId = "urn:younics:ai:agent:mcp:arguments:1";
     private const string SunderMcpArgumentsSchemaMarker = "younics:ai:agent:mcp-arguments:1";
 
-    internal static JsonElement NormalizeFunctionParameters(string? schemaJson)
+    internal static JsonElement NormalizeFunctionParameters(string? schemaJson, bool strict = true)
     {
         JsonNode? schemaNode = string.IsNullOrWhiteSpace(schemaJson)
             ? CreateEmptyObjectSchemaNode()
@@ -28,7 +28,9 @@ internal static class OpenAiStrictToolSchemaNormalizer
             return SerializeEmptyObjectSchema();
         }
 
-        NormalizeSchemaNode(resolvedSchemaObject);
+        // Explicit non-strict tool calls must retain authored optionality. Making
+        // every optional required+nullable wastes arguments and changes intent.
+        NormalizeSchemaNode(resolvedSchemaObject, preserveObjectShape: !strict);
         return JsonSerializer.SerializeToElement(resolvedSchemaObject);
     }
 
@@ -319,6 +321,13 @@ internal static class OpenAiStrictToolSchemaNormalizer
 
     private static void MakePropertyNullable(JsonObject propertySchema)
     {
+        if (propertySchema.ContainsKey("enum") || propertySchema.ContainsKey("const") || propertySchema.ContainsKey("anyOf") || propertySchema.ContainsKey("oneOf") || !propertySchema.ContainsKey("type"))
+        {
+            var original = propertySchema.DeepClone();
+            propertySchema.Clear();
+            propertySchema["anyOf"] = new JsonArray(original, new JsonObject { ["type"] = "null" });
+            return;
+        }
         propertySchema["type"] = EnsureTypeContains(propertySchema["type"], "null", includeNull: true);
     }
 

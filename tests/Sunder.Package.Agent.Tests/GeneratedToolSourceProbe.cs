@@ -34,6 +34,9 @@ internal sealed class GeneratedToolSourceProbe : IDisposable, IAsyncDisposable
         CancellationToken token = default)
         => await (await ToolAsync(token)).Service.ExecuteAsync(context, request, token);
 
+    internal async ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken token = default)
+        => await (await ToolAsync(token)).Service.ValidateArgumentsAsync(request, token);
+
     internal async ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken token = default)
         => await (await ToolAsync(token)).Service.ListToolsAsync(context, token);
 

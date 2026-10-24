@@ -274,6 +274,9 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
             },
         ];
 
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
+
     public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
 

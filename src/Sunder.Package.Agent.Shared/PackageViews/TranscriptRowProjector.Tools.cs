@@ -11,7 +11,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     {
         TranscriptToolDiagnostics.HeaderProjected();
         var status = ResolveToolStatus(item);
-        var isFailure = status is "Failed" or "Ambiguous"
+        var isFailure = status is "Failed" or "Ambiguous" or "Unconfirmed" or "Cancelled"
                         || item.ToolExecutionStatus is null && item.IsError;
         var kind = isFailure
             ? TranscriptProjectedRowKind.Error
@@ -50,19 +50,30 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             item.ToolId ?? "unknown_tool",
             toolLabel,
             status,
-            status == "Completed" ? "✓" : status is "Started" or "Running" ? "i" : status == "Prepared" ? "·" : "!",
+            status is "Completed" or "Applied" ? "✓" : status is "Started" or "Running" or "Running (last observed)" or "Opened" or "Input dispatched" ? "i" : status == "Prepared" ? "·" : "!",
             headerHint,
             errorSummary,
             item.ToolDetailRevision > 0
                 ? item.ToolDetailRevision
                 : TranscriptTurnTransportProjection.CreateDetailRevision(turn),
             TranscriptTurnTransportProjection.HasToolDetails(item),
-            TranscriptRowAnchorKey.Tool(turn, item));
+            TranscriptRowAnchorKey.Tool(turn, item))
+        {
+            IsRunning = item.ToolExecutionStatus is AgentToolExecutionStatus.Prepared or AgentToolExecutionStatus.Started
+                        || item.ToolExecutionStatus is null && item.Kind == AgentTurnItemKind.ToolCall,
+        };
     }
 
     private static string ResolveToolStatus(AgentTurnItemRecord item)
-        => item.ToolExecutionStatus?.ToString()
-           ?? (item.Kind == AgentTurnItemKind.ToolResult
-               ? item.IsError ? "Failed" : "Completed"
-               : "Running");
+    {
+        var operation = ToolOperationPresentation.Read(item.PresentationPayloadJson);
+        // A historical running snapshot cannot hide a terminal execution failure.
+        // Later definite observations still describe the external effect separately.
+        if (operation == "Running" && item.ToolExecutionStatus is AgentToolExecutionStatus.Failed or AgentToolExecutionStatus.Ambiguous)
+            return item.ToolExecutionStatus.ToString()!;
+        if (operation == "Running" && item.Kind == AgentTurnItemKind.ToolResult)
+            return "Running (last observed)";
+        return operation ?? item.ToolExecutionStatus?.ToString()
+            ?? (item.Kind == AgentTurnItemKind.ToolResult ? item.IsError ? "Failed" : "Completed" : "Running");
+    }
 }

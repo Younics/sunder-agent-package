@@ -20,22 +20,25 @@ internal static class LocalGlobMatcher
         string relativePath,
         LocalGlobMatchBudget budget,
         bool posixPaths)
-    {
-        if (string.IsNullOrWhiteSpace(pattern))
-        {
-            return true;
-        }
+        => Compile(pattern, budget, posixPaths).Matches(relativePath, budget);
 
-        var normalizedPattern = NormalizeSeparators(pattern.Trim(), posixPaths);
-        var normalizedPath = NormalizeSeparators(relativePath, posixPaths).TrimStart('/');
-        foreach (var expanded in ExpandBraces(normalizedPattern, budget))
-        {
-            if (MatchesPattern(expanded, normalizedPath, budget))
-            {
-                return true;
-            }
-        }
-        return false;
+    internal static CompiledPattern Compile(string pattern, LocalGlobMatchBudget budget, bool posixPaths, bool includeHidden = true)
+    {
+        var normalized = NormalizeSeparators(pattern.Trim(), posixPaths);
+        return new(ExpandBraces(normalized, budget).ToArray(), posixPaths, FileSearchRequestValidation.IsDirectoryGlob(pattern), includeHidden);
+    }
+
+    internal sealed class CompiledPattern(string[] patterns, bool posixPaths, bool directoriesOnly, bool includeHidden = true)
+    {
+        internal bool DirectoriesOnly => directoriesOnly;
+
+        internal bool Matches(string relativePath, LocalGlobMatchBudget budget)
+            => patterns.Any(pattern => MatchesPattern(pattern.TrimEnd('/'), NormalizeSeparators(relativePath, posixPaths).TrimStart('/'),
+                budget, descendants: false, anchored: pattern.EndsWith('/'), includeHidden));
+
+        internal bool MayMatchDescendants(string relativeDirectory, LocalGlobMatchBudget budget)
+            => patterns.Any(pattern => MatchesPattern(pattern.TrimEnd('/'), NormalizeSeparators(relativeDirectory, posixPaths).TrimStart('/'),
+                budget, descendants: true, anchored: pattern.EndsWith('/'), includeHidden));
     }
 
     private static string NormalizeSeparators(string value, bool posixPaths)
@@ -43,14 +46,15 @@ internal static class LocalGlobMatcher
             ? value.Replace('\\', '/')
             : value;
 
-    private static bool MatchesPattern(string pattern, string path, LocalGlobMatchBudget budget)
+    private static bool MatchesPattern(string pattern, string path, LocalGlobMatchBudget budget, bool descendants = false, bool anchored = false, bool includeHidden = true)
     {
         pattern = pattern.StartsWith("./", StringComparison.Ordinal) ? pattern[2..] : pattern.TrimStart('/');
-        if (!pattern.Contains('/', StringComparison.Ordinal))
+        if (!anchored && !pattern.Contains('/', StringComparison.Ordinal))
         {
+            if (descendants) return includeHidden || !path.Split('/').Any(segment => segment.StartsWith('.'));
             var separator = path.LastIndexOf('/');
             var name = separator < 0 ? path : path[(separator + 1)..];
-            return MatchesSegment(pattern, name, budget);
+            return (includeHidden || !name.StartsWith('.') || pattern.StartsWith('.')) && MatchesSegment(pattern, name, budget);
         }
 
         var patternSegments = CollapseRecursiveWildcards(
@@ -66,9 +70,11 @@ internal static class LocalGlobMatcher
             {
                 continue;
             }
+            if (descendants && state.Path == pathSegments.Length && state.Pattern < patternSegments.Count)
+                return true;
             if (state.Pattern == patternSegments.Count)
             {
-                if (state.Path == pathSegments.Length)
+                if (!descendants && state.Path == pathSegments.Length)
                 {
                     return true;
                 }
@@ -78,13 +84,14 @@ internal static class LocalGlobMatcher
             if (patternSegments[state.Pattern] == "**")
             {
                 pending.Push((state.Pattern + 1, state.Path));
-                if (state.Path < pathSegments.Length)
+                if (state.Path < pathSegments.Length && (includeHidden || !pathSegments[state.Path].StartsWith('.')))
                 {
                     pending.Push((state.Pattern, state.Path + 1));
                 }
                 continue;
             }
             if (state.Path < pathSegments.Length
+                && (includeHidden || !pathSegments[state.Path].StartsWith('.') || patternSegments[state.Pattern].StartsWith('.'))
                 && MatchesSegment(patternSegments[state.Pattern], pathSegments[state.Path], budget))
             {
                 pending.Push((state.Pattern + 1, state.Path + 1));

@@ -51,8 +51,7 @@ internal static class AgentProviderResilience
 
     public static bool IsTransient(Exception exception, CancellationToken cancellationToken = default)
     {
-        if (AgentFailurePresentationPolicy.IsStreamQueueLimit(exception)
-            || ContainsUnsafeRpcFailure(exception))
+        if (AgentFailurePresentationPolicy.IsStreamQueueLimit(exception))
         {
             return false;
         }
@@ -73,13 +72,17 @@ internal static class AgentProviderResilience
             {
                 return false;
             }
+        }
 
-            if (providerException.InnerException is not null)
-            {
-                return IsTransient(providerException.InnerException, cancellationToken)
-                       || IsTransientMessage(providerException.Message)
-                       || IsTransientMessage(providerException.Content);
-            }
+        // Structured dispatch metadata wins over timeout-like wrapper messages.
+        // Every RPC failure in an aggregate must be safe to retry.
+        if (TryClassifyRpcFailure(exception, out var retryable)) return retryable;
+
+        if (exception is AgentChatProviderException { InnerException: { } providerInner } wrappedProviderException)
+        {
+            return IsTransient(providerInner, cancellationToken)
+                   || IsTransientMessage(wrappedProviderException.Message)
+                   || IsTransientMessage(wrappedProviderException.Content);
         }
 
         if (exception is HttpRequestException httpRequestException)
@@ -105,16 +108,21 @@ internal static class AgentProviderResilience
                  || (exception.InnerException is not null && IsTransient(exception.InnerException, cancellationToken));
     }
 
-    private static bool ContainsUnsafeRpcFailure(Exception exception)
+    private static bool TryClassifyRpcFailure(Exception exception, out bool retryable)
     {
+        var found = false;
+        retryable = false;
         var pending = new Stack<Exception>();
         pending.Push(exception);
         while (pending.TryPop(out var current))
         {
-            if (current is SunderRpcException rpcException
-                && rpcException.Error.RetrySafety == SunderRpcRetrySafety.Unsafe)
+            if (current is SunderRpcException rpcException)
             {
-                return true;
+                found = true;
+                if (rpcException.Error.Kind is not (SunderRpcErrorKind.DeadlineExceeded or SunderRpcErrorKind.Unavailable)
+                    || rpcException.Error.DispatchState != SunderRpcDispatchState.NotDispatched
+                    || rpcException.Error.RetrySafety != SunderRpcRetrySafety.Safe)
+                    return true;
             }
 
             if (current is AggregateException aggregate)
@@ -130,7 +138,8 @@ internal static class AgentProviderResilience
             }
         }
 
-        return false;
+        retryable = found;
+        return found;
     }
 
     private static TimeSpan GetDelay(int attemptNumber)

@@ -12,12 +12,12 @@ attributes, canonical project metadata and reviewed consumer intent.
 | --- | --- |
 | Canonical project/package pairs | 15, including C# `Sunder.Package.Agent.Builder` → runtime `younics.sunder.package.maker` |
 | Roles | 15 exact-RID framework-dependent Worker V1; 12 App (the three Tools packages have no App) |
-| Public APIs | 18 at `1.0.0`: four concrete owner services, fourteen declaration-only contracts |
+| Public APIs | 18: `chat-provider` / `execution-target` / `tool-source` at `2.0.0`, fifteen at `1.0.0`; four concrete owner services, fourteen declaration-only contracts |
 | Private APIs | 13 at package `2.0.0`: Agent owner + profile; Maker; Docker/Local presentation; MCP; Memory; four provider management/credential APIs; Skills; Subagents |
-| Providers | 62 Runtime providers; public APIs/Stack use public audience, package-private APIs use owner audience |
+| Providers | 64 Runtime providers; public APIs/Stack use public audience, package-private APIs use owner audience |
 | Agent consumer policy | 15 Runtime uses (behavior loop, run control and runtime catalog required); five App uses (owner/profile required) |
-| Package-wide API consumers | MCP, Memory, Skills, Subagents, Files, Shell; public Runtime uses only, with explicit required-contract lists |
-| Package Maker | Local project/toolchain management through its seven-method private service, with backend-incarnation-fenced job reconciliation; App development/log navigation through host SDK capabilities; no Agent workspace dependency |
+| Package-wide API consumers | MCP, Memory, Skills, Subagents, Files, Shell; Maker optionally; public Runtime uses only, with explicit required-contract lists |
+| Package Maker | Ten-method owner-only private service with three bounded App relay methods; optional `maker.tools` / `maker.permissions`; no required Agent package/provider or direct implementation-assembly dependency |
 | Web | Execution-target discovery only; no inferred invocation or App grant |
 | External authority | `sunder.stack.contributor` / `sunder.core` / platform / `2.0.0` |
 | Capabilities | Exact authored sets in `packages.json`, compared to the union of actual target capabilities |
@@ -29,21 +29,42 @@ pre-V1 history or publication record is inherited. Docker's current capability s
 omits `role-local-workspace.v1`, confirmed by its generated role closure after the
 storage-validation cleanup. SDK freeze and native/release acceptance remain separate.
 
+Agent explicitly opts into `rpc.call-ownership.v1` for activation-owned run work.
+The reviewed `packages.json` capability union includes that declaration; the shared
+current-output/archive oracle also requires it on Agent's Worker target, not merely
+somewhere in the package union. Other families' capability sets, all 31 descriptor/ABI
+records, the fifteen project/package pairs and the 12 App / 15 Worker role counts are
+unchanged. This capability authorizes independent roots while preserving named-parent
+deadlines and the process-wide active depth floor; it does not add service grants or
+resource authority.
+
 Package Maker's local-project refactor updates only its reviewed private descriptor
 and consumer intent. The dated `qualificationInputs` in the contract record retain
 the original first-baseline capture; they are not a current source hash manifest.
-Fresh all-family qualified outputs and the current source-artifact gate validate
+Fresh all-family qualified outputs and the current source-artifact gate must validate
 the refactored package against the reviewed current descriptor. Earlier captures
 are not relabeled as evidence for the refactor.
 
-Builder's reviewed private API has seven methods, including the idempotent
+Builder's reviewed private API retains its original seven methods, including the
+idempotent
 `get-backend-id` read. Start carries that exact backend identity in its job request;
 read/cancel require both `jobId` and `expectedBackendId`. A replacement rejects the
 old identity with `agent.builder.backend-changed` rather than acknowledging or
 replaying an old job. Its private descriptor/ABI changes do not alter any of the
-18 public or other 12 private contract records. Archive review must check these
-request shapes, outcomes, idempotency and unchanged owner-only provider audience,
+18 public or other 12 private contract records. Its three additional relay methods
+are `connect-development-app`, `read-development-command`, and
+`complete-development-command`. Connect/complete are idempotent; read is not.
+All three declare only `agent.builder.development-unavailable`; completion carries
+the bounded typed failure in its existing nullable error string. The exact App
+lease/request binding, cancellation and no-mutation-replay rules remain enforced.
+Archive review must check these request shapes, outcomes, idempotency and unchanged
+owner-only provider audience,
 not just copy the generated hashes. Full all-family qualification remains required.
+
+Separately, Agent's private pending-permission DTO includes the persisted
+`approveForSession` boolean. This records approval intent, not a permission grant;
+session permission still requires validated execution start. It does not alter a
+public contract tuple.
 
 Builder's App role also requires `app-state-updates.v1` for accepted bookmark
 settlement. This is a host-owned App service, supplied by composition fixtures as
@@ -54,6 +75,18 @@ pre-Start execution capture and Host cleanup observations. Both are App-only:
 the reviewed package capability union includes them, while the independently
 admitted Worker target must not require either. Cleanup observations do not
 manufacture a terminal job outcome or authorize Start replay.
+The App also requires `app-activation-services.v1`, `package-development-reload.v1`,
+`package-development-logs.v1`, `package-development-log-queries.v1`, and
+`package-development-views.v1` and `package-development-feedback.v1`; its Worker uses
+the declared extended-deadline capability without gaining these App capabilities.
+The query capability separately gates filtered paging, encoded-byte budgets and
+activation-retained post-unload diagnostics. The legacy logs capability alone
+does not prove that an older App implements these members. Maker's Worker relays
+portable query data; it never references the App-only SDK query type.
+Feedback separately gates semantic view discovery/query, explicit opening and
+native-inclusive scoped capture. Legacy view inspection alone does not advertise
+these implementations. Its addition changes Maker's reviewed capability union,
+not the 18 public or 13 private Agent contract identities/descriptors.
 
 Removed API: `younics.ai.agent.workspace.path.migrator`, including Local/Docker
 providers and test-only generated providers. No predecessor identity translation

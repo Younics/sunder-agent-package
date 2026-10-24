@@ -5,45 +5,6 @@ using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
-internal sealed record ModelBindingSelection(
-    string? ProviderId,
-    string? ModelId,
-    string? SettingsJson = null);
-
-internal sealed record ModelBindingEditorOptions(
-    bool SelectFirstProvider,
-    string NoProvidersText,
-    string NoProviderSelectedText,
-    string LoadingText,
-    string LoadFailurePrefix,
-    string? EmptyProviderLabel = null,
-    string DefaultReasoningDescription = "Use the selected model's default reasoning behavior.");
-
-internal sealed record ModelReasoningOption(
-    string? VariantId,
-    string Label,
-    string? Description = null)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
-internal sealed record ModelSpeedOption(
-    string? SpeedOptionId,
-    string Label,
-    string? Description = null)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
-internal sealed record ModelModeOption(
-    string? ModeOptionId,
-    string Label,
-    string? Description = null,
-    bool DisablesReasoning = false)
-{
-    public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
-}
-
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposable
 {
@@ -64,6 +25,9 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
     private bool _suppressSelectionChanges;
     private bool _disposed;
     private int _loadGeneration;
+    private string? _invalidSettingsJson;
+    private string? _removedReasoningVariantId;
+    private string? _catalogWarning;
 
     public ModelBindingEditorState(
         ProviderModelLoader loader,
@@ -134,9 +98,10 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                 return;
             }
 
+            var previousSettings = _invalidSettingsJson is null ? SettingsJson : null;
             _selectedModel = value;
             OnPropertyChanged();
-            ApplyModelOptions(value, settingsJson: null);
+            ApplyModelOptions(value, _suppressSelectionChanges ? null : previousSettings);
             NotifyOptionStateChanged();
             if (!_suppressSelectionChanges)
             {
@@ -156,8 +121,14 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             }
 
             _selectedReasoningOption = value;
+            if (!_suppressSelectionChanges)
+            {
+                _invalidSettingsJson = null;
+                _removedReasoningVariantId = null;
+            }
             OnPropertyChanged();
             OnPropertyChanged(nameof(SettingsJson));
+            RefreshSelectionWarning();
             if (!_suppressSelectionChanges)
             {
                 Changed?.Invoke();
@@ -178,6 +149,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             _selectedSpeedOption = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(SettingsJson));
+            RefreshSelectionWarning();
             if (!_suppressSelectionChanges)
             {
                 Changed?.Invoke();
@@ -196,7 +168,8 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             }
 
             _selectedModeOption = value;
-            if (value?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null)
+            if (!_suppressSelectionChanges) _invalidSettingsJson = null;
+            if (!_suppressSelectionChanges && value?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null)
             {
                 SetSelectionSilently(() => SelectedReasoningOption = ReasoningOptions.FirstOrDefault());
             }
@@ -204,6 +177,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             OnPropertyChanged();
             OnPropertyChanged(nameof(IsReasoningSelectionEnabled));
             OnPropertyChanged(nameof(SettingsJson));
+            RefreshSelectionWarning();
             if (!_suppressSelectionChanges)
             {
                 Changed?.Invoke();
@@ -294,7 +268,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
     public bool ShowProviderWarning => HasWarning;
 
-    public bool ShowModelSelection => HasSelectedProvider && !HasWarning;
+    public bool ShowModelSelection => HasSelectedProvider && (!HasWarning || Models.Count > 0);
 
     public bool HasReasoningOptions => ReasoningOptions.Count > 0;
 
@@ -304,7 +278,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
     public bool ShowReasoningOptions => ShowModelSelection && HasReasoningOptions;
 
-    public bool ShowSpeedOptions => ShowModelSelection && HasSpeedOptions;
+    public bool ShowSpeedOptions => false; // Speed is selected with the model, not through a competing control.
 
     public bool ShowModeOptions => ShowModelSelection && HasModeOptions;
 
@@ -313,8 +287,8 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
     public bool CanOpenProviderSettings =>
         ShowProviderWarning && !string.IsNullOrWhiteSpace(SelectedProvider?.PackageId);
 
-    public string? SettingsJson => AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(
-        HasReasoningOptions ? SelectedReasoningOption?.VariantId : null,
+    public string? SettingsJson => _invalidSettingsJson ?? AgentChatModelSettingsJson.Serialize(new AgentChatModelSettings(
+        _removedReasoningVariantId ?? (HasReasoningOptions ? SelectedReasoningOption?.VariantId : null),
         HasSpeedOptions ? SelectedSpeedOption?.SpeedOptionId : null,
         HasModeOptions ? SelectedModeOption?.ModeOptionId : null));
 
@@ -334,7 +308,16 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
         CancellationToken cancellationToken = default)
     {
         ThrowIfDisposed();
-        var providers = await _loader.ListProvidersAsync(cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ProviderCatalogOption> providers;
+        string? catalogFailure = null;
+        try { providers = await _loader.ListProvidersAsync(cancellationToken).ConfigureAwait(false); }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            providers = [];
+            catalogFailure = $"{_options.LoadFailurePrefix} could not be loaded: {exception.Message}";
+        }
+        if (!string.IsNullOrWhiteSpace(selection.ProviderId) && !providers.Any(provider => string.Equals(provider.Id, selection.ProviderId, StringComparison.OrdinalIgnoreCase)))
+            providers = providers.Append(new ProviderCatalogOption(selection.ProviderId, selection.ProviderId + " (unavailable)") { IsAvailable = false }).ToArray();
         var selectedProviderId = ResolveProviderId(providers, selection.ProviderId);
         string? providerId = null;
         var hasProviders = false;
@@ -367,9 +350,19 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             });
             hasProviders = HasProviders;
             providerId = SelectedProvider?.Id;
+            if (catalogFailure is not null)
+            {
+                _loader.Cancel();
+                _loadGeneration++;
+                SetSelectionSilently(() => PreserveUnavailableSelection(selection.ModelId, selection.SettingsJson));
+                StatusText = catalogFailure;
+                _catalogWarning = catalogFailure;
+                SetWarning(catalogFailure);
+                IsLoading = false;
+            }
         }).ConfigureAwait(false);
 
-        if (_disposed)
+        if (_disposed || catalogFailure is not null)
         {
             return;
         }
@@ -445,6 +438,7 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
             IsLoading = true;
             StatusText = _options.LoadingText;
+            SetSelectionSilently(() => PreserveUnavailableSelection(selectedModelId, settingsJson));
             ClearWarning();
             shouldLoad = true;
         }).ConfigureAwait(false);
@@ -473,19 +467,26 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                 SetSelectionSilently(() =>
                 {
                     Models.Clear();
-                    foreach (var model in result.Models)
+                    _catalogWarning = result.WarningText;
+                    var settings = AgentChatModelSettingsJson.Parse(settingsJson);
+                    foreach (var model in result.Models.SelectMany(ExpandModelChoices))
                     {
                         Models.Add(model);
                     }
 
+                    if (!string.IsNullOrWhiteSpace(selectedModelId) && !Models.Any(model => string.Equals(model.Id, selectedModelId, StringComparison.OrdinalIgnoreCase)
+                            && string.Equals(model.SpeedOptionId, settings.SpeedOptionId, StringComparison.OrdinalIgnoreCase)))
+                        Models.Add(new ProviderModelCatalogOption(selectedModelId, selectedModelId + " (unavailable)")
+                        { SpeedOptionId = settings.SpeedOptionId, IsAvailable = false });
+
                     SelectedModel = Models.FirstOrDefault(model => string.Equals(
                             model.Id,
                             selectedModelId,
-                            StringComparison.OrdinalIgnoreCase))
+                            StringComparison.OrdinalIgnoreCase) && string.Equals(model.SpeedOptionId, settings.SpeedOptionId, StringComparison.OrdinalIgnoreCase))
                         ?? Models.FirstOrDefault();
                     ApplyModelOptions(SelectedModel, settingsJson);
                     StatusText = result.StatusText;
-                    SetWarning(result.WarningText);
+                    RefreshSelectionWarning();
                 });
                 NotifyOptionStateChanged();
                 if (notifyChanged)
@@ -500,9 +501,10 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
             {
                 if (!_disposed && generation == _loadGeneration && IsSelectedProvider(activeProviderId))
                 {
-                    SetSelectionSilently(ClearModelsAndOptions);
+                    SetSelectionSilently(() => PreserveUnavailableSelection(selectedModelId, settingsJson));
                     StatusText = $"{_options.LoadFailurePrefix}: Failed - {ex.Message}";
-                    SetWarning($"{_options.LoadFailurePrefix} could not be loaded: {ex.Message}");
+                    _catalogWarning = $"{_options.LoadFailurePrefix} could not be loaded: {ex.Message}";
+                    SetWarning(_catalogWarning);
                 }
             }).ConfigureAwait(false);
         }
@@ -520,31 +522,41 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
     private void ApplyModelOptions(ProviderModelCatalogOption? model, string? settingsJson)
     {
-        var settings = AgentChatModelSettingsJson.Parse(settingsJson);
+        var valid = AgentChatModelSettingsJson.TryParse(settingsJson, out var settings);
+        _invalidSettingsJson = valid ? null : settingsJson;
+        // Keep old explicit None values outside the menu until the user chooses
+        // their replacement. A refresh or speed change must not become Default.
+        _removedReasoningVariantId = IsRemovedReasoningVariant(settings.ReasoningVariantId) ? settings.ReasoningVariantId : null;
         SetSelectionSilently(() =>
         {
             ReasoningOptions.Clear();
             SpeedOptions.Clear();
             ModeOptions.Clear();
 
-            if (model?.Variants?.Count > 0)
+            if (_options.IncludeSpeedInModelPicker && model is not null)
             {
                 ReasoningOptions.Add(new ModelReasoningOption(
                     null,
                     "Default",
-                    _options.DefaultReasoningDescription));
-                foreach (var variant in model.Variants.Where(item => !string.IsNullOrWhiteSpace(item.VariantId)))
+                    model.DefaultReasoningVariantId is { } defaultId ? $"Provider default: {defaultId}. No explicit effort is sent." : _options.DefaultReasoningDescription));
+                foreach (var id in new[] { "low", "medium", "high", "xhigh", "max" })
                 {
+                    var variant = model.Variants?.FirstOrDefault(item => string.Equals(item.VariantId, id, StringComparison.OrdinalIgnoreCase));
                     ReasoningOptions.Add(new ModelReasoningOption(
-                        variant.VariantId,
-                        variant.DisplayName,
-                        variant.Description));
+                        id, id == "xhigh" ? "Extra high" : char.ToUpperInvariant(id[0]) + id[1..],
+                        variant?.Description ?? "Not supported by this model and connection.", variant is not null));
                 }
+                foreach (var variant in (model.Variants ?? []).Where(item => !IsRemovedReasoningVariant(item.VariantId)
+                    && item.VariantId.ToLowerInvariant() is not ("low" or "medium" or "high" or "xhigh" or "max")))
+                    ReasoningOptions.Add(new ModelReasoningOption(variant.VariantId, variant.DisplayName, variant.Description));
+                if (!string.IsNullOrWhiteSpace(settings.ReasoningVariantId) && _removedReasoningVariantId is null
+                    && !ReasoningOptions.Any(item => string.Equals(item.VariantId, settings.ReasoningVariantId, StringComparison.OrdinalIgnoreCase)))
+                    ReasoningOptions.Add(new ModelReasoningOption(settings.ReasoningVariantId, settings.ReasoningVariantId + " (unavailable)", "Choose a supported reasoning setting.", false));
             }
 
             if (model?.SpeedOptions?.Count > 0)
             {
-                SpeedOptions.Add(new ModelSpeedOption(null, "Default", "Use the provider's default speed."));
+                SpeedOptions.Add(new ModelSpeedOption(null, "Normal", "Use standard processing without changing reasoning effort."));
                 foreach (var option in model.SpeedOptions.Where(item => !string.IsNullOrWhiteSpace(item.SpeedOptionId)))
                 {
                     SpeedOptions.Add(new ModelSpeedOption(
@@ -553,6 +565,8 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                         option.Description));
                 }
             }
+            if (!string.IsNullOrWhiteSpace(model?.SpeedOptionId) && !SpeedOptions.Any(item => item.SpeedOptionId == model.SpeedOptionId))
+                SpeedOptions.Add(new ModelSpeedOption(model.SpeedOptionId, model.SpeedOptionId + " (unavailable)", "Choose a supported model/speed combination.", false));
 
             if (model?.ModeOptions?.Count > 0)
             {
@@ -569,25 +583,64 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
                         option.DisablesReasoning));
                 }
             }
+            if (!string.IsNullOrWhiteSpace(settings.ModeOptionId) && !ModeOptions.Any(item => string.Equals(item.ModeOptionId, settings.ModeOptionId, StringComparison.OrdinalIgnoreCase)))
+            {
+                if (ModeOptions.Count == 0) ModeOptions.Add(new ModelModeOption(null, "Default", "Use the provider's default execution mode."));
+                ModeOptions.Add(new ModelModeOption(settings.ModeOptionId, settings.ModeOptionId + " (unavailable)", "Choose a supported operating mode.", IsAvailable: false));
+            }
 
-            SelectedReasoningOption = FindOption(
+            SelectedReasoningOption = _removedReasoningVariantId is not null ? null : FindOption(
                 ReasoningOptions,
                 settings.ReasoningVariantId,
                 option => option.VariantId);
             SelectedSpeedOption = FindOption(
                 SpeedOptions,
-                settings.SpeedOptionId,
+                model?.SpeedOptionId,
                 option => option.SpeedOptionId);
             SelectedModeOption = FindOption(
                 ModeOptions,
                 settings.ModeOptionId,
                 option => option.ModeOptionId);
-            if (SelectedModeOption?.DisablesReasoning == true)
-            {
-                SelectedReasoningOption = ReasoningOptions.FirstOrDefault();
-            }
         });
+        RefreshSelectionWarning();
     }
+
+    private void PreserveUnavailableSelection(string? modelId, string? settingsJson)
+    {
+        ClearModelsAndOptions();
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            var settings = AgentChatModelSettingsJson.Parse(settingsJson);
+            var model = new ProviderModelCatalogOption(modelId, modelId + " (unavailable)")
+            { SpeedOptionId = settings.SpeedOptionId, IsAvailable = false };
+            Models.Add(model);
+            SelectedModel = model;
+        }
+        ApplyModelOptions(SelectedModel, settingsJson);
+    }
+
+    private IEnumerable<ProviderModelCatalogOption> ExpandModelChoices(ProviderModelCatalogOption model)
+    {
+        if (!_options.IncludeSpeedInModelPicker) { yield return model; yield break; }
+        yield return model with { SpeedOptionId = null };
+        foreach (var speed in model.SpeedOptions ?? [])
+            yield return model with { Label = model.Label + " · " + speed.DisplayName, SpeedOptionId = speed.SpeedOptionId, Description = speed.Description };
+    }
+
+    private void RefreshSelectionWarning()
+    {
+        var invalid = _invalidSettingsJson is not null ? "The saved model settings are invalid. Select a model and repair its options."
+            : SelectedProvider?.IsAvailable == false || SelectedModel?.IsAvailable == false ? "The saved model or connection is unavailable. Select a supported model."
+            : _removedReasoningVariantId is not null ? "The saved None reasoning option has been preserved. Choose Default or another supported reasoning setting before running."
+            : SelectedReasoningOption?.IsAvailable == false || SelectedSpeedOption?.IsAvailable == false || SelectedModeOption?.IsAvailable == false
+                ? "A saved model option is unavailable. It has been preserved; choose a supported option before running."
+                : SelectedModeOption?.DisablesReasoning == true && SelectedReasoningOption?.VariantId is not null
+                    ? "The saved operating mode cannot use explicit reasoning. Choose Default reasoning or another mode." : _catalogWarning;
+        SetWarning(invalid);
+        OnPropertyChanged(nameof(ShowModelSelection));
+    }
+
+    private static bool IsRemovedReasoningVariant(string? id) => string.Equals(id, "none", StringComparison.OrdinalIgnoreCase);
 
     private string? ResolveProviderId(
         IReadOnlyList<ProviderCatalogOption> providers,
@@ -620,6 +673,9 @@ internal sealed class ModelBindingEditorState : INotifyPropertyChanged, IDisposa
 
     private void ClearModelsAndOptions()
     {
+        _invalidSettingsJson = null;
+        _removedReasoningVariantId = null;
+        _catalogWarning = null;
         Models.Clear();
         ReasoningOptions.Clear();
         SpeedOptions.Clear();

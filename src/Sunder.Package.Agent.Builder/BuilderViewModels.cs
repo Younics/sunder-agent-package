@@ -14,12 +14,13 @@ public sealed partial class BuilderViewModel : BuilderObservable, IAsyncDisposab
     private readonly BuilderProjectPersistence _persistence;
     private readonly BuilderPathService _paths;
     private readonly IBuilderUiDispatcher _ui;
-    private readonly IPackageDevelopmentService _development;
+    private readonly BuilderPackageOperations _packageOperations;
     private readonly IPackageLogNavigationService _logs;
     private readonly IPackageSettingsNavigationService _settings;
     private readonly PresentationTaskScope _tasks;
     private readonly KeyedAdaptiveListDetailState<string, BuilderProjectViewModel> _listDetail;
-    private readonly ConcurrentDictionary<string, BuilderProjectSession> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _sourceObservations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Exception> _developmentPresentationFailures = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, CancellationTokenSource> _operations = new(StringComparer.Ordinal);
     private readonly object _lifecycleSync = new();
     private Task? _initialization;
@@ -40,14 +41,15 @@ public sealed partial class BuilderViewModel : BuilderObservable, IAsyncDisposab
 
     public BuilderViewModel(BuilderProjectApplicationService applicationService, BuilderProjectPersistence persistence,
         BuilderPathService pathService, IBuilderUiDispatcher uiDispatcher, IPackageDevelopmentService development,
-        IPackageLogNavigationService logs, IPackageSettingsNavigationService settings)
+        IPackageLogNavigationService logs, IPackageSettingsNavigationService settings, BuilderPackageOperations? operations = null)
     {
         _application = applicationService;
         _persistence = persistence;
         _paths = pathService;
         _ui = uiDispatcher;
         _tasks = new(PresentationTaskScope.PropagateExpectedFailure, _ui.ShutdownToken);
-        _development = development;
+        _packageOperations = operations ?? new(applicationService, development);
+        _packageOperations.Changed += OnDevelopmentChanged;
         _logs = logs;
         _settings = settings;
         Creation = new(pathService);
@@ -212,15 +214,16 @@ public sealed partial class BuilderViewModel : BuilderObservable, IAsyncDisposab
         // still calling GetStatus and posting UI. Link them to the activation before starting.
         // Cancel all producers first; release/worker cleanup below never needs the dispatcher.
         List<Exception> errors = [];
+        try { _packageOperations.Stop(); }
+        catch (Exception error) { errors.Add(error); }
         try { _tasks.Dispose(); }
         catch (Exception error) { errors.Add(error); }
         // A cancellation callback may fail after cancellation was requested. Still drain every
         // accepted operation before releasing the sessions and persistence it may be using.
         await CaptureCleanupFailureAsync(errors, () => _tasks.DisposeAsync().AsTask()).ConfigureAwait(false);
-        foreach (var owner in _sessions.Values)
-        {
-            await CaptureCleanupFailureAsync(errors, () => ReleaseSessionAsync(owner)).ConfigureAwait(false);
-        }
+        errors.AddRange(_developmentPresentationFailures.Values);
+        _packageOperations.Changed -= OnDevelopmentChanged;
+        await CaptureCleanupFailureAsync(errors, () => _packageOperations.DisposeAsync().AsTask()).ConfigureAwait(false);
         _persistence.SaveFailed -= OnPersistenceFailed;
         _persistence.SaveSucceeded -= OnPersistenceSucceeded;
         await CaptureCleanupFailureAsync(errors, () => _persistence.DisposeAsync().AsTask()).ConfigureAwait(false);

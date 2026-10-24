@@ -45,7 +45,7 @@ public sealed partial class BuilderServiceTests
             return Task.CompletedTask;
         };
         var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Application.RunJobAsync(
-            new() { Operation = "watch", Kind = BuilderProjectKind.Dotnet }, cancellationToken: cancellation.Token));
+            new() { Operation = "build", Kind = BuilderProjectKind.Dotnet }, cancellationToken: cancellation.Token));
         Assert.Equal(cancellation.Token, error.CancellationToken);
         Assert.Empty(fixture.Backend.Starts);
         fixture.Backend.BeforeGetBackendId = null;
@@ -73,9 +73,9 @@ public sealed partial class BuilderServiceTests
     }
 
     [Fact]
-    public async Task CallerHandoffReconcilesAcceptedWatchWithoutCancellingOrStartingAnotherProducer()
+    public async Task CallerHandoffReconcilesAcceptedFiniteBuildWithoutCancellingOrReplayingStart()
     {
-        await using var fixture = new BuilderUiFixture();
+        await using var fixture = new BuilderUiFixture(new() { HoldBuilds = true });
         var reads = 0;
         var cancels = 0;
         List<BuilderJobSnapshot> observations = [];
@@ -90,7 +90,7 @@ public sealed partial class BuilderServiceTests
         };
         try
         {
-            var result = await fixture.Application.RunJobAsync(new() { Operation = "watch", Kind = BuilderProjectKind.Dotnet },
+            var result = await fixture.Application.RunJobAsync(new() { Operation = "build", Kind = BuilderProjectKind.Dotnet },
                 snapshot => { observations.Add(snapshot); return Task.CompletedTask; })
                 .WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal("succeeded", result.State);
@@ -114,7 +114,7 @@ public sealed partial class BuilderServiceTests
     [InlineData(true)]
     public async Task BackendReplacementCannotReplayOrAcknowledgeOldJobAndKeepsProjectExcluded(bool nestedOtherTechnology)
     {
-        await using var fixture = new BuilderUiFixture();
+        await using var fixture = new BuilderUiFixture(new() { HoldBuilds = true });
         var original = fixture.Backend.BackendId;
         var reads = 0;
         var cancels = 0;
@@ -124,7 +124,7 @@ public sealed partial class BuilderServiceTests
         {
             await Assert.ThrowsAsync<BuilderJobCleanupException>(() => fixture.Application.RunJobAsync(new()
             {
-                Operation = "watch", Kind = project.Kind, ProjectFolder = project.ProjectFolder,
+                Operation = "build", Kind = project.Kind, ProjectFolder = project.ProjectFolder,
             }, _ =>
             {
                 if (Interlocked.Increment(ref reads) == 1) fixture.Backend.BackendId = new('b', 32);
@@ -155,7 +155,7 @@ public sealed partial class BuilderServiceTests
         fixture.Backend.OnStart = _ => fixture.Backend.BackendId = new('b', 32);
         var failure = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
         {
-            Operation = "watch", Kind = BuilderProjectKind.Dotnet,
+            Operation = "build", Kind = BuilderProjectKind.Dotnet,
         }));
         Assert.Equal("agent.builder.backend-changed", failure.Error.Code);
         Assert.Empty(fixture.Backend.Jobs);
@@ -182,13 +182,13 @@ public sealed partial class BuilderServiceTests
     [InlineData(SunderRpcErrorKind.Protocol)]
     public async Task JobReadDoesNotRetryOrHideSecurityAndProtocolFailures(SunderRpcErrorKind kind)
     {
-        await using var fixture = new BuilderUiFixture();
+        await using var fixture = new BuilderUiFixture(new() { HoldBuilds = true });
         var reads = 0;
         var failure = new SunderRpcException(new(kind, "test.denied", "This is not a caller reconnect."));
         fixture.Backend.BeforeGet = (_, _) => Interlocked.Increment(ref reads) == 1 ? Task.FromException(failure) : Task.CompletedTask;
         var actual = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
         {
-            Operation = "watch", Kind = BuilderProjectKind.Dotnet,
+            Operation = "build", Kind = BuilderProjectKind.Dotnet,
         }));
         Assert.Same(failure, actual);
         Assert.Equal(2, reads); // One rejected read, then exact stop acknowledgement, no read retry.
@@ -229,7 +229,7 @@ public sealed partial class BuilderServiceTests
     [Fact]
     public async Task UnconfirmedShutdownPreservesPartialSourceButRequiresReconciliationBeforeMutation()
     {
-        await using var fixture = new BuilderUiFixture();
+        await using var fixture = new BuilderUiFixture(new() { HoldBuilds = true });
         var source = BuilderUiFixture.Project("uncertain");
         fixture.Backend.Projects[source.EntryPoint] = source;
         var observed = BuilderUiFixture.Signal();
@@ -240,7 +240,7 @@ public sealed partial class BuilderServiceTests
         BuilderJobSnapshot? partial = null;
         var running = fixture.Application.RunJobAsync(new()
         {
-            Operation = "watch", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder,
+            Operation = "build", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder,
         }, snapshot => { partial = snapshot; observed.TrySetResult(); return Task.CompletedTask; }, cancellation.Token);
         await observed.Task.WaitAsync(TimeSpan.FromSeconds(3));
         cancellation.Cancel();
@@ -663,6 +663,9 @@ public sealed partial class BuilderServiceTests
 
     private sealed class InconsistentContentRuntime : BuilderServices.IBuilderRuntimeService
     {
+        public ValueTask<string> ConnectDevelopmentAppAsync(string appId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ReadDevelopmentCommandAsync(string appId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask CompleteDevelopmentCommandAsync(string appId, string requestId, string responseJson, string? error, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<string> GetBackendIdAsync(CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<SunderContent> DiscoverAsync(string folder, CancellationToken cancellationToken = default) => ValueTask.FromResult(new SunderContent(
             "application/json", "builder-result.json", 1, new string('0', 64), null, true,

@@ -60,6 +60,14 @@ internal sealed class AgentRunExecutionService(
                 started.RunCancellationToken).ConfigureAwait(false);
             host.TryCompleteOpenAssistantTurn();
             loopResult = ResolveStoppedOrInterruptedRunResult(plan, loopResult);
+            if (loopResult.CompletionKind == AgentBehaviorLoopCompletionKind.Interrupted)
+                _runEventLogger.LogRunEvent(PackageLogLevel.Debug, plan.RunKey.SessionId, plan.RunKey.RunId,
+                    plan.RunKey.RunRevision, "run.interruption.context", "Agent run interruption signals.", ElapsedMilliseconds(plan),
+                    new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["provider.retirement_requested"] = plan.ProviderSelection.IsRetiring,
+                        ["run.cancellation_requested"] = started.RunCancellationToken.IsCancellationRequested,
+                    });
             _runEventLogger.LogRunCompletion(
                 plan.RunKey.SessionId,
                 plan.RunKey.RunId,

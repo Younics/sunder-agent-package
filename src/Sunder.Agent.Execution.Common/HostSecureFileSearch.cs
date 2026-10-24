@@ -6,7 +6,6 @@ namespace Sunder.Agent.Execution.Common;
 
 internal static class HostSecureFileSearch
 {
-    private const int MaxResults = 1000;
     private const int MaxOutputCharacters = 51_200;
 
     public static async ValueTask<AgentFileSearchResult> ExecuteAsync(
@@ -16,6 +15,10 @@ internal static class HostSecureFileSearch
         ILocalSecureFileSystemHooks? hooks = null)
     {
         using var approvedAuthority = pathContext.ApprovedAuthority;
+        var callerCancellation = cancellationToken;
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        cancellationToken = deadline.Token;
         if (!TryValidateRequest(request, out var validationError))
         {
             return FileOperation.SearchFailure(
@@ -28,7 +31,7 @@ internal static class HostSecureFileSearch
         {
             try
             {
-                regex = FileSearchRequestValidation.CreateGrepRegex(request.Pattern);
+                regex = FileSearchRequestValidation.CreateGrepRegex(request.Pattern, request.Literal, request.CaseSensitive != false);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
             {
@@ -71,7 +74,11 @@ internal static class HostSecureFileSearch
                     depth: 0,
                     cancellationToken).ConfigureAwait(false);
             }
-            return FileOperation.SearchResult(state.Matches, state.WasTruncated);
+            return FileOperation.SearchResult(state.Matches, state.WasTruncated, state.TruncationReason);
+        }
+        catch (OperationCanceledException) when (!callerCancellation.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            return FileOperation.SearchFailure("file-search-timeout", "Search exceeded its 30-second deadline. Narrow the path, include filter, or pattern; no incomplete matches were returned.");
         }
         catch (LocalSecurePathNotFoundException ex)
         {
@@ -117,12 +124,22 @@ internal static class HostSecureFileSearch
             {
                 continue;
             }
-            using var child = session.OpenChild(directory, name);
             var relativePath = string.IsNullOrEmpty(relativeDirectory)
                 ? name
                 : Path.Combine(relativeDirectory, name);
+            var matches = state.Glob?.Matches(relativePath, state.GlobBudget) ?? true;
+            var descend = state.Glob?.MayMatchDescendants(relativePath, state.GlobBudget) ?? true;
+            if (!matches && !descend) continue;
+            LocalSecureHandle child;
+            try { child = session.OpenChild(directory, name); }
+            catch (LocalSecureSymbolicLinkException) { continue; }
+            catch (LocalSecurePathNotFoundException) { continue; } // An enumerated entry may disappear; the requested root must still exist.
+            using var ownedChild = child;
             if (child.Kind == LocalSecureNodeKind.Directory)
             {
+                if (matches && state.Request.Kind == AgentFileSearchKind.Glob && state.Glob!.DirectoriesOnly)
+                    state.AddDirectory(relativePath);
+                if (!descend || state.WasTruncated) continue;
                 await SearchDirectoryAsync(
                     session,
                     child,
@@ -151,11 +168,7 @@ internal static class HostSecureFileSearch
     {
         if (state.Request.Kind == AgentFileSearchKind.Glob)
         {
-            if (LocalGlobMatcher.Matches(
-                    state.Request.Pattern,
-                    relativePath,
-                    state.GlobBudget,
-                    state.UsesPosixPaths))
+            if (!state.Glob!.DirectoriesOnly && state.Glob.Matches(relativePath, state.GlobBudget))
             {
 #if SUNDER_AGENT_PACKAGE_MODELS
                 state.Add(new AgentFileSearchMatch { Path = reportedPath, LineNumber = null, Text = null });
@@ -165,12 +178,7 @@ internal static class HostSecureFileSearch
             }
             return;
         }
-        if (!string.IsNullOrWhiteSpace(state.Request.Include)
-            && !LocalGlobMatcher.Matches(
-                state.Request.Include,
-                relativePath,
-                state.GlobBudget,
-                state.UsesPosixPaths))
+        if (state.Glob is not null && !state.Glob.Matches(relativePath, state.GlobBudget))
         {
             return;
         }
@@ -205,7 +213,7 @@ internal static class HostSecureFileSearch
                 var match = new AgentFileSearchMatch(reportedPath, lineNumber, line);
 #endif
                 var characters = SearchState.CountCharacters(match);
-                if (fileMatches.Count >= MaxResults
+                if (fileMatches.Count >= state.ResultLimit + 1
                     || fileOutputCharacters + characters > MaxOutputCharacters)
                 {
                     fileWasTruncated = true;
@@ -230,7 +238,7 @@ internal static class HostSecureFileSearch
         }
         if (fileWasTruncated || scan.ExceededByteLimit || scan.ExceededLineLimit)
         {
-            state.MarkTruncated();
+            state.MarkTruncated(scan.ExceededLineLimit ? "line-limit" : fileWasTruncated ? "output-limit" : "scan-limit");
         }
     }
 
@@ -262,6 +270,12 @@ internal static class HostSecureFileSearch
 
         public LocalGlobMatcher.LocalGlobMatchBudget GlobBudget { get; } = new(cancellationToken);
 
+        private LocalGlobMatcher.CompiledPattern? _glob;
+        public LocalGlobMatcher.CompiledPattern? Glob => Request.Kind == AgentFileSearchKind.Glob || !string.IsNullOrWhiteSpace(Request.Include)
+            ? _glob ??= LocalGlobMatcher.Compile(Request.Kind == AgentFileSearchKind.Glob ? Request.Pattern : Request.Include!, GlobBudget, UsesPosixPaths,
+                includeHidden: Request.Kind != AgentFileSearchKind.Glob || Request.Hidden)
+            : null;
+
         public bool UsesPosixPaths { get; } = reportedPathStyle == HostReportedPathStyle.Posix;
 
         public string RootPath { get; } = rootPath;
@@ -276,6 +290,8 @@ internal static class HostSecureFileSearch
         public List<AgentFileSearchMatch> Matches { get; } = [];
 
         public bool WasTruncated { get; private set; }
+        public string? TruncationReason { get; private set; }
+        public int ResultLimit => checked((int)(Request.Limit ?? FileSearchRequestValidation.DefaultResults));
 
         public static int CountCharacters(AgentFileSearchMatch match)
             => match.Path.Length + (match.Text?.Length ?? 0) + 32;
@@ -283,16 +299,30 @@ internal static class HostSecureFileSearch
         public void Add(AgentFileSearchMatch match)
         {
             var characters = CountCharacters(match);
-            if (Matches.Count >= MaxResults || _outputCharacters + characters > MaxOutputCharacters)
+            if (Matches.Count >= ResultLimit || _outputCharacters + characters > MaxOutputCharacters)
             {
-                WasTruncated = true;
+                MarkTruncated(Matches.Count >= ResultLimit ? "result-limit" : "output-limit");
                 return;
             }
             Matches.Add(match);
             _outputCharacters += characters;
         }
 
-        public void MarkTruncated() => WasTruncated = true;
+        public void MarkTruncated(string reason)
+        {
+            WasTruncated = true;
+            TruncationReason ??= reason;
+        }
+
+        public void AddDirectory(string relativePath)
+        {
+            var reported = GetReportedPath(relativePath);
+#if SUNDER_AGENT_PACKAGE_MODELS
+            Add(new AgentFileSearchMatch { Path = reported, LineNumber = null, Text = null });
+#else
+            Add(new AgentFileSearchMatch(reported));
+#endif
+        }
 
         public void VisitEntry(int depth, string name)
             => _traversalBudget.Visit(depth, name);
@@ -303,7 +333,7 @@ internal static class HostSecureFileSearch
                 || bytes > HostFileSystemLimits.MaxSearchFileBytes
                 || _scannedBytes > HostFileSystemLimits.MaxSearchTotalBytes - bytes)
             {
-                WasTruncated = true;
+                MarkTruncated("scan-limit");
                 return false;
             }
             _scannedBytes += bytes;

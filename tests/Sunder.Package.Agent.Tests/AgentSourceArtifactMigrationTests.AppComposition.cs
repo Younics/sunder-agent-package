@@ -64,6 +64,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
               <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><NuGetAudit>false</NuGetAudit></PropertyGroup>
               <ItemGroup>
                 <PackageReference Include="Avalonia.Headless" Version="12.0.3" />
+                <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.3" />
                 <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
                 <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
                 {{(family == "Mcp" ? "<PackageReference Include=\"Avalonia.AvaloniaEdit\" Version=\"12.0.0\" /><PackageReference Include=\"AvaloniaEdit.TextMate\" Version=\"12.0.0\" />" : "")}}

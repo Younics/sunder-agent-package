@@ -3,8 +3,11 @@ using Microsoft.Extensions.AI;
 using OpenAI.Chat;
 using AIChatTool = Microsoft.Extensions.AI.AITool;
 using AIChatToolMode = Microsoft.Extensions.AI.ChatToolMode;
+using Sunder.Package.Agent.Contracts.Models;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
+
+#pragma warning disable OPENAI001 // The adapter owns the SDK's experimental reasoning-field boundary.
 
 internal static class LMStudioOpenAIOptionsTranslator
 {
@@ -14,6 +17,12 @@ internal static class LMStudioOpenAIOptionsTranslator
         {
             AllowParallelToolCalls = options?.AllowMultipleToolCalls == true,
         };
+        var reasoning = AgentChatModelOptions.ReasoningId(options);
+        AgentChatModelOptions.Validate(options, options?.ModelId ?? "LM Studio", ["low", "medium", "high"], null);
+        if (reasoning is not null)
+        {
+            translated.ReasoningEffortLevel = new ChatReasoningEffortLevel(reasoning);
+        }
 
         if (options?.MaxOutputTokens is { } maxOutputTokens)
         {

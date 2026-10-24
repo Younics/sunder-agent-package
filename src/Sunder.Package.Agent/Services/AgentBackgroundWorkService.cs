@@ -39,7 +39,8 @@ public sealed class AgentBackgroundWorkService : IAsyncDisposable
                 _queue = CreateQueue();
                 _stopping = false;
             }
-            _worker ??= ProcessQueueAsync(_lifetime.Token);
+            var lifetimeToken = _lifetime.Token;
+            _worker ??= AgentServiceOwnedTask.Run(() => ProcessQueueAsync(lifetimeToken));
         }
         return Task.CompletedTask;
     }
@@ -141,7 +142,7 @@ public sealed class AgentBackgroundWorkService : IAsyncDisposable
             completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
             drained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             _activeTasks.Add(drained.Task);
-            _ = RunOwnedCoreAsync(work, linked, start.Task, completion, drained);
+            _ = AgentServiceOwnedTask.Run(() => RunOwnedCoreAsync(work, linked, start.Task, completion, drained));
             start.TrySetResult();
         }
         return completion.Task;

@@ -9,6 +9,16 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public partial class AgentChatView
 {
+    private void OnActivityGroupHeaderClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: AgentActivityGroupRowViewModel group } header) return;
+        e.Handled = true;
+        header.Focus();
+        var scope = header.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
+        _transcriptBehavior.MutateViewport(() => group.IsExpanded = !group.IsExpanded,
+            TranscriptViewportMutationKind.ToolExpansion, group.AnchorKey, scope, isExpanding: !group.IsExpanded);
+    }
+
     private void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)
     {
         e.Handled = true;
@@ -130,7 +140,8 @@ public partial class AgentChatView
                 details,
                 template,
                 ResolveDetailWidth(detailHost, header),
-                operationToken);
+                operationToken,
+                currentWidth: () => ResolveDetailWidth(detailHost, header));
             if (!IsCurrentToolExpansion(header, toolRow, scope, detailHost, request)
                 || !ReferenceEquals(prepared.Content, details))
             {

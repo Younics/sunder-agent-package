@@ -57,6 +57,13 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         }
 
         ValidateTerminalReason(getStopReason(response), toolCalls.Length > 0);
+        var reportedSpeed = response switch
+        {
+            Message message => GetSpeed(message.Usage.RawData),
+            global::Anthropic.Models.Beta.Messages.BetaMessage message => GetSpeed(message.Usage.RawData),
+            _ => null,
+        };
+        await _telemetry.ProcessingTierAsync(reportedSpeed, cancellationToken);
         var translatedContent = new List<AIContent>(content.Count);
         foreach (var block in content)
         {
@@ -147,6 +154,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             }
 
             var content = getStreamingContent(rawEvent);
+            await _telemetry.ProcessingTierAsync(content.ProcessingTier, cancellationToken);
             usage.SetLatest(content.Usage);
             if (!string.IsNullOrWhiteSpace(content.StopReason))
             {
@@ -225,14 +233,16 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
     {
         if (rawEvent.TryPickStart(out var messageStart))
         {
-            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true));
+            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true),
+                ProcessingTier: GetSpeed(messageStart.RawData, usageUnderMessage: true));
         }
 
         if (rawEvent.TryPickDelta(out var messageDelta))
         {
             return new AnthropicStreamingContent(
                 StopReason: GetStopReason(messageDelta.RawData),
-                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false));
+                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false),
+                ProcessingTier: GetSpeed(messageDelta.RawData, usageUnderMessage: false));
         }
 
         if (rawEvent.TryPickStop(out _))
@@ -259,14 +269,16 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
     {
         if (rawEvent.TryPickStart(out var messageStart))
         {
-            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true));
+            return new AnthropicStreamingContent(Usage: GetUsage(messageStart.RawData, usageUnderMessage: true),
+                ProcessingTier: GetSpeed(messageStart.RawData, usageUnderMessage: true));
         }
 
         if (rawEvent.TryPickDelta(out var messageDelta))
         {
             return new AnthropicStreamingContent(
                 StopReason: GetStopReason(messageDelta.RawData),
-                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false));
+                Usage: GetUsage(messageDelta.RawData, usageUnderMessage: false),
+                ProcessingTier: GetSpeed(messageDelta.RawData, usageUnderMessage: false));
         }
 
         if (rawEvent.TryPickStop(out _))
@@ -385,6 +397,19 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         return GetUsage(rawData);
     }
 
+    private static string? GetSpeed(IReadOnlyDictionary<string, JsonElement> rawData, bool? usageUnderMessage = null)
+    {
+        if (usageUnderMessage == true && rawData.TryGetValue("message", out var message)
+            && message.ValueKind == JsonValueKind.Object && message.TryGetProperty("usage", out var messageUsage))
+            return GetSpeed(messageUsage);
+        if (usageUnderMessage == false && rawData.TryGetValue("usage", out var usage)) return GetSpeed(usage);
+        return rawData.TryGetValue("speed", out var speed) && speed.ValueKind == JsonValueKind.String ? speed.GetString() : null;
+    }
+
+    private static string? GetSpeed(JsonElement usage)
+        => usage.ValueKind == JsonValueKind.Object && usage.TryGetProperty("speed", out var speed)
+           && speed.ValueKind == JsonValueKind.String ? speed.GetString() : null;
+
     private static ProviderUsageSnapshot GetUsage(JsonElement container)
         => container.TryGetProperty("usage", out var usage) && usage.ValueKind == JsonValueKind.Object
             ? ParseUsage(usage)
@@ -423,4 +448,5 @@ internal readonly record struct AnthropicStreamingContent(
     string? StopReason = null,
     bool IsTerminal = false,
     ProviderUsageSnapshot Usage = default,
-    string? UnsupportedEventKind = null);
+    string? UnsupportedEventKind = null,
+    string? ProcessingTier = null);

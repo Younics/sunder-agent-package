@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.Shared.Presentation;
 internal sealed record ProviderCatalogOption(string? Id, string Label, string? PackageId = null)
 {
     public string? ProviderId => Id;
+    public bool IsAvailable { get; init; } = true;
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -17,6 +18,10 @@ internal sealed record ProviderModelCatalogOption(
     IReadOnlyList<AgentModelModeOptionDescriptor>? ModeOptions = null)
 {
     public string ModelId => Id;
+    public string? SpeedOptionId { get; init; }
+    public string? DefaultReasoningVariantId { get; init; }
+    public string? Description { get; init; }
+    public bool IsAvailable { get; init; } = true;
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -55,7 +60,7 @@ internal sealed partial class ProviderModelCatalogAdapter(
             model.DisplayName,
             model.Variants,
             model.SpeedOptions,
-            model.ModeOptions);
+            model.ModeOptions) { DefaultReasoningVariantId = model.DefaultReasoningVariantId };
 
 }
 

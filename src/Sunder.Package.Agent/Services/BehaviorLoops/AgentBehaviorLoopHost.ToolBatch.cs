@@ -115,9 +115,12 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
             {
                 outcomes[index] = await _host.RecordUnexecutedToolCallAsync(
                     toolCalls[index],
-                    terminalOutcome.Kind == AgentToolCallOutcomeKind.WaitingForApproval
-                        ? "Tool call was not executed because another call in the provider batch is waiting for permission."
-                        : "Tool call was not executed because another call in the provider batch terminated the run.").ConfigureAwait(false);
+                    terminalOutcome.Kind switch
+                    {
+                        AgentToolCallOutcomeKind.WaitingForApproval => "Tool call was not executed because another call in the provider batch is waiting for permission.",
+                        AgentToolCallOutcomeKind.Executed => "Tool call was not executed because another call in this provider batch returned corrective argument feedback. Review the recorded results before requesting further work; no call was automatically retried.",
+                        _ => "Tool call was not executed because another call in the provider batch terminated the run.",
+                    }).ConfigureAwait(false);
             }
         }
     }

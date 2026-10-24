@@ -32,6 +32,9 @@ public sealed record AgentModelDescriptor(
     /// Gets the model's public release date for catalog ordering, or <see langword="null" /> when unknown.
     /// </summary>
     public DateOnly? ReleaseDate { get; init; }
+
+    /// <summary>Gets the known provider default effort, for display only; null means unspecified, not disabled.</summary>
+    public string? DefaultReasoningVariantId { get; init; }
 }
 
 /// <summary>

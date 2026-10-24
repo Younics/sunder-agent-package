@@ -7,6 +7,7 @@ public sealed partial class BuilderViewModel
     public Task LoadSelectedProjectAsync() => ProjectOperationAsync("load");
     public Task UnloadSelectedProjectAsync() => ProjectOperationAsync("unload");
     public Task BuildSelectedProjectAsync() => ProjectOperationAsync("build");
+    public Task HotreloadSelectedProjectAsync() => ProjectOperationAsync("hotreload");
     public Task CreatePackageArchiveAsync() => ProjectOperationAsync("archive");
     public Task RetrySelectedSetupAsync() => ProjectOperationAsync("setup");
     public Task SaveSelectedMetadataAsync() => ProjectOperationAsync("save-metadata");
@@ -22,10 +23,9 @@ public sealed partial class BuilderViewModel
     {
         if (operation == "unload")
         {
-            if (_sessions.TryGetValue(row.Id, out var released))
+            if (_packageOperations.GetSession(row.EntryPoint) is { } released)
             {
                 await ReleaseSessionAsync(released).ConfigureAwait(false);
-                _sessions.TryRemove(row.Id, out _);
             }
             await UpdateUiAsync(() =>
             {
@@ -35,13 +35,17 @@ public sealed partial class BuilderViewModel
             return;
         }
 
+        var owner = _packageOperations.GetSession(row.EntryPoint);
         var inspection = await ReadUiAsync(() => row.Inspection).ConfigureAwait(false);
-        if (inspection is null || row.IsMissing) throw new InvalidOperationException("Locate this project's source first.");
-        if (operation == "load" && _sessions.ContainsKey(row.Id)) return;
-        var owner = _sessions.GetValueOrDefault(row.Id);
+        if (operation == "hotreload" && owner?.PendingHotreload is not null) inspection = owner.Project;
+        else if (inspection is null || row.IsMissing) throw new InvalidOperationException("Locate this project's source first.");
         if (owner?.ReleaseStarted == true)
             throw new InvalidOperationException("This development session is awaiting release. Reconnect and retry Unload before changing this project.");
-        var wasLoaded = owner is not null;
+        if (operation == "load" && owner is not null)
+        {
+            await UpdateUiAsync(() => { row.SetSession(owner.HasHandle); if (owner.Status is { } status) row.SetDevelopmentStatus(status); }).ConfigureAwait(false);
+            return;
+        }
         var name = await ReadUiAsync(() => row.EditedDisplayName.Trim()).ConfigureAwait(false);
         var packageId = await ReadUiAsync(() => row.EditedPackageId.Trim()).ConfigureAwait(false);
         if (operation == "save-metadata")
@@ -53,125 +57,48 @@ public sealed partial class BuilderViewModel
                 throw new InvalidOperationException(inspection.PackageIdReadOnlyReason ?? "The package ID is read-only.");
         }
 
-        var original = owner;
-        var paused = false;
-        var succeeded = false;
-        var uncertain = false;
-        var sourceRevision = 0L;
-        try
+        if (operation == "save-metadata")
         {
-            if (owner is not null)
+            // Identity edits must release the exact old owner first. Editing metadata
+            // does not silently rebuild or acquire a different package identity.
+            if (owner is not null && packageId != inspection.PackageId)
             {
-                sourceRevision = row.Watch ? owner.ObservePause() : 0;
-                await owner.StopWatchAsync().ConfigureAwait(false);
-                paused = true;
-                await owner.Handle.SetWatchAsync(false, token).ConfigureAwait(false);
-                if (operation == "save-metadata" && packageId != inspection.PackageId)
-                {
-                    await ReleaseSessionAsync(owner).ConfigureAwait(false);
-                    _sessions.TryRemove(row.Id, out _);
-                    owner = null;
-                    await UpdateUiAsync(() => row.SetSession(false)).ConfigureAwait(false);
-                }
+                await ReleaseSessionAsync(owner).ConfigureAwait(false);
+                await UpdateUiAsync(() => row.SetSession(false)).ConfigureAwait(false);
             }
-
-            if (operation == "save-metadata")
+            var saved = await RunRowJobAsync(row, generation, new()
             {
-                var saved = await RunRowJobAsync(row, generation, new()
-                {
-                    Operation = operation, Kind = inspection.Kind, ProjectFolder = inspection.ProjectFolder, EntryPoint = inspection.EntryPoint,
-                    Expected = inspection, DisplayName = name, PackageId = packageId,
-                }, token).ConfigureAwait(false);
-                if (saved.State != "succeeded")
-                {
-                    await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
-                    return;
-                }
-                await UpdateUiAsync(() =>
-                {
-                    if (IsCurrent(row, generation)) { row.ApplySnapshot(saved, acceptEdits: true); SaveBookmarks(); }
-                }).ConfigureAwait(false);
-                if (!wasLoaded) { succeeded = true; return; }
-            }
-
-            var loadOutput = operation == "load" || wasLoaded && (operation is "build" or "setup" or "save-metadata");
-            if (loadOutput && inspection.Kind == BuilderProjectKind.Dotnet && row.Watch)
+                Operation = operation, Kind = inspection.Kind, ProjectFolder = inspection.ProjectFolder, EntryPoint = inspection.EntryPoint,
+                Expected = inspection, DisplayName = name, PackageId = packageId,
+            }, token).ConfigureAwait(false);
+            if (saved.State != "succeeded")
             {
-                // Initial Load and manual reload use the same Watch-owned build. A finite
-                // build followed by Watch would compile/analyze the project twice.
-                paused = false;
-                try { await BuildAndLoadWatchedDotnetAsync(row, generation, owner, token).ConfigureAwait(false); }
-                catch (OperationCanceledException error) when (PresentationCancellation.IsExpected(error, token))
-                {
-                    if (owner is not null) await RestoreRetainedWatchAsync(owner, generation, succeeded: false, sourceRevision: 0).ConfigureAwait(false);
-                    throw;
-                }
+                await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
                 return;
             }
-
-            var buildOperation = operation == "load" ? "setup" : operation == "save-metadata" ? "build" : operation;
-            var result = await RunRowJobAsync(row, generation, Request(row, buildOperation), token).ConfigureAwait(false);
-            if (result.State != "succeeded") return;
-            // Source remains authoritative, including edits made by generated tooling during a build.
-            await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
-            if (loadOutput) owner = await LoadOutputAsync(row, owner, result.DevelopmentFolder, token).ConfigureAwait(false);
-            succeeded = true;
-            if (owner is not null && !ReferenceEquals(owner, original) && row.Watch) owner.StartWatch();
-        }
-        catch (BuilderJobCleanupException) { uncertain = true; throw; }
-        finally
-        {
-            // A failed/cancelled manual operation must not silently turn a retained session into
-            // "watch checked, producer stopped". Never use that operation's canceled token to restore it.
-            if (original is not null && paused && !uncertain && !original.ReleaseStarted)
-                await RestoreRetainedWatchAsync(original, generation, succeeded, sourceRevision).ConfigureAwait(false);
-        }
-    }
-
-    private async Task RestoreRetainedWatchAsync(BuilderProjectSession owner, long generation, bool succeeded, long sourceRevision)
-    {
-        if (_stopping || _tasks.CancellationToken.IsCancellationRequested) return;
-        var row = owner.Row;
-        using var recovery = CancellationTokenSource.CreateLinkedTokenSource(_tasks.CancellationToken);
-        recovery.CancelAfter(TimeSpan.FromSeconds(12));
-        try
-        {
-            var restore = await ReadUiAsync(() => !_stopping && IsCurrent(row, generation) && row.Watch
-                && !owner.ReleaseStarted && owner.WatchStopConfirmed && ReferenceEquals(_sessions.GetValueOrDefault(row.Id), owner)
-                && row.EntryPoint == owner.SourceEntryPoint && row.PackageId == owner.SourcePackageId
-                && !_application.HasUnconfirmedJob(row.ProjectFolder)).ConfigureAwait(false);
-            if (!restore) return;
-            await owner.Handle.SetWatchAsync(true, recovery.Token).ConfigureAwait(false);
-            if (!_stopping) owner.StartWatch(waitForSourceChange: !succeeded, sourceRevision);
-        }
-        catch (OperationCanceledException error) when (PresentationCancellation.IsExpected(error, _tasks.CancellationToken)
-            || _tasks.CancellationToken.IsCancellationRequested && PresentationCancellation.IsExpected(error, recovery.Token)) { }
-        catch (Exception error) when ((error is not OperationCanceledException || PresentationCancellation.IsExpected(error, recovery.Token))
-            && BuilderProjectApplicationService.IsRecoverable(error))
-        {
-            await UpdateUiAsync(() => row.SetWatchError("Automatic rebuilding could not restart: " + error.Message)).ConfigureAwait(false);
-        }
-    }
-
-    public Task SetSelectedWatchAsync(bool watch)
-    {
-        var row = SelectedProject;
-        return RunOwnedAsync(async lifetime =>
-        {
-            if (row is null) return;
-            await RunProjectActionAsync(row, async (_, token) =>
+            await UpdateUiAsync(() =>
             {
-                await UpdateUiAsync(() => { row.Watch = watch; SaveBookmarks(); }).ConfigureAwait(false);
-                if (!_sessions.TryGetValue(row.Id, out var owner)) return;
-                if (owner.ReleaseStarted)
-                    throw new InvalidOperationException("This development session is awaiting release. Reconnect and retry Unload before restarting watch.");
-                await owner.StopWatchAsync().ConfigureAwait(false);
-                await owner.Handle.SetWatchAsync(watch, token).ConfigureAwait(false);
-                var status = await owner.Handle.GetStatusAsync(token).ConfigureAwait(false);
-                await UpdateUiAsync(() => row.SetDevelopmentStatus(status)).ConfigureAwait(false);
-                if (watch) owner.StartWatch();
-            }, lifetime).ConfigureAwait(false);
-        });
+                if (IsCurrent(row, generation)) { row.ApplySnapshot(saved, acceptEdits: true); SaveBookmarks(); }
+            }).ConfigureAwait(false);
+            return;
+        }
+
+        if (operation == "hotreload")
+        {
+            var applied = await _packageOperations.HotreloadAsync(inspection!, snapshot => ApplyRowSnapshotAsync(row, generation, snapshot), token, row.Id).ConfigureAwait(false);
+            await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
+            await UpdateUiAsync(() => { if (IsCurrent(row, generation)) row.SetStatus("Hotreload applied revision " + applied.SourceContentIdentity[..12] + "."); }).ConfigureAwait(false);
+            return;
+        }
+
+        var result = await RunRowJobAsync(row, generation, Request(row, operation == "load" ? "setup" : operation), token).ConfigureAwait(false);
+        if (result.State != "succeeded") return;
+        if (operation is "load" or "build" or "setup" && string.IsNullOrWhiteSpace(result.DevelopmentFolder))
+            throw new InvalidDataException("The build did not return a validated development folder.");
+        // A build result is not application evidence. Only explicit Load acquires a
+        // development owner; Build/setup/archive never retire or reload a loaded view.
+        await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
+        if (operation == "load") await LoadOutputAsync(row, owner, result.DevelopmentFolder, token).ConfigureAwait(false);
     }
 
     public Task RefreshSelectedProjectAsync()
@@ -229,112 +156,99 @@ public sealed partial class BuilderViewModel
             await UpdateUiAsync(() =>
             {
                 if (!IsCurrent(row, generation)) return;
-                if (row.HasSession && !_sessions.ContainsKey(row.Id)) row.SetSession(false);
+                if (row.HasSession && _packageOperations.GetSession(row.EntryPoint) is null) row.SetSession(false);
                 row.IsBusy = false;
             }).ConfigureAwait(false);
         }
     }
 
     private Task<BuilderJobSnapshot> RunRowJobAsync(BuilderProjectViewModel row, long generation, BuilderJobRequest request, CancellationToken token)
-        => _application.RunJobAsync(request with { DisplayName = request.DisplayName ?? row.DisplayName, PackageId = request.PackageId ?? row.PackageId }, snapshot => UpdateUiAsync(() =>
+        => _packageOperations.RunJobAsync(request with { DisplayName = request.DisplayName ?? row.DisplayName, PackageId = request.PackageId ?? row.PackageId },
+            snapshot => ApplyRowSnapshotAsync(row, generation, snapshot), token, projectId: row.Id);
+
+    private Task ApplyRowSnapshotAsync(BuilderProjectViewModel row, long generation, BuilderJobSnapshot snapshot) => UpdateUiAsync(() =>
         {
             if (!IsCurrent(row, generation)) return;
             row.ApplySnapshot(snapshot);
             if (snapshot.State != "running") SaveBookmarks();
-        }), token, projectId: row.Id);
+        });
 
     private static BuilderJobRequest Request(BuilderProjectViewModel row, string operation) => new()
     {
         Operation = operation, Kind = row.Kind!.Value, ProjectFolder = row.ProjectFolder, EntryPoint = row.EntryPoint,
     };
 
-    private BuilderProjectSession CreateProjectSession(BuilderProjectViewModel row)
+    private void OnDevelopmentChanged(BuilderDevelopmentSession session)
     {
-        BuilderProjectSession? owner = null;
-        owner = new(row, _application, _development, _tasks.CancellationToken,
-            action => UpdateUiAsync(() =>
-            {
-                if (!_disposed && Projects.Contains(row) && ReferenceEquals(_sessions.GetValueOrDefault(row.Id), owner)) action();
-            }), async () =>
-            {
-                var generation = await ReadUiAsync(() => row.IsBusy ? -1 : row.OperationGeneration).ConfigureAwait(false);
-                if (generation >= 0) await RefreshSourceAsync(row, generation, _tasks.CancellationToken).ConfigureAwait(false);
-            });
-        return owner;
-    }
-
-    private async Task BuildAndLoadWatchedDotnetAsync(BuilderProjectViewModel row, long generation,
-        BuilderProjectSession? owner, CancellationToken token)
-    {
-        owner ??= CreateProjectSession(row);
-        _sessions[row.Id] = owner; // Own the producer before a development handle exists.
-        try
-        {
-            var built = await owner.StartAndWaitForBuildAsync(token, waitForRecovery: !owner.HasHandle).ConfigureAwait(false);
-            if (built.State is "failed" or "cancelled") return;
-            if (built.Phase == BuilderJobPhase.BuildFailed)
-            {
-                // A manual compiler failure returns control without retiring last-good output.
-                // The same Watch job recovers on edits; no new job or second observer is needed.
-                await owner.Handle.SetWatchAsync(true, token).ConfigureAwait(false);
-                return;
-            }
-            await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
-            await UpdateUiAsync(() => { if (IsCurrent(row, generation)) SaveBookmarks(); }).ConfigureAwait(false);
-            await LoadOutputAsync(row, owner, built.DevelopmentFolder, token).ConfigureAwait(false);
-        }
-        catch (Exception error)
+        if (_stopping || _developmentPresentationFailures.ContainsKey(session.SourceEntryPoint)) return;
+        _ = _tasks.RunAsync(async token =>
         {
             try
             {
-                if (error is OperationCanceledException cancellation && PresentationCancellation.IsExpected(cancellation, token)
-                    && owner.HasHandle && !owner.ReleaseStarted) owner.ObservePause();
-            }
-            finally { await owner.StopWatchAsync().ConfigureAwait(false); }
-            throw;
-        }
-        finally
-        {
-            if (!owner.HasHandle)
+            BuilderProjectViewModel? row = null;
+            await UpdateUiAsync(() =>
             {
-                // A cancelled/failed load may already own a Worker. Drain that exact
-                // producer before dropping the pending session, independent of the caller.
-                try { await ReleaseSessionAsync(owner).ConfigureAwait(false); }
-                finally
-                {
-                    await UpdateUiAsync(() => row.SetSession(!owner.Released)).ConfigureAwait(false);
-                }
+                row = Projects.SingleOrDefault(item => item.EntryPoint == session.SourceEntryPoint);
+                if (row is null) return;
+                row.SetSession(!session.Released && session.HasHandle);
+                row.SetHotreloadPending(session.PendingHotreload is not null && !session.Released);
+                if (session.ReleaseStarted && !session.Released) row.SetReleasePending();
+                else if (session.Status is { } status) row.SetDevelopmentStatus(status);
+            }).ConfigureAwait(false);
+            if (row is null || session.ReleaseStarted || session.Released || session.Status is null) return;
+            var now = DateTimeOffset.UtcNow;
+            if (_sourceObservations.TryGetValue(row.Id, out var last) && now - last < TimeSpan.FromSeconds(3)) return;
+            _sourceObservations[row.Id] = now;
+            var generation = await ReadUiAsync(() => row.IsBusy ? -1 : row.OperationGeneration).ConfigureAwait(false);
+            if (generation >= 0) await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
             }
-        }
+            catch (OperationCanceledException error) when (PresentationCancellation.IsExpected(error, token)) { }
+            catch (Exception error)
+            {
+                // The activation, not an event handler or the current page, owns
+                // observation failures. Preserve the exact failure for its drain;
+                // stop this row's presentation without abandoning its lease.
+                _developmentPresentationFailures.TryAdd(session.SourceEntryPoint, error);
+            }
+        });
     }
 
-    private async Task<BuilderProjectSession> LoadOutputAsync(BuilderProjectViewModel row, BuilderProjectSession? owner,
+    private async Task<BuilderDevelopmentSession> LoadOutputAsync(BuilderProjectViewModel row, BuilderDevelopmentSession? owner,
         string? folder, CancellationToken token)
     {
         if (string.IsNullOrWhiteSpace(folder)) throw new InvalidDataException("The build did not return a validated development folder.");
-        owner ??= CreateProjectSession(row);
-        _sessions[row.Id] = owner;
         try
         {
-            try { await owner.LoadAsync(folder, row.Watch, token).ConfigureAwait(false); }
-            catch (Exception error) when (!owner.HasHandle && error is not OperationCanceledException && BuilderProjectApplicationService.IsRecoverable(error))
+            var session = await _packageOperations.LoadAsync(row.Inspection!, folder, token).ConfigureAwait(false);
+            await UpdateUiAsync(() =>
             {
-                throw new InvalidOperationException("The development output could not be loaded. Retry Load into Sunder. " + error.Message, error);
-            }
-            return owner;
+                row.SetSession(true);
+                row.SetStatus("Development session acquired. Checking runtime and App readiness…");
+            }).ConfigureAwait(false);
+            return session;
         }
-        finally
+        catch (Exception error) when (error is not OperationCanceledException && BuilderProjectApplicationService.IsRecoverable(error))
         {
-            if (!owner.HasHandle) await ReleaseSessionAsync(owner).ConfigureAwait(false);
+            throw new InvalidOperationException("The development output could not be loaded. Retry Load into Sunder. " + error.Message, error);
         }
     }
 
-    private async Task ReleaseSessionAsync(BuilderProjectSession owner)
+    private async Task ReleaseSessionAsync(BuilderDevelopmentSession owner)
     {
-        try { await owner.ReleaseAsync().ConfigureAwait(false); }
-        finally
+        List<Exception> failures = [];
+        await CaptureCleanupFailureAsync(failures, () => UpdateUiAsync(() =>
         {
-            if (owner.Released) _sessions.TryRemove(new KeyValuePair<string, BuilderProjectSession>(owner.Row.Id, owner));
+            foreach (var row in Projects.Where(item => item.EntryPoint == owner.SourceEntryPoint)) row.SetReleasePending();
+        })).ConfigureAwait(false);
+        await CaptureCleanupFailureAsync(failures, () => _packageOperations.ReleaseAsync(owner)).ConfigureAwait(false);
+        if (owner.Released)
+        {
+            await CaptureCleanupFailureAsync(failures, () => UpdateUiAsync(() =>
+            {
+                foreach (var row in Projects.Where(item => item.EntryPoint == owner.SourceEntryPoint)) row.SetSession(false);
+            })).ConfigureAwait(false);
         }
+        if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures.Count > 1) throw new AggregateException("Builder development release failed.", failures);
     }
 }

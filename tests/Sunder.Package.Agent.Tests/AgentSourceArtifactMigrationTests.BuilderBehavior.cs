@@ -18,10 +18,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var name in new[] { "BuilderProjectKind", "BuilderProjectInspection", "BuilderJobRequest", "BuilderJobSnapshot", "BuilderToolchainStatus" })
             Assert.NotSame(runtime.GetType("Sunder.Package.Agent.Builder." + name, true), presentation.GetType("Sunder.Package.Agent.Builder." + name, true));
         var descriptor = CanonicalPackageRoles.OwnedDescriptor(worker, "younics.sunder.package.maker.runtime");
-        Assert.Equal(new[] { "cancel-job", "discover", "get-backend-id", "get-job", "get-toolchains", "inspect", "start-job" },
+        Assert.Equal(new[] { "cancel-job", "complete-development-command", "connect-development-app", "discover", "get-backend-id", "get-job", "get-toolchains", "inspect", "read-development-command", "start-job" },
             Assert.Single(descriptor.Services).Methods.Select(method => method.MethodId).Order(StringComparer.Ordinal));
         using (var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(worker), "authoring-receipt.v1.json"))))
-            Assert.Empty(receipt.RootElement.GetProperty("uses").EnumerateArray());
+        {
+            var uses = receipt.RootElement.GetProperty("uses").EnumerateArray().ToArray();
+            Assert.Equal(CurrentPublicRpcDescriptors.ContractIds.Order(StringComparer.Ordinal),
+                uses.Select(use => use.GetProperty("contractKey").GetString()).Order(StringComparer.Ordinal));
+            Assert.All(uses, use =>
+            {
+                Assert.Equal("runtime", use.GetProperty("role").GetString());
+                Assert.False(use.GetProperty("required").GetBoolean());
+            });
+        }
 
         using var package = RegressionTestPackageScope.Create();
         var physical = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
@@ -32,7 +41,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var lifetime = composition.Lifetime;
         Assert.Equal(0, state.DiscoveryCount);
         Assert.Empty(Directory.EnumerateFileSystemEntries(physical));
-        var registration = Assert.Single(composition.Options.Providers);
+        Assert.Equal(new[] { "builder.runtime", "maker.permissions", "maker.tools" },
+            composition.Options.Providers.Select(provider => provider.ProviderId).Order(StringComparer.Ordinal));
+        var registration = Assert.Single(composition.Options.Providers, provider => provider.ProviderId == "builder.runtime");
+        foreach (var provider in composition.Options.Providers.Where(provider => provider.ProviderId != "builder.runtime"))
+        {
+            var expected = CurrentPublicRpcDescriptors.Get(provider.ProviderId == "maker.tools"
+                ? "younics.ai.agent.tool.source" : "younics.ai.agent.permission.surface");
+            Assert.Equal(expected.ContractId, provider.ContractId);
+            Assert.Equal(expected.Version, provider.ContractVersion);
+            Assert.Equal(expected.Sha256, provider.DescriptorSha256);
+            Assert.Equal(expected.AbiSha256, provider.AbiSha256);
+        }
         Assert.Equal("builder.runtime", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
@@ -42,6 +62,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(method.Errors, registration.DeclaredErrors[service.ServiceId][method.MethodId]);
         state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
         await ActivateGeneratedComposition(composition.Options);
+        Assert.Equal(0, state.DiscoveryCount);
         await BuilderSourceMigrationTests.VerifyAppAsync(worker, runtime, presentation, context, descriptor, registration, lifetime, state, client);
     }
 

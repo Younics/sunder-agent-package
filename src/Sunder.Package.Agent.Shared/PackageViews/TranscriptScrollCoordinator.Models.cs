@@ -56,6 +56,7 @@ internal sealed class TranscriptPageAnchorAuthority
 internal enum TranscriptViewportMutationMode
 {
     ToolExpansionNativeAnchor,
+    DetachedNativeAnchor,
     FollowingNativeObserver,
     DetachedLogicalRestore,
 }

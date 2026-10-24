@@ -70,7 +70,7 @@ public sealed class LMStudioConnectionTests
         Assert.True((await catalog.GetCatalogAsync()).IsSuccess);
 
         Assert.Equal(2, handler.Requests.Count);
-        Assert.Equal("https://first.test/v1/models", handler.Requests[0].Uri.AbsoluteUri);
+        Assert.Equal("https://first.test/api/v1/models", handler.Requests[0].Uri.AbsoluteUri);
         Assert.Equal("first-key", handler.Requests[0].Authorization?.Parameter);
         Assert.Equal("https://second.test/api/v1/models", handler.Requests[1].Uri.AbsoluteUri);
         Assert.Equal("second-key", handler.Requests[1].Authorization?.Parameter);

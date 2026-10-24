@@ -14,6 +14,7 @@ namespace Sunder.Package.Agent.Builder;
 [SunderServiceError("agent.builder.job-not-found")]
 [SunderServiceError("agent.builder.project-conflict")]
 [SunderServiceError("agent.builder.backend-changed")]
+[SunderServiceError("agent.builder.development-unavailable")]
 public sealed partial class BuilderRuntimeService(IPackageContext context) : IAsyncDisposable
 {
     private readonly object sync = new();
@@ -21,6 +22,43 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
     private Backend? backend;
     private bool stopping;
     private Task? disposal;
+    private readonly BuilderDevelopmentCommandHub development = new();
+    internal bool HasDevelopmentApp => development.IsConnected;
+    internal Task<BuilderDevelopmentReply> InvokeDevelopmentAsync(string operation, string operationId, string requestJson,
+        string? expectedAppId, CancellationToken token) => development.InvokeAsync(operation, operationId, requestJson, expectedAppId, token);
+
+    [SunderMethod(TimeoutSeconds = 30, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.development-unavailable"])]
+    public ValueTask<string> ConnectDevelopmentAppAsync(string appId, CancellationToken cancellationToken = default)
+        => InvokeDevelopmentBridgeAsync(() => ValueTask.FromResult(development.Connect(appId)), cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30, Errors = ["agent.builder.development-unavailable"])]
+    public ValueTask<SunderContent> ReadDevelopmentCommandAsync(string appId, CancellationToken cancellationToken = default)
+        => InvokeDevelopmentBridgeAsync(async () => BuilderContent.Create(new BuilderDevelopmentCommandBatch(
+            await development.ReadAsync(appId, cancellationToken).ConfigureAwait(false))), cancellationToken);
+
+    [SunderMethod(TimeoutSeconds = 30, Idempotency = SunderServiceIdempotency.Idempotent,
+        Errors = ["agent.builder.development-unavailable"])]
+    public async ValueTask CompleteDevelopmentCommandAsync(string appId, string requestId, string responseJson, string? error, CancellationToken cancellationToken = default)
+        => _ = await InvokeDevelopmentBridgeAsync(() =>
+        {
+            development.Complete(appId, requestId, responseJson, error);
+            return ValueTask.FromResult(true);
+        }, cancellationToken).ConfigureAwait(false);
+
+    private async ValueTask<T> InvokeDevelopmentBridgeAsync<T>(Func<ValueTask<T>> operation, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        lock (sync) ObjectDisposedException.ThrowIf(stopping, this);
+        try { return await operation().ConfigureAwait(false); }
+        catch (SunderRpcException error) when (error.Error is { Kind: SunderRpcErrorKind.Unavailable, Code: "maker.development.unavailable" })
+        {
+            // Expected lease contention/stale observation must be a declared
+            // provider-domain outcome. Providers cannot forge Host Unavailable
+            // errors; the Worker boundary otherwise (correctly) faults them.
+            throw new SunderRpcException(new(SunderRpcErrorKind.Domain, "agent.builder.development-unavailable", error.Error.Message));
+        }
+    }
 
     [SunderMethod(TimeoutSeconds = 120, Idempotency = SunderServiceIdempotency.Idempotent,
         Errors = ["agent.builder.invalid-request", "agent.builder.request-too-large", "agent.builder.response-too-large", "agent.builder.operation-failed", "agent.builder.project-conflict"])]
@@ -138,7 +176,8 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
                 BuilderJobBusyException => "agent.builder.busy",
                 BuilderJobNotFoundException => "agent.builder.job-not-found",
                 BuilderProjectConflictException => "agent.builder.project-conflict",
-                ArgumentException or System.Text.Json.JsonException or InvalidDataException or KeyNotFoundException or FormatException or OverflowException or System.Xml.XmlException => "agent.builder.invalid-request",
+                ArgumentException or System.Text.Json.JsonException or InvalidDataException or FileNotFoundException or DirectoryNotFoundException
+                    or KeyNotFoundException or FormatException or OverflowException or System.Xml.XmlException => "agent.builder.invalid-request",
                 _ => "agent.builder.operation-failed",
             };
             throw new SunderRpcException(new(SunderRpcErrorKind.Domain, code, BuilderJobText.Safe(error.Message, 4096)));
@@ -151,6 +190,7 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
         {
             if (disposal is not null) return new(disposal);
             stopping = true;
+            development.Dispose();
             var current = backend;
             disposal = Task.Run(async () =>
             {
@@ -164,3 +204,6 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
 
     private sealed record Backend(BuilderToolchainService Service, IBuilderProjectDriverToolchains Toolchains, BuilderJobManager Jobs);
 }
+
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
+public sealed record BuilderDevelopmentCommandBatch(BuilderDevelopmentCommand? Command);

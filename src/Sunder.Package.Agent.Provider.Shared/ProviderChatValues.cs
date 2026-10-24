@@ -152,6 +152,9 @@ internal static class ProviderChatValues
             "tool-call" => new FunctionCallContent(content.CallId ?? string.Empty, content.Name ?? string.Empty,
                 content.Json.TryGetValue(out var args) && args.ValueKind != JsonValueKind.Null
                     ? args.Deserialize<Dictionary<string, object?>>() ?? new(StringComparer.Ordinal) : new(StringComparer.Ordinal)) { InformationalOnly = content.InformationalOnly },
+            "tool-result" when content.Content is { } image => new FunctionResultContent(content.CallId ?? string.Empty,
+                new List<AIContent> { new TextContent(content.Json.TryGetValue(out var caption) && caption.ValueKind == JsonValueKind.String ? caption.GetString()! : "Untrusted tool image"),
+                    new DataContent(references[image], image.MediaType) { Name = image.FileName } }),
             "tool-result" => new FunctionResultContent(content.CallId ?? string.Empty, content.Json.TryGetValue(out var result) && result.ValueKind != JsonValueKind.Null ? result.Clone() : null),
             "usage" => ProviderResponseUpdates.CreateUsageContent(new(content.Usage?.InputTokens, content.Usage?.OutputTokens,
                 content.Usage?.TotalTokens, content.Usage?.CachedInputTokens, content.Usage?.ReasoningTokens), inferTotalTokenCount: false),

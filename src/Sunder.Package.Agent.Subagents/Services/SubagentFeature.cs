@@ -53,6 +53,8 @@ public sealed partial class SubagentFeature : IToolSourceService, IPromptContext
         => _descriptors.ContributeContextAsync(request, token);
     public ValueTask<AgentToolPresentation?> PresentationAsync(AgentToolPresentationRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult(_renderer.ResolveToolPresentation(request)); }
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken token = default)
+    { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken token = default)
     { token.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentPermissionRequest?> PermissionAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePermissionRequest request, CancellationToken token = default)

@@ -2,11 +2,14 @@
 
 `agent-current-inventory.json` is the independently reviewed expectation for the
 current product: **15 package/project pairs, 12 App / 15 Worker roles, 18 public
-APIs, 13 package-private APIs and 62 providers**. Runtime identities use Younics,
+APIs, 13 package-private APIs and 64 providers**. Runtime identities use Younics,
 including `younics.sunder.package.maker`; authored C# names remain stable.
 `packages.json` owns the reviewed release titles, artifact names and capability sets.
 
-Public APIs start at `1.0.0`; package/private versions are `2.0.0`. The external
+Public APIs started at `1.0.0`; `chat-provider` and `execution-target` have locally
+reviewed `2.0.0` successors, retaining their frozen `1.0.0` records. Per-contract
+inventory overrides express this without changing the other sixteen APIs.
+Package/private versions are `2.0.0`. The external
 `sunder.stack.contributor` API is owned by platform `sunder.core`, version `2.0.0`.
 Workspace path migration is absent from the current API and provider inventory.
 
@@ -15,8 +18,9 @@ Workspace path migration is absent from the current API and provider inventory.
 `agent-current-contracts.json` is the separately reviewed current input. The initial
 record was qualified from current source, normal Core public Accept/Freeze,
 dependency selection and exact-RID artifacts. It contains all 18 public and 13
-private descriptors, bound to the independent inventory. Public owned history starts
-empty; private-only packages have no owned baseline file. The local record does not
+private descriptors, bound to the independent inventory. Public owned history started
+empty and now retains the two evolved APIs' frozen `1.0.0` records; private-only
+packages have no owned baseline file. The local record does not
 claim publication or SDK freeze: the SDK ledger remains UNFROZEN / UNRELEASED.
 
 Normal tests never refresh these expected bytes. Future changes require current

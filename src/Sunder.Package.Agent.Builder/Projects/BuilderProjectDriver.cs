@@ -71,6 +71,10 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             return;
         }
         var project = await InspectAsync(request, cancellationToken).ConfigureAwait(false);
+        if (request.Operation != "save-metadata" && request.Expected is { } expected
+            && (project.SourceRevision != expected.SourceRevision || project.PackageId != expected.PackageId
+                || project.Kind != expected.Kind || !string.Equals(project.EntryPoint, expected.EntryPoint, BuilderJobValidation.PathComparison)))
+            throw new BuilderProjectConflictException("Project identity or source metadata changed after the accepted operation was prepared. Inspect the current project before starting another build.");
         reporter.Update(new() { Project = project, Message = "Project source inspected." });
         if (request.Operation == "save-metadata")
         {
@@ -98,22 +102,14 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         }
         await using var lease = await toolchains.SelectAsync(project.Kind, project.ProjectFolder, null, toolchainProgress, cancellationToken).ConfigureAwait(false);
         reporter.Update(new() { Installation = lease.Installation });
-        if (project.Kind == BuilderProjectKind.Dotnet && request.Operation == "watch")
-        {
-            await WatchDotnetAsync(project, lease, reporter, cancellationToken).ConfigureAwait(false);
-            return;
-        }
         if (request.Operation == "setup")
             await RestoreAsync(project, lease, reporter, cancellationToken).ConfigureAwait(false);
         if (request.Operation == "archive")
             await ArchiveAsync(project, lease, reporter, cancellationToken).ConfigureAwait(false);
         else
         {
-            var development = project.Kind == BuilderProjectKind.Node && request.Operation == "watch"
-                ? await PrepareNodeWatchAsync(project, lease, reporter, cancellationToken).ConfigureAwait(false)
-                : await BuildAsync(project, lease, reporter, requireApp: false, cancellationToken, restore: request.Operation != "setup").ConfigureAwait(false);
-            if (request.Operation == "watch") await WatchAsync(project, development, lease, reporter, cancellationToken).ConfigureAwait(false);
-            else reporter.Update(new() { Message = request.Operation == "setup" ? "Setup complete; development package is ready." : "Development build completed." });
+            await BuildAsync(project, lease, reporter, requireApp: false, cancellationToken, restore: request.Operation != "setup").ConfigureAwait(false);
+            reporter.Update(new() { Message = request.Operation == "setup" ? "Setup complete; development package is ready." : "Development build completed. Use Hotreload to apply it to a loaded package." });
         }
     }
 
@@ -142,9 +138,9 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     }
 
     private async Task<string> BuildAsync(BuilderProjectInspection project, IBuilderProjectDriverSelection selection,
-        IBuilderJobReporter reporter, bool requireApp, CancellationToken token, bool restore = true, string? watchStagingRoot = null)
+        IBuilderJobReporter reporter, bool requireApp, CancellationToken token, bool restore = true)
     {
-        var output = watchStagingRoot is null ? BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug") : Path.Combine(watchStagingRoot, "sunder-dev");
+        var output = BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug");
         reporter.Update(new() { Phase = BuilderJobPhase.Building, Message = "Building the current-platform development package." });
         if (project.Kind == BuilderProjectKind.Dotnet)
         {
@@ -153,9 +149,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             // when TargetFramework is explicit. Setup/create already restored with the
             // same build properties.
             // MSBuild remains responsible for current inputs, custom targets and package policy.
-            await RunAsync(selection, [.. BuildArguments(project, restore),
-                .. watchStagingRoot is null ? Array.Empty<string>() : ["-p:SunderPackageDevelopmentStagingRoot=" + EscapeProperty(watchStagingRoot)]],
-                project.ProjectFolder, reporter, token, recoverableBuild: watchStagingRoot is not null).ConfigureAwait(false);
+            await RunAsync(selection, BuildArguments(project, restore), project.ProjectFolder, reporter, token).ConfigureAwait(false);
         }
         else
         {
@@ -163,46 +157,10 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             await RunAsync(selection, ["run", "sunder:dev:once"], project.ProjectFolder, reporter, token, npm: true).ConfigureAwait(false);
         }
         reporter.Update(new() { Phase = BuilderJobPhase.Validating });
-        await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(output, project, rid, requireApp, token).ConfigureAwait(false);
-        if (watchStagingRoot is null)
-            reporter.Update(new() { Phase = BuilderJobPhase.BuildReady, LastSuccessfulBuildAtUtc = DateTimeOffset.UtcNow,
-                Project = await discovery.InspectAsync(project.EntryPoint, token).ConfigureAwait(false), DevelopmentFolder = output });
+        var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(output, project, rid, requireApp, token).ConfigureAwait(false);
+        reporter.Update(new() { Phase = BuilderJobPhase.BuildReady, LastSuccessfulBuildAtUtc = DateTimeOffset.UtcNow,
+            Project = await discovery.InspectAsync(project.EntryPoint, token).ConfigureAwait(false), DevelopmentFolder = output, DevelopmentContentIdentity = identity });
         return output;
-    }
-
-    private async Task<string> PrepareNodeWatchAsync(BuilderProjectInspection project, IBuilderProjectDriverSelection selection,
-        IBuilderJobReporter reporter, CancellationToken token)
-    {
-        var development = BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug");
-        try
-        {
-            await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(development, project, rid, requireApp: false, token).ConfigureAwait(false);
-            // npm's watch command still creates its context and performs the initial rebuild.
-            // A verified last-good output only avoids the redundant wrapper dev:once command.
-            return development;
-        }
-        catch (Exception error) when (error is IOException or InvalidDataException or System.Text.Json.JsonException
-            or InvalidOperationException or KeyNotFoundException or FormatException)
-        {
-            // Prepare and validate missing/corrupt output before advertising the watch folder.
-        }
-        return await BuildAsync(project, selection, reporter, requireApp: false, token).ConfigureAwait(false);
-    }
-
-    private async Task WatchAsync(BuilderProjectInspection project, string development, IBuilderProjectDriverSelection selection,
-        IBuilderJobReporter reporter, CancellationToken token)
-    {
-        reporter.Update(new() { Phase = BuilderJobPhase.Watching, Message = "Watching source changes. Keep Builder connected; stop watch before other project mutations.", DevelopmentFolder = development });
-        if (project.Kind == BuilderProjectKind.Node)
-        {
-            BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, "sunder:dev");
-            await RunAsync(selection, ["run", "sunder:dev"], project.ProjectFolder, reporter, token, npm: true, watch: true).ConfigureAwait(false);
-        }
-        else
-        {
-            await WatchDotnetAsync(project, selection, reporter, token).ConfigureAwait(false);
-        }
-        throw new InvalidOperationException("The source watcher exited unexpectedly. Inspect its output and restart watch.");
     }
 
     private async Task ArchiveAsync(BuilderProjectInspection project, IBuilderProjectDriverSelection selection, IBuilderJobReporter reporter, CancellationToken token)
@@ -233,10 +191,6 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
          "-p:SunderPackageComposedOutputRoot=" + EscapeProperty(Path.GetDirectoryName(BuilderProjectDriverOutputs.DevelopmentFolder(project, configuration))!),
          .. options.NuGetConfigPath is { } config ? new[] { "-p:RestoreConfigFile=" + EscapeProperty(config) } : []];
 
-    private Task<BuilderDotnetBuildInputs> DiscoverDotnetInputsAsync(BuilderProjectInspection project,
-        IBuilderProjectDriverSelection selection, CancellationToken token)
-        => BuilderDotnetBuildInputs.DiscoverAsync(project, [options.CacheRootPath, selection.Installation.RootPath], options.NuGetConfigPath, token);
-
     private string[] BuildArguments(BuilderProjectInspection project, bool restore) =>
         ["msbuild", project.EntryPoint, .. restore ? new[] { "-restore" } : [], "--disable-build-servers", "-p:Configuration=Debug",
             "-p:RestoreDisableParallel=true", .. BuildProperties(project, "Debug")];
@@ -253,10 +207,10 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     }
 
     private async Task<BuilderLocalProcessResult> RunAsync(IBuilderProjectDriverSelection selection, IReadOnlyList<string> arguments, string directory,
-        IBuilderJobReporter reporter, CancellationToken token, bool npm = false, bool watch = false, string? cliHome = null, bool recoverableBuild = false)
+        IBuilderJobReporter reporter, CancellationToken token, bool npm = false, string? cliHome = null)
     {
-        var request = CreateProcess(selection, arguments, directory, npm, watch, cliHome);
-        var result = await processes.RunAsync(request, new ProcessStatusProgress(reporter, watch && npm), token).ConfigureAwait(false);
+        var request = CreateProcess(selection, arguments, directory, npm, cliHome);
+        var result = await processes.RunAsync(request, new ProcessStatusProgress(reporter), token).ConfigureAwait(false);
         token.ThrowIfCancellationRequested();
         if (result.ExitCode != 0)
         {
@@ -269,25 +223,21 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             // The process runner streams stdout/stderr into Output. Keep the error summary
             // concise instead of copying the same stack trace into status and error surfaces.
             var message = $"{command} failed (exit code {result.ExitCode}). See the command output for details.";
-            if (recoverableBuild) throw new BuilderCommandFailedException(message);
             throw new InvalidOperationException(message);
         }
         return result;
     }
 
     private BuilderLocalProcessRequest CreateProcess(IBuilderProjectDriverSelection selection, IReadOnlyList<string> arguments, string directory,
-        bool npm = false, bool watch = false, string? cliHome = null)
+        bool npm = false, string? cliHome = null)
     {
         var request = selection.CreateProcess(arguments, directory, npm);
         var environment = new Dictionary<string, string?>(request.Environment, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
         {
             ["NUGET_PACKAGES"] = Path.Combine(options.CacheRootPath, "nuget-packages"), ["NO_COLOR"] = "1", ["TERM"] = "dumb",
-            ["DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER"] = "1", ["DOTNET_WATCH_SUPPRESS_EMOJIS"] = "1",
             ["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0", ["MSBUILDDISABLENODEREUSE"] = "1",
             // The Avalonia collector detaches from MSBuild and would outlive the job/SDK lease.
             ["AVALONIA_TELEMETRY_OPTOUT"] = "1",
-            // Opt-in status only. These lines never authorize reload, output reuse or cleanup.
-            ["SUNDER_BUILDER_WATCH_PROGRESS"] = watch && npm ? "1" : null,
         };
         if (cliHome is not null) environment["DOTNET_CLI_HOME"] = cliHome;
         if (options.NuGetConfigPath is { } config)
@@ -299,7 +249,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
             environment["NUGET_FALLBACK_PACKAGES"] = null;
         }
         if (options.NodeRegistryUri is not null) environment["NPM_CONFIG_REGISTRY"] = options.NodeRegistryUri;
-        return request with { Environment = environment, Timeout = watch ? null : options.CommandTimeout, MaximumCapturedCharacters = 16 * 1024 };
+        return request with { Environment = environment, Timeout = options.CommandTimeout, MaximumCapturedCharacters = 16 * 1024 };
     }
 
     // SDK progress describes the current phase/download sample; process output is an
@@ -310,7 +260,4 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         public void Report(string value) => reporter.Update(new() { Message = value });
     }
 
-    // Only an ordinary nonzero command exit is recoverable in Watch. Ownership,
-    // process-start/drain, timeout, watcher and output-validation failures stay terminal.
-    private sealed class BuilderCommandFailedException(string message) : InvalidOperationException(message);
 }

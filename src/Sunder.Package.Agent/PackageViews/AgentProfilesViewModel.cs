@@ -102,7 +102,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
                 NoProviderSelectedText: "Embeddings are disabled.",
                 LoadingText: "Loading embedding provider status...",
                 LoadFailurePrefix: "Embedding provider status",
-                EmptyProviderLabel: "Disabled (text and metadata only)"),
+                EmptyProviderLabel: "Disabled (text and metadata only)",
+                IncludeSpeedInModelPicker: false),
             uiDispatcher);
         ChatBinding.PropertyChanged += OnModelBindingPropertyChanged;
         EmbeddingBinding.PropertyChanged += OnModelBindingPropertyChanged;

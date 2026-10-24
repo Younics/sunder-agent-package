@@ -48,6 +48,9 @@ public sealed record AgentPendingPermissionRequestRecord(
 
     /// <summary>Gets every durable resource claim covered by this permission request.</summary>
     public IReadOnlyList<AgentResourceClaim> ResourceClaims { get; init; } = [];
+
+    /// <summary>Gets the durable requested approval scope. This is intent, not an accepted permission grant.</summary>
+    public bool ApproveForSession { get; init; }
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]

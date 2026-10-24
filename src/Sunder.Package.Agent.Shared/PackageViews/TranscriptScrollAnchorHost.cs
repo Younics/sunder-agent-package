@@ -1,5 +1,6 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
@@ -10,16 +11,35 @@ internal sealed class TranscriptScrollAnchorHost : Grid, IScrollAnchorProvider
     private readonly HashSet<Control> _forwardedCandidates = [];
     private IScrollAnchorProvider? _outerProvider;
     private bool _isFollowingTail = true;
-    private int _anchoringSuspensionCount;
+    private readonly List<AnchoringSuspension> _anchoringSuspensions = [];
     private object? _exactAnchorKey;
     private long _exactAnchorLeaseRevision;
     private double? _trailingCompensatorExtent;
     private long _trailingCompensatorGeneration;
     private long _trailingCompensatorStartedAt;
+    private int _preservedRealizationDepth;
 
-    internal bool IsAnchoringSuspended => _anchoringSuspensionCount > 0;
+    public TranscriptScrollAnchorHost()
+    {
+        AddHandler(RequestBringIntoViewEvent, OnRequestBringIntoView, RoutingStrategies.Bubble);
+    }
 
-    internal int AnchoringSuspensionDepth => _anchoringSuspensionCount;
+    // ItemsRepeater needs the request to retire its temporary made-anchor. Let
+    // the repeater consume that protocol, then stop it before the outer scroller.
+    public IDisposable SuppressPreservedRealizationNavigation()
+    {
+        _preservedRealizationDepth++;
+        return new PreservedRealizationScope(this);
+    }
+
+    private void OnRequestBringIntoView(object? sender, RequestBringIntoViewEventArgs e)
+    {
+        if (_preservedRealizationDepth > 0) e.Handled = true;
+    }
+
+    internal bool IsAnchoringSuspended => _anchoringSuspensions.Count > 0;
+
+    internal int AnchoringSuspensionDepth => _anchoringSuspensions.Count;
 
     internal bool HasExactAnchorLease => _exactAnchorKey is not null;
 
@@ -39,17 +59,38 @@ internal sealed class TranscriptScrollAnchorHost : Grid, IScrollAnchorProvider
     {
         get
         {
+            // Suspending native offset writes must not remove the repeater's
+            // reading anchor. It still needs that row to survive reflow/recycling.
+            foreach (var suspension in _anchoringSuspensions.AsEnumerable().Reverse())
+            {
+                if (suspension.ResolveRealizationAnchor?.Invoke() is { } key
+                    && FindRealizationAnchor(key) is { } preserved)
+                {
+                    return preserved;
+                }
+            }
             var anchor = _outerProvider?.CurrentAnchor;
             return anchor is not null && _forwardedCandidates.Contains(anchor) ? anchor : null;
         }
     }
 
-    public IDisposable SuspendAnchoring()
+    public IDisposable SuspendAnchoring(Func<object?>? resolveRealizationAnchor = null)
     {
-        _anchoringSuspensionCount++;
+        var suspension = new AnchoringSuspension(this, resolveRealizationAnchor);
+        _anchoringSuspensions.Add(suspension);
         ReconcileForwardedCandidates();
-        return new AnchoringSuspension(this);
+        if (resolveRealizationAnchor?.Invoke() is { } key
+            && FindRealizationAnchor(key)?.GetVisualParent() is ItemsRepeater repeater)
+        {
+            repeater.InvalidateMeasure();
+        }
+        return suspension;
     }
+
+    private TranscriptRowPresenter? FindRealizationAnchor(object key)
+        => this.GetVisualDescendants().OfType<TranscriptRowPresenter>()
+            .FirstOrDefault(presenter => presenter.AnchorRole is TranscriptAnchorItemRole.Transient or TranscriptAnchorItemRole.TailSentinel
+                                         && Equals(presenter.AnchorKey, key));
 
     public IDisposable AcquireExactAnchorLease(object anchorKey)
     {
@@ -336,23 +377,32 @@ internal sealed class TranscriptScrollAnchorHost : Grid, IScrollAnchorProvider
         ReconcileForwardedCandidates();
     }
 
-    private void ResumeAnchoring()
+    private void ResumeAnchoring(AnchoringSuspension suspension)
     {
-        if (_anchoringSuspensionCount == 0)
+        if (!_anchoringSuspensions.Remove(suspension))
         {
             return;
         }
 
-        _anchoringSuspensionCount--;
         ReconcileForwardedCandidates();
     }
 
-    private sealed class AnchoringSuspension(TranscriptScrollAnchorHost host) : IDisposable
+    private sealed class AnchoringSuspension(TranscriptScrollAnchorHost host, Func<object?>? resolveRealizationAnchor) : IDisposable
     {
         private TranscriptScrollAnchorHost? _host = host;
+        public Func<object?>? ResolveRealizationAnchor { get; } = resolveRealizationAnchor;
 
         public void Dispose()
-            => Interlocked.Exchange(ref _host, null)?.ResumeAnchoring();
+            => Interlocked.Exchange(ref _host, null)?.ResumeAnchoring(this);
+    }
+
+    private sealed class PreservedRealizationScope(TranscriptScrollAnchorHost host) : IDisposable
+    {
+        private TranscriptScrollAnchorHost? _host = host;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _host, null) is { } owner) owner._preservedRealizationDepth--;
+        }
     }
 
     private sealed class ExactAnchorLease(

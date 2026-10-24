@@ -14,6 +14,17 @@ internal sealed record LMStudioConnectionOptions(
         NormalizedBaseUrl,
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(ApiKey ?? string.Empty))));
 
+    public Uri NativeModelsUri
+    {
+        get
+        {
+            var path = BaseUri.AbsolutePath.TrimEnd('/');
+            if (path.EndsWith("/api/v1", StringComparison.Ordinal)) path = path[..^7];
+            else if (path.EndsWith("/v1", StringComparison.Ordinal)) path = path[..^3];
+            return new UriBuilder(BaseUri) { Path = path + "/api/v1/models" }.Uri;
+        }
+    }
+
     public static bool TryCreate(
         string? baseUrl,
         string? apiKey,

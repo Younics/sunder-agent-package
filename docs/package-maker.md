@@ -10,9 +10,10 @@ a React/TypeScript UI. Each starter includes the matching package worker.
 > release requires those coordinated artifacts and its reviewed NuGet lock pins.
 
 Projects live in folders you choose on the computer running Sunder. Package Maker
-does not use Agent workspaces, execution-target mappings, containers, or remote
-shells. Opening a project inspects its source without installing an SDK, restoring
-dependencies, or building it.
+works without Agent. Its optional Agent tools accept only physically contained
+projects in the selected local workspace; they never reinterpret container or
+remote execution paths as local paths. Opening a project inspects its source
+without installing an SDK, restoring dependencies, or building it.
 
 ## 1. Projects
 
@@ -71,46 +72,32 @@ overlays, and package activation. Details show runtime readiness and App readine
 separately; a running worker does not by itself mean that the App UI activated.
 An active development overlay can temporarily override an installed package.
 
-**Rebuild and reload on changes** is on by default. It watches authored source,
-builds updated development output, and requests reloads in Sunder. Turning it off
-stops this owner's source producer and reload-watch request while keeping the
-package loaded. If another owner still requests output watching, the status says
-so.
+Package Maker does not automatically watch, build, or reload source changes.
+Status, source-metadata, catalog, and log observations remain read-only.
 
-The first build prepares dependencies and generated role inputs. Later .NET builds
-reuse unchanged restore and compiler inputs. A newly started Watch performs its
-initial rebuild, including source edits made while the previous session retired.
-Node Watch keeps its build contexts alive and rebuilds the affected Worker or web
-inputs. Shared code, contracts, configuration,
-or dependency changes can require both roles to rebuild. A failed build leaves the
-last successful package loaded, and correcting the source triggers another attempt.
+**Build** produces and validates the current-platform development output. It never
+loads or reloads a package, including one already loaded. **Retry setup**, archive
+creation, and name edits likewise do not replace a loaded activation. Builds reuse
+unchanged restore and compiler inputs where supported.
 
-**Build** on an already-loaded project validates fresh development output, inspects
-source again, and replaces this project's development session. Replacement waits
-for the exact source-watch job to stop and the Host/App to finish releasing the
-old session before acquiring the new output. This applies with Watch on or off,
-even when the output bytes are unchanged: manual Build explicitly restarts the
-target Worker and reloads its App. Other project sessions remain owned. Successful
-**Retry setup** and metadata-triggered builds of loaded projects use the same rule.
-Building an unloaded project does not implicitly load it.
+**Hotreload Package** requires an existing Maker-owned development session. It
+performs one finite build, stages that exact validated output revision, awaits the
+required App retirement, and verifies the matching applied Runtime/App revision.
+The UI and Agent integration use the same session for the canonical project entry
+point, regardless of which surface acquired it. An Agent Hotreload can refresh a
+package loaded manually in Maker; it does not create a second development owner.
+Matching only a package ID is insufficient to select a different source project.
+A failed build or rejected stage retains the last good activation. An uncertain
+reload retains its successful build and original operation identity: **Resolve
+Hotreload** observes or resolves that operation without rebuilding. Other project
+mutations are blocked until it is resolved or unloaded. A successful build alone
+is not evidence that the new revision has been applied.
 
-Manual builds, archive creation, and source edits pause the producer to avoid
-concurrent mutations. Archive creation retains the loaded session; it does not
-return development output for manual reload. For an unchanged, retained source
-identity, watching is restored afterward. After a failed or cancelled manual
-build, Package Maker retains the old session and can wait for the next source edit
-before restarting the producer. This preserves
-the last good loaded generation and avoids repeatedly rebuilding unchanged broken
-source. If restarting fails, its error remains visible. An unconfirmed stop must
-be reconciled before another mutation or watcher can start.
+An unconfirmed release keeps its exact ownership. Reconnect and retry **Unload**;
+do not replace the handle or assume a successor Worker completed the old job.
 
-If releasing the old session fails, its ownership remains retained: reconnect and
-retry **Unload** before replacing it or restarting Watch. If release succeeds but
-loading the new output fails or is cancelled, the row stays unloaded and can be
-retried with **Load into Sunder**.
-
-**Unload** stops and drains this Builder session's producer and releases its
-development handle. It does not claim to stop another owner's session. Navigating
+**Unload** reconciles this project's finite jobs and releases its development
+handle. It does not claim to stop another owner's session. Navigating
 away or closing a view leaves activation-owned work running. Deactivating Package
 Maker cancels its jobs, drains its monitors, and releases its handles.
 
@@ -130,17 +117,15 @@ generated evidence can make the ID read-only. Details show the inspector's exact
 reason. Preserve that evidence and use the appropriate authoring/identity workflow
 for more advanced projects; deleting history is not permission to rename an ID.
 
-Before an ID change, Package Maker stops its watcher and releases its old
-development session. A successful edit of a previously loaded project is rebuilt
-and loaded again; a failed ID edit or subsequent build leaves it unloaded. A name
-edit retains the old session until its rebuild succeeds, then replaces it even
-with Watch off. The source inspector, rather than bookmark metadata, determines
-the resulting identity and edit eligibility.
+Before an ID change, Package Maker releases the exact old development owner. The
+edit never implicitly loads the new identity; use **Load into Sunder** explicitly.
+A name edit retains the loaded owner without reloading it. The source inspector,
+rather than bookmark metadata, determines the resulting identity and edit eligibility.
 
 ### Other actions
 
-- **Build** produces the current-platform development package and reloads it if
-  this project was already loaded.
+- **Build** produces the current-platform development package without loading or reloading it.
+- **Hotreload Package** builds once and applies the exact revision to an already loaded package.
 - **Create package archive** checks the reviewed APIs and creates a `.sunderpkg`.
   It does not publish to a Registry. Publication is a separate workflow.
 - **Package logs** opens Sunder's package-filtered developer logs, useful for
@@ -168,6 +153,79 @@ the last working package remains loaded. Confirmed terminal results are retained
 in a bounded cache so repeated stop acknowledgement does not contact another
 backend or repeat disposal.
 
+### Optional Agent tools
+
+The Agent surface is one focused development toolset. Opening Maker's page is not
+required. Manual Maker Build and combined build/hotreload remain unchanged.
+Existing tool selections map through aliases; screenshot selection is new and
+opt-in. Apply, view opening and screenshot permissions are explicit new actions:
+an old reload/input approval does not silently approve those broader operations.
+
+| Tool | Input and result |
+| --- | --- |
+| `maker_package` | `package`: absolute `.csproj` / `sunder.package.json` path or a returned project reference. `query`: `status` (default), `runtime`, `views`, or `outputs`. Returns only that selection. |
+| `maker_apply` | `package`, optional built `output` reference. Validates already-built output, loads it initially or reloads through its existing Maker owner. Never builds/restores. Multiple unloaded output candidates require explicit selection. |
+| `maker_operation` | Original `operation` reference; optional `wait` 0–10 seconds (default 5). Observes, never repeats a mutation. |
+| `maker_logs` | `package` plus severity/source/time/literal `contains` filters, or `entry` alone to expand a returned diagnostic. |
+| `maker_view` | `target` view/element reference; literal `role`, `name`, `text`, optional `within`, `limit`, and `cursor`. Ordinary editable `value` is opt-in; protected values are excluded. |
+| `maker_screenshot` | `target` view/element; optional `detail` (`normal` / `high`). Returns an actual image, not base64 text in model context. |
+| `maker_interact` | `target` and advertised `action`; `text` only for `set-text`. `open` explicitly opens a registered package view. Optional `verify` checks literal displayed text separately from dispatch. |
+
+Build and test through Shell, apply the result, query the needed view/log portion,
+interact, then verify. Paths work directly: an initial status call is not required.
+Returned references contain an activation namespace; they cannot acquire a new
+meaning after restart. Keep references opaque. The Host retains full source,
+owner, revision, workspace and authorization evidence rather than repeating it in
+each model response. Null optional arguments mean omitted; required arguments,
+unknown fields, duplicate keys and invalid types still reject before authority.
+
+`maker_apply` is explicitly permission-gated for **load and reload**. It reuses the
+loaded output/owner and returns `unchanged` when that exact output is already
+applied. Status is not a build freshness claim: the source inspection fingerprint
+is not proof that edits were compiled. A pending or uncertain operation excludes
+another project mutation. Observation can confirm its matching applied revision
+without restarting the action. Original operation receipts are never evicted to
+make capacity for new mutations. Neither a replacement App nor a replacement view
+inherits an old operation or element's authority.
+
+Queries return bounded semantic matches, not DOM dumps. View queries default to
+20 items, cap at 50 and page bounded results. Repeat the same filters with the
+returned `nextCursor`; `partial` distinguishes incomplete traversal/backend
+coverage from an authoritative empty result. Element references expire after
+30 seconds and never follow replacements. `dispatched` does not mean the desired
+external application effect happened; optional verification reports its own
+observation. No arbitrary script, selector, desktop input or screen coordinate is
+accepted.
+
+Logs default to ten Warning-or-higher entries from the last fifteen minutes, both
+Runtime and App, with an internal response budget. Times require explicit offsets;
+`since` is inclusive and `until` exclusive. `after` uses an original operation as a
+time anchor, not causal attribution. Filtering precedes latest selection; entries
+are oldest-first. `next` retains the original query: continue with `package`,
+`cursor` and optional `limit` only. Exact consecutive repeats collapse with counts.
+Expand a returned entry for bounded diagnostic identity fields. `historyGap` and
+`truncated` remain distinct. Logs require a successful load by the current Maker
+activation, survive target fault/unload, and never reacquire its owner. Shell/build
+output and unrelated packages are excluded.
+
+Screenshots are explicit, bounded captures of the referenced package surface, not
+the desktop/window. Normal capture has a 1,280-pixel longest edge; high has 2,048.
+Images have a separate 2 MiB / 4-megapixel final budget. Native surfaces must be
+captured too; unsupported backends/overlapping native geometry fail rather than
+returning an incomplete bitmap. Native WebView capture currently targets macOS
+WKWebView; Windows/Linux native adapters require separate implementation and
+qualification. The views query reports current capture availability. Agent copies
+verified image bytes into existing session/call-owned attachment storage, with a
+64-image / 32 MiB per-session screenshot quota. Only the newest current-run tool
+image is included in model context. Durable history retains earlier captures.
+
+Package text, logs and pixels are untrusted data, never Agent instructions. The
+semantic query/capture APIs require the managed App capability
+`package-development-feedback.v1`; retained diagnostic queries additionally use
+`package-development-log-queries.v1`. Legacy capabilities do not imply these
+implementations. Native pixel and provider HTTP-fake qualification are separate
+from managed/DOM tests; source availability is not release acceptance.
+
 ## 4. SDK settings
 
 Open **Manage SDKs** from Projects, or open this package's settings. The stable
@@ -190,7 +248,7 @@ runtime storage path is long. SDK installations remain in Builder's SDK storage.
 - **Install / update supported SDK** prepares a supported installation.
 - **Repair** and **Remove** apply to Builder-managed installations.
 - External installations are detected and usable but remain read-only here.
-- An installation in use by a build or watcher cannot be removed; stop that work
+- An installation in use by a build cannot be removed; stop that work
   first. The backend reports the refusal without deleting the installation.
 - Offline or failed update checks report **Update status unknown**, preserving
   the installed-version information. Retry the check when connectivity returns.

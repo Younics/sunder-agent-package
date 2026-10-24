@@ -2,6 +2,7 @@ using System.Text.Json;
 using Google.GenAI.Types;
 using Microsoft.Extensions.AI;
 using GenAIContent = Google.GenAI.Types.Content;
+using Sunder.Package.Agent.Contracts.Models;
 using GenAITool = Google.GenAI.Types.Tool;
 
 namespace Sunder.Package.Agent.Provider.Gemini;
@@ -14,11 +15,18 @@ internal sealed class GeminiOptionsTranslator
         GenAIContent? systemInstruction,
         string modelId)
     {
+        var model = GeminiModelCatalog.Find(modelId);
+        AgentChatModelOptions.Validate(options, modelId, model?.Variants?.Select(v => v.VariantId), model?.SpeedOptions?.Select(v => v.SpeedOptionId));
+        var reasoningId = AgentChatModelOptions.ReasoningId(options);
+        var maxOutput = options?.MaxOutputTokens;
+        if (GeminiModelCatalog.IsArgon(modelId))
+            maxOutput = Math.Min(maxOutput ?? 32768, includeTools ? 32768 : 65536);
         var config = new GenerateContentConfig
         {
             SystemInstruction = MergeSystemInstructions(options?.Instructions, systemInstruction),
-            MaxOutputTokens = options?.MaxOutputTokens,
-            ThinkingConfig = TranslateThinking(options?.Reasoning, modelId),
+            MaxOutputTokens = maxOutput,
+            ThinkingConfig = TranslateThinking(reasoningId, options?.Reasoning?.Output, modelId),
+            ServiceTier = AgentChatModelOptions.SpeedId(options) switch { "fast" => ServiceTier.Priority, "normal" => ServiceTier.Standard, _ => (ServiceTier?)null },
         };
 
         if (includeTools && options?.Tools is { Count: > 0 })
@@ -85,14 +93,14 @@ internal sealed class GeminiOptionsTranslator
         };
     }
 
-    private static ThinkingConfig? TranslateThinking(ReasoningOptions? reasoning, string modelId)
+    private static ThinkingConfig? TranslateThinking(string? effort, ReasoningOutput? output, string modelId)
     {
-        if (reasoning?.Effort is not { } effort)
+        if (effort is null)
         {
             return null;
         }
 
-        var includeThoughts = reasoning?.Output is ReasoningOutput.Summary or ReasoningOutput.Full;
+        var includeThoughts = output is null or ReasoningOutput.Summary or ReasoningOutput.Full;
         var normalizedModelId = modelId.StartsWith("gemini/", StringComparison.OrdinalIgnoreCase)
             ? modelId["gemini/".Length..]
             : modelId;
@@ -102,13 +110,12 @@ internal sealed class GeminiOptionsTranslator
                 ? 32768
                 : 24576;
             var supportsDisabledThinking = normalizedModelId.Equals("gemini-2.5-flash", StringComparison.OrdinalIgnoreCase);
-            var budget = effort switch
+            int? budget = effort switch
             {
-                ReasoningEffort.None when supportsDisabledThinking => 0,
-                ReasoningEffort.None => (int?)null,
-                ReasoningEffort.Low => 1024,
-                ReasoningEffort.Medium => 8192,
-                ReasoningEffort.High or ReasoningEffort.ExtraHigh => maxBudget,
+                "none" when supportsDisabledThinking => 0,
+                "low" => 1024,
+                "medium" => 8192,
+                "high" => maxBudget,
                 _ => null,
             };
             return budget is null
@@ -116,18 +123,19 @@ internal sealed class GeminiOptionsTranslator
                 : new ThinkingConfig { ThinkingBudget = budget, IncludeThoughts = includeThoughts };
         }
 
-        if (normalizedModelId.StartsWith("gemini-3", StringComparison.OrdinalIgnoreCase))
+        if (normalizedModelId.StartsWith("gemini-3", StringComparison.OrdinalIgnoreCase) || GeminiModelCatalog.IsArgon(modelId))
         {
             return effort switch
             {
-                ReasoningEffort.Low => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Low, IncludeThoughts = includeThoughts },
-                ReasoningEffort.Medium => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Medium, IncludeThoughts = includeThoughts },
-                ReasoningEffort.High or ReasoningEffort.ExtraHigh => new ThinkingConfig { ThinkingLevel = ThinkingLevel.High, IncludeThoughts = includeThoughts },
-                _ => throw GeminiExceptionMapper.UnsupportedReasoning(modelId, effort),
+                "minimal" => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Minimal, IncludeThoughts = includeThoughts },
+                "low" => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Low, IncludeThoughts = includeThoughts },
+                "medium" => new ThinkingConfig { ThinkingLevel = ThinkingLevel.Medium, IncludeThoughts = includeThoughts },
+                "high" => new ThinkingConfig { ThinkingLevel = ThinkingLevel.High, IncludeThoughts = includeThoughts },
+                _ => throw new AgentChatProviderException($"Unsupported Gemini reasoning '{effort}'.", $"Unsupported Gemini reasoning '{effort}'.", "gemini-unsupported-reasoning"),
             };
         }
 
-        throw GeminiExceptionMapper.UnsupportedReasoning(modelId, effort);
+        throw new AgentChatProviderException($"Unsupported Gemini reasoning '{effort}'.", $"Unsupported Gemini reasoning '{effort}'.", "gemini-unsupported-reasoning");
     }
 
     private static FunctionCallingConfigMode TranslateToolMode(

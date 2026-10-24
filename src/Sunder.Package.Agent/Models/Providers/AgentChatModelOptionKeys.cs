@@ -6,6 +6,9 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// <remarks>The values associated with these keys are provider-defined option identifiers, never credential values.</remarks>
 public static class AgentChatModelOptionKeys
 {
+    /// <summary>Identifies the exact reasoning variant, including values not represented by an AI adapter's effort enum.</summary>
+    public const string ReasoningVariantId = "younics.ai.agent.reasoningVariantId";
+
     /// <summary>Identifies the additional property whose string value selects an <see cref="AgentModelSpeedOptionDescriptor" />.</summary>
     public const string SpeedOptionId = "younics.ai.agent.speedOptionId";
 

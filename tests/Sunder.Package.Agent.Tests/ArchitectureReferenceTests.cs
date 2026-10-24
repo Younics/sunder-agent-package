@@ -154,10 +154,27 @@ public sealed class ArchitectureReferenceTests
         {
             Assert.DoesNotContain(protocolProjectPath, GetProjectReferencePaths(projectPath), StringComparer.OrdinalIgnoreCase);
             using var locked = System.Text.Json.JsonDocument.Parse(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(projectPath)!, "sunder-contracts.lock.json")));
+            Assert.True(locked.RootElement.GetProperty("packageArtifacts").TryGetProperty("younics.ai.agent", out _));
             if (Path.GetFileNameWithoutExtension(projectPath) == "Sunder.Package.Agent.Builder")
-                foreach (var section in new[] { "packageArtifacts", "packageImports", "providerImports", "platformImports" })
-                    Assert.Empty(locked.RootElement.GetProperty(section).EnumerateObject());
-            else Assert.True(locked.RootElement.GetProperty("packageArtifacts").TryGetProperty("younics.ai.agent", out _));
+            {
+                // Generated contract imports support optional tools, not a binary
+                // reference or a requirement that Agent be installed and live.
+                var import = Assert.Single(locked.RootElement.GetProperty("packageImports").EnumerateObject());
+                Assert.Equal("younics.ai.agent", import.Name);
+                Assert.Equal("optional", import.Value.GetProperty("presence").GetString());
+                Assert.Empty(import.Value.GetProperty("requiredContracts").EnumerateArray());
+                Assert.Equal(new[] { "runtime" }, import.Value.GetProperty("consumerRoles").EnumerateArray().Select(role => role.GetString()));
+                var providers = locked.RootElement.GetProperty("providerImports").EnumerateObject().ToArray();
+                Assert.Equal(new[] { "permissions", "tools" }, providers.Select(provider => provider.Name).Order(StringComparer.Ordinal));
+                foreach (var provider in providers)
+                {
+                    Assert.Equal("younics.ai.agent", provider.Value.GetProperty("packageId").GetString());
+                    Assert.Equal("optional", provider.Value.GetProperty("presence").GetString());
+                    Assert.Equal(provider.Name == "tools" ? "younics.ai.agent.tool.source" : "younics.ai.agent.permission.surface",
+                        provider.Value.GetProperty("contractId").GetString());
+                }
+                Assert.Empty(locked.RootElement.GetProperty("platformImports").EnumerateObject());
+            }
         }
     }
 
@@ -533,6 +550,7 @@ public sealed class ArchitectureReferenceTests
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Subagents.Tests",
             "Sunder.Package.Agent.Subagents -> Sunder.Package.Agent.Tests",
             "Sunder.Package.Agent.Tools.Files -> Sunder.Package.Agent.Tests",
+            "Sunder.Package.Agent.Tools.Files -> Sunder.Package.Agent.Execution.Local.Tests",
             "Sunder.Package.Agent.Tools.Web -> Sunder.Package.Agent.Tests",
         ],
         StringComparer.Ordinal);

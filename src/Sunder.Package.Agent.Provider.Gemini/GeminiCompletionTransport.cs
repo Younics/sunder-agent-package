@@ -65,6 +65,8 @@ internal sealed class GeminiCompletionTransport(
                 contents: contents,
                 config: config,
                 cancellationToken: cancellationToken);
+            if (response.SdkHttpResponse?.Headers?.FirstOrDefault(pair => string.Equals(pair.Key, "x-gemini-service-tier", StringComparison.OrdinalIgnoreCase)).Value is { } tier)
+                await telemetry.ProcessingTierAsync(tier, cancellationToken);
             var terminalStatus = GeminiResponseTranslator.GetTerminalStatus(response);
             if (!terminalStatus.IsTerminal || !terminalStatus.IsSuccess)
             {

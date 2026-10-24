@@ -6,7 +6,6 @@ namespace Sunder.Package.Agent.Tools.Files;
 
 internal static class FileSearchHandler
 {
-    private const int MaxResults = 1000;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
     public static async Task<FileSearchToolResult> ExecuteGrepAsync(
@@ -60,7 +59,8 @@ internal static class FileSearchHandler
         CancellationToken cancellationToken)
     {
         var result = await target.Service.StructuredFileSearchAsync(new()
-        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = args.Pattern, Include = args.Include } }, cancellationToken);
+        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = args.Pattern, Include = args.Include,
+            Literal = args.Literal, CaseSensitive = args.CaseSensitive, Limit = args.Limit, Hidden = false } }, cancellationToken);
         if (result.IsError)
         {
             return StructuredFailure(toolId, target, result);
@@ -72,9 +72,9 @@ internal static class FileSearchHandler
             return InvalidSearchResult(toolId, target);
         }
 
-        var bounded = result.Matches.Take(MaxResults + 1).ToArray();
-        var wasTruncated = result.WasTruncated || bounded.Length > MaxResults;
-        var selected = bounded.Take(MaxResults).ToArray();
+        var bounded = result.Matches.Take(args.Limit + 1).ToArray();
+        var wasTruncated = result.WasTruncated || bounded.Length > args.Limit;
+        var selected = bounded.Take(args.Limit).ToArray();
         var matches = selected
             .Select(match => new FileGrepMatch(match.Path, checked((int)match.LineNumber!.Value), match.Text!))
             .ToArray();
@@ -82,7 +82,7 @@ internal static class FileSearchHandler
             FileToolResult.Success(
                 toolId,
                 $"Found {FileToolResult.FormatCount(matches.Length, "match", "matches")}" + (wasTruncated ? " (truncated)" : string.Empty),
-                FormatGrepResults(matches, string.Empty, wasTruncated), FileToolResult.BackendId(target), wasTruncated,
+                FormatGrepResults(matches, string.Empty, wasTruncated, args.Limit, result.TruncationReason), FileToolResult.BackendId(target), wasTruncated,
                 JsonSerializer.Serialize(matches, JsonOptions)),
             selected.Select(match => match.Path).Distinct(StringComparer.Ordinal).ToArray());
     }
@@ -96,7 +96,8 @@ internal static class FileSearchHandler
         CancellationToken cancellationToken)
     {
         var result = await target.Service.StructuredFileSearchAsync(new()
-        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = args.Pattern, Include = null } }, cancellationToken);
+        { Context = context, Request = new() { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = args.Pattern, Include = null,
+            Hidden = args.Hidden, Limit = args.Limit, Literal = false, CaseSensitive = true } }, cancellationToken);
         if (result.IsError)
         {
             return StructuredFailure(toolId, target, result);
@@ -108,15 +109,16 @@ internal static class FileSearchHandler
             return InvalidSearchResult(toolId, target);
         }
 
-        var bounded = result.Matches.Take(MaxResults + 1).ToArray();
-        var wasTruncated = result.WasTruncated || bounded.Length > MaxResults;
-        var selected = bounded.Take(MaxResults).ToArray();
+        var bounded = result.Matches.Take(args.Limit + 1).ToArray();
+        var wasTruncated = result.WasTruncated || bounded.Length > args.Limit;
+        var selected = bounded.Take(args.Limit).ToArray();
         var matches = selected.Select(match => new FileGlobMatch(match.Path)).ToArray();
         return new FileSearchToolResult(
             FileToolResult.Success(
                 toolId,
                 $"Found {FileToolResult.FormatCount(matches.Length, "match", "matches")}" + (wasTruncated ? " (truncated)" : string.Empty),
-                string.Join(Environment.NewLine, matches.Select(match => EscapeDisplayPath(match.Path))), FileToolResult.BackendId(target), wasTruncated,
+                string.Join(Environment.NewLine, matches.Select(match => EscapeDisplayPath(match.Path)))
+                + (wasTruncated ? Environment.NewLine + TruncationNotice(args.Limit, result.TruncationReason) : string.Empty), FileToolResult.BackendId(target), wasTruncated,
                 JsonSerializer.Serialize(matches, JsonOptions)),
             selected.Select(match => match.Path).Distinct(StringComparer.Ordinal).ToArray());
     }
@@ -128,7 +130,7 @@ internal static class FileSearchHandler
         => new(
             FileToolResult.Error(
                 toolId,
-                "Search failed before a governed result could be returned.",
+                "File search could not be completed safely.",
                 result.ErrorCode ?? "files-search-backend-failed") with
             { Content = result.ErrorMessage ?? "The execution target rejected the structured search.", BackendId = FileToolResult.BackendId(target) },
             []);
@@ -155,17 +157,20 @@ internal static class FileSearchHandler
             { Content = "The search backend returned incomplete, ambiguous, or out-of-scope structured output, so no matches were returned.", BackendId = FileToolResult.BackendId(target) },
             []);
 
-    private static string FormatGrepResults(IReadOnlyList<FileGrepMatch> matches, string fallbackOutput, bool wasTruncated)
+    private static string FormatGrepResults(IReadOnlyList<FileGrepMatch> matches, string fallbackOutput, bool wasTruncated, int limit, string? reason)
     {
         var content = matches.Count == 0
             ? fallbackOutput
             : string.Join(
                 Environment.NewLine,
                 matches.Select(match => $"{EscapeDisplayPath(match.Path)}:{match.LineNumber}: {match.Text}"));
-        return wasTruncated && !string.IsNullOrWhiteSpace(content)
-            ? content + Environment.NewLine + $"[Results truncated at {MaxResults} matches]"
+        return wasTruncated
+            ? content + Environment.NewLine + TruncationNotice(limit, reason)
             : content;
     }
+
+    private static string TruncationNotice(int limit, string? reason)
+        => $"[Search incomplete: {reason ?? "target-or-result-limit"}; requested at most {limit} matches. Narrow path/pattern/include or explicitly increase limit (maximum 1000).]";
 
     private static string EscapeDisplayPath(string path)
         => path.Replace("\r", "\\r", StringComparison.Ordinal)

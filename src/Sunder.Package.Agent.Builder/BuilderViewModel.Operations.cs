@@ -84,10 +84,9 @@ public sealed partial class BuilderViewModel
     public Task LocateProjectAsync(BuilderProjectViewModel row, string folder) => RunOwnedAsync(lifetime =>
         RunProjectActionAsync(row, async (generation, token) =>
         {
-            if (_sessions.TryGetValue(row.Id, out var owner))
+            if (_packageOperations.GetSession(row.EntryPoint) is { } owner)
             {
                 await ReleaseSessionAsync(owner).ConfigureAwait(false);
-                _sessions.TryRemove(row.Id, out _);
                 await UpdateUiAsync(() => row.SetSession(false)).ConfigureAwait(false);
             }
             await DiscoverFolderAsync(folder, row, token).ConfigureAwait(false);
@@ -264,10 +263,9 @@ public sealed partial class BuilderViewModel
             if (row is null) return;
             await RunProjectActionAsync(row, async (generation, operationToken) =>
             {
-                if (_sessions.TryGetValue(row.Id, out var owner))
+                if (_packageOperations.GetSession(row.EntryPoint) is { } owner)
                 {
                     await ReleaseSessionAsync(owner).ConfigureAwait(false);
-                    _sessions.TryRemove(row.Id, out _);
                 }
                 var records = await ReadUiAsync(() =>
                 {

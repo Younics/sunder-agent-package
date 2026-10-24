@@ -92,7 +92,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal("files-prompt-context-refresh-required", withheld.ErrorCode); Assert.DoesNotContain("needle", withheld.Content ?? "", StringComparison.Ordinal);
             var receipt = await RefreshPrompt();
             var read = await Tool("execute", "read", new { path = "file.txt", offset = 2, limit = 1 });
-            Assert.False(read.IsError, read.Content); Assert.Equal("2: needle", read.Content);
+            Assert.False(read.IsError, read.Content);
+            Assert.StartsWith("2: needle" + Environment.NewLine, read.Content, StringComparison.Ordinal);
+            Assert.True(read.WasTruncated);
+            Assert.Contains("offset=3", read.Content, StringComparison.Ordinal);
+            Assert.DoesNotContain("3: third", read.Content, StringComparison.Ordinal);
             Assert.False((await Tool("execute", "grep", new { pattern = "needle", path = "." })).IsError);
             Assert.False((await Tool("execute", "glob", new { pattern = "*.txt", path = "." })).IsError);
             Assert.False((await Tool("execute", "write", new { path = "created.txt", content = "created" })).IsError);

@@ -15,7 +15,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
-public sealed class TranscriptViewportMutationTests
+public sealed partial class TranscriptViewportMutationTests
 {
     [AvaloniaFact]
     public async Task ToolExpansionPreparation_RecycledHeaderCannotCommitRow()
@@ -806,6 +806,79 @@ public sealed class TranscriptViewportMutationTests
         Assert.InRange(mutation.Passes, 4, 24);
         Assert.Equal(0, coordinator.DiagnosticSnapshot.AnchoringSuspensionDepth);
         window.Close();
+    }
+
+    [AvaloniaFact]
+    public async Task RepeatedResizeSignalsRetainOneAnchorAndOneCorrectionBudget()
+    {
+        var source = new ControlledGeometrySource();
+        var first = CreateRow("first", 300);
+        var protectedRow = CreateRow("protected", 220, source);
+        var rows = new StackPanel { Children = { first, protectedRow, CreateRow("last", 500) } };
+        var viewer = new ScrollViewer { Content = rows };
+        var window = new Window { Width = 300, Height = 240, Content = viewer };
+        window.Show();
+        try
+        {
+            await LayoutAsync(window);
+            viewer.Offset = new Vector(0, 250);
+            await LayoutAsync(window);
+            using var coordinator = CreateCoordinator(viewer, rows, null, isFollowingLatest: false);
+            source.Request();
+            coordinator.BeginViewportMutation(TranscriptViewportMutationKind.StructuralLayout);
+            var generation = coordinator.DiagnosticSnapshot.Mutation!.Value.Generation;
+            foreach (var height in new[] { 420d, 460d, 420d, 460d })
+            {
+                coordinator.BeginViewportMutation(TranscriptViewportMutationKind.StructuralLayout);
+                first.Height = height;
+                coordinator.OnViewportContentChanged();
+                await LayoutAsync(window);
+                Assert.Equal(generation, coordinator.DiagnosticSnapshot.Mutation!.Value.Generation);
+            }
+            source.Settle();
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.Equal(TranscriptViewportMutationStatus.CycleDetected, coordinator.DiagnosticSnapshot.Mutation?.Status);
+            Assert.Equal(0, coordinator.DiagnosticSnapshot.AnchoringSuspensionDepth);
+        }
+        finally { window.Close(); }
+    }
+
+    [AvaloniaFact]
+    public async Task CompactProjectionChangePreservesTheVisibleGroupInsteadOfRevealingHiddenMember()
+    {
+        var before = CreateRow("before", 300);
+        var member = CreateRow("member", 80);
+        var summary = CreateRow("group", 40);
+        var rows = new StackPanel { Children = { before, member, CreateRow("after", 800) } };
+        var viewer = new ScrollViewer { Content = rows };
+        var window = new Window { Width = 320, Height = 240, Content = viewer };
+        window.Show();
+        try
+        {
+            await LayoutAsync(window);
+            viewer.Offset = new Vector(0, 250);
+            await LayoutAsync(window);
+            var originalTop = Top(member, viewer);
+            var compact = false;
+            var reveals = 0;
+            using var coordinator = new TranscriptScrollCoordinator(viewer, rows,
+                canLoadOlderRows: () => false, loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+                canLoadNewerRows: () => false, loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+                hasNewerRows: () => false, isFollowingLatest: () => false,
+                realizeAnchorVisual: _ => { reveals++; return null; },
+                resolvePreservedAnchorKey: key => compact && Equals(key, "member") ? "group" : key);
+            coordinator.BeginViewportMutation(TranscriptViewportMutationKind.StructuralLayout);
+            compact = true;
+            rows.Children[1] = summary;
+            before.Height += 120;
+            coordinator.OnViewportContentChanged();
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(3));
+            await LayoutAsync(window);
+            Assert.Equal(0, reveals);
+            Assert.InRange(Math.Abs(Top(summary, viewer) - originalTop), 0, 1);
+            Assert.Equal(TranscriptViewportMutationStatus.Completed, coordinator.DiagnosticSnapshot.Mutation?.Status);
+        }
+        finally { window.Close(); }
     }
 
     [AvaloniaFact]

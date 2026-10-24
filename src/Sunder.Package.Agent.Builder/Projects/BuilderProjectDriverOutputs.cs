@@ -5,6 +5,7 @@ using System.Text.RegularExpressions;
 
 namespace Sunder.Package.Agent.Builder;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class BuilderProjectDriverOutputs
 {
     private const int MaximumMetadata = 1024 * 1024;
@@ -15,7 +16,7 @@ internal static class BuilderProjectDriverOutputs
     {
         var root = project.Kind == BuilderProjectKind.Dotnet ? Path.Combine(project.ProjectFolder, "bin", configuration, "net10.0") : NodeOutput(project);
         var path = Path.Combine(root, "sunder-dev");
-        BuilderProjectSource.EnsureSafePath(project.ProjectFolder, path);
+        BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, path);
         return path;
     }
 
@@ -27,7 +28,7 @@ internal static class BuilderProjectDriverOutputs
         if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) || version.Length > 128)
             throw new InvalidDataException("The package version is not a canonical archive version.");
         var path = Path.Combine(NodeOutput(project), project.PackageId + "." + version + ".sunderpkg");
-        BuilderProjectSource.EnsureSafePath(project.ProjectFolder, path);
+        BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, path);
         return path;
     }
 
@@ -39,13 +40,16 @@ internal static class BuilderProjectDriverOutputs
             throw new InvalidOperationException($"The project has no '{script}' script. Update its coordinated Sunder tooling/scripts before retrying.");
     }
 
-    internal static async Task ValidateDevelopmentAsync(string path, BuilderProjectInspection project, string rid, bool requireApp, CancellationToken token)
+    internal static async Task<string> ValidateDevelopmentAsync(string path, BuilderProjectInspection project, string rid, bool requireApp, CancellationToken token)
     {
-        BuilderProjectSource.EnsureSafePath(project.ProjectFolder, path);
+        BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, path);
         var manifestPath = Contained(path, Manifest);
-        using var manifest = ReadJson(manifestPath);
+        var manifestBytes = ReadMetadata(manifestPath);
+        using var manifest = BuilderProjectFiles.Json(manifestBytes);
         var targets = ValidateManifest(manifest.RootElement, project, rid, requireApp);
-        using var index = ReadJson(Contained(path, Index));
+        var indexPath = Contained(path, Index);
+        var indexBytes = ReadMetadata(indexPath);
+        using var index = BuilderProjectFiles.Json(indexBytes);
         var entries = ValidateIndex(index.RootElement);
         if (!entries.ContainsKey(Manifest)) throw new InvalidDataException("The development output index omits its manifest.");
         _ = ResolveEntryPoints(targets, entries.Keys);
@@ -61,11 +65,16 @@ internal static class BuilderProjectDriverOutputs
             var digest = Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
             if (!string.Equals(digest, evidence.Hash, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Development output failed its content-index checksum check. Rebuild the project.");
         }
+        if (!manifestBytes.AsSpan().SequenceEqual(ReadMetadata(manifestPath)) || !indexBytes.AsSpan().SequenceEqual(ReadMetadata(indexPath)))
+            throw new InvalidDataException("Development metadata changed during output validation.");
+        // Canonical V1 full-source identity: SHA256(manifest SHA256 || content-index SHA256).
+        // The Host independently validates the entire selected output again before staging it.
+        return Convert.ToHexStringLower(SHA256.HashData([.. SHA256.HashData(manifestBytes), .. SHA256.HashData(indexBytes)]));
     }
 
     internal static async Task ValidateArchiveAsync(string archivePath, BuilderProjectInspection project, string rid, CancellationToken token)
     {
-        BuilderProjectSource.EnsureSafePath(project.ProjectFolder, archivePath);
+        BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, archivePath);
         if (!File.Exists(archivePath) || new FileInfo(archivePath).Length > 1024L * 1024 * 1024) throw new InvalidDataException("The package command did not produce a bounded canonical archive.");
         await using var file = File.OpenRead(archivePath);
         using var archive = new ZipArchive(file, ZipArchiveMode.Read);
@@ -77,9 +86,9 @@ internal static class BuilderProjectDriverOutputs
             if (!names.Add(entry.FullName)) throw new InvalidDataException("The package archive has duplicate or case-colliding entries.");
         }
         var manifestBytes = await ReadEntryAsync(archive.GetEntry(Manifest), token).ConfigureAwait(false);
-        using var manifest = BuilderProjectSource.Json(manifestBytes);
+        using var manifest = BuilderProjectFiles.Json(manifestBytes);
         var targets = ValidateManifest(manifest.RootElement, project, rid, requireApp: false);
-        using var index = BuilderProjectSource.Json(await ReadEntryAsync(archive.GetEntry(Index), token).ConfigureAwait(false));
+        using var index = BuilderProjectFiles.Json(await ReadEntryAsync(archive.GetEntry(Index), token).ConfigureAwait(false));
         var evidence = ValidateIndex(index.RootElement);
         var entryPoints = ResolveEntryPoints(targets, evidence.Keys);
         if (!evidence.TryGetValue(Manifest, out var manifestEvidence) || manifestEvidence.Size != manifestBytes.Length ||
@@ -157,7 +166,7 @@ internal static class BuilderProjectDriverOutputs
     {
         ValidateRelativePath(relative);
         var path = Path.GetFullPath(Path.Combine(root, relative));
-        BuilderProjectSource.EnsureSafePath(root, path);
+        BuilderProjectFiles.EnsureSafePath(root, path);
         return path;
     }
 
@@ -169,10 +178,15 @@ internal static class BuilderProjectDriverOutputs
     }
 
     private static JsonDocument ReadJson(string path)
+        => BuilderProjectFiles.Json(ReadMetadata(path));
+
+    private static byte[] ReadMetadata(string path)
     {
-        BuilderProjectSource.EnsureSafePath(Path.GetDirectoryName(path)!, path);
+        BuilderProjectFiles.EnsureSafePath(Path.GetDirectoryName(path)!, path);
         if (!File.Exists(path) || new FileInfo(path).Length > MaximumMetadata) throw new InvalidDataException("Required source/output metadata is missing or exceeds 1 MiB: " + path);
-        return BuilderProjectSource.Json(File.ReadAllBytes(path));
+        var bytes = File.ReadAllBytes(path);
+        if (bytes.Length > MaximumMetadata) throw new InvalidDataException("Required source/output metadata grew beyond its byte limit.");
+        return bytes;
     }
 
     private static async Task<byte[]> ReadEntryAsync(ZipArchiveEntry? entry, CancellationToken token)

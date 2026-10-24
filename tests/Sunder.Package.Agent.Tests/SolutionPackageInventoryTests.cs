@@ -13,7 +13,7 @@ public sealed class SolutionPackageInventoryTests
         Assert.Equal(18, contracts.Length);
         Assert.Equal(contracts.Select(contract => contract.ContractId).Order(StringComparer.Ordinal),
             CurrentPublicRpcDescriptors.ContractIds.Order(StringComparer.Ordinal));
-        Assert.All(contracts, contract => Assert.Equal(CurrentPublicRpcDescriptors.ContractVersion, contract.Version));
+        Assert.All(contracts, contract => Assert.Equal(CurrentContractInventory.Find(contract.ContractId).Version, contract.Version));
         Assert.False(CurrentPublicRpcDescriptors.IsAgentPublicContract(CurrentPrivateRpcDescriptors.OwnerId));
         Assert.False(CurrentPublicRpcDescriptors.IsAgentPublicContract("sunder.stack.contributor"));
     }

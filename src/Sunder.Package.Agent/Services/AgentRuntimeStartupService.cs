@@ -92,6 +92,7 @@ internal sealed class AgentRuntimeStartupService(
         var cleanupStarted = false;
         var lifecycleStarted = false;
         var dispatcherStarted = false;
+        var phase = "generation-ownership";
         RuntimeGenerationLease? generationLease = null;
         try
         {
@@ -123,14 +124,17 @@ internal sealed class AgentRuntimeStartupService(
             store.EnsureRuntimeGenerationCurrent();
             historySearch.BindRuntimeGeneration(generation.ActivationId);
 
+            phase = "durable-recovery";
             store.RecoverToolExecutions();
             store.RecoverInterruptedPermissionClaims();
             store.RecoverAmbiguousParentContinuationWork();
             store.RecoverUnownedActiveRuns();
+            phase = "attachment-retention";
             attachmentService.CleanupOrphans(
                 store.ListReferencedAttachmentPaths(),
                 DateTimeOffset.UtcNow - AttachmentOrphanGrace);
 
+            phase = "background-workers";
             backgroundStarted = true;
             await backgroundWork.StartAsync(cancellationToken).ConfigureAwait(false);
             cleanupStarted = true;
@@ -142,6 +146,7 @@ internal sealed class AgentRuntimeStartupService(
             parentContinuations.StartRecovery();
 
             // Local-only History maintenance mutates shared derived state, so it runs last.
+            phase = "history-search";
             historyStarted = true;
             await historySearch.StartAsync(cancellationToken).ConfigureAwait(false);
 
@@ -152,15 +157,19 @@ internal sealed class AgentRuntimeStartupService(
             }
             generationLease = null;
         }
-        catch
+        catch (Exception error)
         {
-            await StopWorkersAsync(
+            // Signal every started worker before best-effort diagnostics can wait.
+            var cleanup = StopWorkersAsync(
                 dispatcherStarted,
                 lifecycleStarted,
                 cleanupStarted,
                 historyStarted,
                 backgroundStarted,
-                suppressErrors: true).ConfigureAwait(false);
+                suppressErrors: true);
+            if (error is not OperationCanceledException)
+                await AgentRuntimeStartupDiagnostics.LogFailureAsync(_eventLogger, generation, phase, error).ConfigureAwait(false);
+            await cleanup.ConfigureAwait(false);
             if (generationLease is not null)
             {
                 try

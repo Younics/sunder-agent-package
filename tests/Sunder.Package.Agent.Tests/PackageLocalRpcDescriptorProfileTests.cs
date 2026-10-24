@@ -88,6 +88,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
                 "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/activationEpoch=9007199254740991",
                 "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/sessionGeneration=9007199254740991",
                 "younics.ai.agent.execution.target:#/$defs/AgentFileReadRequest/properties/limit/oneOf/1=2000",
+                "younics.ai.agent.execution.target:#/$defs/AgentFileSearchRequest/properties/limit/oneOf/1=1000",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentChatSnapshotRequest/properties/initialTranscriptLimit=500",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/afterLimit=30",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/beforeLimit=30",

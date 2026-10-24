@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
@@ -16,13 +17,15 @@ public sealed partial class AgentToolService(
     AgentWorkspaceService workspaceService,
     AgentExecutionTargetService executionTargetService,
     IServiceProviders<AgentServices.IToolSourceService> sources,
-    IServiceProviders<AgentServices.IToolExecutionObservedService> observedExecutions)
+    IServiceProviders<AgentServices.IToolExecutionObservedService> observedExecutions,
+    AgentAttachmentService? attachmentStore = null)
 {
     private readonly AgentSessionService _sessionService = sessionService;
     private readonly AgentWorkspaceService _workspaceService = workspaceService;
     private readonly AgentExecutionTargetService _executionTargetService = executionTargetService;
     private readonly IServiceProviders<AgentServices.IToolSourceService> _sources = sources;
     private readonly IServiceProviders<AgentServices.IToolExecutionObservedService> _observedExecutions = observedExecutions;
+    private readonly AgentAttachmentService? _toolAttachmentStore = attachmentStore;
     private readonly ConcurrentDictionary<Guid, AgentToolInvocationReference> _preparedInvocations = new();
     private readonly ConcurrentDictionary<Guid, PreparedResourceAuthority> _preparedResourceCapabilities = new();
 
@@ -57,8 +60,7 @@ public sealed partial class AgentToolService(
                                     executionTargetOwnerPackageId,
                                     candidate.Invocation.ExecutionTargetOwnerPackageId,
                                     StringComparison.Ordinal)
-                                && IsAllowedForProfile(profile, candidate.RuntimeTool.Descriptor)
-                                && IsInvocationAvailable(candidate.Invocation))
+                                 && IsInvocationAvailable(candidate.Invocation))
             .Take(2)
             .ToArray();
         return matches.Length == 1 ? matches[0].Invocation : null;
@@ -154,7 +156,7 @@ public sealed partial class AgentToolService(
                 await target.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
             if (resolvedTool.Invocation.ObservedExecutionProvider is { } observed)
                 await observed.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
-            return await StartWorkspaceBoundInvocation(
+            var result = await StartWorkspaceBoundInvocation(
                 workspace,
                 enforceExpectedExecutionContext ? expectedExecutionBinding : executionBinding,
                 PermissionContextChangedResult(toolId),
@@ -163,6 +165,9 @@ public sealed partial class AgentToolService(
                     executionContext,
                     request,
                     cancellationToken)).ConfigureAwait(false);
+            try { return await AdoptToolImageAsync(result, context, cancellationToken).ConfigureAwait(false); }
+            catch (Exception error) when (error is InvalidDataException or JsonException or FormatException or InvalidOperationException)
+            { return new(toolId, "Tool image rejected", Content: "The returned image could not be validated or stored. No image was sent to the model.", IsError: true, ErrorCode: "tool-image-invalid"); }
         }
         catch (SunderRpcException ex) when (!cancellationToken.IsCancellationRequested
             && (ex.Error.Kind is SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.Unavailable)

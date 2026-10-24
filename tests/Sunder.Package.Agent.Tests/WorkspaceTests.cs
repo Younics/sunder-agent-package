@@ -3329,7 +3329,8 @@ public sealed class WorkspaceTests
         var details = await TranscriptToolTestHarness.ExpandAsync(row);
         var file = Assert.Single(details.ToolDiffFiles);
 
-        Assert.Equal("Wrote 21 character(s).", row.HeaderDetailText);
+        Assert.Equal("Edited notes.txt: 1 replacement(s), +1/-1 lines.", row.HeaderDetailText);
+        Assert.Equal("one\ntwo\nnew\nsame\nfive", target.Content);
         Assert.Contains(file.Lines, line => line.IsDeleted && line.LineNumberText == "3" && line.Text == "old");
         Assert.Contains(file.Lines, line => line.IsAdded && line.LineNumberText == "3" && line.Text == "new");
         Assert.Contains(file.Lines, line => line.IsContext && line.LineNumberText == "4" && line.Text == "same");

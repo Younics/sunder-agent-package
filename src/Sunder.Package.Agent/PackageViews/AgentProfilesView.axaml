@@ -423,21 +423,23 @@
                        <shared:SunderComboBox ItemsSource="{Binding ReasoningOptions}"
                                               SelectedItem="{Binding SelectedReasoningOption, Mode=TwoWay}"
                                               IsEnabled="{Binding IsReasoningSelectionEnabled}"
-                                              ItemTemplate="{StaticResource ModelBindingReasoningOptionTemplate}"
+                                               ItemTemplate="{StaticResource ModelBindingReasoningOptionTemplate}"
+                                               ItemContainerTheme="{StaticResource ModelBindingReasoningItemTheme}"
                                              HorizontalAlignment="Stretch">
                       </shared:SunderComboBox>
                     </StackPanel>
 
-                    <StackPanel Spacing="5"
-                                IsVisible="{Binding ShowModeOptions}">
+                    <Expander Header="Advanced model options" IsVisible="{Binding ShowModeOptions}">
+                    <StackPanel Spacing="5">
                       <TextBlock Classes="profile-field-label"
                                  Text="Mode" />
                        <shared:SunderComboBox ItemsSource="{Binding ModeOptions}"
                                              SelectedItem="{Binding SelectedModeOption, Mode=TwoWay}"
                                              ItemTemplate="{StaticResource ModelBindingModeOptionTemplate}"
                                              HorizontalAlignment="Stretch">
-                      </shared:SunderComboBox>
+                       </shared:SunderComboBox>
                     </StackPanel>
+                    </Expander>
                   </StackPanel>
                 </Border>
 

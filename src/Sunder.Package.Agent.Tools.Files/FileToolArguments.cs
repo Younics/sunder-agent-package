@@ -60,6 +60,12 @@ internal static class FileToolArguments
             return false;
         }
 
+        if (string.Equals(oldString, newString, StringComparison.Ordinal))
+        {
+            error = Prefix("edit", "The replacement makes no changes. `oldString` and `newString` must differ.");
+            return false;
+        }
+
         args = new FileEditArgs(path!, oldString, newString!, replaceAll ?? false);
         return true;
     }
@@ -96,13 +102,18 @@ internal static class FileToolArguments
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(pattern))
+        if (string.IsNullOrEmpty(pattern))
         {
             error = Prefix("grep", "The `pattern` parameter must not be empty.");
             return false;
         }
 
-        args = new FileGrepArgs(pattern, path, include);
+        if (!values!.TryReadOptionalBoolean("literal", out var literal, out error)
+            || !values.TryReadOptionalBoolean("caseSensitive", out var caseSensitive, out error)
+            || !values.TryReadOptionalInt32("limit", out var limit, out error)
+            || !ValidateSearchLimit(limit, out error))
+        { error = Prefix("grep", error); return false; }
+        args = new FileGrepArgs(pattern, path, include, literal ?? false, caseSensitive ?? true, limit ?? 100);
         return true;
     }
 
@@ -123,7 +134,11 @@ internal static class FileToolArguments
             return false;
         }
 
-        args = new FileGlobArgs(pattern, path);
+        if (!values!.TryReadOptionalBoolean("hidden", out var hidden, out error)
+            || !values.TryReadOptionalInt32("limit", out var limit, out error)
+            || !ValidateSearchLimit(limit, out error))
+        { error = Prefix("glob", error); return false; }
+        args = new FileGlobArgs(pattern, path, hidden ?? false, limit ?? 100);
         return true;
     }
 
@@ -169,6 +184,12 @@ internal static class FileToolArguments
 
     private static string Prefix(string toolName, string? error)
         => $"Invalid {toolName} arguments: {error ?? "arguments were empty or invalid."}";
+
+    private static bool ValidateSearchLimit(int? limit, out string? error)
+    {
+        error = limit is < 1 or > 1000 ? "The `limit` parameter must be between 1 and 1000." : null;
+        return error is null;
+    }
 }
 
 internal sealed record FileReadArgs(string Path, int? Offset = null, int? Limit = null)
@@ -184,6 +205,6 @@ internal sealed record FileEditArgs(string Path, string OldString, string NewStr
 
 internal sealed record FilePatchArgs(string PatchText);
 
-internal sealed record FileGrepArgs(string Pattern, string? Path = null, string? Include = null);
+internal sealed record FileGrepArgs(string Pattern, string? Path = null, string? Include = null, bool Literal = false, bool CaseSensitive = true, int Limit = 100);
 
-internal sealed record FileGlobArgs(string Pattern, string? Path = null);
+internal sealed record FileGlobArgs(string Pattern, string? Path = null, bool Hidden = false, int Limit = 100);

@@ -467,7 +467,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest { Path = "pinned/search", Kind = AgentFileSearchKind.Grep, Pattern = "needle", Include = "*.txt" },
+            new AgentFileSearchRequest { Path = "pinned/search", Kind = AgentFileSearchKind.Grep, Pattern = "needle", Include = "*.txt", Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None,
@@ -502,6 +502,56 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         Assert.Equal("safe policy", Assert.Single(Assert.Single(result.Scopes).Documents).Content);
         Assert.Equal("OUTSIDE policy", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "AGENTS.md")));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.FileSymbolicLinks, "Search must skip npm-style symlinks without following their targets.")]
+    public async Task GlobPrunesUnrelatedTreesSkipsLinksAndFindsDirectoriesWithoutWeakeningExplicitPaths()
+    {
+        var fixture = CreateFixture();
+        var app = Path.Combine(fixture.Workspace, "app");
+        var bin = Path.Combine(fixture.Workspace, "node_modules", ".bin");
+        Directory.CreateDirectory(Path.Combine(app, "src"));
+        Directory.CreateDirectory(bin);
+        var main = Path.Combine(app, "src", "main.ts");
+        await File.WriteAllTextAsync(main, "safe");
+        var secret = Path.Combine(fixture.Outside, "secret.ts");
+        await File.WriteAllTextAsync(secret, "OUTSIDE");
+        File.CreateSymbolicLink(Path.Combine(bin, "tsserver"), secret);
+        File.CreateSymbolicLink(Path.Combine(bin, "dangling"), Path.Combine(fixture.Outside, "missing"));
+        File.CreateSymbolicLink(Path.Combine(bin, "cycle"), Path.Combine(bin, "cycle"));
+
+        var narrowed = await Search("app/**/*", new SearchPruningHook());
+        Assert.False(narrowed.IsError, narrowed.ErrorMessage);
+        Assert.Equal(main, Assert.Single(narrowed.Matches).Path);
+        var broad = await Search("**/*.ts");
+        Assert.False(broad.IsError, broad.ErrorMessage);
+        Assert.Equal(main, Assert.Single(broad.Matches).Path);
+        var directories = await Search("*/");
+        Assert.False(directories.IsError, directories.ErrorMessage);
+        Assert.Contains(directories.Matches, match => match.Path == app);
+        Assert.Contains(directories.Matches, match => match.Path == Path.Combine(fixture.Workspace, "node_modules"));
+        Assert.DoesNotContain(directories.Matches, match => match.Path == Path.Combine(app, "src"));
+        var explicitLink = await LocalSecureFileSearch.ExecuteAsync(fixture.Config,
+            new AgentFileSearchRequest { Path = "node_modules/.bin/tsserver", Kind = AgentFileSearchKind.Glob, Pattern = "*", Literal = false, Hidden = true },
+            false, null, CancellationToken.None);
+        Assert.True(explicitLink.IsError);
+        Assert.Equal(AgentFileSearchErrorCodes.PathUnresolvable, explicitLink.ErrorCode);
+        Assert.Empty(explicitLink.Matches);
+        Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(secret));
+
+        async Task<LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchResult> Search(string pattern, ILocalSecureFileSystemHooks? hook = null)
+            => await LocalSecureFileSearch.ExecuteAsync(fixture.Config,
+                new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = pattern, Literal = false, Hidden = true },
+                false, null, CancellationToken.None, hook);
+    }
+
+    private sealed class SearchPruningHook : ILocalSecureFileSystemHooks
+    {
+        public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
+        {
+            if (checkpoint == LocalSecureFileSystemCheckpoint.BeforeOpen && entryName == "node_modules")
+                throw new InvalidOperationException("The app-only search must not open node_modules.");
+        }
     }
 
     [FileSystemFact(
@@ -601,7 +651,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () =>
             await LocalSecureFileSearch.ExecuteAsync(
                 fixture.Config,
-                new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
+                new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = "**/*", Literal = false, Hidden = true },
                 false,
                 approvedResourceReferences: null,
                 cancellation.Token));
@@ -614,7 +664,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest { Path = fixture.Outside, Kind = AgentFileSearchKind.Glob, Pattern = "**/*" },
+            new AgentFileSearchRequest { Path = fixture.Outside, Kind = AgentFileSearchKind.Glob, Pattern = "**/*", Literal = false, Hidden = true },
             allowOutsideConfiguredScope: true,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -636,7 +686,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = pattern },
+            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Glob, Pattern = pattern, Literal = false, Hidden = true },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -659,7 +709,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var result = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest { Path = "binary-late.dat", Kind = AgentFileSearchKind.Grep, Pattern = "needle" },
+            new AgentFileSearchRequest { Path = "binary-late.dat", Kind = AgentFileSearchKind.Grep, Pattern = "needle", Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);
@@ -881,7 +931,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             fixture.Config,
-            new AgentFileSearchRequest { Path = "linked.txt", Kind = AgentFileSearchKind.Grep, Pattern = "content" },
+            new AgentFileSearchRequest { Path = "linked.txt", Kind = AgentFileSearchKind.Grep, Pattern = "content", Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);

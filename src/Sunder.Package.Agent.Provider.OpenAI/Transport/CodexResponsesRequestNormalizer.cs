@@ -15,6 +15,12 @@ internal static class CodexResponsesRequestNormalizer
     {
         var modelId = options?.ModelId ?? context.ModelId;
         var model = OpenAiModelIds.Normalize(modelId);
+        var descriptor = OpenAiModelCatalog.Find(model, connected: true);
+        if (descriptor is null)
+            throw new AgentChatProviderException("The selected model is unavailable on this ChatGPT connection.",
+                "Choose a model supported by the ChatGPT connection or switch to API-key authentication.", "openai-model-unavailable");
+        AgentChatModelOptions.Validate(options, modelId, descriptor.Variants?.Select(v => v.VariantId),
+            descriptor.SpeedOptions?.Select(v => v.SpeedOptionId), descriptor.ModeOptions?.Select(v => v.ModeOptionId));
         var modelCapabilities = OpenAiModelCatalog.GetCapabilities(model);
         var isReasoningModel = modelCapabilities.SupportsReasoning;
         var conversationInput = CodexResponsesInputNormalizer.BuildNativeInput(messages, isReasoningModel);
@@ -28,7 +34,7 @@ internal static class CodexResponsesRequestNormalizer
             : string.IsNullOrWhiteSpace(options?.ConversationId) ? null : options.ConversationId;
         var instructions = string.IsNullOrWhiteSpace(options?.Instructions) ? null : options.Instructions;
         IReadOnlyList<string>? include = isReasoningModel ? ["reasoning.encrypted_content"] : null;
-        var reasoning = BuildReasoningOptions(modelCapabilities, options?.Reasoning);
+        var reasoning = BuildReasoningOptions(modelCapabilities, options);
         var input = modelCapabilities.UseResponsesLite
             ? BuildResponsesLiteInput(conversationInput, instructions, tools)
             : conversationInput;
@@ -114,38 +120,26 @@ internal static class CodexResponsesRequestNormalizer
 
     private static CodexReasoningOptions? BuildReasoningOptions(
         OpenAiModelCapabilities modelCapabilities,
-        ReasoningOptions? reasoning)
+        ChatOptions? options)
     {
         if (!modelCapabilities.SupportsReasoning)
         {
             return null;
         }
 
-        var summary = reasoning?.Output == ReasoningOutput.None ? null : "auto";
+        var effort = AgentChatModelOptions.ReasoningId(options);
+        var summary = effort == "none" || options?.Reasoning?.Output == ReasoningOutput.None ? null : "auto";
 
         // The Codex-connected endpoint rejects reasoning.mode. API-key mode applies Pro in OpenAiModelOptionsChatClient.
         return new CodexReasoningOptions(
-            ToOpenAiReasoningEffort(reasoning?.Effort) ?? modelCapabilities.DefaultReasoningEffort,
+            effort,
             summary,
             Mode: null,
             Context: modelCapabilities.UseResponsesLite ? "all_turns" : null);
     }
 
-    private static string? ToOpenAiReasoningEffort(ReasoningEffort? effort)
-        => effort switch
-        {
-            ReasoningEffort.None => "none",
-            ReasoningEffort.Low => "low",
-            ReasoningEffort.Medium => "medium",
-            ReasoningEffort.High => "high",
-            ReasoningEffort.ExtraHigh => "xhigh",
-            _ => null,
-        };
-
     private static string? GetServiceTier(ChatOptions? options)
-        => string.Equals(GetModelOption(options, AgentChatModelOptionKeys.SpeedOptionId), "fast", StringComparison.OrdinalIgnoreCase)
-            ? "priority"
-            : null;
+        => AgentChatModelOptions.SpeedId(options) switch { "fast" => "priority", "normal" => "default", _ => null };
 
     private static string? GetModelOption(ChatOptions? options, string key)
         => options?.AdditionalProperties is { } properties

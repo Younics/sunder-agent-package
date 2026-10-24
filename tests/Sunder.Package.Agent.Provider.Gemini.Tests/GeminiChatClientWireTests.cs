@@ -19,6 +19,26 @@ public sealed class GeminiChatClientWireTests
         "data: {\"responseId\":\"response-1\",\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}\n\n";
 
     [Fact]
+    public async Task ToolImageUsesNativeFunctionResponsePartsInTheHttpBody()
+    {
+        await using var server = new GeminiWireServer(StreamResponse, "text/event-stream");
+        using var client = CreateClient(server, modelId: "gemini/gemini-3-flash-preview");
+        await ReadUpdatesAsync(client,
+        [
+            new(AIChatRole.Assistant, [new FunctionCallContent("capture-1", "maker_screenshot", new Dictionary<string, object?>())]),
+            new(AIChatRole.Tool, [new FunctionResultContent("capture-1", new List<AIContent>
+                { new TextContent("Untrusted package pixels"), new DataContent(new byte[] { 1, 2, 3 }, "image/png") })]),
+        ]);
+        using var json = JsonDocument.Parse((await server.Request).Body);
+        var response = json.RootElement.GetProperty("contents")[1].GetProperty("parts")[0].GetProperty("functionResponse");
+        Assert.Equal("capture-1", response.GetProperty("id").GetString());
+        Assert.Equal("Untrusted package pixels", response.GetProperty("response").GetProperty("output").GetString());
+        var image = response.GetProperty("parts")[0].GetProperty("inlineData");
+        Assert.Equal("image/png", image.GetProperty("mimeType").GetString());
+        Assert.Equal("AQID", image.GetProperty("data").GetString());
+    }
+
+    [Fact]
     public async Task StreamingRequest_PreservesWireRolesMixedContentAndToolResultNames()
     {
         await using var server = new GeminiWireServer(StreamResponse, "text/event-stream");

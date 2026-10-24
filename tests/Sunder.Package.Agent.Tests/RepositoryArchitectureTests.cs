@@ -740,14 +740,15 @@ public sealed partial class RepositoryArchitectureTests
         {
             Assert.DoesNotContain("SunderPackageDependency", File.ReadAllText(package.MetadataPath), StringComparison.Ordinal);
             using var currentLock = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(package.DirectoryPath, "sunder-contracts.lock.json")));
-            if (package.Name == "Sunder.Package.Agent.Builder")
-            {
-                Assert.Empty(currentLock.RootElement.GetProperty("packageArtifacts").EnumerateObject());
-                continue;
-            }
             var currentOwner = currentLock.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
             Assert.Equal(">=2.0.0 <3.0.0", currentOwner.GetProperty("requestedVersionRange").GetString());
             Assert.Equal("2.0.0", currentOwner.GetProperty("selectedPackageVersion").GetString());
+            if (package.Name == "Sunder.Package.Agent.Builder")
+            {
+                var import = currentLock.RootElement.GetProperty("packageImports").GetProperty("younics.ai.agent");
+                Assert.Equal("optional", import.GetProperty("presence").GetString());
+                Assert.Empty(import.GetProperty("requiredContracts").EnumerateArray());
+            }
         }
 
         var editorConfig = File.ReadAllText(Path.Combine(repositoryRoot, ".editorconfig"));

@@ -30,6 +30,8 @@ internal sealed partial class WebToolSource(WebFetchTool fetch, WebSearchTool se
             "web_search" => await search.GetReadinessAsync(token).ConfigureAwait(false),
             _ => null,
         }, cancellationToken);
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default)
+    { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentToolResult?> PreflightAsync(CYounics_Ai_Agent_Tool_Source_ToolSourcePreflightRequest request, CancellationToken cancellationToken = default)
     { cancellationToken.ThrowIfCancellationRequested(); return ValueTask.FromResult<AgentToolResult?>(null); }
     public ValueTask<AgentToolResult> ExecuteAsync(CYounics_Ai_Agent_Tool_Source_ToolSourceExecuteRequest request, CancellationToken cancellationToken = default)

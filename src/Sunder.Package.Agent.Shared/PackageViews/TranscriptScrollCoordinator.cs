@@ -35,6 +35,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private readonly Action<Exception>? _pagingFailed;
     private readonly Func<IEnumerable<(object Item, Control Visual)>>? _enumerateRealizedAnchors;
     private readonly Func<object, Control?>? _realizeAnchorVisual;
+    private readonly Func<object, Control?>? _realizePreservedAnchorVisual;
+    private readonly Func<object, object>? _resolvePreservedAnchorKey;
     private readonly Func<Control?>? _realizeTailVisual;
     private readonly Func<CancellationToken, Task> _waitForViewportMutationWatchdog;
     private readonly TranscriptScrollAnchorHost? _anchorHost;
@@ -100,7 +102,9 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         TranscriptScrollAnchorHost? anchorHost = null,
         Func<Control?>? realizeTailVisual = null,
         Func<CancellationToken, Task>? waitForViewportMutationWatchdog = null,
-        TimeProvider? viewportMutationTimeProvider = null)
+        TimeProvider? viewportMutationTimeProvider = null,
+        Func<object, Control?>? realizePreservedAnchorVisual = null,
+        Func<object, object>? resolvePreservedAnchorKey = null)
     {
         _scrollViewer = scrollViewer;
         _itemsControl = itemsControl;
@@ -117,6 +121,8 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         _pagingFailed = pagingFailed;
         _enumerateRealizedAnchors = enumerateRealizedAnchors;
         _realizeAnchorVisual = realizeAnchorVisual;
+        _realizePreservedAnchorVisual = realizePreservedAnchorVisual ?? realizeAnchorVisual;
+        _resolvePreservedAnchorKey = resolvePreservedAnchorKey;
         _realizeTailVisual = realizeTailVisual;
         _waitForViewportMutationWatchdog = waitForViewportMutationWatchdog
             ?? (cancellationToken => WaitForDefaultViewportMutationWatchdogAsync(
@@ -196,7 +202,9 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         TranscriptScrollAnchorHost? anchorHost = null,
         Func<Control?>? realizeTailVisual = null,
         Func<CancellationToken, Task>? waitForViewportMutationWatchdog = null,
-        TimeProvider? viewportMutationTimeProvider = null)
+        TimeProvider? viewportMutationTimeProvider = null,
+        Func<object, Control?>? realizePreservedAnchorVisual = null,
+        Func<object, object>? resolvePreservedAnchorKey = null)
         : this(
             scrollViewer,
             null,
@@ -219,7 +227,9 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             anchorHost,
             realizeTailVisual,
             waitForViewportMutationWatchdog,
-            viewportMutationTimeProvider)
+            viewportMutationTimeProvider,
+            realizePreservedAnchorVisual,
+            resolvePreservedAnchorKey)
     {
     }
 
@@ -253,6 +263,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         }
         _interactionRevision++;
         _pagingContextRevision++;
+        ResetPagingContinuation();
         _lastObservedOffsetY = _scrollViewer.Offset.Y;
         _pendingScrollToBottomRequest = null;
         _captureViewportAnchorOnScrollChanged = false;
@@ -320,7 +331,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             _interactionRevision,
             _viewportAuthorityRevision,
             items,
-            _anchorHost?.SuspendAnchoring()));
+            SuspendAnchoringForManualScroll(anchor.AnchorKey)));
         QueueRestoreScrollAnchor();
     }
 
@@ -396,6 +407,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             return;
         }
 
+        SupersedeViewportMutationForAuthority();
         var version = BeginBottomPlacementLock();
         _pendingSettledScrollCompleted = completed;
         var interactionRevision = _bottomPlacementInteractionRevision;
@@ -510,7 +522,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
     internal bool QueueLoadOlderRows()
     {
-        if (_disposed || !_presentationActive)
+        if (_disposed || !_presentationActive || _consecutiveEdgePages >= MaximumConsecutiveEdgePages)
         {
             return false;
         }
@@ -555,7 +567,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
     internal bool QueueLoadNewerRows(bool resumeFollowingWhenCaughtUp = false)
     {
-        if (_disposed || !_presentationActive)
+        if (_disposed || !_presentationActive || _consecutiveEdgePages >= MaximumConsecutiveEdgePages)
         {
             return false;
         }

@@ -2,6 +2,11 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:p="using:Sunder.Package.Agent.Shared.Presentation">
   <Styles.Resources>
+    <ControlTheme x:Key="ModelBindingReasoningItemTheme" TargetType="ComboBoxItem"
+                  BasedOn="{StaticResource {x:Type ComboBoxItem}}" x:DataType="p:ModelReasoningOption">
+      <Setter Property="IsEnabled" Value="{Binding IsAvailable}" />
+      <Setter Property="ToolTip.Tip" Value="{Binding Description}" />
+    </ControlTheme>
     <DataTemplate x:Key="ModelBindingProviderOptionTemplate"
                   x:DataType="p:ProviderCatalogOption">
       <TextBlock Text="{Binding Label}" />
@@ -9,7 +14,7 @@
 
     <DataTemplate x:Key="ModelBindingModelOptionTemplate"
                   x:DataType="p:ProviderModelCatalogOption">
-      <TextBlock Text="{Binding Label}" />
+      <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" TextTrimming="CharacterEllipsis" />
     </DataTemplate>
 
     <DataTemplate x:Key="ModelBindingReasoningOptionTemplate"

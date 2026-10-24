@@ -219,7 +219,7 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentProfilesViewModel_NonReadyChatProvider_ShowsSettingsWarningAndHidesModelControls()
+    public async Task AgentProfilesViewModel_NonReadyChatProvider_KeepsSavedModelRepairControlsWithSettingsWarning()
     {
         var settingsNavigation = new CapturingPackageSettingsNavigationService();
         using var runtime = AgentTestRuntime.Create(
@@ -242,8 +242,8 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.True(viewModel.ShowChatProviderWarning);
         Assert.Equal("Authorize Test Provider.", viewModel.ChatProviderWarningText);
-        Assert.False(viewModel.ShowChatModelSelection);
-        Assert.False(viewModel.ShowReasoningOptions);
+        Assert.True(viewModel.ShowChatModelSelection);
+        Assert.True(viewModel.ShowReasoningOptions);
         Assert.True(viewModel.CanOpenChatProviderSettings);
 
         await viewModel.OpenSelectedChatProviderSettingsCommand.ExecuteAsync(null);
@@ -521,7 +521,7 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task SubagentsViewModel_NonReadyChatProvider_ShowsSettingsWarningAndHidesModelControls()
+    public async Task SubagentsViewModel_NonReadyChatProvider_KeepsSavedModelRepairControlsWithSettingsWarning()
     {
         var rootPath = Path.Combine(
             Path.GetTempPath(),
@@ -554,8 +554,8 @@ public sealed partial class AgentRunCoordinatorTests
             await WaitUntilAsync(() => viewModel.ShowChatProviderWarning);
 
             Assert.Equal("Authorize Test Provider.", viewModel.ChatProviderWarningText);
-            Assert.False(viewModel.ShowChatModelSelection);
-            Assert.False(viewModel.ShowReasoningOptions);
+            Assert.True(viewModel.ShowChatModelSelection);
+            Assert.True(viewModel.ShowReasoningOptions);
             Assert.True(viewModel.CanOpenChatProviderSettings);
 
             await viewModel.OpenSelectedChatProviderSettingsCommand.ExecuteAsync(null);
@@ -1668,7 +1668,7 @@ public sealed partial class AgentRunCoordinatorTests
 
             var opus = models.Single(model => model.ModelId == "anthropic/claude-opus-4-7");
             Assert.Contains(opus.Variants ?? [], variant => variant.ReasoningEffort == AnthropicReasoningEffort.ExtraHigh);
-            Assert.Contains(opus.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");
+            Assert.Empty(opus.SpeedOptions ?? []);
 
             var opus48 = models.Single(model => model.ModelId == "anthropic/claude-opus-4-8");
             Assert.Contains(opus48.SpeedOptions ?? [], option => option.SpeedOptionId == "fast");

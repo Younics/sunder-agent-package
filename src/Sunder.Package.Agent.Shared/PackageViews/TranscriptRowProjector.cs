@@ -37,7 +37,11 @@ internal readonly record struct TranscriptToolProjection(
     string ErrorSummary,
     long DetailRevision,
     bool HasDetails,
-    object AnchorKey);
+    object AnchorKey)
+{
+    // A display receipt describes the last observed effect, not a live execution.
+    public bool IsRunning { get; init; }
+}
 
 internal readonly record struct TranscriptActivityProjection(
     TranscriptProjectedRowKind Kind,
@@ -381,7 +385,8 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     public TRow? FindByAnchorKey(object? anchorKey)
         => anchorKey is null
             ? null
-            : _rows.FirstOrDefault(row => Equals(_factory.GetAnchorKey(row), anchorKey));
+            : _rows.FirstOrDefault(row => Equals(_factory.GetAnchorKey(row),
+                anchorKey is TranscriptActivityGroupAnchor group ? group.SourceAnchor : anchorKey));
 
     public void Reset()
     {
@@ -532,7 +537,10 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             ? orderedTurns
             : orderedTurns.Reverse();
         var trimmedTurnIds = trimCandidates
-            .OrderBy(turn => protectedTurnIds.Contains(turn.TurnId) ? 1 : 0)
+            // A page batch can temporarily contain more turns than the working
+            // limit. Never discard snapshots backing projected rows here: the
+            // viewport-aware row trim must choose the retained range first.
+            .Where(turn => !protectedTurnIds.Contains(turn.TurnId))
             .Take(overflowCount)
             .Select(turn => turn.TurnId)
             .ToHashSet();

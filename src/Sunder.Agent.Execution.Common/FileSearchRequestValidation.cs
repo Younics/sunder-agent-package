@@ -6,20 +6,27 @@ namespace Sunder.Agent.Execution.Common;
 // Pure request validation shared by tool preflight and target-owned execution.
 internal static class FileSearchRequestValidation
 {
+    internal const int DefaultResults = 100;
+    internal const int MaximumResults = 1000;
     internal const int MaxBraceExpansions = 256;
     private const int MaxExpressionCharacters = 4096;
     private static readonly TimeSpan RegexTimeout = TimeSpan.FromSeconds(1);
 
-    internal static Regex CreateGrepRegex(string pattern)
-        => new(pattern, RegexOptions.CultureInvariant | RegexOptions.NonBacktracking, RegexTimeout);
+    internal static bool IsDirectoryGlob(string pattern) => pattern.TrimEnd().EndsWith('/');
+
+    internal static Regex CreateGrepRegex(string pattern, bool literal = false, bool caseSensitive = true)
+        => new(literal ? Regex.Escape(pattern) : pattern,
+            RegexOptions.CultureInvariant | RegexOptions.NonBacktracking | (caseSensitive ? RegexOptions.None : RegexOptions.IgnoreCase), RegexTimeout);
 
     internal static bool TryValidateRequest(AgentFileSearchRequest request, out string? error)
     {
         if (string.IsNullOrWhiteSpace(request.Path)
-            || string.IsNullOrWhiteSpace(request.Pattern)
+            || string.IsNullOrEmpty(request.Pattern)
             || request.Pattern.Length > MaxExpressionCharacters
             || request.Include?.Length > MaxExpressionCharacters
             || !Enum.IsDefined(request.Kind)
+            || request.Limit is < 1 or > MaximumResults
+            || request.Kind == AgentFileSearchKind.Glob && (request.Literal || request.CaseSensitive == false || string.IsNullOrWhiteSpace(request.Pattern))
             || (request.Kind == AgentFileSearchKind.Glob
                 && !IsWithinExpansionBounds(request.Pattern))
             || (request.Kind == AgentFileSearchKind.Grep
@@ -34,7 +41,7 @@ internal static class FileSearchRequestValidation
         {
             try
             {
-                _ = CreateGrepRegex(request.Pattern);
+                _ = CreateGrepRegex(request.Pattern, request.Literal, request.CaseSensitive != false);
             }
             catch (Exception ex) when (ex is ArgumentException or NotSupportedException)
             {

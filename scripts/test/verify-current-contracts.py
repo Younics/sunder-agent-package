@@ -96,6 +96,10 @@ def actions(contract):
     return ["discover", "invoke"] + (["subscribe"] if contract["streams"] else [])
 
 
+def contract_version(contract, expected):
+    return contract.get("contractVersion", expected["publicVersion"] if contract["exposure"] == "public" else expected["packageVersion"])
+
+
 def uses(package, expected):
     result = {}
     for contract in expected["contracts"]:
@@ -111,7 +115,7 @@ def uses(package, expected):
 def contract_record(snapshot, contract, expected):
     raw = snapshot["canonicalDescriptor"].encode("utf-8")
     descriptor = release.decode(raw)
-    version = expected["publicVersion"] if contract["exposure"] == "public" else expected["packageVersion"]
+    version = contract_version(contract, expected)
     require(descriptor["descriptorVersion"] == 1 and descriptor["schemaProfile"] == "sunder.rpc.values.v1", "Descriptor profile differs")
     require(descriptor["contractId"] == snapshot["contractId"] == contract["contractId"]
             and descriptor["version"] == snapshot["contractVersion"] == version
@@ -140,8 +144,7 @@ def verify_manifest(manifest, package, expected, inventory):
         require(bundle["authorityId"] == authority and bundle["authorityKind"] == ("platform" if platform else "package")
                 and bundle["source"] == ("owned" if authority == package["packageId"] else "imported")
                 and bundle["exposure"] == ("public" if platform else contracts[cid]["exposure"]), "Bundle authority/exposure differs")
-        require(bundle["version"] == (expected["platform"]["version"] if platform else expected["publicVersion"]
-                if contracts[cid]["exposure"] == "public" else expected["packageVersion"]), "Bundle version differs")
+        require(bundle["version"] == (expected["platform"]["version"] if platform else contract_version(contracts[cid], expected)), "Bundle version differs")
     providers = index(manifest["provides"], "providerId")
     require(providers.keys() == package["providers"].keys(), "Provider inventory differs")
     for provider_id, cid in package["providers"].items():
@@ -155,16 +158,16 @@ def verify_manifest(manifest, package, expected, inventory):
         bundle = bundles[use["contractId"]]
         require(use["contractVersion"] == bundle["version"] and use["abiSha256"] == bundle["abiSha256"], "Use tuple differs")
     dependencies = manifest["dependsOn"]
-    if package["packageId"] in (AGENT, "younics.sunder.package.maker"):
+    if package["packageId"] == AGENT:
         require(not dependencies, "Owner must not acquire a package dependency")
     else:
         require(len(dependencies) == 1 and all(dependencies[0][key] == value for key, value in
-                dict(packageId=AGENT, versionRange=">=2.0.0 <3.0.0", presence="required").items()), "Package dependency policy differs")
+                dict(packageId=AGENT, versionRange=">=2.0.0 <3.0.0", presence="optional" if package["key"] == "agent-builder" else "required").items()), "Package dependency policy differs")
     public_ids = {cid for cid, contract in contracts.items() if contract["exposure"] == "public"}
     api_imports = manifest.get("packageApiImports", [])
     if package["packageApi"]:
         require(len(api_imports) == 1 and api_imports[0]["packageId"] == AGENT
-                and api_imports[0]["presence"] == "required", "Package API authority differs")
+                and api_imports[0]["presence"] == ("optional" if package["key"] == "agent-builder" else "required"), "Package API authority differs")
         for field in ("bundleRefs", "useRefs"):
             refs = api_imports[0][field]
             require(len(refs) == len(public_ids) and {r["contractId"] for r in refs} == public_ids, "Package API subset differs")
@@ -173,7 +176,8 @@ def verify_manifest(manifest, package, expected, inventory):
     imported_providers = set(package["providers"].values()) & public_ids if package["packageId"] != AGENT else set()
     actual_imports = manifest.get("providerImports", [])
     require(len(actual_imports) == len(imported_providers) and {p["contractId"] for p in actual_imports} == imported_providers
-            and all(p["packageId"] == AGENT for p in actual_imports), "Provider import authority differs")
+            and all(p["packageId"] == AGENT and p.get("presence", "required") == ("optional" if package["key"] == "agent-builder" else "required")
+                    for p in actual_imports), "Provider import authority differs")
     stacks = {pid for pid, cid in package["providers"].items() if cid == STACK}
     platform_imports = manifest.get("platformImports", [])
     if stacks:

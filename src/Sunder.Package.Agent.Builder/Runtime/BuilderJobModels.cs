@@ -31,6 +31,7 @@ public sealed record BuilderJobSnapshot
     public string? Error { get; init; }
     public BuilderProjectInspection? Project { get; init; }
     public string? DevelopmentFolder { get; init; }
+    public string? DevelopmentContentIdentity { get; init; }
     public BuilderToolchainInstallation? Installation { get; init; }
     public string? ArchivePath { get; init; }
     public BuilderJobPhase Phase { get; init; }
@@ -45,7 +46,7 @@ public sealed record BuilderJobSnapshot
 public enum BuilderJobConnectionState { Connected, Reconnecting, StopUnconfirmed }
 
 [SunderPackageCodeRole(SunderPackageCodeRole.Shared)]
-public enum BuilderJobPhase { Queued, CheckingSdk, Restoring, Building, Validating, BuildReady, Watching, Packaging, EditingMetadata, BuildFailed }
+public enum BuilderJobPhase { Queued, CheckingSdk, Restoring, Building, Validating, BuildReady, Packaging, EditingMetadata, BuildFailed }
 
 public sealed record BuilderJobUpdate
 {
@@ -55,6 +56,7 @@ public sealed record BuilderJobUpdate
     public string? Message { get; init; }
     public BuilderProjectInspection? Project { get; init; }
     public string? DevelopmentFolder { get; init; }
+    public string? DevelopmentContentIdentity { get; init; }
     public BuilderToolchainInstallation? Installation { get; init; }
     public string? ArchivePath { get; init; }
 }

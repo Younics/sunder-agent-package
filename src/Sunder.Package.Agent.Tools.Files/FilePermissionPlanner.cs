@@ -8,7 +8,6 @@ namespace Sunder.Package.Agent.Tools.Files;
 internal static class FilePermissionPlanner
 {
     private const int PatchAuthorityUsesPerPath = 2;
-    private const int MaximumPatchPaths = 64;
     private const int MaximumResourceCapabilities = 128;
 
     private static IReadOnlyList<AgentPermissionBoundaryDescriptor> Boundaries { get; } =
@@ -22,7 +21,7 @@ internal static class FilePermissionPlanner
     [
         new() { ActionId = "files.read", DisplayName = "Read files", Description = "Read files and directories.", Boundaries = Boundaries },
         new() { ActionId = "files.search", DisplayName = "Search files", Description = "Search file names and contents.", Boundaries = Boundaries },
-        new() { ActionId = "files.mutate", DisplayName = "Modify files", Description = "Create, overwrite, or edit files.", Boundaries = Boundaries },
+        new() { ActionId = "files.mutate", DisplayName = "Modify files", Description = "Create, overwrite, edit, move, or delete files.", Boundaries = Boundaries },
     ];
 
     public static async ValueTask<AgentPermissionRequest?> BuildAsync(
@@ -109,16 +108,18 @@ internal static class FilePermissionPlanner
         }
 
         IReadOnlyList<FilePatchOperation> operations;
+        IReadOnlyList<FilePatchPath> affected;
         try
         {
             operations = FilePatchParser.Parse(args.PatchText);
+            affected = FilePatchPaths.Affected(operations);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             return FilePermissionScope.Unknown();
         }
 
-        var paths = operations.Select(operation => operation.Path)
+        var paths = affected.Select(path => path.Path)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
@@ -126,7 +127,7 @@ internal static class FilePermissionPlanner
         {
             return FilePermissionScope.Unknown();
         }
-        if (operations.Count > FilePatchParser.MaximumOperations || paths.Length > MaximumPatchPaths)
+        if (operations.Count > FilePatchParser.MaximumOperations || paths.Length > FilePatchPaths.MaximumPaths)
         {
             return FilePermissionScope.Unknown();
         }
@@ -156,9 +157,9 @@ internal static class FilePermissionPlanner
                     resource.DeleteAuthorityReferences.Concat(resource.AuthorityReferences));
                 classificationBases.Add(resource.ScopeClassificationBasis);
                 singleResource = paths.Length == 1 ? resource : null;
-                var isDelete = operations
-                    .Where(operation => string.Equals(operation.Path, path, StringComparison.Ordinal))
-                    .All(operation => operation.Kind == FilePatchOperationKind.Delete);
+                var isDelete = affected
+                    .Where(affectedPath => string.Equals(affectedPath.Path, path, StringComparison.Ordinal))
+                    .All(affectedPath => affectedPath.IsDelete);
                 var operationReferences = isDelete
                     ? new[] { resource.DeleteCanonicalReference, resource.CanonicalReference }
                     : [resource.CanonicalReference];
@@ -252,7 +253,7 @@ internal static class FilePermissionPlanner
     }
 
     private static int AuthorityUseCount(string toolId)
-        => toolId.Equals("edit", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+        => toolId.Equals("edit", StringComparison.OrdinalIgnoreCase) || toolId.Equals("write", StringComparison.OrdinalIgnoreCase) ? 2 : 1;
 
     private sealed class PlannedResourceAuthority(
         FileExecutionTarget target,
@@ -328,7 +329,8 @@ internal static class FilePermissionPlanner
                 }
                 path = string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path;
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include },
+                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include,
+                        Literal = grep.Literal, CaseSensitive = grep.CaseSensitive, Limit = grep.Limit, Hidden = false },
                     out _);
             case "glob":
                 if (!FileToolArguments.TryParseGlob(request.ArgumentsJson, out var glob, out _))
@@ -337,7 +339,8 @@ internal static class FilePermissionPlanner
                 }
                 path = string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path;
                 return FileSearchRequestValidation.TryValidateRequest(
-                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null },
+                    new AgentFileSearchRequest { Path = path, Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null,
+                        Hidden = glob.Hidden, Limit = glob.Limit, Literal = false, CaseSensitive = true },
                     out _);
             default:
                 return false;

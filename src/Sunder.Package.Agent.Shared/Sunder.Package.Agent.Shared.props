@@ -34,7 +34,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\ITranscriptGeometrySource.cs"
              Link="PackageViews\ITranscriptGeometrySource.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptItemsProjection.cs"
-             Link="PackageViews\TranscriptItemsProjection.cs" />
+              Link="PackageViews\TranscriptItemsProjection.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptActivityProjection.cs"
+             Link="PackageViews\TranscriptActivityProjection.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.cs"
              Link="PackageViews\TranscriptRowProjector.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.Tools.cs"

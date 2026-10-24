@@ -151,7 +151,7 @@ internal static class LocalWindowsNative
         }
         if ((information.FileAttributes & AttributeReparsePoint) != 0)
         {
-            throw new LocalSecurePathException($"Reparse points are not supported by structured Local operations: {path}");
+            throw new LocalSecureSymbolicLinkException(path);
         }
         if (GetFileType(handle) != FileTypeDisk)
         {

@@ -4,7 +4,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
-public sealed class EditorSharedStateTests
+public sealed partial class EditorSharedStateTests
 {
     [Fact]
     public async Task ProviderModelLoader_StaleFirstSelectionCannotOverwriteSecondSelection()
@@ -205,7 +205,9 @@ public sealed class EditorSharedStateTests
 
         await state.RefreshAsync(new ModelBindingSelection("provider", "model-fast", null), TestContext.Current.CancellationToken);
 
-        Assert.Equal("default", state.SelectedModel?.Id);
+        Assert.Equal("model-fast", state.SelectedModel?.Id);
+        Assert.False(state.SelectedModel?.IsAvailable);
+        Assert.True(state.HasWarning);
         Assert.Null(AgentChatModelSettingsJson.Parse(state.SettingsJson).SpeedOptionId);
     }
 
@@ -242,12 +244,13 @@ public sealed class EditorSharedStateTests
     public async Task ModelBindingEditorState_DisposalPreventsLateProviderCallbacks()
     {
         using var dispatcher = new DedicatedPresentationDispatcher();
+        var loadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var completion = new TaskCompletionSource<ProviderModelCatalogResult>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new ProviderModelCatalogAdapter(
             _ => Task.FromResult<IReadOnlyList<ProviderCatalogOption>>(
                 [new ProviderCatalogOption("provider", "Provider")]),
-            (_, _) => completion.Task);
+            (_, _) => { loadStarted.TrySetResult(); return completion.Task; });
         var state = new ModelBindingEditorState(
             new ProviderModelLoader(catalog),
             Options(),
@@ -258,14 +261,15 @@ public sealed class EditorSharedStateTests
         var refresh = state.RefreshAsync(
             new ModelBindingSelection("provider", "model"),
             TestContext.Current.CancellationToken);
-        await dispatcher.WaitForIdleAsync();
-        state.Dispose();
+        await loadStarted.Task;
+        await dispatcher.InvokeAsync(state.Dispose);
         var notificationsAtDisposal = Volatile.Read(ref notifications);
+        var modelsAtDisposal = state.Models.ToArray();
         completion.SetResult(Result("model"));
         await refresh;
 
         Assert.Equal(notificationsAtDisposal, Volatile.Read(ref notifications));
-        Assert.Empty(state.Models);
+        Assert.Equal(modelsAtDisposal, state.Models);
     }
 
     [Fact]

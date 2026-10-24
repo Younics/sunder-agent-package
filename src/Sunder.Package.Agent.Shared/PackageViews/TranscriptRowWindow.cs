@@ -29,7 +29,8 @@ internal static class TranscriptRowWindow
         int retainedRowLimit,
         AgentTranscriptTrimDirection trimDirection,
         object? protectedAnchorKey,
-        Func<TRow, object?> anchorKeySelector)
+        Func<TRow, object?> anchorKeySelector,
+        int protectedTrailingRowCount = 0)
     {
         if (retainedRowLimit <= 0)
         {
@@ -45,7 +46,9 @@ internal static class TranscriptRowWindow
             ? visibleRows.Count - retainedRowLimit
             : 0;
         var protectedIndex = IndexOfAnchor(visibleRows, protectedAnchorKey, anchorKeySelector);
-        if (protectedIndex >= defaultStart && protectedIndex < defaultStart + retainedRowLimit)
+        var protectedEnd = Math.Min(visibleRows.Count - 1,
+            protectedIndex + Math.Clamp(protectedTrailingRowCount, 0, retainedRowLimit - 1));
+        if (protectedIndex >= defaultStart && protectedEnd < defaultStart + retainedRowLimit)
         {
             return visibleRows.Skip(defaultStart).Take(retainedRowLimit).ToArray();
         }
@@ -55,7 +58,7 @@ internal static class TranscriptRowWindow
             var maxStart = visibleRows.Count - retainedRowLimit;
             var desiredStart = trimDirection == AgentTranscriptTrimDirection.Oldest
                 ? protectedIndex
-                : protectedIndex - retainedRowLimit + 1;
+                : protectedEnd - retainedRowLimit + 1;
             var start = Math.Clamp(desiredStart, 0, maxStart);
             return visibleRows.Skip(start).Take(retainedRowLimit).ToArray();
         }

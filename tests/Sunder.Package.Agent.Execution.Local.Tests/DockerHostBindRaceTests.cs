@@ -126,6 +126,7 @@ public sealed class DockerHostBindRaceTests : IDisposable
                 fixture.Config,
                 new AgentFileSearchRequest
                 {
+                    Hidden = false, Literal = false,
                     Path = "/workspace/pinned/search",
                     Kind = AgentFileSearchKind.Grep,
                     Pattern = "needle",

@@ -54,6 +54,15 @@ internal sealed partial class TranscriptScrollCoordinator
             return null;
         }
 
+        // SizeChanged can arrive on every layout pass of one continuous drag.
+        // Keep its original reading anchor, watchdog and correction/cycle budget.
+        if (kind == TranscriptViewportMutationKind.StructuralLayout
+            && _activeViewportMutation is { Kind: TranscriptViewportMutationKind.StructuralLayout } resizing
+            && IsCurrentViewportMutation(resizing))
+        {
+            return resizing;
+        }
+
         var wasFollowingTail = IsFollowingTail;
         var exactToolAnchor = kind == TranscriptViewportMutationKind.ToolExpansion
                               && preferredAnchorKey is not null
@@ -73,6 +82,17 @@ internal sealed partial class TranscriptScrollCoordinator
                 CaptureRealizedMutationAnchor(preferredAnchorKey, scope),
             _ => null,
         };
+        // With a real anchor host, native anchoring can preserve this reading row
+        // through intermediate Markdown heights without manual corrections
+        // repeatedly moving the repeater's realization window during a resize.
+        if (kind == TranscriptViewportMutationKind.StructuralLayout
+            && mode == TranscriptViewportMutationMode.DetachedLogicalRestore
+            && _itemsControl is ItemsRepeater
+            && _anchorHost is not null && protectedAnchor is not null)
+        {
+            mode = TranscriptViewportMutationMode.DetachedNativeAnchor;
+            preferredAnchorKey = protectedAnchor.Item;
+        }
         var authorityRevision = SupersedeViewportMutationForAuthority(
             TranscriptViewportMutationStatus.Superseded);
         if (mode == TranscriptViewportMutationMode.ToolExpansionNativeAnchor
@@ -89,8 +109,10 @@ internal sealed partial class TranscriptScrollCoordinator
         {
             TranscriptViewportMutationMode.ToolExpansionNativeAnchor =>
                 _anchorHost!.AcquireExactAnchorLease(preferredAnchorKey!),
+            TranscriptViewportMutationMode.DetachedNativeAnchor =>
+                _anchorHost!.AcquireExactAnchorLease(preferredAnchorKey!),
             TranscriptViewportMutationMode.DetachedLogicalRestore =>
-                _anchorHost?.SuspendAnchoring(),
+                SuspendAnchoringForManualScroll(protectedAnchor?.Item),
             _ => null,
         };
         var generation = ++_viewportMutationGeneration;
@@ -291,14 +313,16 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         transaction.Passes++;
-        if (transaction.Mode == TranscriptViewportMutationMode.DetachedLogicalRestore
+        if (transaction.Mode is TranscriptViewportMutationMode.DetachedLogicalRestore
+                or TranscriptViewportMutationMode.DetachedNativeAnchor
             && transaction.ProtectedAnchor is { } anchorToRealize
             && !TryGetRealizedAnchorTop(anchorToRealize.Item, out _))
         {
-            _ = _realizeAnchorVisual?.Invoke(anchorToRealize.Item);
+            _ = _realizePreservedAnchorVisual?.Invoke(anchorToRealize.Item);
         }
         var fingerprint = CaptureViewportGeometry(transaction);
-        if (transaction.Mode == TranscriptViewportMutationMode.DetachedLogicalRestore
+        if ((transaction.Mode == TranscriptViewportMutationMode.DetachedLogicalRestore
+             || transaction.Mode == TranscriptViewportMutationMode.DetachedNativeAnchor && !fingerprint.GeometryPending)
             && transaction.ProtectedAnchor is { } protectedAnchor
             && fingerprint.AnchorAvailable
             && transaction.LastCorrectionFingerprint != fingerprint)
@@ -349,7 +373,8 @@ internal sealed partial class TranscriptScrollCoordinator
 
         if (transaction.StablePasses >= ViewportMutationStablePasses)
         {
-            var status = transaction.Mode == TranscriptViewportMutationMode.DetachedLogicalRestore
+            var status = transaction.Mode is TranscriptViewportMutationMode.DetachedLogicalRestore
+                             or TranscriptViewportMutationMode.DetachedNativeAnchor
                          && transaction.ProtectedAnchor is not null
                          && !fingerprint.AnchorAvailable
                 ? TranscriptViewportMutationStatus.AnchorUnavailable
@@ -424,7 +449,8 @@ internal sealed partial class TranscriptScrollCoordinator
             sourceFingerprint = unchecked(sourceFingerprint * 31 + source.SettledRevision);
             sourceFingerprint = unchecked(sourceFingerprint * 31 + source.GeometryRevision);
             sourceFingerprint = unchecked(sourceFingerprint * 31 + (source.IsGeometryPending ? 1 : 0));
-            geometryPending |= source.IsGeometryPending;
+            geometryPending |= source.IsGeometryPending
+                               || source is StreamingMarkdownPresenter { IsRenderPending: true };
             sourceRevisions.Add(
                 $"{source.GetType().Name}:r{source.RequestedRevision}/s{source.SettledRevision}/g{source.GeometryRevision}/p{source.IsGeometryPending}");
         }
@@ -467,6 +493,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private bool TryGetRealizedAnchorTop(object anchorKey, out double top)
     {
+        anchorKey = ResolvePreservedAnchorKey(anchorKey);
         foreach (var (item, visual) in EnumerateRowAnchorVisuals())
         {
             if (Equals(item, anchorKey) && TryGetTop(visual, out top))
@@ -531,7 +558,8 @@ internal sealed partial class TranscriptScrollCoordinator
         double offsetY)
     {
         if (!IsCurrentViewportMutation(transaction)
-            || transaction.Mode != TranscriptViewportMutationMode.DetachedLogicalRestore)
+            || transaction.Mode is not (TranscriptViewportMutationMode.DetachedLogicalRestore
+                or TranscriptViewportMutationMode.DetachedNativeAnchor))
         {
             return false;
         }
@@ -542,9 +570,17 @@ internal sealed partial class TranscriptScrollCoordinator
             return false;
         }
 
-        SetProgrammaticOffset(
-            clampedOffset,
-            TranscriptProgrammaticOffsetWriteSource.ViewportMutationCorrection);
+        using (transaction.Mode == TranscriptViewportMutationMode.DetachedNativeAnchor
+                   ? SuspendAnchoringForManualScroll(transaction.ProtectedAnchor?.Item) : null)
+        {
+            SetProgrammaticOffset(
+                clampedOffset,
+                TranscriptProgrammaticOffsetWriteSource.ViewportMutationCorrection);
+            if (transaction.Mode == TranscriptViewportMutationMode.DetachedNativeAnchor)
+            {
+                _scrollViewer.UpdateLayout();
+            }
+        }
         return true;
     }
 
@@ -590,6 +626,8 @@ internal sealed partial class TranscriptScrollCoordinator
     private long SupersedeViewportMutationForAuthority(
         TranscriptViewportMutationStatus status = TranscriptViewportMutationStatus.CanceledByAuthority)
     {
+        _anchorRestorationWaitCancellation?.Cancel();
+        _bottomPlacementWaitCancellation?.Cancel();
         ReleaseSettledExactAnchorLease();
         _viewportAuthorityRevision++;
         if (_activeViewportMutation is { } active)
@@ -636,7 +674,8 @@ internal sealed partial class TranscriptScrollCoordinator
     private static bool ShouldRetainExactAnchorLease(
         ViewportMutationTransaction transaction,
         TranscriptViewportMutationStatus status)
-        => transaction.Mode == TranscriptViewportMutationMode.ToolExpansionNativeAnchor
+        => transaction.Mode is TranscriptViewportMutationMode.ToolExpansionNativeAnchor
+                or TranscriptViewportMutationMode.DetachedNativeAnchor
            && transaction.IsExpanding != false
            && status == TranscriptViewportMutationStatus.Completed;
 
@@ -660,7 +699,7 @@ internal sealed partial class TranscriptScrollCoordinator
         var detailHost = transaction.Scope?.GetVisualDescendants()
             .OfType<TranscriptToolDetailHost>()
             .FirstOrDefault();
-        if (transaction.Status == TranscriptViewportMutationStatus.Superseded)
+        if (transaction.Status != TranscriptViewportMutationStatus.Completed)
         {
             detailHost?.ReleaseCollapseCompensator();
             _anchorHost.ReleaseTrailingCompensator(transaction.Generation);
@@ -678,12 +717,19 @@ internal sealed partial class TranscriptScrollCoordinator
                 _scrollViewer.Extent.Height
                 - _anchorHost.TrailingCompensatorHeight
                 - _scrollViewer.Viewport.Height);
-            var requiresClamp = _scrollViewer.Offset.Y > naturalMaximumOffset + 0.01;
+            // Removing the detail can change ItemsRepeater's estimated positions of
+            // preceding rows. Preserve the position captured for this collapse, not
+            // the offset (or anchor) from before the user scrolled the expanded row.
+            var desiredOffset = transaction.ProtectedAnchor is { } captured
+                                && TryGetMutationAnchorTop(transaction, captured.Item, out var currentTop)
+                ? _scrollViewer.Offset.Y + currentTop - captured.Top
+                : _scrollViewer.Offset.Y;
             _anchorHost.ReleaseTrailingCompensator(transaction.Generation);
-            if (requiresClamp)
+            var finalOffset = Math.Clamp(desiredOffset, 0, naturalMaximumOffset);
+            if (Math.Abs(finalOffset - _scrollViewer.Offset.Y) > 0.01)
             {
                 SetProgrammaticOffset(
-                    naturalMaximumOffset,
+                    finalOffset,
                     TranscriptProgrammaticOffsetWriteSource.ToolCollapseClamp);
                 transaction.CollapseClamps++;
                 TranscriptToolDiagnostics.CollapseClamped();

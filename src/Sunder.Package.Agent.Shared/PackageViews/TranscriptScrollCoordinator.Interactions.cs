@@ -57,6 +57,7 @@ internal sealed partial class TranscriptScrollCoordinator
             CancelPendingPagingForViewportAuthority();
         }
         SupersedeViewportMutationForAuthority();
+        ResetPagingContinuation();
         _anchorHost?.ReleaseTrailingCompensator();
         _interactionRevision++;
         _loadNewerResumeInteractionRevision = -1;
@@ -461,6 +462,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _anchorHost?.ReleaseTrailingCompensator();
         _interactionRevision++;
         _pagingContextRevision++;
+        ResetPagingContinuation();
         _loadNewerResumeInteractionRevision = -1;
         _pendingScrollToBottomRequest = null;
         _captureViewportAnchorOnScrollChanged = false;
@@ -482,6 +484,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _presentationPagingCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetimeCancellation.Token);
         _pagingContextRevision++;
+        ResetPagingContinuation();
         superseded.Cancel();
         superseded.Dispose();
     }

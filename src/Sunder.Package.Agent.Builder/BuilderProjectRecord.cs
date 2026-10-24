@@ -12,6 +12,5 @@ public sealed record BuilderProjectRecord(
     DateTimeOffset UpdatedAtUtc)
 {
     public bool SetupIncomplete { get; init; }
-    public bool Watch { get; init; } = true;
     public BuilderToolchainInstallation? Installation { get; init; }
 }

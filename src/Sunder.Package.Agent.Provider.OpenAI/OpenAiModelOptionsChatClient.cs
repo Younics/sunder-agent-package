@@ -2,12 +2,13 @@ using System.Runtime.CompilerServices;
 using Microsoft.Extensions.AI;
 using OpenAI.Responses;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Provider.Shared;
 
 namespace Sunder.Package.Agent.Provider.OpenAI;
 
 #pragma warning disable OPENAI001, SCME0001
 
-internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatClient
+internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatClientContext? context = null) : IChatClient
 {
     private readonly IChatClient _inner = inner;
 
@@ -24,6 +25,8 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
             var response = await _inner.GetResponseAsync(messages, PrepareOptions(options), cancellationToken)
                 .ConfigureAwait(false);
             ThrowIfTerminalFailure(response);
+            if (context is not null && response.RawRepresentation is ResponseResult raw)
+                await new ProviderStreamTelemetry(context).ProcessingTierAsync(raw.ServiceTier?.ToString(), cancellationToken);
             return response;
         }
         catch (Exception ex)
@@ -61,6 +64,7 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
             throw;
         }
 
+        var telemetry = context is null ? null : new ProviderStreamTelemetry(context);
         await using (enumerator.ConfigureAwait(false))
         {
             while (true)
@@ -86,6 +90,8 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
                 }
 
                 ThrowIfTerminalFailure(update);
+                if (telemetry is not null && update.RawRepresentation is StreamingResponseCompletedUpdate completed)
+                    await telemetry.ProcessingTierAsync(completed.Response.ServiceTier?.ToString(), cancellationToken);
                 yield return update;
             }
         }
@@ -181,11 +187,21 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
             "openai-response-failed");
     }
 
-    private static ChatOptions? PrepareOptions(ChatOptions? options)
+    private ChatOptions? PrepareOptions(ChatOptions? options)
     {
-        var speedOptionId = GetOption(options, AgentChatModelOptionKeys.SpeedOptionId);
-        var modeOptionId = GetOption(options, AgentChatModelOptionKeys.ModeOptionId);
+        var modelId = options?.ModelId ?? context?.ModelId;
+        if (!string.IsNullOrWhiteSpace(modelId))
+        {
+            var model = OpenAiModelCatalog.Find(modelId);
+            AgentChatModelOptions.Validate(options, modelId, model?.Variants?.Select(v => v.VariantId),
+                model?.SpeedOptions?.Select(v => v.SpeedOptionId), model?.ModeOptions?.Select(v => v.ModeOptionId));
+        }
+        var speedOptionId = AgentChatModelOptions.SpeedId(options);
+        var modeOptionId = AgentChatModelOptions.ModeId(options);
+        var reasoningId = AgentChatModelOptions.ReasoningId(options);
         if (!string.Equals(speedOptionId, "fast", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(speedOptionId, "normal", StringComparison.OrdinalIgnoreCase)
+            && reasoningId is null
             && !string.Equals(modeOptionId, "pro", StringComparison.OrdinalIgnoreCase))
         {
             return options;
@@ -195,9 +211,10 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
         var rawRepresentationFactory = preparedOptions.RawRepresentationFactory;
         preparedOptions.RawRepresentationFactory = client => CreateRawOptions(
             rawRepresentationFactory?.Invoke(client) as CreateResponseOptions,
-            GetOption(preparedOptions, AgentChatModelOptionKeys.SpeedOptionId),
-            GetOption(preparedOptions, AgentChatModelOptionKeys.ModeOptionId),
-            preparedOptions.Reasoning);
+            speedOptionId,
+            modeOptionId,
+            preparedOptions.Reasoning,
+            reasoningId);
         return preparedOptions;
     }
 
@@ -205,12 +222,26 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
         CreateResponseOptions? rawOptions,
         string? speedOptionId,
         string? modeOptionId,
-        ReasoningOptions? reasoning)
+        ReasoningOptions? reasoning,
+        string? reasoningId)
     {
         rawOptions ??= new CreateResponseOptions();
         if (string.Equals(speedOptionId, "fast", StringComparison.OrdinalIgnoreCase))
         {
             rawOptions.ServiceTier = new ResponseServiceTier("priority");
+        }
+        else if (string.Equals(speedOptionId, "normal", StringComparison.OrdinalIgnoreCase))
+        {
+            rawOptions.ServiceTier = new ResponseServiceTier("default");
+        }
+
+        if (reasoningId is not null)
+        {
+            var responseReasoning = rawOptions.ReasoningOptions ?? new ResponseReasoningOptions();
+            responseReasoning.ReasoningEffortLevel = new ResponseReasoningEffortLevel(reasoningId);
+            responseReasoning.ReasoningSummaryVerbosity = reasoningId == "none"
+                ? null : ToOpenAiReasoningSummary(reasoning?.Output ?? ReasoningOutput.Summary);
+            rawOptions.ReasoningOptions = responseReasoning;
         }
 
         if (string.Equals(modeOptionId, "pro", StringComparison.OrdinalIgnoreCase))
@@ -244,9 +275,4 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner) : IChatCli
             _ => null,
         };
 
-    private static string? GetOption(ChatOptions? options, string key) =>
-        options?.AdditionalProperties is { } properties
-        && properties.TryGetValue(key, out var value)
-            ? value as string
-            : null;
 }

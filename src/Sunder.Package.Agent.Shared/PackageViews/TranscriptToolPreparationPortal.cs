@@ -19,7 +19,8 @@ internal sealed class TranscriptToolPreparationPortal : Panel, IDisposable
         object content,
         IDataTemplate contentTemplate,
         double width,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<double>? currentWidth = null)
     {
         ArgumentNullException.ThrowIfNull(content);
         ArgumentNullException.ThrowIfNull(contentTemplate);
@@ -56,6 +57,7 @@ internal sealed class TranscriptToolPreparationPortal : Panel, IDisposable
             {
                 currentToken.ThrowIfCancellationRequested();
                 Dispatcher.UIThread.VerifyAccess();
+                presenter.Width = Math.Max(1, currentWidth?.Invoke() ?? width);
                 presenter.InvalidateMeasure();
                 InvalidateMeasure();
                 await Task.Delay(1, currentToken);
@@ -132,6 +134,7 @@ internal sealed class TranscriptToolPreparationPortal : Panel, IDisposable
             prepared.Presenter.Opacity = 1;
             prepared.Presenter.IsHitTestVisible = true;
             Children.Remove(prepared.Presenter);
+            prepared.Presenter.ClearValue(WidthProperty);
             _presenter = null;
             Interlocked.Exchange(ref _preparationCancellation, null)?.Dispose();
             host.AttachPrepared(owner, prepared.Presenter);

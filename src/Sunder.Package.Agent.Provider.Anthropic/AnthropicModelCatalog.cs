@@ -24,12 +24,17 @@ internal static class AnthropicModelCatalog
 
     private static readonly IReadOnlyList<AgentModelSpeedOptionDescriptor> FastSpeedOptions =
     [
-        new() { SpeedOptionId = "fast", DisplayName = "Fast", Description = "Use Anthropic fast mode for lower latency." },
+        new() { SpeedOptionId = "fast", DisplayName = "Fast", Description = "Accelerate the same model without lowering effort. Premium token pricing applies. Opus 5 / 4.8 require preview access; Opus 5.5 requires an eligible paid usage tier." },
     ];
 
     private static readonly IReadOnlyDictionary<string, DateOnly> ReleaseDates =
         new Dictionary<string, DateOnly>(StringComparer.OrdinalIgnoreCase)
         {
+            ["anthropic/claude-opus-5-5"] = new(2026, 9, 22),
+            ["anthropic/claude-sonnet-5-5"] = new(2026, 9, 28),
+            ["anthropic/claude-haiku-5-5"] = new(2026, 10, 7),
+            ["anthropic/claude-fable-5-1"] = new(2026, 9, 1),
+            ["anthropic/claude-opus-5"] = new(2026, 7, 24),
             ["anthropic/claude-sonnet-5"] = new(2026, 6, 29),
             ["anthropic/claude-fable-5"] = new(2026, 6, 7),
             ["anthropic/claude-opus-4-8"] = new(2026, 5, 28),
@@ -46,6 +51,16 @@ internal static class AnthropicModelCatalog
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ProviderModelCatalog.ApplyReleaseDates([
+        new() { ModelId = "anthropic/claude-opus-5-5", DisplayName = "Claude Opus 5.5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = FastSpeedOptions, ModeOptions = null },
+        new() { ModelId = "anthropic/claude-sonnet-5-5", DisplayName = "Claude Sonnet 5.5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "anthropic/claude-haiku-5-5", DisplayName = "Claude Haiku 5.5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "anthropic/claude-fable-5-1", DisplayName = "Claude Fable 5.1", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "anthropic/claude-opus-5", DisplayName = "Claude Opus 5", ContextWindow = 1000000, MaxOutputTokens = 128000,
+            IsRecommended = false, Variants = OpusReasoningVariants, SpeedOptions = FastSpeedOptions, ModeOptions = null },
         new() { ModelId = "anthropic/claude-fable-5", DisplayName = "Claude Fable 5", ContextWindow = 1000000, MaxOutputTokens = 128000,
             IsRecommended = true, Variants = OpusReasoningVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
         new() { ModelId = "anthropic/claude-opus-4-8", DisplayName = "Claude Opus 4.8", ContextWindow = 1000000, MaxOutputTokens = 128000,
@@ -73,11 +88,46 @@ internal static class AnthropicModelCatalog
     ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
-        VendorModels,
+        VendorModels.Select(ReviewCapabilities),
         AnthropicProviderConfiguration.DefaultUtilityModelId,
         static _ => true);
 
     public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
+
+    internal static AgentModelDescriptor? Find(string modelId)
+        => ProviderModelCatalog.FindByNormalizedId(Models, modelId, static id => ProviderModelId.RemovePrefix(id, "anthropic"));
+
+    internal static bool UsesAdaptiveThinking(string modelId)
+        => ProviderModelId.RemovePrefix(modelId, "anthropic") is
+            "claude-opus-5-5" or "claude-opus-5" or "claude-sonnet-5-5" or "claude-sonnet-5" or
+            "claude-haiku-5-5" or "claude-fable-5-1" or "claude-fable-5" or
+            "claude-opus-4-8" or "claude-opus-4-7" or "claude-opus-4-6" or "claude-sonnet-4-6";
+
+    internal static bool UsesStableFast(string modelId)
+        => ProviderModelId.RemovePrefix(modelId, "anthropic") == "claude-opus-5-5";
+
+    internal static bool SupportsNativeEffort(string modelId)
+        => UsesAdaptiveThinking(modelId) || ProviderModelId.RemovePrefix(modelId, "anthropic") is "claude-opus-4-5" or "claude-opus-4-5-20251101";
+
+    // Reviewed vendor effort/Fast tables, 2026-10-22. Manual-thinking legacy
+    // models retain budget presets rather than receiving unsupported effort fields.
+    private static AgentModelDescriptor ReviewCapabilities(AgentModelDescriptor model)
+    {
+        var id = ProviderModelId.RemovePrefix(model.ModelId, "anthropic");
+        var adaptive = UsesAdaptiveThinking(id);
+        return model with
+        {
+            Variants = !adaptive ? model.Variants
+                : id is "claude-opus-4-6" or "claude-sonnet-4-6"
+                    ? ProviderModelReasoning.Create("low", "medium", "high", "max")
+                    : id == "claude-haiku-5-5"
+                        ? ProviderModelReasoning.Create("none", "low", "medium", "high", "xhigh", "max")
+                        : ProviderModelReasoning.Create("low", "medium", "high", "xhigh", "max"),
+            SpeedOptions = id is "claude-opus-5-5" or "claude-opus-5" or "claude-opus-4-8" ? FastSpeedOptions : null,
+            DefaultReasoningVariantId = adaptive ? id is "claude-opus-5-5" or "claude-haiku-5-5" ? "medium" : "high" : null,
+            ContextWindow = id.StartsWith("claude-sonnet-4-5", StringComparison.Ordinal) ? 200000 : model.ContextWindow,
+        };
+    }
 
     public static IReadOnlyList<PackageSettingsOption> UtilityModelOptions { get; } =
         Catalog.UtilityModelOptions;

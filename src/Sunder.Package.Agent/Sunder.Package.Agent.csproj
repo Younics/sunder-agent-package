@@ -21,6 +21,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <SunderSdkCapability Include="rpc.call-ownership.v1" />
     <PackageReference Include="Microsoft.Data.Sqlite" SunderPackageAssetRole="worker" />
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />

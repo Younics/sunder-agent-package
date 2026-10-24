@@ -10,48 +10,38 @@ internal static class FileDiffPresentation
         => JsonSerializer.Serialize(new FileDiffPresentationPayload("younics.ai.agent.tools.files.diff.v1", files), JsonOptions);
 
     public static string? BuildEditPayload(FileEditArgs args, string currentContent)
+        => BuildEditPayload(args.Path, FileTextEditPlanner.Edit(currentContent, args.OldString, args.NewString, args.ReplaceAll));
+
+    public static string? BuildEditPayload(string path, FileTextEditPlan plan)
+        => BuildPayload([EditedFile(path, plan)]);
+
+    public static FileDiffPayloadFile EditedFile(string path, FileTextEditPlan plan)
     {
-        var matches = FindMatchIndexes(currentContent, args.OldString, args.ReplaceAll);
-        if (matches.Count == 0)
-        {
-            return null;
-        }
-
         var lines = new List<FileDiffPayloadLine>();
-        foreach (var index in matches)
+        foreach (var replacement in plan.Replacements)
         {
-            AppendReplacementLines(lines, args.OldString, args.NewString, CountLinesBefore(currentContent, index) + 1);
+            AppendReplacementLines(lines, replacement.OldText, replacement.NewText, replacement.StartLine);
         }
 
-        return BuildPayload(
-        [
-            new FileDiffPayloadFile(
-                args.Path,
+        return new FileDiffPayloadFile(
+                path,
                 "Edit",
                 lines.Count(line => line.Kind == "added"),
                 lines.Count(line => line.Kind == "deleted"),
-                lines)
-        ]);
+                lines);
     }
 
-    public static string ApplyHunks(string content, IReadOnlyList<FilePatchHunk> hunks, out IReadOnlyList<FileDiffPayloadLine> diffLines)
+    public static string ApplyHunks(string content, IReadOnlyList<FilePatchHunk> hunks, out IReadOnlyList<FileDiffPayloadLine> diffLines, bool allowUnchanged = false)
     {
-        var next = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+        var plan = FileTextEditPlanner.Patch(content, hunks, allowUnchanged);
         var lines = new List<FileDiffPayloadLine>();
-        foreach (var hunk in hunks)
+        foreach (var replacement in plan.Replacements)
         {
-            var index = next.IndexOf(hunk.OldText, StringComparison.Ordinal);
-            if (index < 0)
-            {
-                throw new InvalidOperationException("Patch hunk did not match the current file content.");
-            }
-
-            AppendReplacementLines(lines, hunk.OldText, hunk.NewText, CountLinesBefore(next, index) + 1);
-            next = next[..index] + hunk.NewText + next[(index + hunk.OldText.Length)..];
+            AppendReplacementLines(lines, replacement.OldText, replacement.NewText, replacement.StartLine);
         }
 
         diffLines = lines;
-        return next;
+        return plan.Content;
     }
 
     public static FileDiffPayloadFile AddedFile(string path, string content)
@@ -69,6 +59,13 @@ internal static class FileDiffPresentation
             lines.Count(line => line.Kind == "added"),
             lines.Count(line => line.Kind == "deleted"),
             lines);
+
+    public static FileDiffPayloadFile ReplacedFile(string path, string before, string after)
+    {
+        var lines = new List<FileDiffPayloadLine>();
+        AppendReplacementLines(lines, before, after, 1);
+        return UpdatedFile(path, lines);
+    }
 
     public static FileDiffPayloadFile DeletedFile(string path)
         => new(path, "Delete", 0, 0, [new FileDiffPayloadLine("collapsed", null, "File deleted")]);

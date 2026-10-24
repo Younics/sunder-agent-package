@@ -57,7 +57,8 @@ internal sealed class AgentRunDispatcher : IAsyncDisposable
                 return Task.CompletedTask;
             }
             _lifetime = new CancellationTokenSource();
-            _worker = RunAsync(_lifetime.Token);
+            var lifetimeToken = _lifetime.Token;
+            _worker = AgentServiceOwnedTask.Run(() => RunAsync(lifetimeToken));
         }
         Signal();
         return Task.CompletedTask;

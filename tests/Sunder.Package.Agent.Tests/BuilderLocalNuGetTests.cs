@@ -366,68 +366,42 @@ public sealed class BuilderLocalNuGetTests
     }
 
     [Fact]
-    public async Task WarmWatchPinsScopedSourceAndNewJobInvalidatesSameVersionHotfix()
+    public async Task AcceptedFiniteBuildPinsScopedSourceAndNewJobInvalidatesSameVersionHotfix()
     {
         using var fixture = new Fixture(); fixture.CreateFeed(); fixture.Process.ProduceDevelopment = true;
         var entry = fixture.WriteProject();
         await using var jobs = fixture.Jobs();
         var setup = await TerminalAsync(jobs, jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "setup", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry }));
         Assert.Equal("succeeded", setup.State);
-        var id = jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry });
-        await Watching(2);
+        var selected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proceed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Tools.BeforeSelect = async token => { selected.TrySetResult(); await proceed.Task.WaitAsync(token); };
+        var id = jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "build", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry });
+        await selected.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        fixture.Pointer("now-invalid");
+        proceed.TrySetResult();
+        Assert.Equal("succeeded", (await TerminalAsync(jobs, id)).State);
+        fixture.Tools.BeforeSelect = null;
         var commands = fixture.Process.Requests.ToArray();
         var config = Assert.Single(commands.Select(command => command.Environment["RestoreConfigFile"]).Distinct())!;
         Assert.Equal(new[] { "restore", "msbuild", "msbuild" }, commands.Where(command => !command.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal)))
             .Select(command => command.Arguments[0]));
-        fixture.Pointer("now-invalid");
-        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(entry)!, "WarmEdit.cs"), "internal class WarmEdit { }");
-        await Watching(3);
         Assert.Single(fixture.Process.Requests, command => command.Arguments[0] == "restore");
         Assert.All(fixture.Process.Requests, command => Assert.Equal(config, command.Environment["RestoreConfigFile"]));
-        // Watch builds keep MSBuild restore in the same invocation and retain the accepted
-        // job's selected feed even after the configuration pointer changes.
-        await File.AppendAllTextAsync(entry, "\n<!-- dependency evaluation changed -->\n");
-        await Watching(4);
-        Assert.Single(fixture.Process.Requests, command => command.Arguments[0] == "restore"); // Setup only.
-        Assert.All(fixture.Process.Requests.Where(IsBuild).Skip(2),
-            command => Assert.Contains("-restore", command.Arguments));
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
+        Assert.Contains("-restore", commands.Last().Arguments);
 
         fixture.CreateFeed();
         fixture.WritePackage("Sunder.Package.Build", marker: "same-version hotfix");
         var before = fixture.Process.Requests.Count;
-        id = jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry });
-        await Watching(5);
+        id = jobs.Start(new() { Id = Guid.NewGuid().ToString("N"), Operation = "build", Kind = BuilderProjectKind.Dotnet, EntryPoint = entry });
+        Assert.Equal("succeeded", (await TerminalAsync(jobs, id)).State);
         var hotfix = fixture.Process.Requests.Skip(before).ToArray();
-        Assert.Equal(3, hotfix.Length); // Preflight restore, one compiler, compile-free publication.
+        Assert.Single(hotfix); // One finite MSBuild invocation, with integrated restore.
         Assert.All(hotfix, command => Assert.Equal("msbuild", command.Arguments[0]));
-        Assert.Contains("-t:_ValidateSunderDevelopmentWatch", hotfix[0].Arguments);
         Assert.Contains("-restore", hotfix[0].Arguments);
-        Assert.DoesNotContain("-restore", hotfix[1].Arguments);
-        Assert.Contains("-t:_PublishSunderDevelopmentWatch", hotfix[2].Arguments);
-        Assert.DoesNotContain("-restore", hotfix[2].Arguments);
         var newConfig = Assert.Single(hotfix.Select(command => command.Environment["RestoreConfigFile"]).Distinct());
         Assert.NotEqual(config, newConfig);
         Assert.NotEqual(commands[0].Environment["NUGET_PACKAGES"], hotfix[0].Environment["NUGET_PACKAGES"]);
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
-
-        async Task Watching(int builds)
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            while (true)
-            {
-                var current = jobs.GetJob(id);
-                Assert.True(current.State == "running", current.Error);
-                if (current.Message.StartsWith("Watching source changes.", StringComparison.Ordinal)
-                    && fixture.Process.Requests.Count(IsBuild) >= builds) return;
-                await Task.Delay(20, deadline.Token);
-            }
-        }
-
-        static bool IsBuild(BuilderLocalProcessRequest command) => command.Arguments[0] == "msbuild"
-            && !command.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -616,24 +590,10 @@ public sealed class BuilderLocalNuGetTests
             if (request.Arguments[0] == "restore") return new(0, "", "");
             if (InstallTemplate && request.Arguments[0] == "new" && request.Arguments[1] is "install" or "list") return new(0, "sunder-package", "");
             string Property(string name) => Uri.UnescapeDataString(request.Arguments.Single(argument => argument.StartsWith("-p:" + name + "=", StringComparison.Ordinal)).Split('=', 2)[1]);
-            if (ProduceDevelopment && request.Arguments.Contains("-t:_ValidateSunderDevelopmentWatch")) return new(0, "", "");
-            if (ProduceDevelopment && request.Arguments.Contains("-t:_PublishSunderDevelopmentWatch"))
-            {
-                var candidate = Path.Combine(Property("SunderPackageDevelopmentStagingRoot"), "sunder-dev");
-                var output = Path.Combine(Property("SunderPackageComposedOutputRoot"), "sunder-dev");
-                foreach (var file in Directory.EnumerateFiles(candidate, "*", SearchOption.AllDirectories))
-                {
-                    var destination = Path.Combine(output, Path.GetRelativePath(candidate, file));
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    File.Copy(file, destination, overwrite: true);
-                }
-                return new(0, "", "");
-            }
             if (ProduceDevelopment && request.Arguments[0] == "msbuild"
                 && !request.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal)))
             {
-                var staged = request.Arguments.Any(argument => argument.StartsWith("-p:SunderPackageDevelopmentStagingRoot=", StringComparison.Ordinal));
-                var root = Path.Combine(Property(staged ? "SunderPackageDevelopmentStagingRoot" : "SunderPackageComposedOutputRoot"), "sunder-dev");
+                var root = Path.Combine(Property("SunderPackageComposedOutputRoot"), "sunder-dev");
                 var rid = BuilderToolchainPlatform.Current.DotnetRid;
                 Directory.CreateDirectory(Path.Combine(root, "manifest")); Directory.CreateDirectory(Path.Combine(root, "payload/runtime", rid));
                 await File.WriteAllTextAsync(Path.Combine(root, "payload/runtime", rid, "worker.js"), "worker", cancellationToken);

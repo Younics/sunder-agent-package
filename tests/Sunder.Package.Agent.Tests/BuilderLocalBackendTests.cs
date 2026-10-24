@@ -19,7 +19,7 @@ public sealed class BuilderLocalBackendTests
     {
         var methods = typeof(BuilderRuntimeService).GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
             .Where(method => method.CustomAttributes.Any(attribute => attribute.AttributeType.Name == "SunderMethodAttribute"));
-        Assert.Equal(new[] { "CancelJobAsync", "DiscoverAsync", "GetBackendIdAsync", "GetJobAsync", "GetToolchainsAsync", "InspectAsync", "StartJobAsync" },
+        Assert.Equal(new[] { "CancelJobAsync", "CompleteDevelopmentCommandAsync", "ConnectDevelopmentAppAsync", "DiscoverAsync", "GetBackendIdAsync", "GetJobAsync", "GetToolchainsAsync", "InspectAsync", "ReadDevelopmentCommandAsync", "StartJobAsync" },
             methods.Select(method => method.Name).Order(StringComparer.Ordinal));
     }
 
@@ -160,28 +160,28 @@ public sealed class BuilderLocalBackendTests
     }
 
     [Fact]
-    public async Task WatchExcludesSameProjectButAllowsIndependentFiniteWork()
+    public async Task FiniteBuildExcludesSameProjectButAllowsIndependentWork()
     {
         using var fixture = new Fixture();
         var entered = NewSignal();
         var driver = new DelegateDriver(async (request, _, token) =>
         {
-            if (request.Operation == "watch") { entered.SetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            if (request.Operation == "build" && request.ProjectFolder == Path.Combine(fixture.Root, "first")) { entered.SetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); }
         });
         await using var jobs = new BuilderJobManager(driver, new() { MaximumConcurrentJobs = 2 });
         var project = fixture.WriteNode("first");
-        var watch = jobs.Start(Request("watch", project));
+        var build = jobs.Start(Request("build", project));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Throws<BuilderJobBusyException>(() => jobs.Start(Request("build", project)));
         var other = jobs.Start(Request("build", fixture.WriteNode("other")));
         Assert.Equal("succeeded", (await TerminalAsync(jobs, other)).State);
-        await jobs.CancelAsync(watch);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, watch)).State);
-        Assert.Equal("succeeded", (await TerminalAsync(jobs, jobs.Start(Request("build", project)))).State);
+        await jobs.CancelAsync(build);
+        Assert.Equal("cancelled", (await TerminalAsync(jobs, build)).State);
+        Assert.Equal("succeeded", (await TerminalAsync(jobs, jobs.Start(Request("archive", project)))).State);
     }
 
     [Fact]
-    public async Task HeartbeatsRenewWatchLeaseAndOrphansStop()
+    public async Task HeartbeatsRenewFiniteJobLeaseAndOrphansStop()
     {
         var entered = NewSignal(); var stopped = NewSignal();
         var driver = new DelegateDriver(async (_, _, token) =>
@@ -192,7 +192,7 @@ public sealed class BuilderLocalBackendTests
         });
         using var fixture = new Fixture();
         await using var jobs = new BuilderJobManager(driver, new() { OrphanTimeout = TimeSpan.FromMilliseconds(250), HeartbeatInterval = TimeSpan.FromMilliseconds(25) });
-        var id = jobs.Start(Request("watch", fixture.WriteNode("project")));
+        var id = jobs.Start(Request("build", fixture.WriteNode("project")));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         for (var index = 0; index < 8; index++) { Assert.Equal("running", jobs.GetJob(id).State); await Task.Delay(50); }
         await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5)); // no polling: the lease must expire
@@ -482,185 +482,13 @@ public sealed class BuilderLocalBackendTests
     }
 
     [Theory]
-    [InlineData(BuilderProjectKind.Dotnet, "valid")]
-    [InlineData(BuilderProjectKind.Node, "valid")]
-    [InlineData(BuilderProjectKind.Node, "missing")]
-    [InlineData(BuilderProjectKind.Node, "invalid")]
-    [InlineData(BuilderProjectKind.Node, "cold")]
-    public async Task WatchOwnsExactSdkLeaseUntilItsProcessStops(BuilderProjectKind kind, string outputState)
+    [InlineData(BuilderProjectKind.Dotnet)]
+    [InlineData(BuilderProjectKind.Node)]
+    public async Task FiniteBuildOwnsExactSdkLeaseUntilItsChildDrainsAndNeverStartsAWatcher(BuilderProjectKind kind)
     {
         using var fixture = new Fixture();
         var entry = kind == BuilderProjectKind.Dotnet ? fixture.WriteDotnet("project") : fixture.WriteNode("project");
         await using var jobs = fixture.Jobs();
-        string? output = null;
-        if (outputState != "cold")
-        {
-            var setup = await TerminalAsync(jobs, jobs.Start(Request("setup", entry, kind)));
-            Assert.Equal("succeeded", setup.State);
-            output = setup.DevelopmentFolder!;
-        }
-        if (outputState == "missing") Directory.Delete(output!, recursive: true);
-        if (outputState == "invalid")
-            await File.WriteAllTextAsync(Path.Combine(output!, "payload", "runtime", BuilderToolchainPlatform.Current.DotnetRid, "bin", "worker.cjs"), "broken");
-        if (kind == BuilderProjectKind.Node && outputState == "valid")
-            await File.AppendAllTextAsync(Path.Combine(Path.GetDirectoryName(entry)!, "src", "services.ts"), "\n// Changed after setup; npm watch owns the initial rebuild.\n");
-        var preparing = NewSignal(); var release = NewSignal();
-        var mustPrepare = kind == BuilderProjectKind.Node && outputState != "valid";
-        if (mustPrepare) fixture.Process.BeforeBuild = async token => { preparing.TrySetResult(); await release.Task.WaitAsync(token); };
-        var id = jobs.Start(Request("watch", entry, kind));
-        if (mustPrepare)
-        {
-            try
-            {
-                await preparing.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.Equal(1, fixture.Tools.Leases);
-                Assert.False(fixture.Process.WatchStarted.Task.IsCompleted);
-                Assert.Null(jobs.GetJob(id).DevelopmentFolder);
-                Assert.Equal(BuilderJobPhase.Building, jobs.GetJob(id).Phase);
-                Assert.Null(jobs.GetJob(id).LastSuccessfulBuildAtUtc);
-                Assert.DoesNotContain("Watching source changes.", jobs.GetJob(id).Message);
-            }
-            finally { release.TrySetResult(); }
-        }
-        if (kind == BuilderProjectKind.Node) await fixture.Process.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        else await WatchingAsync(jobs, id);
-        Assert.Equal(1, fixture.Tools.Leases);
-        var watch = fixture.Process.Requests.Last();
-        Assert.Equal(fixture.Tools.For(kind).ExecutablePath, watch.ExecutablePath);
-        if (kind == BuilderProjectKind.Node)
-        {
-            Assert.Null(watch.Timeout);
-            Assert.Equal(new[] { fixture.Tools.For(kind).NpmCliPath!, "run", "sunder:dev" }, watch.Arguments);
-            Assert.Single(fixture.Process.Requests, request => request.Arguments.Contains("sunder:dev"));
-            Assert.Equal(outputState is "missing" or "invalid" ? 2 : 1,
-                fixture.Process.Requests.Count(request => request.Arguments.Contains("sunder:dev:once")));
-            Assert.Equal("worker", await File.ReadAllTextAsync(Path.Combine(jobs.GetJob(id).DevelopmentFolder!, "payload", "runtime",
-                BuilderToolchainPlatform.Current.DotnetRid, "bin", "worker.cjs")));
-        }
-        else
-        {
-            // Unknown input closure must run MSBuild even for unchanged Watch startup.
-            // Subsequent membership changes use the filesystem subscription, not timer retries.
-            Assert.Equal(new[] { "restore", "msbuild", "msbuild" }, fixture.Process.Requests
-                .Where(request => !request.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal)))
-                .Select(request => request.Arguments[0]));
-            var sourceBytes = await File.ReadAllBytesAsync(entry);
-            Assert.Null(jobs.GetJob(id).LastSourceChangeAtUtc);
-            Assert.NotNull(jobs.GetJob(id).LastSuccessfulBuildAtUtc);
-            var added = Path.Combine(Path.GetDirectoryName(entry)!, "AddedDuringWatch.cs");
-            await File.WriteAllTextAsync(added, "internal class AddedDuringWatch { }");
-            await WatchingAsync(jobs, id, () => fixture.Process.Builds >= 3);
-            var observedChange = jobs.GetJob(id).LastSourceChangeAtUtc;
-            Assert.NotNull(observedChange);
-            Assert.True(jobs.GetJob(id).LastSuccessfulBuildAtUtc >= observedChange);
-            Assert.Equal(BuilderJobPhase.Watching, jobs.GetJob(id).Phase);
-            File.Move(added, Path.ChangeExtension(added, ".axaml"));
-            await WatchingAsync(jobs, id, () => fixture.Process.Builds >= 4);
-            File.Delete(Path.ChangeExtension(added, ".axaml"));
-            await WatchingAsync(jobs, id, () => fixture.Process.Builds >= 5);
-            Assert.Single(fixture.Process.Requests, request => request.Arguments[0] == "restore"); // Setup's explicit phase only.
-            Assert.All(fixture.Process.Requests, request =>
-            {
-                Assert.Equal("1", request.Environment["MSBUILDDISABLENODEREUSE"]);
-                Assert.Equal("0", request.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"]);
-                Assert.Equal("1", request.Environment["AVALONIA_TELEMETRY_OPTOUT"]);
-            });
-            Assert.All(fixture.Process.Requests.Where(request => request.Arguments[0] == "msbuild"), request =>
-            {
-                Assert.Contains("--disable-build-servers", request.Arguments);
-                Assert.Contains("-p:UseSharedCompilation=false", request.Arguments);
-            });
-            var builds = fixture.Process.Requests.Where(request => request.Arguments[0] == "msbuild"
-                && !request.Arguments.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal))).ToArray();
-            Assert.DoesNotContain("-restore", builds[0].Arguments); // Setup restored with matching properties.
-            Assert.DoesNotContain("-restore", builds[1].Arguments); // Watch preflight restored with the same properties.
-            Assert.All(builds.Skip(2), request => Assert.Contains("-restore", request.Arguments));
-            Assert.Contains(fixture.Process.Requests, request => request.Arguments.Contains("-t:_ValidateSunderDevelopmentWatch") && request.Arguments.Contains("-restore"));
-            Assert.Equal(sourceBytes, await File.ReadAllBytesAsync(entry));
-        }
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
-        if (kind == BuilderProjectKind.Node) Assert.True(fixture.Process.WatchStopped.Task.IsCompleted);
-        Assert.Equal(0, fixture.Tools.Leases);
-    }
-
-    [Fact]
-    public async Task NodeWatchProgressIsChunkSafeAndPresentationOnlyWhileMalformedDiagnosticsRemainOutput()
-    {
-        using var fixture = new Fixture();
-        var entry = fixture.WriteNode("watch-progress");
-        await using var jobs = fixture.Jobs();
-        Assert.Equal("succeeded", (await TerminalAsync(jobs, jobs.Start(Request("setup", entry)))).State);
-        var building = NewSignal(); var fail = NewSignal(); var failed = NewSignal(); var recover = NewSignal(); var ready = NewSignal();
-        fixture.Process.WatchOperation = async (progress, token) =>
-        {
-            progress!.Report("sunder.package.watch:{not json}\nsunder.package.watch:{\"schemaVersion\":\"bad\",\"state\":\"ready\"}\n");
-            progress.Report("sunder.package.watch:{\"schemaVersion\":1,\"state\":\"source-");
-            progress.Report("changed\"}\nsunder.package.watch:{\"schemaVersion\":1,\"state\":\"building\"}\n");
-            building.TrySetResult();
-            await fail.Task.WaitAsync(token);
-            progress.Report("sunder.package.watch:{\"schemaVersion\":1,\"state\":\"failed\"}\n");
-            failed.TrySetResult();
-            await recover.Task.WaitAsync(token);
-            progress.Report("sunder.package.watch:{\"schemaVersion\":1,\"state\":\"ready\"}\n");
-            ready.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, token);
-        };
-        var id = jobs.Start(Request("watch", entry));
-        await building.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(BuilderJobPhase.Building, jobs.GetJob(id).Phase);
-        Assert.NotNull(jobs.GetJob(id).LastSourceChangeAtUtc);
-        Assert.Null(jobs.GetJob(id).LastSuccessfulBuildAtUtc);
-        Assert.Contains("not json", jobs.GetJob(id).Output);
-        Assert.Equal("1", fixture.Process.Requests.Last().Environment["SUNDER_BUILDER_WATCH_PROGRESS"]);
-        fail.TrySetResult();
-        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(BuilderJobPhase.BuildFailed, jobs.GetJob(id).Phase);
-        Assert.Equal("running", jobs.GetJob(id).State);
-        recover.TrySetResult();
-        await ready.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal(BuilderJobPhase.Watching, jobs.GetJob(id).Phase);
-        Assert.NotNull(jobs.GetJob(id).LastSuccessfulBuildAtUtc);
-        Assert.Equal("running", jobs.GetJob(id).State); // No invented job outcome or cleanup acknowledgement.
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
-    }
-
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DotnetWatchFailureRetainsLastGoodOutputAndCancellationDrainsActiveCompilerBeforeLeaseRelease(bool failInitially)
-    {
-        using var fixture = new Fixture();
-        var entry = fixture.WriteDotnet("project");
-        var failed = NewSignal();
-        await using var jobs = fixture.Jobs(update => { if (update.Phase == BuilderJobPhase.BuildFailed) failed.TrySetResult(); });
-        var setup = await TerminalAsync(jobs, jobs.Start(Request("setup", entry, BuilderProjectKind.Dotnet)));
-        Assert.Equal("succeeded", setup.State);
-        fixture.Process.FailBuild = failInitially;
-        var watch = jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet));
-        if (!failInitially) await WatchingAsync(jobs, watch);
-        var output = setup.DevelopmentFolder!;
-        var before = await File.ReadAllBytesAsync(Path.Combine(output, "manifest", "content-index.json"));
-        var lastGood = jobs.GetJob(watch).LastSuccessfulBuildAtUtc;
-        fixture.Process.FailBuild = true;
-        var source = Path.Combine(Path.GetDirectoryName(entry)!, "Changed.cs");
-        if (!failInitially) await File.WriteAllTextAsync(source, "invalid source");
-        await failed.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.Equal("running", jobs.GetJob(watch).State);
-        Assert.Equal(BuilderJobPhase.BuildFailed, jobs.GetJob(watch).Phase);
-        Assert.Equal(before, await File.ReadAllBytesAsync(Path.Combine(output, "manifest", "content-index.json")));
-        Assert.Equal(lastGood, jobs.GetJob(watch).LastSuccessfulBuildAtUtc);
-        Assert.Equal(1, fixture.Tools.Leases);
-        var failedBuilds = fixture.Process.Builds;
-        await Task.Delay(500);
-        Assert.Equal(failedBuilds, fixture.Process.Builds); // No timed retry of the same invalid input.
-
-        fixture.Process.FailBuild = false;
-        await File.WriteAllTextAsync(source, "internal class Changed { }");
-        await WatchingAsync(jobs, watch, () => fixture.Process.Builds > failedBuilds);
-        Assert.Equal(2, fixture.Tools.Selections); // Setup and the original Watch; no replayed Start.
-        Assert.Single(fixture.Process.Requests, request => request.Arguments[0] == "restore");
         var entered = NewSignal(); var cancelled = NewSignal(); var release = NewSignal();
         fixture.Process.BeforeBuild = async token =>
         {
@@ -668,147 +496,114 @@ public sealed class BuilderLocalBackendTests
             try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
             finally { cancelled.TrySetResult(); await release.Task; }
         };
-        await File.WriteAllTextAsync(source, "internal class ChangedAgain { }");
+        var id = jobs.Start(Request("build", entry, kind));
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        await jobs.CancelAsync(watch);
+        await jobs.CancelAsync(id);
         try
         {
             await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.Equal("running", jobs.GetJob(watch).State);
             Assert.Equal(1, fixture.Tools.Leases);
+            Assert.Equal("running", jobs.GetJob(id).State);
+            Assert.Null(jobs.GetJob(id).LastSuccessfulBuildAtUtc);
+            Assert.Throws<BuilderJobBusyException>(() => jobs.Start(Request("build", entry, kind)));
         }
         finally { release.TrySetResult(); }
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, watch)).State);
+        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
         Assert.Equal(0, fixture.Tools.Leases);
-        // A replacement at the same SDK path/version is selected for the next real build.
-        fixture.Process.BeforeBuild = null;
-        fixture.Tools.InstalledAtUtc = DateTimeOffset.UtcNow;
-        var buildsBeforeRepair = fixture.Process.Builds;
-        watch = jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet));
-        await WatchingAsync(jobs, watch);
-        Assert.Equal(buildsBeforeRepair + 1, fixture.Process.Builds);
-        Assert.Contains(fixture.Process.Requests, request => request.Arguments.Contains("-t:_ValidateSunderDevelopmentWatch") && request.Arguments.Contains("-restore"));
-        Assert.Equal(fixture.Tools.InstalledAtUtc, jobs.GetJob(watch).Installation!.InstalledAtUtc);
-        await jobs.CancelAsync(watch);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, watch)).State);
-        Assert.Equal(0, fixture.Tools.Leases);
+        var command = Assert.Single(fixture.Process.Requests);
+        Assert.Equal(fixture.Tools.For(kind).ExecutablePath, command.ExecutablePath);
+        Assert.NotNull(command.Timeout);
+        Assert.DoesNotContain("sunder:dev", command.Arguments);
+        Assert.DoesNotContain("watch", command.Arguments);
+        if (kind == BuilderProjectKind.Dotnet)
+        {
+            Assert.Contains("-restore", command.Arguments);
+            Assert.Contains("--disable-build-servers", command.Arguments);
+            Assert.Contains("-p:UseSharedCompilation=false", command.Arguments);
+            Assert.Equal("1", command.Environment["MSBUILDDISABLENODEREUSE"]);
+            Assert.Equal("0", command.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"]);
+            Assert.Equal("1", command.Environment["AVALONIA_TELEMETRY_OPTOUT"]);
+        }
+    }
+
+    [Fact]
+    public async Task RemovedWatchRequestsAreRejectedBeforeToolchainOrProcessAccess()
+    {
+        using var fixture = new Fixture();
+        await using var jobs = fixture.Jobs();
+        Assert.Throws<ArgumentException>(() => jobs.Start(Request("watch", fixture.WriteNode("project"))));
+        Assert.Empty(fixture.Process.Requests);
+        Assert.Equal(0, fixture.Tools.Selections);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task DotnetWatchRejectsDifferentOrOversizedOutputInsteadOfReportingItsCandidateReady(bool oversized)
+    [InlineData(BuilderProjectKind.Dotnet)]
+    [InlineData(BuilderProjectKind.Node)]
+    public async Task FailedFiniteBuildRetainsLastGoodOutputAndRequiresExplicitRetry(BuilderProjectKind kind)
     {
         using var fixture = new Fixture();
-        var entry = fixture.WriteDotnet("project");
-        fixture.Process.ReplacePublishedOutput = true;
-        fixture.Process.OversizedPublishedIndex = oversized;
-        var ready = 0;
-        await using var jobs = fixture.Jobs(update => { if (update.Phase == BuilderJobPhase.BuildReady) ready++; });
-        var result = await TerminalAsync(jobs, jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet)));
-        Assert.Equal("failed", result.State);
-        Assert.Contains(oversized ? "content index exceeds its size bound" : "content identity differs", result.Error);
-        Assert.Equal(0, ready);
-        Assert.Null(result.LastSuccessfulBuildAtUtc);
+        var entry = kind == BuilderProjectKind.Dotnet ? fixture.WriteDotnet("project") : fixture.WriteNode("project");
+        await using var jobs = fixture.Jobs();
+        var setup = await TerminalAsync(jobs, jobs.Start(Request("setup", entry, kind)));
+        Assert.Equal("succeeded", setup.State);
+        var output = setup.DevelopmentFolder!;
+        var before = await File.ReadAllBytesAsync(Path.Combine(output, "manifest", "content-index.json"));
+        fixture.Process.FailBuild = true;
+        var failed = await TerminalAsync(jobs, jobs.Start(Request("build", entry, kind)));
+        Assert.Equal("failed", failed.State);
+        Assert.Equal(before, await File.ReadAllBytesAsync(Path.Combine(output, "manifest", "content-index.json")));
+        Assert.Null(failed.LastSuccessfulBuildAtUtc);
+        Assert.Equal(0, fixture.Tools.Leases);
+        var failedBuilds = fixture.Process.Builds;
+        fixture.Process.FailBuild = false;
+        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(entry)!, "Fixed.cs"), "internal class Fixed { }");
+        await Task.Delay(350);
+        Assert.Equal(failedBuilds, fixture.Process.Builds); // Neither elapsed time nor a save restarts work.
+        fixture.Tools.InstalledAtUtc = DateTimeOffset.UtcNow;
+        var retried = await TerminalAsync(jobs, jobs.Start(Request("build", entry, kind)));
+        Assert.Equal("succeeded", retried.State);
+        Assert.Equal(failedBuilds + 1, fixture.Process.Builds);
+        Assert.Equal(fixture.Tools.InstalledAtUtc, retried.Installation!.InstalledAtUtc);
         Assert.Equal(0, fixture.Tools.Leases);
     }
 
     [Fact]
-    public async Task DotnetWatchSupersedesActiveCompilerAndCoalescesLatestEditOnlyAfterExactChildDrain()
+    public async Task FiniteBuildDoesNotSpawnSuccessorsWhenSourceChangesDuringCompilation()
     {
         using var fixture = new Fixture();
         var entry = fixture.WriteDotnet("project");
-        var ready = 0;
-        await using var jobs = fixture.Jobs(update => { if (update.Phase == BuilderJobPhase.BuildReady) Interlocked.Increment(ref ready); });
-        var watch = jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet));
-        await WatchingAsync(jobs, watch);
-        var snapshot = jobs.GetJob(watch);
-        var index = Path.Combine(snapshot.DevelopmentFolder!, "manifest", "content-index.json");
-        var before = await File.ReadAllBytesAsync(index);
-        var entered = NewSignal(); var cancelled = NewSignal(); var drain = NewSignal();
-        var builds = fixture.Process.Builds;
-        var readyBefore = ready;
+        await using var jobs = fixture.Jobs();
+        var entered = NewSignal(); var drain = NewSignal();
         fixture.Process.BeforeBuild = async token =>
         {
-            if (fixture.Process.Builds != builds + 1) return;
             entered.TrySetResult();
-            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
-            finally { cancelled.TrySetResult(); await drain.Task; }
+            await drain.Task.WaitAsync(token);
         };
+        var build = jobs.Start(Request("build", entry, BuilderProjectKind.Dotnet));
         var source = Path.Combine(Path.GetDirectoryName(entry)!, "Changed.cs");
-        await File.WriteAllTextAsync(source, "internal class Obsolete { }");
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
         {
-            await File.WriteAllTextAsync(source, "internal class Newer { }");
-            await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
             for (var i = 0; i < 4; i++)
             {
                 await File.WriteAllTextAsync(source, $"internal class Latest{i} {{ }}");
                 await Task.Delay(80);
             }
-            Assert.Equal(builds + 1, fixture.Process.Builds);
-            Assert.Equal(readyBefore, ready);
-            Assert.Equal(snapshot.LastSuccessfulBuildAtUtc, jobs.GetJob(watch).LastSuccessfulBuildAtUtc);
-            Assert.Equal(before, await File.ReadAllBytesAsync(index));
+            Assert.Equal(1, fixture.Process.Builds);
+            Assert.Equal("running", jobs.GetJob(build).State);
             Assert.Equal(1, fixture.Tools.Leases);
-            fixture.Process.WorkerContents = "latest revision";
         }
         finally { drain.TrySetResult(); }
-        await WatchingAsync(jobs, watch, () => fixture.Process.Builds == builds + 2);
-        Assert.Equal(readyBefore + 1, ready);
-        Assert.NotEqual(before, await File.ReadAllBytesAsync(index));
-        await Task.Delay(500);
-        Assert.Equal(builds + 2, fixture.Process.Builds);
-        await jobs.CancelAsync(watch);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, watch)).State);
+        Assert.Equal("succeeded", (await TerminalAsync(jobs, build)).State);
+        await File.WriteAllTextAsync(source, "internal class AfterBuild { }");
+        await Task.Delay(350);
+        Assert.Equal(1, fixture.Process.Builds);
         Assert.Equal(0, fixture.Tools.Leases);
-    }
-
-    [Fact]
-    public async Task SourceMonitorDebounceWaitsForTheLastSaveRatherThanTheFirst()
-    {
-        using var fixture = new Fixture();
-        var folder = fixture.PathOf("project"); Directory.CreateDirectory(folder);
-        using var changes = new BuilderSourceChangeMonitor(folder);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var revision = changes.Revision;
-        var debounced = changes.WaitForChangeAsync(revision, deadline.Token);
-        for (var i = 0; i < 5; i++)
-        {
-            var previous = changes.Revision;
-            await File.WriteAllTextAsync(Path.Combine(folder, "source.cs"), $"internal class Save{i} {{ }}");
-            await changes.WaitForRevisionAsync(previous, deadline.Token);
-            Assert.False(debounced.IsCompleted);
-            await Task.Delay(90, deadline.Token);
-        }
-        Assert.False(debounced.IsCompleted); // The original fixed 250-ms delay fails here.
-        await debounced;
-        Assert.False(changes.ReportIfCurrent(revision, () => Assert.Fail("An old revision cannot report BuildReady.")));
-    }
-
-    [Fact]
-    public async Task SourceMonitorFaultInvalidatesPublicationAndCannotBeClearedByAnotherEdit()
-    {
-        using var fixture = new Fixture();
-        var folder = fixture.PathOf("project"); Directory.CreateDirectory(folder);
-        var revisionFile = fixture.PathOf("revision");
-        using var changes = new BuilderSourceChangeMonitor(folder, publicationRevisionFile: revisionFile);
-        var revision = changes.Revision;
-        var waiting = changes.WaitForRevisionAsync(revision, CancellationToken.None);
-        var watcher = (FileSystemWatcher)typeof(BuilderSourceChangeMonitor).GetField("_watcher", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(changes)!;
-        typeof(FileSystemWatcher).GetMethod("OnError", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .Invoke(watcher, [new ErrorEventArgs(new InternalBufferOverflowException("injected watcher overflow"))]);
-        Assert.IsType<InternalBufferOverflowException>((await Assert.ThrowsAsync<IOException>(() => waiting)).InnerException);
-        Assert.Equal("-1\n", await File.ReadAllTextAsync(revisionFile));
-        await File.WriteAllTextAsync(Path.Combine(folder, "fixed.cs"), "internal class Fixed { }");
-        await Assert.ThrowsAsync<IOException>(() => changes.WaitForChangeAsync(revision, CancellationToken.None));
-        Assert.Throws<IOException>(() => changes.ReportIfCurrent(changes.Revision, () => Assert.Fail("Watcher uncertainty cannot publish status.")));
     }
 
     [Theory]
     [InlineData("build", false)]
-    [InlineData("watch", true)]
+    [InlineData("build", true)]
     public async Task UnchangedSourcesCannotSkipAnOutsideGatedProjectOrNuGetTarget(string operation, bool packageTarget)
     {
         using var fixture = new Fixture();
@@ -820,7 +615,6 @@ public sealed class BuilderLocalBackendTests
             var path = fixture.PathOf("cache/nuget-packages/sunder.package.build/1.1.0/build/Sunder.Package.Build.targets");
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             await File.WriteAllTextAsync(path, "<Project>" + target + "</Project>");
-            fixture.TrackingPlan(entry, dependencyInputs: [path]);
         }
         else await File.WriteAllTextAsync(entry, (await File.ReadAllTextAsync(entry)).Replace("</Project>", target + "</Project>", StringComparison.Ordinal));
         await using var jobs = fixture.Jobs();
@@ -919,182 +713,17 @@ public sealed class BuilderLocalBackendTests
         await File.WriteAllTextAsync(Path.Combine(setup.DevelopmentFolder!, "manifest", metadata), "{");
         var entered = NewSignal(); var release = NewSignal();
         fixture.Process.BeforeBuild = async token => { entered.TrySetResult(); await release.Task.WaitAsync(token); };
-        var id = jobs.Start(Request("watch", entry, kind));
+        var id = jobs.Start(Request("build", entry, kind));
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Null(jobs.GetJob(id).DevelopmentFolder);
-            Assert.False(fixture.Process.WatchStarted.Task.IsCompleted);
         }
         finally { release.TrySetResult(); }
-        await WatchingAsync(jobs, id);
+        Assert.Equal("succeeded", (await TerminalAsync(jobs, id)).State);
         Assert.Equal(2, fixture.Process.Builds);
         await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(jobs.GetJob(id).DevelopmentFolder!, setup.Project!,
             BuilderToolchainPlatform.Current.DotnetRid, requireApp: false, CancellationToken.None);
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
-        Assert.Equal(0, fixture.Tools.Leases);
-    }
-
-    [Fact]
-    public async Task InputGraphWatchesExternalMembershipAndExplicitObjSourcesWithoutReadingReferenceBytes()
-    {
-        using var fixture = new Fixture();
-        var entry = fixture.WriteDotnet("project");
-        var projectRoot = Path.GetDirectoryName(entry)!;
-        var inputs = fixture.PathOf("inputs"); Directory.CreateDirectory(inputs);
-        var props = Path.Combine(inputs, "Inputs.props");
-        await File.WriteAllTextAsync(props, """
-            <Project><ItemGroup>
-              <Compile Include="../inputs/sources/**/*.cs" />
-              <Compile Include="obj/Authored.g.cs" />
-              <AvaloniaResource Include="../inputs/resources/**/*" />
-            </ItemGroup></Project>
-            """);
-        await File.WriteAllTextAsync(entry, (await File.ReadAllTextAsync(entry)).Replace("</Project>", "<Import Project=\"../inputs/Inputs.props\" /></Project>", StringComparison.Ordinal));
-        var reference = Path.Combine(inputs, "External.dll"); await File.WriteAllTextAsync(reference, "original DLL bytes");
-        var contract = Path.Combine(inputs, "external-contract.json"); await File.WriteAllTextAsync(contract, "{}");
-        var authored = Path.Combine(projectRoot, "obj", "Authored.g.cs"); Directory.CreateDirectory(Path.GetDirectoryName(authored)!);
-        await File.WriteAllTextAsync(authored, "internal class Original { }");
-        var globalUsings = Path.Combine(projectRoot, "obj", "Debug", "net10.0", "sunder-analysis", BuilderToolchainPlatform.Current.DotnetRid,
-            Path.GetFileNameWithoutExtension(entry) + ".GlobalUsings.g.cs");
-        fixture.TrackingPlan(entry, ["obj/Authored.g.cs", globalUsings], [contract, props], [reference]);
-        BuilderDotnetBuildInputs snapshot;
-        // A notification graph must not open or hash the PE payload, even when it is locked.
-        using (var lockedReference = new FileStream(reference, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-            snapshot = await fixture.InputsAsync(entry);
-        using var changes = new BuilderSourceChangeMonitor(projectRoot, [inputs]);
-        changes.ObserveInputs(snapshot.Roots, snapshot.Files);
-        await Change(reference, "replaced DLL bytes");
-        await Change(contract, "{\"contractVersion\":2}");
-        await Change(authored, "internal class AuthoredChange { }");
-        // Both glob roots are absent at subscription time. A later sibling directory must
-        // also be observed, not just the directory of the first evaluated member.
-        await Change(Path.Combine(inputs, "sources", "first", "First.cs"), "internal class First { }");
-        await Change(Path.Combine(inputs, "sources", "sibling", "Second.cs"), "internal class Second { }");
-        var resource = Path.Combine(inputs, "resources", "nested", "icon.txt");
-        await Change(resource, "new resource");
-        await Change(resource, "changed resource");
-        await Change(fixture.PathOf(".editorconfig"), "root=true\n[*.cs]\ndotnet_diagnostic.CS0168.severity=error\n");
-        await Change(props, (await File.ReadAllTextAsync(props)) + "\n<!-- changed imported bytes -->\n");
-        var revision = changes.Revision;
-        File.Delete(resource);
-        await Observe(revision);
-
-        // Real restore/compiler products must not trigger a watch rebuild loop. The explicit
-        // authored .g.cs above remains observable despite sharing the obj directory.
-        revision = changes.Revision;
-        Directory.CreateDirectory(Path.GetDirectoryName(globalUsings)!);
-        await File.WriteAllTextAsync(globalUsings, "global using System;\n");
-        await File.WriteAllTextAsync(Path.Combine(projectRoot, "obj", "project.assets.json"), "{}");
-        // A shared reference-tree subscription observes tracked paths, not unrelated tool
-        // cache writes elsewhere in that tree.
-        var unrelated = Path.Combine(inputs, "unrelated-tool-cache", "trace.log");
-        Directory.CreateDirectory(Path.GetDirectoryName(unrelated)!);
-        await File.WriteAllTextAsync(unrelated, "unrelated tooling activity");
-        await Task.Delay(500);
-        Assert.Equal(revision, changes.Revision);
-
-        async Task Change(string path, string text)
-        {
-            var before = changes.Revision;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            await File.WriteAllTextAsync(path, text);
-            await Observe(before);
-        }
-        async Task Observe(long revision)
-        {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            await changes.WaitForChangeAsync(revision, deadline.Token);
-            snapshot = await fixture.InputsAsync(entry);
-            changes.ObserveInputs(snapshot.Roots, snapshot.Files);
-        }
-    }
-
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task WatchRebuildsOnlyForPreviouslyUnobservedInputs(bool external)
-    {
-        using var fixture = new Fixture();
-        var entry = fixture.WriteDotnet("project");
-        var reference = fixture.PathOf(external ? "late-reference.dll" : "project/late-reference.dll");
-        await File.WriteAllTextAsync(reference, "first reference bytes");
-        await using var jobs = fixture.Jobs();
-        Assert.Equal("succeeded", (await TerminalAsync(jobs, jobs.Start(Request("setup", entry, BuilderProjectKind.Dotnet)))).State);
-        var entered = NewSignal(); var release = NewSignal();
-        fixture.Process.BeforeBuild = async token =>
-        {
-            if (fixture.Process.Builds == 2)
-            {
-                // Simulate evaluation revealing an external input, followed by a save before
-                // Builder can install its first subscription to that input.
-                fixture.TrackingPlan(entry, references: [reference]);
-                if (external) await File.WriteAllTextAsync(reference, "saved during first compilation", token);
-            }
-            else { entered.TrySetResult(); await release.Task.WaitAsync(token); }
-        };
-        var id = jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet));
-        try
-        {
-            if (external)
-            {
-                await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                Assert.Equal(3, fixture.Process.Builds);
-                Assert.DoesNotContain("Watching source changes.", jobs.GetJob(id).Message);
-            }
-            else
-            {
-                await WatchingAsync(jobs, id);
-                Assert.Equal(2, fixture.Process.Builds);
-                Assert.False(entered.Task.IsCompleted);
-            }
-        }
-        finally { release.TrySetResult(); }
-        await WatchingAsync(jobs, id);
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
-        Assert.Equal(0, fixture.Tools.Leases);
-    }
-
-    [Fact]
-    public async Task WatchDoesNotAdvertiseIdleBetweenACompletedBuildAndItsAlreadyPendingSourceEdit()
-    {
-        using var fixture = new Fixture();
-        var entry = fixture.WriteDotnet("project");
-        var source = Path.Combine(Path.GetDirectoryName(entry)!, "Changed.cs");
-        await File.WriteAllTextAsync(source, "internal class Original { }");
-        var updates = new ConcurrentQueue<BuilderJobUpdate>();
-        await using var jobs = fixture.Jobs(updates.Enqueue);
-        Assert.Equal("succeeded", (await TerminalAsync(jobs, jobs.Start(Request("setup", entry, BuilderProjectKind.Dotnet)))).State);
-        var id = jobs.Start(Request("watch", entry, BuilderProjectKind.Dotnet));
-        await WatchingAsync(jobs, id);
-        var first = NewSignal(); var releaseFirst = NewSignal();
-        var second = NewSignal(); var releaseSecond = NewSignal();
-        var buildsBeforeEdit = fixture.Process.Builds;
-        fixture.Process.BeforeBuild = async token =>
-        {
-            var count = fixture.Process.Builds - buildsBeforeEdit;
-            if (count == 1) { first.TrySetResult(); await releaseFirst.Task.WaitAsync(token); }
-            if (count == 2) { second.TrySetResult(); await releaseSecond.Task.WaitAsync(token); }
-        };
-        try
-        {
-            await File.WriteAllTextAsync(source, "internal class FirstEdit { }");
-            await first.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            updates.Clear();
-            await File.WriteAllTextAsync(source, "internal class SavedDuringCompilation { }");
-            // Deliver the real filesystem event while the finite compiler is gated.
-            // Entry into the second build below independently proves it was queued.
-            await Task.Delay(500);
-            releaseFirst.TrySetResult();
-            await second.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            Assert.DoesNotContain(updates, update => update.Message?.StartsWith("Watching source changes.", StringComparison.Ordinal) == true);
-        }
-        finally { releaseFirst.TrySetResult(); releaseSecond.TrySetResult(); }
-        await WatchingAsync(jobs, id, () => fixture.Process.Builds >= buildsBeforeEdit + 2);
-        await jobs.CancelAsync(id);
-        Assert.Equal("cancelled", (await TerminalAsync(jobs, id)).State);
         Assert.Equal(0, fixture.Tools.Leases);
     }
 
@@ -1188,7 +817,7 @@ public sealed class BuilderLocalBackendTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task SeparateActivationCannotBuildWhileAWatchOwnsProjectMutationLock(bool differentFeedCache)
+    public async Task SeparateActivationCannotBuildUntilTheExactFiniteProcessReleasesProjectLock(bool differentFeedCache)
     {
         using var fixture = new Fixture();
         var entry = fixture.WriteNode("project");
@@ -1196,11 +825,14 @@ public sealed class BuilderLocalBackendTests
         await using var first = new BuilderJobManager(new BuilderProjectDriver(fixture.Tools, fixture.Process, options));
         await using var second = new BuilderJobManager(new BuilderProjectDriver(fixture.Tools, fixture.Process,
             differentFeedCache ? options with { CacheRootPath = fixture.PathOf("another-retained-feed/tools") } : options));
-        var id = first.Start(Request("watch", entry));
-        await fixture.Process.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var entered = NewSignal();
+        fixture.Process.BeforeBuild = async token => { entered.TrySetResult(); await Task.Delay(Timeout.InfiniteTimeSpan, token); };
+        var id = first.Start(Request("build", entry));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         var blocked = await TerminalAsync(second, second.Start(Request("build", entry)));
         Assert.Equal("failed", blocked.State); Assert.Contains("Another Builder activation", blocked.Error);
         await first.CancelAsync(id); await TerminalAsync(first, id);
+        fixture.Process.BeforeBuild = null;
         Assert.Equal("succeeded", (await TerminalAsync(second, second.Start(Request("build", entry)))).State);
     }
 
@@ -1248,17 +880,6 @@ public sealed class BuilderLocalBackendTests
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private static async Task WatchingAsync(BuilderJobManager jobs, string id, Func<bool>? condition = null)
-    {
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (true)
-        {
-            var snapshot = jobs.GetJob(id);
-            Assert.True(snapshot.State == "running", snapshot.Error);
-            if (snapshot.Message.StartsWith("Watching source changes.", StringComparison.Ordinal) && (condition?.Invoke() ?? true)) return;
-            await Task.Delay(20, deadline.Token);
-        }
-    }
     private static BuilderJobRequest Request(string operation, string? entry = null, BuilderProjectKind kind = BuilderProjectKind.Node)
         => new() { Id = Guid.NewGuid().ToString("N"), Operation = operation, Kind = kind, EntryPoint = entry };
     private static async Task<BuilderJobSnapshot> TerminalAsync(BuilderJobManager jobs, string id)
@@ -1347,25 +968,6 @@ public sealed class BuilderLocalBackendTests
         }
         internal string WriteDotnet(string folder, string filename = "Chosen.csproj", string id = "sample.hello", string name = "Hello package")
             => Dotnet(PathOf(folder), filename, id, name);
-        internal async Task<BuilderDotnetBuildInputs> InputsAsync(string entry)
-        {
-            var project = await new BuilderProjectDiscovery().InspectAsync(entry);
-            var installation = Tools.For(BuilderProjectKind.Dotnet);
-            return await BuilderDotnetBuildInputs.DiscoverAsync(project, [PathOf("cache"), installation.RootPath], null, CancellationToken.None);
-        }
-        internal void TrackingPlan(string entry, string[]? sources = null, string[]? dependencyInputs = null, string[]? references = null)
-        {
-            // A notification-input fixture, not complete build/up-to-date authority.
-            var path = Path.Combine(Path.GetDirectoryName(entry)!, "obj", "Debug", "net10.0", "sunder-analysis",
-                BuilderToolchainPlatform.Current.DotnetRid, "sunder-rpc", "package-role-plan.v1.json");
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.WriteAllText(path, JsonSerializer.Serialize(new
-            {
-                sourceFiles = (sources ?? []).Select(path => new { path }),
-                workerDependencies = new { inputs = (dependencyInputs ?? []).Select(path => new { path }) },
-                workerReferences = (references ?? []).Select(path => new { path }),
-            }));
-        }
         internal static string Dotnet(string folder, string filename, string id, string name)
         {
             Directory.CreateDirectory(folder);
@@ -1401,11 +1003,8 @@ public sealed class BuilderLocalBackendTests
         internal bool FailBuild;
         internal int Builds;
         internal Func<CancellationToken, Task>? BeforeBuild;
-        internal Func<IProgress<string>?, CancellationToken, Task>? WatchOperation;
         internal Func<IProgress<string>?, CancellationToken, Task<BuilderLocalProcessResult?>>? BuildOperation;
         internal string WorkerContents = "worker";
-        internal bool ReplacePublishedOutput;
-        internal bool OversizedPublishedIndex;
         internal bool FailReview;
         internal bool FailTemplateInstall;
         internal const string TemplateFailure = "Unhandled exception. System.ArgumentException: The length of the name exceeds the maximum limit.\n   at Microsoft.TemplateEngine.Edge.Settings.AsyncMutex.WaitLoop(Object state)\n";
@@ -1413,8 +1012,6 @@ public sealed class BuilderLocalBackendTests
         internal string PayloadLayer = "target";
         internal int Scaffolds;
         internal Action? AfterScaffold;
-        internal TaskCompletionSource WatchStarted { get; } = NewSignal();
-        internal TaskCompletionSource WatchStopped { get; } = NewSignal();
 
         public async Task<BuilderLocalProcessResult> RunAsync(BuilderLocalProcessRequest request, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
@@ -1457,13 +1054,7 @@ public sealed class BuilderLocalBackendTests
             }
             else if (args[0] == "watch" || npm && args.SequenceEqual(["run", "sunder:dev"]))
             {
-                WatchStarted.SetResult();
-                try
-                {
-                    if (WatchOperation is { } operation) await operation(progress, cancellationToken);
-                    else await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-                }
-                finally { WatchStopped.SetResult(); }
+                Assert.Fail("Package Maker must not start an automatic source watcher.");
             }
             else if (args[0] == "msbuild" && !args.Any(argument => argument.StartsWith("-t:", StringComparison.Ordinal))
                 || npm && args.SequenceEqual(["run", "sunder:dev:once"]))
@@ -1474,37 +1065,11 @@ public sealed class BuilderLocalBackendTests
                 if (BeforeBuild is { } before) await before(cancellationToken);
                 if (BuildOperation is { } operation && await operation(progress, cancellationToken) is { } result) return result;
                 if (FailBuild) return new(1, "", "source compilation failed");
-                var staging = args.SingleOrDefault(argument => argument.StartsWith("-p:SunderPackageDevelopmentStagingRoot=", StringComparison.Ordinal));
                 var output = npm ? Path.Combine(request.WorkingDirectory, "dist", "sunder-dev") : Path.Combine(
-                    staging is null ? Property(args, "SunderPackageComposedOutputRoot") : Property(args, "SunderPackageDevelopmentStagingRoot"), "sunder-dev");
+                    Property(args, "SunderPackageComposedOutputRoot"), "sunder-dev");
                 var entry = npm ? Path.Combine(request.WorkingDirectory, "sunder.package.json") : args[1];
                 var project = await new BuilderProjectDiscovery().InspectAsync(entry, cancellationToken);
                 await WriteOutputAsync(output, project.PackageId, InvalidRid, PayloadLayer, WorkerContents);
-            }
-            else if (args.Contains("-t:_ValidateSunderDevelopmentWatch")) { }
-            else if (args.Contains("-t:_PublishSunderDevelopmentWatch"))
-            {
-                using var revision = new FileStream(Property(args, "SunderPackageDevelopmentRevisionFile"), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-                using var reader = new StreamReader(revision, leaveOpen: true);
-                if (await reader.ReadToEndAsync(cancellationToken) != Property(args, "SunderPackageDevelopmentRevision") + "\n") return new(1, "", "superseded");
-                var candidate = Path.Combine(Property(args, "SunderPackageDevelopmentStagingRoot"), "sunder-dev");
-                var output = Path.Combine(Property(args, "SunderPackageComposedOutputRoot"), "sunder-dev");
-                foreach (var file in Directory.EnumerateFiles(candidate, "*", SearchOption.AllDirectories))
-                {
-                    var destination = Path.Combine(output, Path.GetRelativePath(candidate, file));
-                    Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
-                    File.Copy(file, destination, overwrite: true);
-                }
-                if (ReplacePublishedOutput)
-                {
-                    var project = await new BuilderProjectDiscovery().InspectAsync(args[1], cancellationToken);
-                    await WriteOutputAsync(output, project.PackageId, false, PayloadLayer, "different but valid output");
-                    if (OversizedPublishedIndex)
-                    {
-                        using var index = new FileStream(Path.Combine(output, "manifest", "content-index.json"), FileMode.Open, FileAccess.Write);
-                        index.SetLength(1024 * 1024 + 1);
-                    }
-                }
             }
             else if (args[0] == "msbuild" || npm && args.SequenceEqual(["run", "package"]))
             {

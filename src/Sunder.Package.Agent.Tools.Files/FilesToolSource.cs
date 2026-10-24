@@ -218,8 +218,10 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
                                 {
                                     var search = await FileSearchHandler.ExecuteGlobAsync(target, targetContext, request, invocationToken);
                                     result = search.Result;
+                                    var directories = FileToolArguments.TryParseGlob(request.ArgumentsJson, out var glob, out _)
+                                        && Sunder.Agent.Execution.Common.FileSearchRequestValidation.IsDirectoryGlob(glob.Pattern);
                                     accessProbes = search.MatchedPaths
-                                        .Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = false, FollowFinalSymbolicLink = true })
+                                        .Select(path => new AgentScopedInstructionProbe { Path = path, IsDirectory = directories, FollowFinalSymbolicLink = false })
                                         .ToArray();
                                     break;
                                 }
@@ -372,6 +374,13 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
                 return blocks.Count == 0 ? null : new AgentPromptContextContribution { Blocks = blocks };
             },
             static () => null);
+    }
+
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(TryValidateArguments(request, out var error)
+            ? null : FileToolResult.Error(request.ToolId, error!, "files-arguments-invalid"));
     }
 
     public async ValueTask<AgentToolResult?> PreflightAsync(
@@ -577,12 +586,12 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
             case "apply_patch" when FileToolArguments.TryParsePatch(request.ArgumentsJson, out var patch, out _):
                 try
                 {
-                    probes = FilePatchParser.Parse(patch.PatchText)
-                        .GroupBy(operation => operation.Path, StringComparer.Ordinal)
+                    probes = FilePatchPaths.Affected(FilePatchParser.Parse(patch.PatchText))
+                        .GroupBy(path => path.Path, StringComparer.Ordinal)
                         .Select(group => new AgentScopedInstructionProbe
                         {
                             Path = group.Key, IsDirectory = false,
-                            FollowFinalSymbolicLink = group.All(operation => operation.Kind != FilePatchOperationKind.Delete),
+                            FollowFinalSymbolicLink = group.All(path => !path.IsDelete),
                         })
                         .ToArray();
                     return true;
@@ -616,7 +625,8 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
             {
                 return null;
             }
-            if (operations.Count <= 1)
+            var affected = FilePatchPaths.Affected(operations);
+            if (affected.Count <= 1)
             {
                 return null;
             }
@@ -631,13 +641,13 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
                 ExpectedConfigurationGeneration = context.ExecutionTargetConfigurationGeneration,
             };
             var resources = new List<AgentResolvedResource>();
-            foreach (var path in operations.Select(operation => operation.Path).Distinct(StringComparer.Ordinal))
+            foreach (var path in affected.Select(path => path.Path).Distinct(StringComparer.Ordinal))
             {
                 resources.Add(await target.Service.ResolveFileAsync(new() { Context = targetContext, Path = path }, cancellationToken));
             }
             if (!resources.Any(resource => resource.IsScopedInstructionDocument
                                            || IsInstructionPath(resource.CanonicalReference))
-                && !operations.Any(operation => IsInstructionPath(operation.Path)))
+                && !affected.Any(path => IsInstructionPath(path.Path)))
             {
                 return null;
             }
@@ -649,6 +659,11 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
             { Content = "### Patch not dispatched\n\nSplit the AGENTS.md change into its own apply_patch call, refresh prompt context, and replan later governed mutations." };
         }
         catch (FilePatchOperationLimitException ex)
+        {
+            return FileToolResult.Error(request.ToolId, ex.Message, "files-scoped-instruction-path-limit") with
+            { Content = $"### Patch not dispatched\n\n{ex.Message} No files were changed." };
+        }
+        catch (FilePatchPathLimitException ex)
         {
             return FileToolResult.Error(request.ToolId, ex.Message, "files-scoped-instruction-path-limit") with
             { Content = $"### Patch not dispatched\n\n{ex.Message} No files were changed." };
@@ -688,6 +703,23 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
 
     private static bool TryValidateArguments(AgentToolRequest request, out string? error)
     {
+        if (!AgentToolArgumentObject.TryParse(request.ArgumentsJson, out var arguments, out error)) return false;
+        string[] allowed = request.ToolId.ToLowerInvariant() switch
+        {
+            "read" => ["path", "offset", "limit"],
+            "write" => ["path", "content"],
+            "edit" => ["path", "oldString", "newString", "replaceAll"],
+            "apply_patch" => ["patchText"],
+            "grep" => ["pattern", "path", "include", "literal", "caseSensitive", "limit"],
+            "glob" => ["pattern", "path", "hidden", "limit"],
+            _ => [],
+        };
+        foreach (var key in arguments!.ToDictionary().Keys)
+        {
+            if (allowed.Contains(key, StringComparer.OrdinalIgnoreCase)) continue;
+            error = $"Invalid {request.ToolId} arguments: Unsupported parameter `{key}`. Use the advertised tool schema.";
+            return false;
+        }
         switch (request.ToolId.ToLowerInvariant())
         {
             case "read":
@@ -705,7 +737,8 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
                 }
                 return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest { Path = string.IsNullOrWhiteSpace(grep.Path) ? "." : grep.Path,
-                        Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include },
+                        Kind = AgentFileSearchKind.Grep, Pattern = grep.Pattern, Include = grep.Include,
+                        Literal = grep.Literal, CaseSensitive = grep.CaseSensitive, Limit = grep.Limit, Hidden = false },
                     out error);
             case "glob":
                 if (!FileToolArguments.TryParseGlob(request.ArgumentsJson, out var glob, out error))
@@ -714,7 +747,8 @@ public sealed partial class FilesToolSource : IToolSourceService, IPermissionSur
                 }
                 return FileSearchRequestValidation.TryValidateRequest(
                     new AgentFileSearchRequest { Path = string.IsNullOrWhiteSpace(glob.Path) ? "." : glob.Path,
-                        Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null },
+                        Kind = AgentFileSearchKind.Glob, Pattern = glob.Pattern, Include = null,
+                        Hidden = glob.Hidden, Limit = glob.Limit, Literal = false, CaseSensitive = true },
                     out error);
             default:
                 error = $"Unknown file tool '{request.ToolId}'.";

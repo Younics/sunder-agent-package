@@ -28,7 +28,16 @@ public partial class SubsessionsView
 
     private Control? RealizeTranscriptAnchor(object anchorKey)
     {
-        var messages = ViewModel?.Messages;
+        anchorKey = ViewModel?.RevealTranscriptAnchor(anchorKey) ?? anchorKey;
+        return RealizeTranscriptAnchorCore(anchorKey, bringIntoView: true);
+    }
+
+    private Control? RealizePreservedTranscriptAnchor(object anchorKey)
+        => RealizeTranscriptAnchorCore(ViewModel?.ResolveVisibleTranscriptAnchor(anchorKey) ?? anchorKey, bringIntoView: false);
+
+    private Control? RealizeTranscriptAnchorCore(object anchorKey, bool bringIntoView)
+    {
+        var messages = ViewModel?.TranscriptItems;
         if (messages is null)
         {
             return null;
@@ -39,7 +48,7 @@ public partial class SubsessionsView
             if (messages[index] is ITranscriptAnchorItem anchorItem
                 && Equals(anchorItem.AnchorKey, anchorKey))
             {
-                return RealizeTranscriptElement(index);
+                return RealizeTranscriptElement(index, bringIntoView);
             }
         }
 
@@ -55,19 +64,38 @@ public partial class SubsessionsView
         }
 
         var tailIndex = transcriptItems.Count - 1;
-        return transcriptItems[tailIndex] is ITranscriptAnchorItem
+        if (transcriptItems[tailIndex] is not ITranscriptAnchorItem
         {
             AnchorRole: TranscriptAnchorItemRole.TailSentinel,
+        })
+        {
+            return null;
         }
-            ? RealizeTranscriptElement(tailIndex)
-            : null;
+
+        var tail = RealizeTranscriptElement(tailIndex);
+        tail?.BringIntoView();
+        TranscriptItemsControl.UpdateLayout();
+        return tail;
     }
 
-    private Control? RealizeTranscriptElement(int index)
+    private Control? RealizeTranscriptElement(int index, bool bringIntoView = true)
     {
-        if (TranscriptItemsControl.TryGetElement(index) is Control realized)
+        var realized = TranscriptItemsControl.TryGetElement(index);
+        if (realized is not null
+            && TranscriptRowPresenter.HasLayoutGeometry(realized))
         {
             return realized;
+        }
+
+        // Pinned focus controls need to re-enter the layout before the repeater's
+        // GetOrCreateElement/BringIntoView protocol can operate on their geometry.
+        if (realized is not null
+            && ViewModel?.TranscriptItems[index] is ITranscriptAnchorItem anchor)
+        {
+            using (TranscriptAnchorHost.SuspendAnchoring(() => anchor.AnchorKey))
+            {
+                TranscriptItemsControl.UpdateLayout();
+            }
         }
 
         var element = TranscriptItemsControl.GetOrCreateElement(index) as Control;
@@ -77,7 +105,10 @@ public partial class SubsessionsView
         }
 
         TranscriptItemsControl.UpdateLayout();
-        element.BringIntoView();
+        using (bringIntoView ? null : TranscriptAnchorHost.SuppressPreservedRealizationNavigation())
+        {
+            element.BringIntoView();
+        }
         TranscriptItemsControl.UpdateLayout();
         return TranscriptItemsControl.TryGetElement(index) as Control ?? element;
     }

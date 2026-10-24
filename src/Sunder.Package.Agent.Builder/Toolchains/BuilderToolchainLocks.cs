@@ -89,5 +89,5 @@ internal static class BuilderToolchainLocks
     }
 
     private static BuilderToolchainException InUse(Exception? inner = null) => new("selection",
-        "This toolchain is selected by an active build/watch or another process. Stop that operation before repair or removal.", true, inner);
+        "This toolchain is selected by an active build or another process. Stop that operation before repair or removal.", true, inner);
 }

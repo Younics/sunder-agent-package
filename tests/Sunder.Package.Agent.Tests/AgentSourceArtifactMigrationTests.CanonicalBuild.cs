@@ -200,7 +200,20 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         Assert.True(Directory.Exists(source), $"Required generated output is missing: {source}");
         Directory.CreateDirectory(destination);
-        foreach (var file in Directory.EnumerateFiles(source)) File.Copy(file, Path.Combine(destination, Path.GetFileName(file)), overwrite: true);
+        foreach (var file in Directory.EnumerateFiles(source))
+        {
+            var target = Path.Combine(destination, Path.GetFileName(file));
+            if (File.Exists(target))
+            {
+                // Collectible role probes can retain read-only symbol handles.
+                // Reuse only exact bytes; changed output must be copied or fail.
+                using var input = File.OpenRead(file);
+                using var existing = File.OpenRead(target);
+                if (input.Length == existing.Length
+                    && SHA256.HashData(input).AsSpan().SequenceEqual(SHA256.HashData(existing))) continue;
+            }
+            File.Copy(file, target, overwrite: true);
+        }
         foreach (var child in Directory.EnumerateDirectories(source)) CopyDirectory(child, Path.Combine(destination, Path.GetFileName(child)));
     }
 

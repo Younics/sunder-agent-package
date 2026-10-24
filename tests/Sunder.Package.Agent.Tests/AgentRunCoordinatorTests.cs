@@ -276,6 +276,8 @@ public sealed partial class AgentRunCoordinatorTests
     [Fact]
     public async Task RuntimeRequestCancellationAfterAdmission_DoesNotCancelAcceptedWork()
     {
+        var ambient = new AsyncLocal<string?>();
+        string? providerAmbient = "not-started";
         var executionStarted = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseExecution = new TaskCompletionSource(
@@ -283,6 +285,7 @@ public sealed partial class AgentRunCoordinatorTests
         var providerTokenCanceled = false;
         async ValueTask BeforeExecution(CancellationToken cancellationToken)
         {
+            providerAmbient = ambient.Value;
             executionStarted.TrySetResult();
             await releaseExecution.Task.ConfigureAwait(false);
             providerTokenCanceled = cancellationToken.IsCancellationRequested;
@@ -302,7 +305,9 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.SessionService,
             transfers,
             changes);
+        ambient.Value = "bootstrap-rpc-deadline-and-depth";
         await runtime.Dispatcher.StartAsync();
+        ambient.Value = "incoming-run-command";
         using var requestCancellation = new CancellationTokenSource();
 
         var accepted = await handler.HandleAsync(
@@ -322,6 +327,8 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Idle, accepted.Checkpoint?.Status);
         Assert.False(providerTokenCanceled);
+        Assert.Null(providerAmbient);
+        Assert.Equal("incoming-run-command", ambient.Value);
     }
 
     [Fact]
@@ -3213,14 +3220,17 @@ public sealed partial class AgentRunCoordinatorTests
         Assert.DoesNotContain(provider.Requests, request => request.ModelId == "utility-model");
     }
 
-    [Fact]
-    public async Task AgentRunCoordinator_AppliesProfileReasoningVariantToChatOptions()
+    [Theory]
+    [InlineData("high", ReasoningEffort.High)]
+    [InlineData("max", null)]
+    [InlineData(null, null)]
+    public async Task AgentRunCoordinator_AppliesExactProfileReasoningWithoutCoercingMaxOrDefault(string? variantId, ReasoningEffort? expectedEffort)
     {
         var provider = new ScriptedProvider(
             (request, _) =>
             {
-                Assert.Equal(ReasoningEffort.High, request.ReasoningEffort);
-                Assert.Equal(ReasoningOutput.Summary, request.ReasoningOutput);
+                Assert.Equal(expectedEffort, request.ReasoningEffort);
+                Assert.Equal(expectedEffort is null ? null : ReasoningOutput.Summary, request.ReasoningOutput);
                 return Complete("done");
             },
             models:
@@ -3234,9 +3244,9 @@ public sealed partial class AgentRunCoordinatorTests
                     Variants:
                     [
                         new AgentModelVariantDescriptor(
-                            "high",
-                            "High",
-                            ReasoningEffort: AgentReasoningEffort.High
+                            variantId ?? "high",
+                            variantId ?? "High",
+                            ReasoningEffort: variantId == "high" ? AgentReasoningEffort.High : null
                         ),
                     ]
                 ),
@@ -3253,7 +3263,7 @@ public sealed partial class AgentRunCoordinatorTests
             profile.ChatModelId,
             profile.EmbeddingProviderId,
             profile.EmbeddingModelId,
-            chatModelSettingsJson: "{\"reasoningVariantId\":\"high\"}"
+            chatModelSettingsJson: AgentChatModelSettingsJson.Serialize(new(variantId))
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
         var session = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId);
@@ -3265,7 +3275,11 @@ public sealed partial class AgentRunCoordinatorTests
             workspace.WorkspaceId
         );
 
-        Assert.Single(provider.Requests);
+        Assert.Equal("test-model", Assert.Single(provider.Requests).ModelId);
+        var options = Assert.Single(provider.RequestOptions);
+        Assert.Equal("normal", options.AdditionalProperties![AgentChatModelOptionKeys.SpeedOptionId]);
+        if (variantId is null) Assert.False(options.AdditionalProperties.ContainsKey(AgentChatModelOptionKeys.ReasoningVariantId));
+        else Assert.Equal(variantId, options.AdditionalProperties[AgentChatModelOptionKeys.ReasoningVariantId]);
     }
 
     [Fact]
@@ -3376,8 +3390,15 @@ public sealed partial class AgentRunCoordinatorTests
         );
     }
 
-    [Fact]
-    public async Task AgentRunCoordinator_IgnoresStaleProfileReasoningVariant()
+    [Theory]
+    [InlineData("{\"reasoningVariantId\":\"high\"}")]
+    [InlineData("{\"reasoningVariantId\":\"max\"}")]
+    [InlineData("{\"speedOptionId\":\"fast\"}")]
+    [InlineData("{\"modeOptionId\":\"pro\"}")]
+    [InlineData("{\"reasoningVariantId\":42}")]
+    [InlineData("{\"futureSetting\":true}")]
+    [InlineData("null")]
+    public async Task AgentRunCoordinator_RejectsInvalidProfileModelSettingsBeforeInference(string settingsJson)
     {
         var provider = new ScriptedProvider(
             (request, _) =>
@@ -3415,18 +3436,20 @@ public sealed partial class AgentRunCoordinatorTests
             profile.ChatModelId,
             profile.EmbeddingProviderId,
             profile.EmbeddingModelId,
-            chatModelSettingsJson: "{\"reasoningVariantId\":\"high\"}"
+            chatModelSettingsJson: settingsJson
         );
         var workspace = runtime.WorkspaceService.CreateWorkspace("Test Workspace");
         var session = runtime.SessionService.CreateSession("Test Session", workspaceId: workspace.WorkspaceId);
 
-        await runtime.RunCoordinator.QueueUserMessageAsync(
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             session.SessionId,
             profile.ProfileId,
             "Use default reasoning.",
             workspace.WorkspaceId
         );
 
-        Assert.Single(provider.Requests);
+        Assert.Empty(provider.Requests);
+        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
+        Assert.Equal(settingsJson, runtime.ProfileService.GetChatBinding(profile.ProfileId)?.SettingsJson);
     }
 }

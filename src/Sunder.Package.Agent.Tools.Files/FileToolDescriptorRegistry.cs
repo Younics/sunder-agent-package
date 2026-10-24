@@ -43,6 +43,7 @@ internal static class FileToolDescriptorRegistry
         - File contents are returned with each line prefixed by its line number.
         - Directory entries are returned one per line, with a trailing slash for subdirectories.
         - Avoid tiny repeated slices. If you need more context, read a larger window.
+        - Pages are bounded to about 50 KiB and individual long lines are shortened explicitly. Use grep for omitted long-line content.
         """;
 
     private const string GlobInstructions = """
@@ -50,7 +51,12 @@ internal static class FileToolDescriptorRegistry
 
         Usage:
         - Supports glob patterns like **/*.cs or src/**/*.ts.
-        - Returns at most 1000 matching paths.
+        - Patterns containing a slash are relative to the search path; unrelated directory trees are not traversed.
+        - End a pattern with / to find directories: */ lists immediate child directories, **/ finds nested directories.
+        - Symbolic links are not followed. Use read on a directory to inspect its entries.
+        - Hidden files/directories are excluded from wildcard matches unless hidden is true; explicit dot segments still match.
+        - Returns up to 100 matching paths by default; set limit between 1 and 1000.
+        - Incomplete results include the limiting bound and narrowing guidance. A search deadline is 30 seconds.
         - Use this when you need to locate files by name pattern.
         - Prefer this over shell commands for file discovery.
         """;
@@ -60,9 +66,12 @@ internal static class FileToolDescriptorRegistry
 
         Usage:
         - Searches file contents using regular expressions.
-        - Supports full regex syntax.
+        - Uses bounded .NET non-backtracking regular expressions; backreferences and lookarounds are not supported.
+        - Set literal to true to search exact text without regex escaping.
+        - Matching is case-sensitive by default; set caseSensitive to false for invariant case-insensitive matching.
         - Use include to filter by file pattern when supported.
-        - Returns at most 1000 matches with file paths and line numbers.
+        - Returns up to 100 matching lines by default; set limit between 1 and 1000.
+        - Incomplete results include the limiting bound and narrowing guidance. A search deadline is 30 seconds.
         - Use this when you need to find references, symbols, text, or code patterns.
         - Prefer this over shell commands for content search.
         """;
@@ -74,6 +83,7 @@ internal static class FileToolDescriptorRegistry
         - This tool overwrites the existing file if one exists at the provided path.
         - Prefer edit or apply_patch for modifying existing code.
         - Read an existing file first before replacing it so you do not accidentally discard content.
+        - Existing files require a complete text snapshot and a content check at publication. A concurrent change fails without overwriting it.
         - Do not create documentation files unless explicitly requested.
         - Avoid emojis unless the user explicitly asks for them.
         """;
@@ -84,7 +94,8 @@ internal static class FileToolDescriptorRegistry
         Usage:
         - Read the target file before editing.
         - Preserve exact indentation and whitespace from the current file content.
-        - The edit fails if oldString is not found.
+        - The edit fails if oldString is not found or matches more than once, unless replaceAll is true.
+        - Do not copy line-number prefixes from read into oldString/newString. Use LF line breaks; the file's original line endings are preserved.
         - Include enough surrounding context in oldString to identify the intended location.
         - Use replaceAll for file-wide renames or repeated exact replacements.
         - Prefer this over write for focused changes to existing files.
@@ -105,9 +116,11 @@ internal static class FileToolDescriptorRegistry
 
         Rules:
         - You must include a header with the intended action.
-        - A patch may contain at most 64 file operations targeting at most 64 distinct paths.
+        - A patch may contain at most 64 file operations targeting at most 64 distinct paths, counting both paths of a move.
         - Add File content lines must be prefixed with +.
-        - Use Update File for in-place changes.
+        - Use Update File for in-place changes. Immediately follow it with *** Move to: <new path> to move the file, with optional edit hunks.
+        - Move destinations must not exist. Moves create the destination and then remove the source; they are not atomic renames and do not guarantee filesystem identity or metadata preservation.
+        - Failed moves use guarded best-effort rollback. If source restoration or destination ownership cannot be confirmed, retain recovery files and inspect the reported state instead of blindly retrying.
         - Use Delete File only when removing an existing file.
         - Use each path at most once in a patch.
         - Prefer apply_patch for coordinated edits across multiple files.
@@ -130,10 +143,10 @@ internal static class FileToolDescriptorRegistry
         """;
 
     private const string GrepSchema = """
-        {"type":"object","properties":{"pattern":{"type":"string","minLength":1},"path":{"type":"string"},"include":{"type":"string"}},"required":["pattern"],"additionalProperties":false}
+        {"type":"object","properties":{"pattern":{"type":"string","minLength":1},"path":{"type":"string"},"include":{"type":"string"},"literal":{"type":"boolean"},"caseSensitive":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":1000}},"required":["pattern"],"additionalProperties":false}
         """;
 
     private const string GlobSchema = """
-        {"type":"object","properties":{"pattern":{"type":"string","minLength":1},"path":{"type":"string"}},"required":["pattern"],"additionalProperties":false}
+        {"type":"object","properties":{"pattern":{"type":"string","minLength":1},"path":{"type":"string"},"hidden":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":1000}},"required":["pattern"],"additionalProperties":false}
         """;
 }

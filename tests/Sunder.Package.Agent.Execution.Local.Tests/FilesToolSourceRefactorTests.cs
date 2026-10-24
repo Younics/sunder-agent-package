@@ -31,7 +31,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
-public sealed class FilesToolSourceRefactorTests : IDisposable
+public sealed partial class FilesToolSourceRefactorTests : IDisposable
 {
     private readonly RegressionTestPackageScope _packageScope = RegressionTestPackageScope.Create();
     private readonly List<RegressionTestExtensionCatalog> _catalogs = [];
@@ -78,7 +78,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
 
         Assert.False(result.IsError, result.Content);
         Assert.Equal(new AgentFileReadRequest("nested/file.txt", 2, 2), target.LastReadRequest);
-        Assert.Equal($"2: two{Environment.NewLine}3: three", result.Content);
+        Assert.StartsWith($"2: two{Environment.NewLine}3: three", result.Content, StringComparison.Ordinal);
+        Assert.Contains("offset=4", result.Content, StringComparison.Ordinal);
         Assert.True(result.WasTruncated);
     }
 
@@ -95,7 +96,8 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             context,
             new AgentToolRequest("read", "{\"path\":\"file.txt\",\"offset\":2,\"limit\":1}"));
 
-        Assert.Equal("2: two", result.Content);
+        Assert.StartsWith("2: two", result.Content, StringComparison.Ordinal);
+        Assert.Contains("offset=3", result.Content, StringComparison.Ordinal);
         Assert.True(result.WasTruncated);
     }
 
@@ -438,9 +440,11 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
     [InlineData("local", "add")]
     [InlineData("local", "update")]
     [InlineData("local", "delete")]
+    [InlineData("local", "move")]
     [InlineData("docker", "add")]
     [InlineData("docker", "update")]
     [InlineData("docker", "delete")]
+    [InlineData("docker", "move")]
     public async Task ApplyPatch_StrictTargets_CompensateWithExactPostMutationResource(
         string targetKind,
         string operationKind)
@@ -494,7 +498,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             : "/workspace/trigger.txt";
         var subjectHostPath = Path.Combine(targetRoot, "subject.txt");
         var triggerHostPath = Path.Combine(targetRoot, "trigger.txt");
-        if (operationKind is "update" or "delete")
+        if (operationKind is "update" or "delete" or "move")
         {
             await File.WriteAllTextAsync(subjectHostPath, "old subject");
         }
@@ -504,6 +508,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             "add" => $"*** Add File: {subjectPath}\n+new subject",
             "update" => $"*** Update File: {subjectPath}\n@@\n-old subject\n+new subject",
             "delete" => $"*** Delete File: {subjectPath}",
+            "move" => $"*** Update File: {subjectPath}\n*** Move to: {Path.GetDirectoryName(subjectPath)!.Replace('\\', '/')}/moved.txt\n@@\n-old subject\n+new subject",
             _ => throw new ArgumentOutOfRangeException(nameof(operationKind)),
         };
         var request = new AgentToolRequest(
@@ -575,6 +580,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
             Assert.Equal("old subject", await File.ReadAllTextAsync(subjectHostPath));
         }
         Assert.Equal("old trigger", await File.ReadAllTextAsync(triggerHostPath));
+        Assert.False(File.Exists(Path.Combine(targetRoot, "moved.txt")));
     }
 
     [Fact]
@@ -647,8 +653,10 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Assert.Empty(permission.ResourceCapabilities);
     }
 
-    [Fact]
-    public async Task ApplyPatchPermission_AtPathLimit_RequestsAtMost128Capabilities()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyPatchPermission_AtPathLimit_RequestsAtMost128Capabilities(bool moves)
     {
         var target = new TrackingPlanningExecutionTarget
         {
@@ -670,7 +678,9 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
                 Guid.NewGuid().ToString("N"),
                 CanIssueOutsideAuthority: true),
         };
-        var request = new AgentToolRequest("apply_patch", PatchArguments(BuildAddPatch(64)));
+        var patch = moves ? "*** Begin Patch\n" + string.Concat(Enumerable.Range(0, 32)
+            .Select(index => $"*** Update File: old-{index}.txt\n*** Move to: new-{index}.txt\n")) + "*** End Patch" : BuildAddPatch(64);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(patch));
 
         var permission = await source.BuildPermissionRequestAsync(context, request);
 
@@ -715,7 +725,7 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Assert.True(result.WasTruncated);
         Assert.Contains("truncated", result.Summary, StringComparison.OrdinalIgnoreCase);
         using var payload = JsonDocument.Parse(result.StructuredPayloadJson!);
-        Assert.Equal(1000, payload.RootElement.GetArrayLength());
+        Assert.Equal(100, payload.RootElement.GetArrayLength());
         Assert.DoesNotContain("file-0065.txt", result.Content, StringComparison.Ordinal);
     }
 
@@ -774,9 +784,28 @@ public sealed class FilesToolSourceRefactorTests : IDisposable
         Directory.CreateSymbolicLink(link, first);
         var (source, baseContext) = await CreateLocalSourceAsync(scope, root);
         var request = new AgentToolRequest("glob", JsonSerializer.Serialize(new { pattern = "**/*.txt", path = link }));
-        await Assert.ThrowsAsync<LocalSecurePathException>(async () =>
+        await Assert.ThrowsAsync<LocalSecureSymbolicLinkException>(async () =>
             await source.BuildPermissionRequestAsync(baseContext, request));
         Assert.Equal("RETARGETED_SEARCH_SECRET", await File.ReadAllTextAsync(Path.Combine(second, "secret.txt")));
+    }
+
+    [Fact]
+    public async Task DirectoryGlob_ClaimsInstructionsInsideMatchedDirectoryBeforeReturningResults()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var root = Path.Combine(scope.RootPath, "workspace");
+        var feature = Path.Combine(root, "feature");
+        Directory.CreateDirectory(feature);
+        await File.WriteAllTextAsync(Path.Combine(feature, "AGENTS.md"), "directory-specific instructions");
+        var (source, context) = await CreateLocalSourceAsync(scope, root);
+        context = context with { SessionId = Guid.NewGuid(), TranscriptEpoch = 1 };
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("glob", "{\"pattern\":\"*/\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-prompt-context-refresh-required", result.ErrorCode);
+        Assert.Null(result.StructuredPayloadJson);
+        Assert.Contains("AGENTS.md", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -58,6 +58,8 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
             {
                 throw new LocalSecurePathNotFoundException(Path.Combine(parent.FullPath, name));
             }
+            if (error == (OperatingSystem.IsMacOS() ? 62 : 40))
+                throw new LocalSecureSymbolicLinkException(Path.Combine(parent.FullPath, name));
             throw new LocalSecurePathException(
                 $"Secure filesystem openat failed for '{Path.Combine(parent.FullPath, name)}': "
                 + new System.ComponentModel.Win32Exception(error).Message);

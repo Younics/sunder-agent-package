@@ -6,6 +6,8 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
 {
+    private CancellationTokenSource? _bottomPlacementWaitCancellation;
+
     public void QueuePlaceAnchorAfterLayout(
         object anchorKey,
         Action? completed = null,
@@ -59,11 +61,16 @@ internal sealed partial class TranscriptScrollCoordinator
                         return;
                     }
 
-                    await WaitForInitialAnchorGeometryAsync(
-                        anchorKey,
-                        interactionRevision,
-                        authorityRevision,
-                        cancellationToken);
+                    try
+                    {
+                        await WaitForInitialAnchorGeometryAsync(
+                            anchorKey, interactionRevision, authorityRevision, cancellationToken);
+                    }
+                    catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested
+                                                             && !_lifetimeCancellation.IsCancellationRequested)
+                    {
+                        throw new TimeoutException("Transcript layout did not settle; showing the available content.");
+                    }
                     cancellationToken.ThrowIfCancellationRequested();
                     if (_disposed
                         || interactionRevision != _interactionRevision
@@ -104,15 +111,29 @@ internal sealed partial class TranscriptScrollCoordinator
         long authorityRevision,
         CancellationToken cancellationToken)
     {
+        using var placementBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCancellation.Token);
+        placementBudget.CancelAfter(ViewportMutationWatchdogTimeout);
+        _bottomPlacementWaitCancellation?.Cancel();
+        _bottomPlacementWaitCancellation = placementBudget;
         try
         {
             await ScrollToBottomAfterLayoutSettlesAsync(
                 interactionRevision,
                 authorityRevision,
-                cancellationToken);
+                placementBudget.Token);
+        }
+        catch (OperationCanceledException) when (placementBudget.IsCancellationRequested
+                                                  && !cancellationToken.IsCancellationRequested)
+        {
+            // The available tail remains visible on timeout; newer viewport
+            // authority must not wait for a blocked Markdown parser to finish.
         }
         finally
         {
+            if (ReferenceEquals(_bottomPlacementWaitCancellation, placementBudget))
+            {
+                _bottomPlacementWaitCancellation = null;
+            }
             if (version == _bottomPlacementLockVersion)
             {
                 if (cancellationToken.IsCancellationRequested || _disposed)
@@ -120,6 +141,11 @@ internal sealed partial class TranscriptScrollCoordinator
                     _pendingSettledScrollCompleted = null;
                     _bottomPlacementLockActive = false;
                     ReleaseBottomPlacementAnchoringSuspension();
+                }
+                else if (interactionRevision != _interactionRevision
+                         || authorityRevision != _viewportAuthorityRevision)
+                {
+                    CancelBottomPlacementLockForUserInteraction();
                 }
                 else
                 {
@@ -145,6 +171,9 @@ internal sealed partial class TranscriptScrollCoordinator
 
         ClearPendingAnchor();
         PrepareToFollowTail();
+        // Extent is only an estimate until the repeater has laid out its tail.
+        // Realize it before yielding a frame, not after a numeric bottom write.
+        EnsureTailAnchorRealized();
 
         var previousExtentHeight = -1d;
         var previousViewportHeight = -1d;
@@ -160,7 +189,19 @@ internal sealed partial class TranscriptScrollCoordinator
                 return;
             }
             EnsureTailAnchorRealized();
+            await Task.WhenAll(_scrollViewer.GetVisualDescendants()
+                .OfType<StreamingMarkdownPresenter>()
+                .Where(presenter => presenter.IsEffectivelyVisible)
+                .Select(presenter => presenter.PendingRenderOperations))
+                .WaitAsync(cancellationToken);
+            await YieldForRenderedContent(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (_disposed
+                || interactionRevision != _interactionRevision
+                || authorityRevision != _viewportAuthorityRevision)
+            {
+                return;
+            }
             PinToBottom(TranscriptProgrammaticOffsetWriteSource.BottomPlacementSettling);
 
             var extentHeight = _scrollViewer.Extent.Height;
@@ -197,7 +238,6 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private int BeginBottomPlacementLock()
     {
-        SupersedeViewportMutationForAuthority();
         var supersededSettledCallback = _pendingSettledScrollCompleted;
         var supersededReleaseCallback = _pendingBottomPlacementReleaseCompleted;
         _pendingSettledScrollCompleted = null;
@@ -207,7 +247,11 @@ internal sealed partial class TranscriptScrollCoordinator
         _bottomPlacementInteractionRevision = _interactionRevision;
         _bottomPlacementAuthorityRevision = _viewportAuthorityRevision;
         ReleaseBottomPlacementAnchoringSuspension();
-        _bottomPlacementAnchoringSuspension = _anchorHost?.SuspendAnchoring();
+        _bottomPlacementAnchoringSuspension = _anchorHost?.SuspendAnchoring(
+            _itemsControl is ItemsRepeater
+                ? () => _scrollViewer.GetVisualDescendants().OfType<TranscriptRowPresenter>()
+                    .FirstOrDefault(presenter => presenter.AnchorRole == TranscriptAnchorItemRole.TailSentinel)?.AnchorKey
+                : null);
         ClearPendingAnchor();
         PrepareToFollowTail();
         UpdateJumpToLatestVisibility();
@@ -318,9 +362,12 @@ internal sealed partial class TranscriptScrollCoordinator
         var previousViewport = double.NaN;
         var previousTop = double.NaN;
         var stablePasses = 0;
-        while (true)
+        using var placementBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetimeCancellation.Token);
+        placementBudget.CancelAfter(TimeSpan.FromSeconds(2));
+        var placementToken = placementBudget.Token;
+        for (var pass = 0; pass < AnchorRestorationMaxRenderPasses; pass++)
         {
-            cancellationToken.ThrowIfCancellationRequested();
+            placementToken.ThrowIfCancellationRequested();
             if (_disposed
                 || interactionRevision != _interactionRevision
                 || authorityRevision != _viewportAuthorityRevision)
@@ -338,7 +385,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 .ToArray();
             if (pendingOperations.Length > 0)
             {
-                await Task.WhenAll(pendingOperations).WaitAsync(cancellationToken);
+                await Task.WhenAll(pendingOperations).WaitAsync(placementToken);
             }
             await Dispatcher.Yield(DispatcherPriority.Background);
 
@@ -372,5 +419,6 @@ internal sealed partial class TranscriptScrollCoordinator
             previousViewport = viewport;
             previousTop = top;
         }
+        throw new TimeoutException("Transcript layout did not settle; showing the available content.");
     }
 }

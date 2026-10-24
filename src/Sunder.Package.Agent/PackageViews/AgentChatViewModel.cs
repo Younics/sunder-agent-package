@@ -33,7 +33,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
     private readonly AgentToolPresentationService _toolPresentationService;
     private readonly IPackageShellViewService? _shellViewService;
     private readonly TranscriptTimelineState<AgentTranscriptRowViewModel> _timeline;
-    private readonly TranscriptItemsProjection<AgentTranscriptRowViewModel> _transcriptItemsProjection;
+    private readonly TranscriptActivityProjection<AgentTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AgentComposerState _composer = new();

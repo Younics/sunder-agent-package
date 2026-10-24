@@ -130,7 +130,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 Assert.True(generated.IsInterface);
                 Assert.Equal(count, generated.GetMethods().Length);
             }
-            foreach (var (name, count) in new[] { ("WorkspaceEditor", 4), ("PermissionSurface", 1), ("ProfileCapabilityConsumer", 1), ("SelectableCapabilityProvider", 3), ("EmbeddingProvider", 6), ("ToolSource", 7), ("ToolExecutionObserved", 2), ("DurableLifecycleObserver", 2), ("SystemPromptContributor", 2), ("ChatProvider", 6) })
+            foreach (var (name, count) in new[] { ("WorkspaceEditor", 4), ("PermissionSurface", 1), ("ProfileCapabilityConsumer", 1), ("SelectableCapabilityProvider", 3), ("EmbeddingProvider", 6), ("ToolSource", 8), ("ToolExecutionObserved", 2), ("DurableLifecycleObserver", 2), ("SystemPromptContributor", 2), ("ChatProvider", 6) })
             {
                 var extension = assembly.GetType("Sunder.Package.Agent.Rpc.Public." + name + "Service", true)!;
                 Assert.True(extension.IsInterface);

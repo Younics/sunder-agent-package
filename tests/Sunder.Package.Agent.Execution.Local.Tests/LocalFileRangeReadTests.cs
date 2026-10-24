@@ -10,7 +10,7 @@ using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileR
 
 namespace Sunder.Package.Agent.Execution.Local.Tests;
 
-public sealed class LocalFileRangeReadTests : IDisposable
+public sealed partial class LocalFileRangeReadTests : IDisposable
 {
     private readonly string _root = Path.Combine(
         OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
@@ -55,8 +55,11 @@ public sealed class LocalFileRangeReadTests : IDisposable
 
         Assert.True(file.IsError);
         Assert.Equal(AgentFileReadErrorCodes.TooLarge, file.ErrorCode);
-        Assert.True(listing.WasTruncated);
-        Assert.Equal(HostFileSystemLimits.MaxDirectoryEntries, listing.Content.Split(Environment.NewLine).Length);
+        Assert.True(listing.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.TooLarge, listing.ErrorCode);
+        Assert.Empty(listing.Content);
+        Assert.Null(listing.TotalLines);
+        Assert.Contains("narrower directory", listing.ErrorMessage, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -107,7 +110,7 @@ public sealed class LocalFileRangeReadTests : IDisposable
             CancellationToken.None);
         var search = await LocalSecureFileSearch.ExecuteAsync(
             config,
-            new AgentFileSearchRequest { Path = "long-line.txt", Kind = AgentFileSearchKind.Grep, Pattern = "needle" },
+            new AgentFileSearchRequest { Path = "long-line.txt", Kind = AgentFileSearchKind.Grep, Pattern = "needle", Literal = false, Hidden = false },
             false,
             approvedResourceReferences: null,
             CancellationToken.None);

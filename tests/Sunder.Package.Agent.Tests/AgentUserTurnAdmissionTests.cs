@@ -211,6 +211,26 @@ public sealed class AgentUserTurnAdmissionTests
         var metadata = ReadAttachmentMetadata(fixture.Store.GetTurn(userTurnId)!);
         var reopenedStore = new AgentLocalStore(fixture.Scope.Context);
         var reopenedAttachments = new AgentAttachmentService(fixture.Scope.Context);
+        var attachment = Assert.Single(fixture.Store.GetTurn(userTurnId)!.Items,
+            item => item.Kind == AgentTurnItemKind.Attachment);
+        using (var connection = OpenDatabase(fixture.Store.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "UPDATE AgentTurnItems SET StructuredPayloadJson = $payload WHERE ItemId = $item;";
+            command.Parameters.AddWithValue("$item", attachment.ItemId.ToString());
+            var payload = command.Parameters.AddWithValue("$payload", "[]");
+            foreach (var invalid in new[] { "[]", "null", "{\"StorageRelativePath\":42}", "{\"storageRelativePath\":{}}", "not-json" })
+            {
+                payload.Value = invalid;
+                Assert.Equal(1, command.ExecuteNonQuery());
+                Assert.Empty(reopenedStore.ListReferencedAttachmentPaths());
+            }
+            payload.Value = JsonSerializer.Serialize(new { storageRelativePath = metadata.StorageRelativePath });
+            command.ExecuteNonQuery();
+            Assert.Equal(metadata.StorageRelativePath, Assert.Single(reopenedStore.ListReferencedAttachmentPaths()));
+            payload.Value = attachment.StructuredPayloadJson!;
+            command.ExecuteNonQuery();
+        }
         var attachmentRoot = fixture.Scope.Context.Storage.RoleLocalWorkspace.GetLocalPath("agent/attachments");
         var orphanDirectory = Path.Combine(attachmentRoot, "orphan", "turn");
         Directory.CreateDirectory(orphanDirectory);

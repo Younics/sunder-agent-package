@@ -100,7 +100,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal("lmstudio/utility-model", (await Rpc("chat", "resolve-utility-model", new { })).GetString());
             await context.Settings.DeleteValueAsync("utility.modelId");
             await Rpc("chat", "list-models", new { }); Assert.Equal(2, handler.ModelRequests);
-            Assert.EndsWith("/alternate/v1/models", handler.Requests.Last().Uri.AbsoluteUri, StringComparison.Ordinal);
+            Assert.EndsWith("/alternate/api/v1/models", handler.Requests.Last().Uri.AbsoluteUri, StringComparison.Ordinal);
             Assert.True(await Credential("SetAsync", ["  artifact-lmstudio-key  ", CancellationToken.None]));
             Assert.Equal("artifact-lmstudio-key", await context.Secrets.GetSecretAsync("connection.apiKey"));
             await Rpc("embedding", "list-models", new { }); Assert.Equal(3, handler.ModelRequests);

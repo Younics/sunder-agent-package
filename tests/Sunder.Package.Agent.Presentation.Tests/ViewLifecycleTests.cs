@@ -84,7 +84,7 @@ using IOpenAiManagementService = OpenAiApp::Sunder.Generated.Packages.Younics_Ai
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
-public sealed class ViewLifecycleTests
+public sealed partial class ViewLifecycleTests
 {
     [AvaloniaTheory]
     [InlineData("agent")]
@@ -1169,7 +1169,8 @@ public sealed class ViewLifecycleTests
 
             Assert.True(InvokeQueueLoadOlderRows(coordinator));
             await sessionGateway.BlockedLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            Assert.True(GetAnchorHostSuspended(view));
+            Assert.False(GetAnchorHostSuspended(view));
+            Assert.True(Assert.IsType<TranscriptScrollCoordinator>(coordinator).DiagnosticSnapshot.ExactAnchorLeaseActive);
 
             GetToolHeader().RaiseEvent(new Avalonia.Interactivity.RoutedEventArgs(Button.ClickEvent));
             await WaitUntilAsync(() => !toolRow.IsPreparing);
@@ -1295,7 +1296,8 @@ public sealed class ViewLifecycleTests
 
             Assert.True(InvokeQueueLoadNewerRows(coordinator));
             await sessionGateway.BlockedLoadStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            Assert.True(GetAnchorHostSuspended(view));
+            Assert.False(GetAnchorHostSuspended(view));
+            Assert.True(Assert.IsType<TranscriptScrollCoordinator>(coordinator).DiagnosticSnapshot.ExactAnchorLeaseActive);
 
             window.Width = 680;
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -3071,9 +3073,14 @@ public sealed class ViewLifecycleTests
             Assert.Null(GetPrivateField(viewModel, "_navigationHighlightCancellation"));
             var repeater = Assert.IsType<ItemsRepeater>(
                 view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
+            var targetPresentationIndex = viewModel.TranscriptItems
+                .Select((row, index) => (row, index))
+                .Single(item => string.Equals(item.row.AnchorKey.ToString(), targetAnchorKey, StringComparison.Ordinal)).index;
             var targetPresenter = Assert.IsAssignableFrom<Control>(
-                repeater.TryGetElement(targetIndex));
+                repeater.TryGetElement(targetPresentationIndex));
             Assert.Equal(nameof(TranscriptRowPresenter), targetPresenter.GetType().Name);
+            Assert.Same(viewModel.Messages[targetIndex], targetPresenter.DataContext);
+            Assert.All(viewModel.Messages.OfType<SubsessionToolInvocationRowViewModel>(), call => Assert.False(call.HasMaterializedDetails));
             var transcript = Assert.IsType<ScrollViewer>(
                 view.FindControl<ScrollViewer>("TranscriptScrollViewer"));
             var targetTop = Assert.IsType<Point>(
@@ -3621,7 +3628,10 @@ public sealed class ViewLifecycleTests
             await GetPendingRuntimeRefresh(viewModel).WaitAsync(TimeSpan.FromSeconds(10));
             await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Background);
             await GetPendingCoordinatorOperations(view);
-            Assert.True(viewModel.HasNewerTranscriptRows);
+            Assert.True(viewModel.HasNewerTranscriptRows,
+                $"Buffered live row was consumed without tail intent; direction={GetPrivateField(coordinator, "_lastUserScrollDirection")}; "
+                + DescribeSubsessionTranscriptState(view, transcript, coordinator, "live-buffer-assertion")
+                + Environment.NewLine + string.Join(Environment.NewLine, viewportTrace));
             Assert.DoesNotContain(
                 viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
                 row => row.Content == "Live child update while manually detached.");

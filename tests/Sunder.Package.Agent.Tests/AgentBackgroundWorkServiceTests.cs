@@ -5,6 +5,29 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class AgentBackgroundWorkServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ServiceOwnedWorkStartsOutsideCallerExecutionContext(bool queued)
+    {
+        var ambient = new AsyncLocal<string?> { Value = "bootstrap-rpc-deadline-and-depth" };
+        await using var service = new AgentBackgroundWorkService();
+        await service.StartAsync();
+        ambient.Value = "request-rpc-deadline-and-depth";
+        var observed = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<int> Work(CancellationToken token)
+        {
+            await Task.Yield();
+            token.ThrowIfCancellationRequested();
+            observed.TrySetResult(ambient.Value);
+            return 1;
+        }
+        if (queued) Assert.True(service.TryQueue(async token => { await Work(token); }));
+        else await service.RunOwnedAsync(Work);
+        Assert.Null(await observed.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+        Assert.Equal("request-rpc-deadline-and-depth", ambient.Value);
+    }
+
     [Fact]
     public async Task StopAsync_WaitsForOwnedWorkRegisteredBeforeDelegateStarts()
     {

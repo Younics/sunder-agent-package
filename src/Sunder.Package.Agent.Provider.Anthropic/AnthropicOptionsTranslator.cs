@@ -1,5 +1,6 @@
 using Anthropic.Models.Beta;
 using Anthropic.Models.Messages;
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
@@ -20,13 +21,13 @@ internal static class AnthropicOptionsTranslator
         ChatOptions? options,
         string modelId)
     {
+        var model = AnthropicModelCatalog.Find(modelId);
+        AgentChatModelOptions.Validate(options, modelId, model?.Variants?.Select(v => v.VariantId), model?.SpeedOptions?.Select(v => v.SpeedOptionId));
+        var reasoningId = AgentChatModelOptions.ReasoningId(options);
         var includeTools = ShouldIncludeTools(options);
-        var useAdaptiveThinking = UsesAdaptiveThinking(modelId);
-        var hasVisibleReasoning = options?.Reasoning is
-        {
-            Effort: ReasoningEffort.Low or ReasoningEffort.Medium or ReasoningEffort.High or ReasoningEffort.ExtraHigh,
-            Output: ReasoningOutput.Summary or ReasoningOutput.Full,
-        };
+        var useAdaptiveThinking = AnthropicModelCatalog.UsesAdaptiveThinking(modelId);
+        var hasVisibleReasoning = reasoningId is not null and not "none"
+                                  && options?.Reasoning?.Output != ReasoningOutput.None;
         var budget = TranslateTokenBudget(options, modelId, allowExplicitThinking: !useAdaptiveThinking);
         if (includeTools
             && hasVisibleReasoning
@@ -56,12 +57,16 @@ internal static class AnthropicOptionsTranslator
             };
         }
 
-        if (TranslateEffort(options?.Reasoning?.Effort) is { } effort)
+        if (AnthropicModelCatalog.SupportsNativeEffort(modelId) && TranslateEffort(reasoningId) is { } effort)
         {
             parameters = parameters with { OutputConfig = new OutputConfig { Effort = effort } };
         }
 
-        if (useAdaptiveThinking && hasVisibleReasoning)
+        if (useAdaptiveThinking && reasoningId == "none")
+        {
+            parameters = parameters with { Thinking = new ThinkingConfigDisabled() };
+        }
+        else if (useAdaptiveThinking && hasVisibleReasoning)
         {
             parameters = parameters with
             {
@@ -104,18 +109,36 @@ internal static class AnthropicOptionsTranslator
             Betas = [AnthropicBeta.FastMode2026_02_01],
         };
 
+    internal static MessageCreateParams TranslateStableFast(MessageCreateParams parameters)
+    {
+        var body = parameters.RawBodyData.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        body["speed"] = JsonSerializer.SerializeToElement("fast");
+        return MessageCreateParams.FromRawUnchecked(parameters.RawHeaderData, parameters.RawQueryData, body);
+    }
+
     internal static AnthropicTokenBudget TranslateTokenBudget(
         ChatOptions? options,
         string modelId,
         bool allowExplicitThinking = true)
     {
         var modelLimit = AnthropicModelCatalog.GetMaxOutputTokens(modelId) ?? FallbackModelOutputLimit;
+        // Adaptive thinking shares max_tokens with the answer. Keep explicit
+        // caller caps, but do not give Max the legacy 8K total by default.
+        var defaultTokens = AnthropicModelCatalog.UsesAdaptiveThinking(modelId)
+            ? AgentChatModelOptions.ReasoningId(options) switch
+            {
+                "none" or "low" => DefaultVisibleOutputTokens,
+                "medium" => 16384,
+                "xhigh" => 65536,
+                "max" => modelLimit,
+                _ => 32768,
+            } : DefaultVisibleOutputTokens;
         var requestedVisibleTokens = Math.Clamp(
-            options?.MaxOutputTokens ?? DefaultVisibleOutputTokens,
+            options?.MaxOutputTokens ?? defaultTokens,
             1,
             modelLimit);
         var desiredThinkingTokens = allowExplicitThinking
-            ? TranslateThinkingTokens(options?.Reasoning)
+            ? TranslateThinkingTokens(options)
             : null;
         if (desiredThinkingTokens is null)
         {
@@ -143,38 +166,35 @@ internal static class AnthropicOptionsTranslator
             _ => null,
         };
 
-    private static int? TranslateThinkingTokens(ReasoningOptions? reasoning)
+    private static Effort? TranslateEffort(string? effort) => effort switch
     {
-        if (reasoning?.Output is not (ReasoningOutput.Summary or ReasoningOutput.Full))
+        "low" => Effort.Low,
+        "medium" => Effort.Medium,
+        "high" => Effort.High,
+        "xhigh" => Effort.Xhigh,
+        "max" => Effort.Max,
+        _ => null,
+    };
+
+    private static int? TranslateThinkingTokens(ChatOptions? options)
+    {
+        if (options?.Reasoning?.Output == ReasoningOutput.None)
         {
             return null;
         }
 
-        return reasoning.Effort switch
+        return AgentChatModelOptions.ReasoningId(options) switch
         {
-            ReasoningEffort.Low => 1024,
-            ReasoningEffort.Medium => 2048,
-            ReasoningEffort.High => 4096,
-            ReasoningEffort.ExtraHigh => 8192,
+            "low" => 1024,
+            "medium" => 2048,
+            "high" => 4096,
+            "xhigh" => 8192,
             _ => null,
         };
     }
 
     private static bool UsesFastMode(ChatOptions? options)
-        => options?.AdditionalProperties is { } properties
-            && properties.TryGetValue(AgentChatModelOptionKeys.SpeedOptionId, out var value)
-            && string.Equals(value as string, "fast", StringComparison.OrdinalIgnoreCase);
-
-    private static bool UsesAdaptiveThinking(string modelId)
-    {
-        var normalized = ProviderModelId.RemovePrefix(modelId, "anthropic");
-        return normalized.StartsWith("claude-fable-5", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("claude-sonnet-5", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("claude-opus-4-8", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("claude-opus-4-7", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("claude-opus-4-6", StringComparison.OrdinalIgnoreCase)
-               || normalized.StartsWith("claude-sonnet-4-6", StringComparison.OrdinalIgnoreCase);
-    }
+        => AgentChatModelOptions.SpeedId(options) == "fast";
 
     private static bool ShouldIncludeTools(ChatOptions? options)
     {

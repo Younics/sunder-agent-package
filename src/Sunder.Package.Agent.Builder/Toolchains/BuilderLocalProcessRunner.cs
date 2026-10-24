@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Builder;
 public sealed record BuilderLocalProcessRequest(string ExecutablePath, IReadOnlyList<string> Arguments, string WorkingDirectory)
 {
     public IReadOnlyDictionary<string, string?> Environment { get; init; } = new Dictionary<string, string?>();
-    /// <summary>Set null explicitly for a watch process whose lifetime is governed by cancellation.</summary>
+    /// <summary>Execution deadline. The owning job also enforces its finite operation deadline.</summary>
     public TimeSpan? Timeout { get; init; } = TimeSpan.FromMinutes(10);
     public int MaximumCapturedCharacters { get; init; } = 1024 * 1024;
 }

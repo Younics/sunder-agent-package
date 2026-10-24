@@ -126,8 +126,8 @@ public partial class AgentChatView
         }
 
         var labels = viewModel.WorkspacePathChipLabels;
-        var wideVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, WideWorkspacePathRow.Bounds.Width);
-        var narrowVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, NarrowWorkspacePathRow.Bounds.Width);
+        var wideVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, WideWorkspacePathArea.Bounds.Width);
+        var narrowVisibleCount = CalculateVisibleWorkspacePathChipCount(labels, NarrowWorkspacePathArea.Bounds.Width);
         viewModel.UpdateWorkspacePathChipLayout(wideVisibleCount, narrowVisibleCount);
     }
 

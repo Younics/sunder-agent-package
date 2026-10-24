@@ -97,9 +97,11 @@ is not a complete OS sandbox. See [execution security](docs/execution-targets.md
 
 ## 2.x Compatibility Policy
 
-The 15 runtime packages share the 2.x family line. All 18 public APIs owned by
-`younics.ai.agent` start their new identity families at `1.0.0`; private contracts
-follow package version `2.0.0`. The platform-owned `sunder.stack.contributor` stays
+The 15 runtime packages share the 2.x family line. Public APIs owned by
+`younics.ai.agent` started their new identity families at `1.0.0`; `chat-provider`
+and `execution-target` now use locally reviewed `2.0.0` successors, retaining frozen
+`1.0.0` history. The other sixteen remain at `1.0.0`; private contracts follow package
+version `2.0.0`. The platform-owned `sunder.stack.contributor` stays
 at `2.0.0`. Runtime IDs and current test expectations follow the
 [current inventory](compatibility/agent-current-inventory.json); C# project, assembly
 and authored namespace names remain stable. No Protocol package

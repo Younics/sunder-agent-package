@@ -16,6 +16,7 @@
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />
 
   <ItemGroup>
+    <Compile Include="..\Sunder.Package.Agent\Models\Tools\AgentToolResultErrorCodes.cs" Link="Domain\AgentToolResultErrorCodes.cs" />
     <Compile Remove="..\Sunder.Package.Agent.Shared\Presentation\CapabilitySelectionState.cs;..\Sunder.Package.Agent.Shared\Presentation\ModelBindingEditorState.cs;..\Sunder.Package.Agent.Shared\Presentation\ProviderModelLoader.cs;..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs" />
   </ItemGroup>
 

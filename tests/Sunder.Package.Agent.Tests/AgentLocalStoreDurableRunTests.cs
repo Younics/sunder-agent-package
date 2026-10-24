@@ -30,6 +30,7 @@ public sealed class AgentLocalStoreDurableRunTests
         Assert.Equal(
             [
                 (1L, "agent-2.0-baseline"),
+                (2L, "durable-permission-approval-intent"),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));

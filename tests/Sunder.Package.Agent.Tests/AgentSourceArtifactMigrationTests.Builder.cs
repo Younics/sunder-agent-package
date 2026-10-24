@@ -8,13 +8,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static async Task VerifyBuilderArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Builder", "BuilderWorker", cache);
+        var canonical = await BuildCanonicalFamily(root, "Builder", "BuilderWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         using (var locked = JsonDocument.Parse(selected))
         {
-            foreach (var section in new[] { "packageArtifacts", "packageImports", "providerImports", "platformImports" })
-                Assert.Empty(locked.RootElement.GetProperty(section).EnumerateObject());
+            var artifact = Assert.Single(locked.RootElement.GetProperty("packageArtifacts").EnumerateObject());
+            Assert.Equal("younics.ai.agent", artifact.Name);
+            var api = Assert.Single(locked.RootElement.GetProperty("packageImports").EnumerateObject());
+            Assert.Equal("younics.ai.agent", api.Name);
+            Assert.Equal("optional", api.Value.GetProperty("presence").GetString());
+            Assert.Empty(api.Value.GetProperty("requiredContracts").EnumerateArray());
+            var providers = locked.RootElement.GetProperty("providerImports").EnumerateObject().ToArray();
+            Assert.Equal(new[] { "permissions", "tools" }, providers.Select(provider => provider.Name).Order(StringComparer.Ordinal));
+            Assert.All(providers, provider => Assert.Equal("optional", provider.Value.GetProperty("presence").GetString()));
+            Assert.Empty(locked.RootElement.GetProperty("platformImports").EnumerateObject());
         }
         await VerifyGeneratedAppView(worker, "Builder");
         await VerifyBuilderRoles(worker);
@@ -32,14 +40,30 @@ public sealed partial class AgentSourceArtifactMigrationTests
         using var manifest = JsonDocument.Parse(manifestStream);
         var value = manifest.RootElement;
         Assert.Equal("younics.sunder.package.maker", value.GetProperty("id").GetString());
-        Assert.Single(value.GetProperty("contractBundles").EnumerateArray()); Assert.Single(value.GetProperty("provides").EnumerateArray());
-        var use = Assert.Single(value.GetProperty("usesContracts").EnumerateArray());
+        Assert.Equal(19, value.GetProperty("contractBundles").GetArrayLength());
+        Assert.Equal(new[] { "builder.runtime", "maker.permissions", "maker.tools" },
+            value.GetProperty("provides").EnumerateArray().Select(provider => provider.GetProperty("providerId").GetString()).Order(StringComparer.Ordinal));
+        var uses = value.GetProperty("usesContracts").EnumerateArray().ToArray();
+        var use = Assert.Single(uses, entry => entry.GetProperty("role").GetString() == "app");
         Assert.Equal("app", use.GetProperty("role").GetString()); Assert.True(use.GetProperty("required").GetBoolean());
         Assert.Equal("younics.sunder.package.maker.runtime", use.GetProperty("contractId").GetString());
-        Assert.Empty(value.GetProperty("dependsOn").EnumerateArray());
-        Assert.True(!value.TryGetProperty("packageApiImports", out var imports) || imports.GetArrayLength() == 0);
+        var runtimeUses = uses.Where(entry => entry.GetProperty("role").GetString() == "runtime").ToArray();
+        Assert.Equal(19, uses.Length);
+        Assert.Equal(CurrentPublicRpcDescriptors.ContractIds.Order(StringComparer.Ordinal),
+            runtimeUses.Select(entry => entry.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
+        Assert.All(runtimeUses, entry => Assert.False(entry.GetProperty("required").GetBoolean()));
+        var agentDependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
+        Assert.Equal("younics.ai.agent", agentDependency.GetProperty("packageId").GetString());
+        Assert.Equal(">=2.0.0 <3.0.0", agentDependency.GetProperty("versionRange").GetString());
+        Assert.Equal("optional", agentDependency.GetProperty("presence").GetString());
+        var import = Assert.Single(value.GetProperty("packageApiImports").EnumerateArray());
+        Assert.Equal("younics.ai.agent", import.GetProperty("packageId").GetString());
+        Assert.Equal("optional", import.GetProperty("presence").GetString());
         Assert.Equal(2, value.GetProperty("targets").GetArrayLength());
-        Assert.True(!value.TryGetProperty("providerImports", out var providers) || providers.GetArrayLength() == 0);
+        var providerImports = value.GetProperty("providerImports").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "younics.ai.agent.permission.surface", "younics.ai.agent.tool.source" },
+            providerImports.Select(provider => provider.GetProperty("contractId").GetString()).Order(StringComparer.Ordinal));
+        Assert.All(providerImports, provider => Assert.Equal("optional", provider.GetProperty("presence").GetString()));
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
         await ProjectCanonicalWorker(worker, driver);
         var workspace = Directory.CreateDirectory(Path.Combine(root, "BuilderProcessWorkspace")).FullName;

@@ -678,13 +678,15 @@ internal sealed class AgentRunCommandHandler(
         var checkpoint = request.Kind switch
         {
             AgentRunCommandKind.Stop => await ((IAgentRunGateway)runs).StopAsync(request.SessionId, cancellationToken),
-            AgentRunCommandKind.ApprovePermission => await runs.ApprovePendingPermissionAsync(
+            AgentRunCommandKind.ApprovePermission => await runs.AdmitPermissionDecisionAsync(
                 request.SessionId,
                 Require(request.PermissionRequestId, "Permission request id"),
+                approve: true,
                 request.ApproveForSession,
                 cancellationToken),
-            AgentRunCommandKind.DenyPermission => await ((IAgentRunGateway)runs).DenyPendingPermissionAsync(
-                request.SessionId, Require(request.PermissionRequestId, "Permission request id"), cancellationToken),
+            AgentRunCommandKind.DenyPermission => await runs.AdmitPermissionDecisionAsync(
+                request.SessionId, Require(request.PermissionRequestId, "Permission request id"),
+                approve: false, approveForSession: false, cancellationToken),
             _ => throw new AgentOwnerOperationException("Unknown run command."),
         };
         if (request.Kind is AgentRunCommandKind.ApprovePermission or AgentRunCommandKind.DenyPermission)

@@ -4,6 +4,8 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed class BuilderPathService
 {
+    internal static StringComparer PathComparer => OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
     private const int MaximumSymbolicLinkDepth = 40;
 
     public string ResolveContainedHostPath(string hostPath, string allowedRoot)

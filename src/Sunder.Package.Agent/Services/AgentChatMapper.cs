@@ -225,7 +225,7 @@ internal static class AgentChatMapper
             TextReasoningContent reasoning => new("reasoning", Text: reasoning.Text, ProtectedData: reasoning.ProtectedData),
             TextContent text => new("text", Text: text.Text),
             FunctionCallContent call => new("tool-call", CallId: call.CallId, Name: call.Name, Json: new(JsonSerializer.SerializeToElement(call.Arguments)), InformationalOnly: call.InformationalOnly),
-            FunctionResultContent result => new("tool-result", CallId: result.CallId, Json: new(JsonSerializer.SerializeToElement(result.Result))),
+            FunctionResultContent result => FromToolResult(result),
             UsageContent usage => new("usage", Usage: new AgentChatUsage(
                 usage.Details.InputTokenCount,
                 usage.Details.OutputTokenCount,
@@ -250,6 +250,17 @@ internal static class AgentChatMapper
                 string.IsNullOrWhiteSpace(content.Name) ? "content.bin" : content.Name));
     }
 
+    private static AgentChatContent FromToolResult(FunctionResultContent result)
+    {
+        if (result.Result is not IEnumerable<AIContent> parts) return new("tool-result", CallId: result.CallId, Json: new(JsonSerializer.SerializeToElement(result.Result)));
+        var materialized = parts.ToArray();
+        var image = materialized.OfType<DataContent>().Single();
+        if (materialized.Any(part => part is not (TextContent or DataContent)) || image.MediaType != "image/png" || image.Data.Length > 2 * 1024 * 1024)
+            throw new InvalidDataException("Unsupported bounded tool media content.");
+        return new("tool-result", CallId: result.CallId, Json: new(JsonSerializer.SerializeToElement(string.Join("\n", materialized.OfType<TextContent>().Select(text => text.Text)))),
+            Content: SunderContent.FromBytes(image.Data, "image/png", "package-view.png"));
+    }
+
     private static AIContent ToContent(
         AgentChatContent content,
         Func<SunderContent, ReadOnlyMemory<byte>>? resolveContent)
@@ -261,6 +272,9 @@ internal static class AgentChatMapper
                 content.CallId ?? string.Empty,
                 content.Name ?? string.Empty,
                 DeserializeDictionary(content.Json)) { InformationalOnly = content.InformationalOnly },
+            "tool-result" when content.Content is { } image && resolveContent is not null => new FunctionResultContent(content.CallId ?? string.Empty,
+                new List<AIContent> { new TextContent(content.Json.TryGetValue(out var caption) && caption.ValueKind == JsonValueKind.String ? caption.GetString()! : "Untrusted tool image"),
+                    new DataContent(resolveContent(image), image.MediaType) { Name = image.FileName } }),
             "tool-result" => new FunctionResultContent(content.CallId ?? string.Empty, DeserializeObject(content.Json)),
             "usage" => new UsageContent(new UsageDetails
             {

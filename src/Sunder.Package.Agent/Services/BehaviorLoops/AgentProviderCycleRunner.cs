@@ -142,12 +142,14 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
 
     private static AdditionalPropertiesDictionary? BuildModelOptionProperties(AgentBehaviorLoopContext context)
     {
-        if (context.ModelSpeedOption is null && context.ModelModeOption is null)
+        var properties = new AdditionalPropertiesDictionary
         {
-            return null;
+            [AgentChatModelOptionKeys.SpeedOptionId] = context.ModelSpeedOption?.SpeedOptionId ?? "normal",
+        };
+        if (!string.IsNullOrWhiteSpace(context.ModelVariant?.VariantId))
+        {
+            properties[AgentChatModelOptionKeys.ReasoningVariantId] = context.ModelVariant.VariantId;
         }
-
-        var properties = new AdditionalPropertiesDictionary();
         if (!string.IsNullOrWhiteSpace(context.ModelSpeedOption?.SpeedOptionId))
         {
             properties[AgentChatModelOptionKeys.SpeedOptionId] = context.ModelSpeedOption.SpeedOptionId;
@@ -169,7 +171,7 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
             AgentReasoningEffort.Medium => ReasoningEffort.Medium,
             AgentReasoningEffort.High => ReasoningEffort.High,
             AgentReasoningEffort.ExtraHigh => ReasoningEffort.ExtraHigh,
-            _ => ReasoningEffort.Medium,
+            _ => throw new InvalidOperationException($"Unsupported reasoning hint '{effort}'."),
         };
 }
 

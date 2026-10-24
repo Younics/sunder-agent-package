@@ -19,7 +19,7 @@ public sealed partial class BuilderServiceTests
         var updates = new JournalStateUpdates(revocation.Token);
         var storage = new BuilderMemoryJournalStorage();
         var journal = new BuilderJobJournal(storage, updates);
-        var backend = new BuilderUiBackend();
+        var backend = new BuilderUiBackend { HoldBuilds = true };
         var observing = BuilderUiFixture.Signal();
         backend.BeforeGet = async (_, token) =>
         {
@@ -28,7 +28,7 @@ public sealed partial class BuilderServiceTests
             await Task.Delay(Timeout.InfiniteTimeSpan, token);
         };
         var application = new BuilderProjectApplicationService(backend, new BuilderUiStore(), new(new BuilderUiBackgroundQueue()), journal);
-        var request = JournalRequest("revoked-live-job", Path.GetTempPath()) with { Operation = "watch" };
+        var request = JournalRequest("revoked-live-job", Path.GetTempPath()) with { Operation = "build" };
         var run = application.RunJobAsync(request);
         await observing.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Equal("running", backend.Jobs[request.Id!].State);

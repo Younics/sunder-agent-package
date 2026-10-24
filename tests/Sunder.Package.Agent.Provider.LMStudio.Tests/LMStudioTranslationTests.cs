@@ -12,6 +12,49 @@ namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 public sealed class LMStudioTranslationTests
 {
     [Fact]
+    public async Task ToolImageIsNativeImageContentNotAStringifiedToolResult()
+    {
+        const string stream = "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        var handler = new LMStudioTestHttpHandler((_, _, _) => Task.FromResult(new HttpResponseMessage
+            { Content = new StringContent(stream, Encoding.UTF8, "text/event-stream") }));
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.lmstudio", new Dictionary<string, string>
+            { [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1" });
+        using var connection = new LMStudioConnection(context, handler);
+        using var client = new LMStudioChatClient(new AgentChatClientContext("lmstudio", "lmstudio/model"), connection);
+        await foreach (var _ in client.GetStreamingResponseAsync(
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("capture-1", "maker_screenshot", new Dictionary<string, object?>())]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("capture-1", new List<AIContent>
+                { new TextContent("Untrusted package pixels"), new DataContent(new byte[] { 1, 2, 3 }, "image/png") })]),
+        ])) { }
+        using var json = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        var result = json.RootElement.GetProperty("messages")[1];
+        Assert.Equal("tool", result.GetProperty("role").GetString());
+        Assert.Equal("capture-1", result.GetProperty("tool_call_id").GetString());
+        var parts = result.GetProperty("content");
+        Assert.Equal(JsonValueKind.Array, parts.ValueKind);
+        Assert.Equal("image_url", parts[1].GetProperty("type").GetString());
+        Assert.Equal("data:image/png;base64,AQID", parts[1].GetProperty("image_url").GetProperty("url").GetString());
+    }
+
+    [Theory]
+    [InlineData("low")]
+    [InlineData("medium")]
+    [InlineData("high")]
+    public void OptionsTranslator_MapsExactSupportedEffortsWithoutInventingSpeedOrOnOffLevels(string effort)
+    {
+        var options = new ChatOptions { AdditionalProperties = new() { [AgentChatModelOptionKeys.ReasoningVariantId] = effort } };
+#pragma warning disable OPENAI001
+        Assert.Equal(effort, LMStudioOpenAIOptionsTranslator.Translate(options).ReasoningEffortLevel?.ToString());
+#pragma warning restore OPENAI001
+        options.AdditionalProperties[AgentChatModelOptionKeys.ReasoningVariantId] = "max";
+        Assert.Throws<AgentChatProviderException>(() => LMStudioOpenAIOptionsTranslator.Translate(options));
+        options.AdditionalProperties[AgentChatModelOptionKeys.ReasoningVariantId] = null;
+        options.AdditionalProperties[AgentChatModelOptionKeys.SpeedOptionId] = "fast";
+        Assert.Throws<AgentChatProviderException>(() => LMStudioOpenAIOptionsTranslator.Translate(options));
+    }
+
+    [Fact]
     public async Task ChatClient_TranslatesRolesToolsAndMaxOutputOnWire()
     {
         const string stream = """

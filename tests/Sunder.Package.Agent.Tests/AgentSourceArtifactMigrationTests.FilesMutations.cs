@@ -68,6 +68,50 @@ public sealed partial class AgentSourceArtifactMigrationTests
             && call.Request.GetProperty("context").GetProperty("resourceOperation").GetProperty("authorityActivationId").GetString() == approved.ResourceOperation!.AuthorityActivationId);
         var denied = await tool("execute", "write", new { path = outsideFile, content = "reused" }, approved, default);
         Assert.True(denied.IsError); Assert.Equal("approved", await File.ReadAllTextAsync(outsideFile));
+        var moveSource = Path.Combine(workspace, "move.txt");
+        await File.WriteAllTextAsync(moveSource, "before\r\nlast\n");
+        var movePatch = "*** Begin Patch\n*** Update File: move.txt\n*** Move to: moved.txt\n@@\n-before\n+after\n*** End Patch";
+        var moved = await tool("execute", "apply_patch", new { patchText = movePatch }, null, default);
+        Assert.False(moved.IsError, moved.Content);
+        Assert.False(File.Exists(moveSource));
+        Assert.Equal("after\r\nlast\n", await File.ReadAllTextAsync(Path.Combine(workspace, "moved.txt")));
+        Assert.Contains("non-atomic", moved.Content, StringComparison.Ordinal);
+
+        var outsideDestination = Path.Combine(outside, "moved-approved.txt");
+        var outsidePatch = $"*** Begin Patch\n*** Update File: {outsideFile}\n*** Move to: {outsideDestination}\n@@\n-approved\n+moved\n*** End Patch";
+        var movePermission = await toolSource.PermissionAsync(planning,
+            new("apply_patch", JsonSerializer.Serialize(new { patchText = outsidePatch })));
+        Assert.NotNull(movePermission);
+        Assert.Equal(AgentPermissionBoundaryIds.OutsideConfiguredScope, movePermission.BoundaryId);
+        Assert.Equal(2, movePermission.ResourceClaims.Count);
+        Assert.Equal([0, 1], movePermission.ResourceClaims.Select(claim => claim.ResourceIndex));
+        var moveContext = planning with
+        {
+            ApprovedResourceCapabilities = movePermission.ResourceCapabilities,
+            ApprovedResourceReferences = movePermission.ResourceReferences,
+            ApprovedResourceClaims = movePermission.ResourceClaims,
+            ResourceOperation = planning.ResourceOperation! with { CanIssueOutsideAuthority = false },
+        };
+        var outsideMove = await tool("execute", "apply_patch", new { patchText = outsidePatch }, moveContext, default);
+        Assert.False(outsideMove.IsError, outsideMove.Content);
+        Assert.False(File.Exists(outsideFile));
+        Assert.Equal("moved", await File.ReadAllTextAsync(outsideDestination));
+
+        target.BeforeWrite = request =>
+        {
+            if (request.GetProperty("request").GetProperty("path").GetString() == "collision.txt")
+                File.WriteAllText(Path.Combine(workspace, "collision.txt"), "same");
+        };
+        AgentToolResult collision;
+        try
+        {
+            collision = await tool("execute", "apply_patch", new { patchText = "*** Begin Patch\n*** Add File: collision.txt\n+same\n*** End Patch" }, null, default);
+        }
+        finally { target.BeforeWrite = null; }
+        Assert.True(collision.IsError);
+        Assert.Equal("same", await File.ReadAllTextAsync(Path.Combine(workspace, "collision.txt")));
+        Assert.DoesNotContain(target.Calls, call => call.Method == "delete-file"
+            && call.Request.GetProperty("request").GetProperty("path").GetString() == "collision.txt");
         var stale = await Assert.ThrowsAsync<SunderRpcException>(() => tool("execute", "write", new { path = "a.txt", content = "stale" }, context with { ExecutionTargetConfigurationGeneration = "changed-generation" }, default));
         Assert.Equal(SunderRpcErrorKind.ProviderFaulted, stale.Error.Kind);
         Assert.Equal("a\n", await File.ReadAllTextAsync(Path.Combine(workspace, "a.txt")));

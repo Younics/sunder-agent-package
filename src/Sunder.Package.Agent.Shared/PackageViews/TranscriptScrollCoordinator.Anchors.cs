@@ -7,6 +7,8 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed partial class TranscriptScrollCoordinator
 {
+    private CancellationTokenSource? _anchorRestorationWaitCancellation;
+
     private void QueueRestoreScrollAnchor()
     {
         if (_restoreAnchorPending)
@@ -32,6 +34,9 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         await _anchorRestorationGate.WaitAsync(cancellationToken);
+        using var restorationBudget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        restorationBudget.CancelAfter(ViewportMutationWatchdogTimeout);
+        _anchorRestorationWaitCancellation = restorationBudget;
         try
         {
             _isRestoringAnchor = true;
@@ -40,7 +45,14 @@ internal sealed partial class TranscriptScrollCoordinator
             var restoredAtLeastOnce = false;
             for (var pass = 0; pass < AnchorRestorationMaxRenderPasses; pass++)
             {
-                await YieldForRenderedContent(cancellationToken);
+                await YieldForRenderedContent(restorationBudget.Token);
+                // Dispatcher yields alone can exhaust all passes before the
+                // asynchronous Markdown parser has published even its first body.
+                await Task.WhenAll(_scrollViewer.GetVisualDescendants()
+                    .OfType<StreamingMarkdownPresenter>()
+                    .Where(presenter => presenter.IsEffectivelyVisible)
+                    .Select(presenter => presenter.PendingRenderOperations))
+                    .WaitAsync(restorationBudget.Token);
                 cancellationToken.ThrowIfCancellationRequested();
                 if (_disposed)
                 {
@@ -54,7 +66,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
                 if (TryRealizeAnchorVisual(anchor))
                 {
-                    await YieldForRenderedContent(cancellationToken);
+                    await YieldForRenderedContent(restorationBudget.Token);
                     cancellationToken.ThrowIfCancellationRequested();
                     if (_disposed
                         || anchor.InteractionRevision != _interactionRevision
@@ -97,8 +109,14 @@ internal sealed partial class TranscriptScrollCoordinator
 
             return restoredAtLeastOnce && !HasPendingRenderedContent();
         }
+        catch (OperationCanceledException) when (restorationBudget.IsCancellationRequested
+                                                  && !cancellationToken.IsCancellationRequested)
+        {
+            return false;
+        }
         finally
         {
+            _anchorRestorationWaitCancellation = null;
             _isRestoringAnchor = false;
             _anchorRestorationGate.Release();
         }
@@ -143,7 +161,7 @@ internal sealed partial class TranscriptScrollCoordinator
             .ToDictionary(group => group.Key, group => group.First().Top!.Value);
         foreach (var itemAnchor in anchor.Items)
         {
-            if (!realizedAnchorTops.TryGetValue(itemAnchor.Item, out var currentTop))
+            if (!realizedAnchorTops.TryGetValue(ResolvePreservedAnchorKey(itemAnchor.Item), out var currentTop))
             {
                 continue;
             }
@@ -198,6 +216,14 @@ internal sealed partial class TranscriptScrollCoordinator
                 viewportAnchor?.Top));
         }
 
+        // Let the repeater and scroller preserve the same retained row during
+        // publication. Suppressing native anchoring leaves a blank first frame
+        // until the asynchronous page-restoration callback can correct it.
+        var authorityLease = _itemsControl is ItemsRepeater
+                             && _anchorHost is not null
+                             && itemAnchors.FirstOrDefault() is { } primary
+            ? _anchorHost.AcquireExactAnchorLease(ResolvePreservedAnchorKey(primary.Item))
+            : SuspendAnchoringForManualScroll(itemAnchors.FirstOrDefault()?.Item);
         return new ScrollAnchor(
             mode,
             _scrollViewer.Offset.Y,
@@ -205,7 +231,7 @@ internal sealed partial class TranscriptScrollCoordinator
             _interactionRevision,
             _viewportAuthorityRevision,
             itemAnchors,
-            SuspendAnchoringForManualScroll());
+            authorityLease);
     }
 
     private void CaptureViewportAnchor()
@@ -229,6 +255,11 @@ internal sealed partial class TranscriptScrollCoordinator
     private ItemAnchor? CaptureCurrentViewportAnchor(IReadOnlyList<ItemAnchor>? itemAnchors = null)
     {
         var candidates = itemAnchors ?? CaptureItemAnchors();
+        if (_anchorHost?.ExactAnchorKey is { } exactKey
+            && candidates.FirstOrDefault(item => Equals(item.Item, exactKey)) is { } exact)
+        {
+            return exact;
+        }
         if (_scrollViewer.CurrentAnchor is Visual currentAnchor)
         {
             var rowPresenter = currentAnchor as TranscriptRowPresenter
@@ -252,18 +283,25 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private bool TryRealizeAnchorVisual(ScrollAnchor anchor)
     {
-        if (_realizeAnchorVisual is null)
+        if (_realizePreservedAnchorVisual is null)
         {
             return false;
         }
 
         var realizedItems = EnumerateRowAnchorVisuals()
+            .Where(pair => TryGetTop(pair.Visual, out _))
             .Select(pair => pair.Item)
             .ToHashSet();
+        // A retained anchor is enough. Realizing every missing fallback navigates
+        // the repeater away from the viewport we are trying to preserve.
+        if (anchor.Items.Any(item => realizedItems.Contains(ResolvePreservedAnchorKey(item.Item))))
+        {
+            return false;
+        }
         foreach (var itemAnchor in anchor.Items)
         {
-            if (!realizedItems.Contains(itemAnchor.Item)
-                && _realizeAnchorVisual(itemAnchor.Item) is not null)
+            if (!realizedItems.Contains(ResolvePreservedAnchorKey(itemAnchor.Item))
+                && _realizePreservedAnchorVisual?.Invoke(itemAnchor.Item) is not null)
             {
                 return true;
             }
@@ -271,6 +309,9 @@ internal sealed partial class TranscriptScrollCoordinator
 
         return false;
     }
+
+    private object ResolvePreservedAnchorKey(object anchorKey)
+        => _resolvePreservedAnchorKey?.Invoke(anchorKey) ?? anchorKey;
 
     private IReadOnlyList<ItemAnchor> CaptureItemAnchors()
     {
@@ -355,8 +396,13 @@ internal sealed partial class TranscriptScrollCoordinator
             : candidate.Bounds.Height > current.Bounds.Height;
     }
 
-    private bool TryGetTop(Visual visual, out double top)
+    private bool TryGetTop(Control visual, out double top)
     {
+        if (!TranscriptRowPresenter.HasLayoutGeometry(visual))
+        {
+            top = 0;
+            return false;
+        }
         var point = visual.TranslatePoint(new Point(0, 0), _scrollViewer);
         top = point?.Y ?? 0;
         return point is not null;

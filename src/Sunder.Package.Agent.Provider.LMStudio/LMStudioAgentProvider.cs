@@ -62,10 +62,11 @@ public sealed partial class LMStudioAgentProvider : IChatProviderService, IDispo
                     ContextWindow = model.ContextWindow ?? DefaultContextWindow,
                     MaxOutputTokens = model.MaxOutputTokens ?? DefaultMaxOutputTokens,
                     IsRecommended = false,
-                    Variants = null,
+                    Variants = ProviderModelReasoning.Create((model.ReasoningOptions ?? []).Where(id => id is "low" or "medium" or "high").ToArray()),
                     SpeedOptions = null,
                     ModeOptions = null,
                     ReleaseDate = null,
+                    DefaultReasoningVariantId = model.DefaultReasoning,
                 })
                 .ToArray()
             : [];
@@ -123,24 +124,26 @@ public sealed partial class LMStudioAgentProvider : IChatProviderService, IDispo
         };
     }
 
-    public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(
+    public async ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(
         string? modelId,
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(new AgentProviderRunCapabilities
+        var result = await _catalog.GetCatalogAsync(cancellationToken).ConfigureAwait(false);
+        var model = result.Models.FirstOrDefault(item => string.Equals(item.Id, ProviderModelId.RemovePrefix(modelId ?? string.Empty, "lmstudio"), StringComparison.OrdinalIgnoreCase));
+        return new AgentProviderRunCapabilities
         {
-            SupportsNativeToolCalling = true,
-            SupportsStreamingToolCalls = true,
-            SupportsMultipleToolCalls = true,
+            SupportsNativeToolCalling = model?.SupportsTools ?? true,
+            SupportsStreamingToolCalls = model?.SupportsTools ?? true,
+            SupportsMultipleToolCalls = model?.SupportsTools ?? true,
             Summary = "LM Studio can expose OpenAI-compatible native tool calls when the loaded model supports them, and Sunder can run parallel-safe tools concurrently.",
-            SupportsImageInput = false,
+            SupportsImageInput = model?.SupportsVision ?? false,
             SupportsPdfInput = false,
             SupportsAudioInput = false,
             SupportsVideoInput = false,
-            ContextWindowTokens = null,
-            MaxOutputTokens = null,
-        });
+            ContextWindowTokens = model?.ContextWindow,
+            MaxOutputTokens = model?.MaxOutputTokens,
+        };
     }
 
     public IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request, CancellationToken cancellationToken = default)
@@ -151,7 +154,7 @@ public sealed partial class LMStudioAgentProvider : IChatProviderService, IDispo
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult<AIChatClient>(new LMStudioChatClient(context, _connection));
+        return ValueTask.FromResult<AIChatClient>(new LMStudioChatClient(context, _connection, _catalog));
     }
 
     public void Dispose()

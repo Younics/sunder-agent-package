@@ -5,7 +5,6 @@ namespace Sunder.Package.Agent.Tests;
 
 internal static class CurrentPublicRpcDescriptors
 {
-    internal const string ContractVersion = "1.0.0";
     internal static readonly IReadOnlySet<string> ContractIds = CurrentContractInventory.Contracts
         .Where(value => value.Exposure == "public").Select(value => value.ContractId).ToHashSet(StringComparer.Ordinal);
 

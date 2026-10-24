@@ -162,6 +162,8 @@ internal sealed class GeminiContentTranslator
                             Id = functionResult.CallId,
                             Name = correlation.Resolve(functionResult.CallId),
                             Response = BuildFunctionResponsePayload(functionResult),
+                            Parts = ProviderToolResult.Parts(functionResult.Result)?.OfType<DataContent>().Select(image => new FunctionResponsePart
+                            { InlineData = new FunctionResponseBlob { MimeType = image.MediaType, Data = image.Data.ToArray() } }).ToList(),
                         },
                     };
                     break;
@@ -230,6 +232,7 @@ internal sealed class GeminiContentTranslator
     private static Dictionary<string, object> BuildFunctionResponsePayload(FunctionResultContent result)
         => new()
         {
-            [result.Exception is null ? "output" : "error"] = ProviderToolResult.RenderText(result.Result),
+            [result.Exception is null ? "output" : "error"] = ProviderToolResult.Parts(result.Result) is { } parts
+                ? string.Join("\n", parts.OfType<TextContent>().Select(text => text.Text)) : ProviderToolResult.RenderText(result.Result),
         };
 }

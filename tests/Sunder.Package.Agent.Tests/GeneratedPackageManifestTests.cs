@@ -105,7 +105,7 @@ public sealed class GeneratedPackageManifestTests
                 Assert.Equal("public", observedProvider.GetProperty("audience").GetString());
             }
             var dependencies = root.GetProperty("dependsOn").EnumerateArray().ToArray();
-            if (packageId is "younics.ai.agent" or "younics.sunder.package.maker")
+            if (packageId == "younics.ai.agent")
             {
                 Assert.Empty(dependencies);
             }
@@ -114,6 +114,7 @@ public sealed class GeneratedPackageManifestTests
                 var baseAgent = Assert.Single(dependencies);
                 Assert.Equal("younics.ai.agent", baseAgent.GetProperty("packageId").GetString());
                 Assert.Equal(">=2.0.0 <3.0.0", baseAgent.GetProperty("versionRange").GetString());
+                Assert.Equal(packageId == "younics.sunder.package.maker" ? "optional" : "required", baseAgent.GetProperty("presence").GetString());
             }
             var expected = expectedCapabilities.GetProperty(packageId)
                 .EnumerateArray()

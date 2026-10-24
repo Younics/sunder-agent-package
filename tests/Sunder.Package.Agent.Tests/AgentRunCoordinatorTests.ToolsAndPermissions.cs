@@ -67,6 +67,56 @@ using McpStatusKind = McpApp::Sunder.Package.Agent.Mcp.McpStatusKind;
 public sealed partial class AgentRunCoordinatorTests
 {
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CorrectiveArgumentFeedbackReachesTheNextProviderCycleAndStillConsumesTheToolBudget(bool exhaustBudget)
+    {
+        const string toolId = "mutate";
+        var source = new PermissionAwareMutationToolSource(toolId)
+        {
+            ArgumentValidator = request => request.ArgumentsJson.Contains("newString", StringComparison.Ordinal)
+                ? null : new(toolId, "Missing replacement text.", Content: "Supply oldString and newString.",
+                    IsError: true, ErrorCode: "files-arguments-invalid"),
+        };
+        var provider = new ScriptedProvider((request, index) =>
+        {
+            if (index == 1) return ToolRequest("invalid-call", toolId, "{\"path\":\"File.cs\"}");
+            if (index == 2)
+            {
+                Assert.Equal(0, source.ExecutionCount);
+                Assert.Equal(0, source.PermissionResolutionCount);
+                Assert.Contains(request.Turns, turn => turn.Kind == AgentTurnKind.ToolResult
+                    && turn.Items.Any(item => item.Kind == AgentTurnItemKind.ToolResult && item.CallId == "invalid-call"
+                        && item.TextContent?.Contains("Supply oldString and newString", StringComparison.Ordinal) == true));
+                return ToolRequest("corrected-call", toolId, "{\"path\":\"File.cs\",\"oldString\":\"old\",\"newString\":\"new\"}");
+            }
+            Assert.False(exhaustBudget, "The budget must stop before another provider attempt.");
+            return Complete("Only the corrected invocation executed.");
+        });
+        using var runtime = AgentTestRuntime.CreateWithBudget(provider,
+            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, exhaustBudget ? 1 : 2));
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
+        runtime.PermissionService.SaveOverride("test.mutate", "test-boundary", AgentPermissionDecision.Allow);
+        var session = await runtime.CreateSessionAsync(toolId);
+
+        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(session, runtime.CurrentProfileId,
+            "Edit the file using valid replacement arguments.", runtime.CurrentWorkspaceId);
+
+        Assert.Equal(exhaustBudget ? AgentRunStatus.Failed : AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(exhaustBudget ? 0 : 1, source.ExecutionCount);
+        Assert.Equal(exhaustBudget ? 2 : 3, provider.Requests.Count);
+        var invalid = Assert.Single(runtime.Store.ListToolExecutions(session), execution => execution.CallId == "invalid-call");
+        Assert.Null(invalid.StartedAtUtc);
+        Assert.Equal(AgentToolExecutionStatus.Failed, invalid.Status);
+        if (exhaustBudget)
+        {
+            Assert.Contains("1-call tool budget", checkpoint.Summary, StringComparison.Ordinal);
+            Assert.Equal(0, source.PermissionResolutionCount);
+        }
+    }
+
     [Fact]
     public async Task QueueUserMessageAsync_RunsParallelSafeToolCallsConcurrently()
     {
@@ -340,6 +390,95 @@ public sealed partial class AgentRunCoordinatorTests
                 && turn.Kind == AgentTurnKind.Message
                 && RenderTurnText(turn).Contains("Used the tool result", StringComparison.Ordinal)
         );
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PermissionCommandAcknowledgesDurableClaimAndContinuationBelongsToWorkerNotRequest(bool stopOwner)
+    {
+        const string toolId = "owned_approval_tool";
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ambient = new AsyncLocal<string?>();
+        string? providerAmbient = "not-started";
+        var execution = 0;
+        async ValueTask BeforeExecution(CancellationToken token)
+        {
+            if (Interlocked.Increment(ref execution) == 1) return;
+            providerAmbient = ambient.Value;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+        }
+        var provider = new ScriptedProvider((_, index) => index == 1
+            ? ToolRequest("owned-call", toolId, "{\"path\":\"~\"}") : Complete("Approved tool continued."),
+            beforeExecutionHandler: BeforeExecution);
+        using var runtime = AgentTestRuntime.Create(provider);
+        var source = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
+        var session = await runtime.CreateSessionAsync(toolId);
+        await runtime.RunCoordinator.QueueUserMessageAsync(session, runtime.CurrentProfileId, "Use the protected tool.", runtime.CurrentWorkspaceId);
+        var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(session));
+        using var changes = new AgentRuntimeChangeHub(runtime.ProfileService, runtime.WorkspaceService, runtime.SessionService);
+        using var transfers = new AgentAttachmentTransferService(new TestPackageContext(runtime.RootPath));
+        var handler = new AgentRunCommandHandler(runtime.RunCoordinator, runtime.SessionService, transfers, changes);
+        using var caller = new CancellationTokenSource();
+        ambient.Value = "permission-command-rpc-lineage";
+        var command = handler.HandleAsync(new AgentRunCommand(AgentRunCommandKind.ApprovePermission, session,
+            PermissionRequestId: pending.RequestId, ApproveForSession: true), caller.Token).AsTask();
+        try
+        {
+            var acknowledged = await command.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.NotNull(acknowledged.Checkpoint);
+            caller.Cancel();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Null(providerAmbient);
+            Assert.Equal(1, source.ExecutionCount);
+            Assert.Equal(AgentPendingPermissionStatus.Executed, runtime.Store.GetPermissionRequest(session, pending.RequestId)?.Status);
+            var repeated = await handler.HandleAsync(new AgentRunCommand(AgentRunCommandKind.ApprovePermission, session,
+                PermissionRequestId: pending.RequestId));
+            Assert.Equal(1, source.ExecutionCount);
+            Assert.NotNull(repeated.Checkpoint);
+            if (stopOwner) await runtime.BackgroundWork.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            else release.TrySetResult();
+            await WaitUntilAsync(() => runtime.Store.GetRun(pending.RunId)?.FinishedAtUtc is not null);
+            Assert.Equal(stopOwner ? AgentDurableRunStatus.Interrupted : AgentDurableRunStatus.Completed, runtime.Store.GetRun(pending.RunId)?.Status);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await command.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+    }
+
+    [Fact]
+    public async Task PermissionCommandCancelledBeforeClaimCannotExecuteOrGrantSessionPermission()
+    {
+        const string toolId = "cancelled_approval_tool";
+        using var runtime = AgentTestRuntime.Create(new ScriptedProvider((_, index) => index == 1
+            ? ToolRequest("cancelled-call", toolId, "{\"path\":\"~\"}") : Complete("Must not continue.")));
+        var source = new PermissionedToolSource(toolId);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
+        runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
+        var session = await runtime.CreateSessionAsync(toolId);
+        await runtime.RunCoordinator.QueueUserMessageAsync(session, runtime.CurrentProfileId, "Use the protected tool.", runtime.CurrentWorkspaceId);
+        var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(session));
+        using var changes = new AgentRuntimeChangeHub(runtime.ProfileService, runtime.WorkspaceService, runtime.SessionService);
+        using var transfers = new AgentAttachmentTransferService(new TestPackageContext(runtime.RootPath));
+        var handler = new AgentRunCommandHandler(runtime.RunCoordinator, runtime.SessionService, transfers, changes);
+        using var caller = new CancellationTokenSource();
+        using (await AgentSessionTransitionGate.Shared.EnterAsync(session))
+        {
+            var command = handler.HandleAsync(new AgentRunCommand(AgentRunCommandKind.ApprovePermission, session,
+                PermissionRequestId: pending.RequestId, ApproveForSession: true), caller.Token).AsTask();
+            caller.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => command);
+        }
+        await runtime.BackgroundWork.StopAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(0, source.ExecutionCount);
+        Assert.Empty(runtime.Store.ListSessionPermissionApprovals(session));
+        Assert.Equal(pending.RequestId, Assert.Single(runtime.PermissionService.ListPendingRequests(session)).RequestId);
     }
 
     [Fact]

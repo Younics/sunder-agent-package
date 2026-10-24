@@ -91,12 +91,9 @@
                             <TextBlock Text="{Binding LoadStateText}" Classes="load-state" Classes.loaded="{Binding IsLoaded}" VerticalAlignment="Center" Margin="0,0,16,6" />
                             <Button Content="Load into Sunder" Classes="primary" IsVisible="{Binding !HasSession}" IsEnabled="{Binding CanLoad}" Click="OnLoadClicked" Margin="0,0,8,6" />
                             <Button Content="Unload" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanUnload}" Click="OnUnloadClicked" Margin="0,0,8,6" />
+                            <Button Content="{Binding HotreloadActionText}" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanHotreload}" Click="OnHotreloadClicked" Margin="0,0,8,6" />
                             <Button Content="Package logs" Click="OnLogsClicked" Margin="0,0,8,6" />
                             <Button Content="Cancel" IsVisible="{Binding IsBusy}" Click="OnCancelOperationClicked" Margin="0,0,0,6" />
-                          </WrapPanel>
-                          <WrapPanel>
-                            <CheckBox Content="Auto rebuild" IsChecked="{Binding Watch, Mode=OneWay}" IsEnabled="{Binding !IsBusy}" Click="OnWatchClicked" Margin="0,0,12,0" />
-                            <TextBlock Text="{Binding WatchSummaryText}" Classes="caption" VerticalAlignment="Center" />
                           </WrapPanel>
                           <ProgressBar IsVisible="{Binding IsBuildRunning}" IsIndeterminate="True" Height="3" />
                           <TextBlock Text="{Binding ActivityText}" TextWrapping="Wrap" />
@@ -106,7 +103,6 @@
                             <TextBlock Text="{Binding AppliedActivityText}" Classes="caption" FontSize="12" IsVisible="{Binding HasAppliedActivity}" ToolTip.Tip="{Binding LastAppliedRevision.SourceContentIdentity}" />
                             <TextBlock Text="{Binding ApplicationStatusText}" Classes="caption" FontSize="12" IsVisible="{Binding HasSession}" />
                           </StackPanel>
-                          <TextBlock Text="{Binding WatchStatusText}" IsVisible="{Binding ShowWatchNotice}" Classes="caption" />
                           <Button Content="Retry setup" IsVisible="{Binding SetupIncomplete}" IsEnabled="{Binding CanOperate}" Click="OnRetrySetupClicked" HorizontalAlignment="Left" />
                         </StackPanel>
                       </Border>

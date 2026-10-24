@@ -57,7 +57,7 @@ public sealed partial class BuilderServiceTests
         };
 
         Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
-        { Operation = "watch", Kind = BuilderProjectKind.Dotnet })));
+        { Operation = "build", Kind = BuilderProjectKind.Dotnet })));
 
         Assert.Equal(1, fixture.Observations.CaptureAttempts);
         Assert.Empty(fixture.Backend.Starts);
@@ -82,7 +82,7 @@ public sealed partial class BuilderServiceTests
         var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
         var execution = await fixture.Gateway.CaptureExecutionAsync();
         var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
-            Operation = "watch", Kind = BuilderProjectKind.Node };
+            Operation = "build", Kind = BuilderProjectKind.Node };
         await execution.StartJobAsync(request);
         old.BindingFailure = new SunderRpcException(new(kind, code, "The receiver's old binding retired."));
         var current = new BuilderRuntimeFake(fixture.Backend);
@@ -108,7 +108,7 @@ public sealed partial class BuilderServiceTests
         var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
         var execution = await fixture.Gateway.CaptureExecutionAsync();
         var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
-            Operation = "watch", Kind = BuilderProjectKind.Node };
+            Operation = "build", Kind = BuilderProjectKind.Node };
         await execution.StartJobAsync(request);
         old.BindingFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.app-session.retired", "Retired."));
         var fresh = new BuilderRuntimeFake(fixture.Backend);
@@ -139,7 +139,7 @@ public sealed partial class BuilderServiceTests
         var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
         var execution = await fixture.Gateway.CaptureExecutionAsync();
         var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
-            Operation = "watch", Kind = BuilderProjectKind.Node };
+            Operation = "build", Kind = BuilderProjectKind.Node };
         await execution.StartJobAsync(request);
         old.BindingFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.app-session.retired", "Retired receiver binding."));
         var other = new BuilderUiBackend { BackendId = boundary == "backend" ? Guid.NewGuid().ToString("N") : fixture.Backend.BackendId };
@@ -173,7 +173,7 @@ public sealed partial class BuilderServiceTests
         var old = (BuilderRuntimeFake)fixture.Catalog.Current.Service;
         var execution = await fixture.Gateway.CaptureExecutionAsync();
         var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), BackendId = execution.BackendId,
-            Operation = "watch", Kind = BuilderProjectKind.Node };
+            Operation = "build", Kind = BuilderProjectKind.Node };
         await execution.StartJobAsync(request);
         using var foreign = new CancellationTokenSource();
         foreign.Cancel();
@@ -212,7 +212,7 @@ public sealed partial class BuilderServiceTests
         Assert.Equal(project, Assert.Single(await application.DiscoverAsync(project.ProjectFolder)));
         Assert.Empty(fixture.Observations.Captured);
         Assert.Empty(fixture.Observations.Observed);
-        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = project.Kind };
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "build", Kind = project.Kind };
         await Assert.ThrowsAsync<NotSupportedException>(() => application.RunJobAsync(request));
 
         Assert.Empty(fixture.Backend.Starts);
@@ -227,7 +227,7 @@ public sealed partial class BuilderServiceTests
         await using var fixture = new ObservedBuilderFixture();
         using var cancellation = new CancellationTokenSource();
         fixture.Observations.BeforeCapture = _ => cancellation.Cancel();
-        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = BuilderProjectKind.Dotnet };
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "build", Kind = BuilderProjectKind.Dotnet };
 
         var failure = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => fixture.Application.RunJobAsync(request,
             cancellationToken: cancellation.Token));
@@ -389,7 +389,7 @@ public sealed partial class BuilderServiceTests
         await using var fixture = new ObservedBuilderFixture();
         var failure = new SunderRpcException(new(SunderRpcErrorKind.PermissionDenied, "test.denied", "Capture was denied."));
         fixture.Observations.CaptureFailure = failure;
-        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "watch", Kind = BuilderProjectKind.Dotnet };
+        var request = new BuilderJobRequest { Id = Guid.NewGuid().ToString("N"), Operation = "build", Kind = BuilderProjectKind.Dotnet };
 
         Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(request)));
 
@@ -406,7 +406,7 @@ public sealed partial class BuilderServiceTests
         fixture.Observations.CaptureFailure = failure;
 
         Assert.Same(failure, await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Application.RunJobAsync(new()
-        { Operation = "watch", Kind = BuilderProjectKind.Dotnet })));
+        { Operation = "build", Kind = BuilderProjectKind.Dotnet })));
 
         Assert.Equal(1, fixture.Observations.CaptureAttempts);
         Assert.Empty(fixture.Backend.Starts);
@@ -444,7 +444,7 @@ public sealed partial class BuilderServiceTests
         List<BuilderJobSnapshot> snapshots = [];
         fixture.Observations.State = PackageWorkerExecutionState.CleanupConfirmed;
         var error = await Assert.ThrowsAsync<BuilderJobOutcomeUnknownException>(() => fixture.Application.RunJobAsync(new()
-        { Operation = "watch", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder }, snapshot =>
+        { Operation = "build", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder }, snapshot =>
         {
             snapshots.Add(snapshot);
             fixture.DisconnectOriginal();
@@ -461,7 +461,7 @@ public sealed partial class BuilderServiceTests
     }
 
     [Fact]
-    public async Task RetainedDevelopmentOwnerWaitsForExactWatchCleanupRatherThanReplacementReadiness()
+    public async Task RetainedDevelopmentOwnerWaitsForExactFiniteBuildCleanupRatherThanReplacementReadiness()
     {
         await using var fixture = new ObservedBuilderFixture();
         var source = BuilderUiFixture.Project("retained-exact-cleanup");
@@ -473,15 +473,25 @@ public sealed partial class BuilderServiceTests
             development, development, NullPackageSettingsNavigationService.Instance);
         await model.OpenFolderAsync(source.ProjectFolder);
         var row = model.SelectedProject!;
-        var watchReads = 0;
-        fixture.Backend.BeforeGet = (request, _) => request.Operation == "watch" && Interlocked.Increment(ref watchReads) > 1
-            ? Task.FromException(new IOException("The original watch cannot be observed.")) : Task.CompletedTask;
-        fixture.Backend.BeforeCancel = (_, _) => Task.FromException(new IOException("The original stop cannot be acknowledged."));
         await model.LoadSelectedProjectAsync();
+        var reads = 0;
+        var observed = BuilderUiFixture.Signal();
+        fixture.Backend.BeforeGet = (request, _) =>
+        {
+            if (request.Operation != "build") return Task.CompletedTask;
+            if (Interlocked.Increment(ref reads) > 1) throw new IOException("The original build cannot be observed.");
+            observed.TrySetResult();
+            return Task.CompletedTask;
+        };
+        fixture.Backend.BeforeCancel = (_, _) => Task.FromException(new IOException("The original stop cannot be acknowledged."));
+        var building = model.BuildSelectedProjectAsync();
+        await observed.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        model.CancelCurrentOperation();
+        await building.WaitAsync(TimeSpan.FromSeconds(3));
         await BuilderUiFixture.WaitAsync(() => fixture.Application.HasUnconfirmedJob(source.ProjectFolder));
-        var watch = Assert.Single(fixture.Backend.Starts, request => request.Operation == "watch");
+        var build = Assert.Single(fixture.Backend.Starts, request => request.Operation == "build");
         var handle = Assert.Single(development.Sessions);
-        fixture.ReplaceWithSameBackendId(watch);
+        fixture.ReplaceWithSameBackendId(build);
 
         await model.UnloadSelectedProjectAsync();
 
@@ -497,15 +507,15 @@ public sealed partial class BuilderServiceTests
         Assert.True(handle.Disposed);
         Assert.False(row.HasSession);
         Assert.False(fixture.Application.HasUnconfirmedJob(source.ProjectFolder));
-        var stopped = await fixture.Application.StopJobAsync(watch.Id!);
+        var stopped = await fixture.Application.StopJobAsync(build.Id!);
         Assert.Equal(BuilderJobStopOutcome.CleanupConfirmedUnknownOutcome, stopped.Outcome);
         Assert.Null(stopped.TerminalSnapshot);
-        Assert.Equal("running", fixture.Backend.Jobs[watch.Id!].State);
+        Assert.Equal("running", fixture.Backend.Jobs[build.Id!].State);
     }
 
     private sealed class ObservedBuilderFixture : IAsyncDisposable
     {
-        internal BuilderUiBackend Backend { get; } = new();
+        internal BuilderUiBackend Backend { get; } = new() { HoldBuilds = true };
         internal BuilderRuntimeCatalog Catalog { get; }
         internal BuilderReceiptObservations Observations { get; } = new();
         internal BuilderBackendGateway Gateway { get; }
@@ -529,7 +539,7 @@ public sealed partial class BuilderServiceTests
         {
             Backend.Projects[source.EntryPoint] = source;
             await Assert.ThrowsAsync<BuilderJobCleanupException>(() => Application.RunJobAsync(new()
-            { Operation = "watch", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder }, _ =>
+            { Operation = "build", Kind = source.Kind, EntryPoint = source.EntryPoint, ProjectFolder = source.ProjectFolder }, _ =>
             { DisconnectOriginal(); return Task.CompletedTask; }));
             return Assert.Single(Backend.Starts);
         }
@@ -620,6 +630,9 @@ public sealed partial class BuilderServiceTests
 
     private sealed class BuilderRuntimeFake(BuilderUiBackend backend) : BuilderServices.IBuilderRuntimeService
     {
+        public ValueTask<string> ConnectDevelopmentAppAsync(string appId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask<SunderContent> ReadDevelopmentCommandAsync(string appId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public ValueTask CompleteDevelopmentCommandAsync(string appId, string requestId, string responseJson, string? error, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         internal int Reads;
         internal int Cancels;
         internal int BackendIds;

@@ -167,7 +167,7 @@ internal static class TranscriptTurnTransportProjection
             SourcesJson = null,
             ErrorCode = null,
             BackendId = null,
-            PresentationPayloadJson = null,
+            PresentationPayloadJson = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Compact(item.PresentationPayloadJson),
             ToolOwnerPackageId = null,
             ToolSchemaId = null,
             ToolSchemaVersion = null,

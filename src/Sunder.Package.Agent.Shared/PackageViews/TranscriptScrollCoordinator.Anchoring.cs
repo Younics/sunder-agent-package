@@ -80,6 +80,7 @@ internal sealed partial class TranscriptScrollCoordinator
     private Control? EnsureTailAnchorRealized()
         => _realizeTailVisual?.Invoke();
 
-    private IDisposable? SuspendAnchoringForManualScroll()
-        => _anchorHost?.SuspendAnchoring();
+    private IDisposable? SuspendAnchoringForManualScroll(object? anchorKey = null)
+        => _anchorHost?.SuspendAnchoring(anchorKey is null || _itemsControl is not ItemsRepeater
+            ? null : () => ResolvePreservedAnchorKey(anchorKey));
 }

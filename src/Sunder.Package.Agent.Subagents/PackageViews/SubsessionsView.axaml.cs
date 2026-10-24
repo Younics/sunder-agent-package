@@ -74,6 +74,8 @@ public partial class SubsessionsView : UserControl,
             exception => ViewModel?.ReportTranscriptPagingFailure(exception),
             enumerateRealizedAnchors: EnumerateRealizedTranscriptAnchors,
             realizeAnchorVisual: RealizeTranscriptAnchor,
+            realizePreservedAnchorVisual: RealizePreservedTranscriptAnchor,
+            resolvePreservedAnchorKey: key => ViewModel?.ResolveVisibleTranscriptAnchor(key) ?? key,
             realizeTailVisual: RealizeTranscriptTailSentinel,
             presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive),
             anchorHost: TranscriptAnchorHost);
@@ -358,6 +360,16 @@ public partial class SubsessionsView : UserControl,
             _transcriptBehavior.JumpToLatest(
                 () => viewModel.JumpToLatestTranscriptCommand.Execute(null));
         }
+    }
+
+    private void OnActivityGroupHeaderClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: SubsessionActivityGroupRowViewModel group } header) return;
+        e.Handled = true;
+        header.Focus();
+        var scope = header.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
+        _transcriptBehavior.MutateViewport(() => group.IsExpanded = !group.IsExpanded,
+            TranscriptViewportMutationKind.ToolExpansion, group.AnchorKey, scope, isExpanding: !group.IsExpanded);
     }
 
     private void OnToolStepHeaderClick(object? sender, RoutedEventArgs e)

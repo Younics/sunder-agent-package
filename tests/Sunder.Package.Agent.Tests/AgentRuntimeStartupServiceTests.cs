@@ -13,7 +13,9 @@ using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Worker;
 using Xunit;
@@ -23,6 +25,35 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class AgentRuntimeStartupServiceTests
 {
     private static readonly TimeSpan TestTimeout = TimeSpan.FromSeconds(15);
+    [Fact]
+    public async Task WorkerActivation_PersistedNonImageToolPayloadsDoNotPreventGenerationCommit()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var provider = RegressionTestRuntime.Create(scope.Context);
+        var sessions = provider.GetRequiredService<AgentSessionService>();
+        var workspace = provider.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Existing tool history");
+        var session = sessions.CreateSession("Existing tool history", workspaceId: workspace.WorkspaceId);
+        var payloads = new[] { "[]", "[{}]", "\"legacy text result\"", "42", "true", "null" };
+        var turns = payloads.Select((payload, index) => sessions.AppendToolResultTurn(session.SessionId,
+            "legacy-" + index, "legacy.tool", "{}", "Original receipt", "Original summary", payload,
+            null, false, false, null, null)).ToArray();
+        var lifecycle = new AgentWorkerLifecycle(provider);
+        lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
+
+        await lifecycle.ActivateAsync(static (_, _, _) => ValueTask.CompletedTask, CancellationToken.None)
+            .AsTask().WaitAsync(TestTimeout);
+
+        Assert.True(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
+        Assert.Empty(provider.GetRequiredService<AgentLocalStore>().ListReferencedAttachmentPaths());
+        for (var index = 0; index < turns.Length; index++)
+        {
+            var item = Assert.Single(sessions.GetTurn(turns[index].TurnId)!.Items);
+            Assert.Equal(payloads[index], item.StructuredPayloadJson);
+            Assert.Equal("Original receipt", item.TextContent);
+        }
+        await lifecycle.StopAsync(CancellationToken.None);
+    }
+
     [Fact]
     public async Task WorkerActivation_DoesNotWaitForPreActivationCatalogDiscovery()
     {
@@ -73,11 +104,30 @@ public sealed class AgentRuntimeStartupServiceTests
         await lifecycle.StopAsync(CancellationToken.None);
     }
 
-    [Fact]
-    public async Task WorkerActivation_GenerationCommitFailureRejectsCandidateAndUnwindsStartup()
+    [Theory]
+    [InlineData("record")]
+    [InlineData("throw")]
+    [InlineData("hang")]
+    [InlineData("block")]
+    public async Task WorkerActivation_GenerationCommitFailureRejectsCandidateAndUnwindsStartup(string loggingBehavior)
     {
         using var scope = RegressionTestPackageScope.Create();
-        await using var provider = RegressionTestRuntime.Create(scope.Context);
+        var events = new RecordingPackageEventLogger();
+        var logging = new StartupFailureLogging(events, loggingBehavior);
+        var context = new RegressionTestPackageContext(scope.RootPath, logging);
+        await using var provider = RegressionTestRuntime.Create(context);
+        var workers = new object[]
+        {
+            provider.GetRequiredService<HistorySearchIndexingService>(),
+            provider.GetRequiredService<AgentRunDispatcher>(),
+            provider.GetRequiredService<AgentLifecycleDispatcher>(),
+            provider.GetRequiredService<AgentSessionCleanupDispatcher>(),
+            provider.GetRequiredService<AgentBackgroundWorkService>(),
+        };
+        logging.BeforeFailureEmission = () => workers.All(worker =>
+            // Completed drains may already have cleared their lifetime fields.
+            worker.GetType().GetField("_lifetime", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(worker)
+                is not CancellationTokenSource { IsCancellationRequested: false });
         var history = provider.GetRequiredService<HistorySearchStore>();
         history.ChangeConfiguration(true, "test.embedding", "test.provider", "test.model", new string('a', 64));
         using (var connection = Open(history.DatabasePath))
@@ -96,18 +146,68 @@ public sealed class AgentRuntimeStartupServiceTests
         lifecycle.CommitGeneration(new PackageRuntimeGeneration(Guid.NewGuid(), 1));
         var faultReported = false;
 
-        var exception = await Assert.ThrowsAsync<SqliteException>(() => lifecycle.ActivateAsync(
+        var activation = Task.Run(() => lifecycle.ActivateAsync(
             (_, _, _) =>
             {
                 faultReported = true;
                 return ValueTask.CompletedTask;
             },
             CancellationToken.None).AsTask());
+        SqliteException exception;
+        try
+        {
+            exception = await Assert.ThrowsAsync<SqliteException>(() => activation.WaitAsync(TestTimeout));
+        }
+        finally
+        {
+            logging.Release();
+            try
+            {
+                await activation.WaitAsync(TestTimeout);
+            }
+            catch (SqliteException)
+            {
+                // The original activation failure is asserted above.
+            }
+        }
 
         Assert.Contains("worker generation commit rejected", exception.Message, StringComparison.Ordinal);
+        Assert.True(logging.WorkersCancelledBeforeEmission);
         Assert.False(faultReported);
         Assert.Null(provider.GetRequiredService<AgentLocalStore>().OwnedRuntimeGeneration);
         Assert.False(provider.GetRequiredService<AgentBackgroundWorkService>().IsRunning);
+        var diagnostic = Assert.Single(events.Events, value => value.EventName == "runtime.generation.startup-failed");
+        Assert.Equal(PackageLogLevel.Error, diagnostic.Level);
+        Assert.Equal("history-search", diagnostic.Attributes["runtime.startup.phase"]);
+        Assert.Equal(typeof(SqliteException).FullName, diagnostic.Attributes["exception.type"]);
+        Assert.Matches("^[a-f0-9]{64}$", Assert.IsType<string>(diagnostic.Attributes["exception.fingerprint"]));
+        Assert.Null(diagnostic.Exception);
+        Assert.DoesNotContain("worker generation commit rejected", JsonSerializer.Serialize(diagnostic), StringComparison.Ordinal);
+    }
+
+    private sealed class StartupFailureLogging(RecordingPackageEventLogger events, string behavior) : IPackageLogging, IPackageEventLogger
+    {
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Func<bool>? BeforeFailureEmission { get; set; }
+        public bool? WorkersCancelledBeforeEmission { get; private set; }
+        public void Release() => _release.TrySetResult();
+        public Microsoft.Extensions.Logging.ILoggerFactory LoggerFactory => NullPackageLogging.Instance.LoggerFactory;
+        public IPackageEventLogger Events => this;
+        public ValueTask WriteAsync(PackageLogLevel level, string eventName, string message,
+            IReadOnlyDictionary<string, object?>? attributes = null, Exception? exception = null, CancellationToken cancellationToken = default)
+        {
+            if (eventName == "runtime.generation.startup-failed")
+                WorkersCancelledBeforeEmission = BeforeFailureEmission?.Invoke();
+            var recorded = events.WriteAsync(level, eventName, message, attributes, exception, cancellationToken);
+            if (eventName != "runtime.generation.startup-failed") return recorded;
+            if (behavior == "block") _release.Task.GetAwaiter().GetResult();
+            return behavior switch
+            {
+                "throw" => ValueTask.FromException(new IOException("Logging must not replace the original startup failure.")),
+                "hang" => new(_release.Task),
+                _ => recorded,
+            };
+        }
     }
 
     [Fact]

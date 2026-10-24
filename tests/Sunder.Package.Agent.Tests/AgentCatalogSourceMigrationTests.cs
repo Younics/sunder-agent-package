@@ -142,7 +142,7 @@ public sealed class AgentCatalogSourceMigrationTests
                     break;
                 default: break;
             }
-            Assert.Equal(family is not ("Agent" or "Builder" or "Execution.Local" or "Execution.Docker"),
+            Assert.Equal(family is not ("Agent" or "Execution.Local" or "Execution.Docker"),
                 assembly.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentChatStreamEvent") is not null);
             Assert.Equal(family == "Agent", assembly.GetType("Sunder.Package.Agent.Protocol.AgentChatStreamEvent") is not null);
         }

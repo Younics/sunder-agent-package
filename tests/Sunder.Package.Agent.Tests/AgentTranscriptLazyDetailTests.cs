@@ -22,6 +22,29 @@ using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Age
 public sealed class AgentTranscriptLazyDetailTests
 {
     [Fact]
+    public void LaterOperationObservationUpdatesOnlySameSessionHeadersNotOriginalReceipts()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessions = new AgentSessionService(store);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Operation receipts");
+        var session = sessions.CreateSession("Operation receipts", workspaceId: workspace.WorkspaceId);
+        var original = sessions.AppendToolResultTurn(session.SessionId, "apply", "maker_apply", "{}", "original-running-receipt", "Package operation running", null, null,
+            false, false, null, null, "{\"operationStatus\":\"running\",\"operationRef\":\"o-original\"}");
+        sessions.AppendToolResultTurn(session.SessionId, "observe", "maker_operation", "{}", "later-applied-observation", "Package operation applied", null, null,
+            false, false, null, null, "{\"operationStatus\":\"applied\",\"operationRef\":\"o-original\"}");
+        var foreign = sessions.CreateSession("Other session", workspaceId: workspace.WorkspaceId);
+        sessions.AppendToolResultTurn(foreign.SessionId, "foreign", "maker_operation", "{}", "foreign-failure", "Foreign failure", null, null,
+            false, true, null, null, "{\"operationStatus\":\"failed\",\"operationRef\":\"o-original\"}");
+        var page = store.LoadTranscriptAroundTurn(session.SessionId, original.TurnId, 0, 0);
+        var header = Assert.Single(Assert.Single(page.Turns).Items);
+        Assert.Contains("applied", header.PresentationPayloadJson);
+        Assert.Equal("Package operation applied", header.ToolHeaderHint);
+        var raw = Assert.Single(store.GetTurn(original.TurnId)!.Items);
+        Assert.Equal("original-running-receipt", raw.TextContent);
+        Assert.Contains("running", raw.PresentationPayloadJson);
+    }
+    [Fact]
     public async Task RuntimeCatalogPagingPreservesPayloadsWhileSubsessionsReadHeaders()
     {
         using var scope = RegressionTestPackageScope.Create();

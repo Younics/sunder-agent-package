@@ -29,7 +29,7 @@ internal static class CodexResponsesInputNormalizer
             .Select(tool => new CodexFunctionTool(
                 tool.Name,
                 tool.Description,
-                OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(BuildToolSchemaJson(tool.JsonSchema)),
+                OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(BuildToolSchemaJson(tool.JsonSchema), strict: false),
                 Strict: false))
             .ToArray();
 
@@ -196,9 +196,15 @@ internal static class CodexResponsesInputNormalizer
     private static string SerializeArguments(IDictionary<string, object?> arguments)
         => arguments.Count == 0 ? "{}" : JsonSerializer.Serialize(arguments);
 
-    private static string RenderFunctionResult(object? result)
+    private static object RenderFunctionResult(object? result)
         => result switch
         {
+            IEnumerable<AIContent> parts => parts.Select(part => part switch
+            {
+                TextContent text => (object)new CodexTextPart("input_text", text.Text),
+                DataContent image when image.MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) => new CodexImagePart(image.Uri),
+                _ => throw new NotSupportedException("Unsupported tool result content."),
+            }).ToArray(),
             null => string.Empty,
             string text => text,
             JsonElement jsonElement => jsonElement.GetRawText(),

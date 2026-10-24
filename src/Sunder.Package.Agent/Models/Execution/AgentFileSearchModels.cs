@@ -19,7 +19,18 @@ public sealed record AgentFileSearchRequest(
     string Path,
     AgentFileSearchKind Kind,
     string Pattern,
-    string? Include = null);
+    string? Include = null)
+{
+    /// <summary>Gets whether grep treats the pattern as literal text rather than a bounded regular expression.</summary>
+    public bool Literal { get; init; }
+    /// <summary>Gets whether grep uses ordinal case-sensitive matching.</summary>
+    public bool? CaseSensitive { get; init; }
+    /// <summary>Gets whether glob wildcards may match hidden path segments. Explicit dot segments still match.</summary>
+    public bool Hidden { get; init; }
+    /// <summary>Gets the requested result count, bounded to 1–1,000 by the execution target.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "1", Maximum = "1000")]
+    public int? Limit { get; init; }
+}
 
 /// <summary>Contains one structured file-search match.</summary>
 /// <param name="Path">The target-visible matched file path.</param>
@@ -45,6 +56,10 @@ public sealed record AgentFileSearchResult(
 
     /// <summary>Gets the bounded user-facing failure explanation.</summary>
     public string? ErrorMessage { get; init; }
+
+    /// <summary>Gets the first bound that prevented a complete search, or null for complete results.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(AllowedStrings = ["result-limit", "output-limit", "scan-limit", "line-limit"])]
+    public string? TruncationReason { get; init; }
 
     /// <summary>Creates a failed search with no matches.</summary>
     public static AgentFileSearchResult Failure(string errorCode, string errorMessage)

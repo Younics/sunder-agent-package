@@ -111,10 +111,12 @@ public sealed partial class AgentChatViewModel
             uiDispatcher);
         RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
         TailSentinelRow = new AgentTranscriptTailSentinelRowViewModel();
-        _transcriptItemsProjection = new TranscriptItemsProjection<AgentTranscriptRowViewModel>(
+        _transcriptItemsProjection = new TranscriptActivityProjection<AgentTranscriptRowViewModel>(
             Messages,
+            static row => (row as AgentToolInvocationRowViewModel)?.ActivityMember,
+            static (first, state) => new AgentActivityGroupRowViewModel(first, state),
             RunActivityRow,
-            TailSentinelRow);
+            TailSentinelRow) { InitialNavigationAnchor = () => _timeline.SelectedAnchorKey };
         TranscriptItems = _transcriptItemsProjection.Items;
         _runActivity = new AgentRunActivityState(
             () => IsDisplayedSessionRunActive,

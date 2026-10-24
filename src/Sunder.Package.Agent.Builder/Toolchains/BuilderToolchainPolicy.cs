@@ -59,6 +59,7 @@ public static class BuilderToolchainPolicy
     }
 }
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public sealed record BuilderToolchainPlatform(string DotnetRid, string NodePlatform)
 {
     public static BuilderToolchainPlatform Current

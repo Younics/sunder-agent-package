@@ -9,6 +9,24 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class CodexResponsesRequestBuilderTests
 {
     [Fact]
+    public void ToolImageIsWrittenAsAnImageBlockNotSerializedText()
+    {
+        var request = CodexResponsesRequestBuilder.Build(new AgentChatClientContext("openai", "openai/gpt-5.5"),
+        [
+            new ChatMessage(ChatRole.Assistant, [new FunctionCallContent("capture-1", "maker_screenshot", new Dictionary<string, object?>())]),
+            new ChatMessage(ChatRole.Tool, [new FunctionResultContent("capture-1", new List<AIContent>
+                { new TextContent("Untrusted package pixels"), new DataContent(new byte[] { 1, 2, 3 }, "image/png") })]),
+        ], new ChatOptions(), toolAware: true);
+        using var json = JsonDocument.Parse(request.Body);
+        var result = json.RootElement.GetProperty("input")[1];
+        Assert.Equal("function_call_output", result.GetProperty("type").GetString());
+        Assert.Equal("capture-1", result.GetProperty("call_id").GetString());
+        var output = result.GetProperty("output");
+        Assert.Equal(JsonValueKind.Array, output.ValueKind);
+        Assert.Equal("input_image", output[1].GetProperty("type").GetString());
+        Assert.Equal("data:image/png;base64,AQID", output[1].GetProperty("image_url").GetString());
+    }
+    [Fact]
     public void Build_Gpt55TextRequest_AppliesCodexDefaults()
     {
         var request = CodexResponsesRequestBuilder.Build(
@@ -29,7 +47,7 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.False(root.GetProperty("store").GetBoolean());
         Assert.Equal("session-123", root.GetProperty("prompt_cache_key").GetString());
         Assert.False(root.TryGetProperty("service_tier", out _));
-        Assert.Equal("medium", root.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.False(root.GetProperty("reasoning").TryGetProperty("effort", out _));
         Assert.Equal("auto", root.GetProperty("reasoning").GetProperty("summary").GetString());
         Assert.Equal("low", root.GetProperty("text").GetProperty("verbosity").GetString());
         Assert.Equal("Be brief.", root.GetProperty("instructions").GetString());
@@ -52,24 +70,22 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.Null(request.ToolChoice);
     }
 
-    [Fact]
-    public void Build_FastSuffixDoesNotRewriteModelOrEnablePriorityServiceTier()
+    [Theory]
+    [InlineData("openai/gpt-5.5-fast")]
+    [InlineData("openai/gpt-5.6")]
+    [InlineData("openai/gpt-5.3-chat-latest")]
+    [InlineData("openai/o3")]
+    public void Build_RejectsUnqualifiedConnectedModelsRatherThanRewritingTheirIds(string modelId)
     {
-        var request = CodexResponsesRequestBuilder.Build(
-            new AgentChatClientContext("openai", "openai/gpt-5.5-fast"),
+        var failure = Assert.Throws<AgentChatProviderException>(() => CodexResponsesRequestBuilder.Build(
+            new AgentChatClientContext("openai", modelId),
             [new ChatMessage(ChatRole.User, "Say hi.")],
             new ChatOptions
             {
                 ConversationId = "session-123",
             },
-            toolAware: false);
-
-        using var document = JsonDocument.Parse(request.Body);
-        var root = document.RootElement;
-
-        Assert.Equal("gpt-5.5-fast", root.GetProperty("model").GetString());
-        Assert.False(root.TryGetProperty("service_tier", out _));
-        Assert.Null(request.ServiceTier);
+            toolAware: false));
+        Assert.Equal("openai-model-unavailable", failure.ErrorCode);
     }
 
     [Theory]
@@ -87,7 +103,7 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
-    public void Build_Gpt56ConfiguredFastAndProRequest_FallsBackToStandardReasoningForCodex()
+    public void Build_Gpt56FastRequest_PreservesEffortAndRejectsLegacyProRatherThanDroppingIt()
     {
         var request = CodexResponsesRequestBuilder.Build(
             new AgentChatClientContext("openai", "openai/gpt-5.6-sol"),
@@ -97,7 +113,6 @@ public sealed class CodexResponsesRequestBuilderTests
                 AdditionalProperties = new AdditionalPropertiesDictionary
                 {
                     [AgentChatModelOptionKeys.SpeedOptionId] = "fast",
-                    [AgentChatModelOptionKeys.ModeOptionId] = "pro",
                 },
                 Reasoning = new ReasoningOptions
                 {
@@ -122,13 +137,15 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.Equal("additional_tools", root.GetProperty("input")[0].GetProperty("type").GetString());
         Assert.Empty(root.GetProperty("input")[0].GetProperty("tools").EnumerateArray());
         Assert.True(request.UsesResponsesLite);
+        Assert.Throws<AgentChatProviderException>(() => CodexResponsesRequestBuilder.Build(
+            new("openai", "openai/gpt-5.6-sol"), [], new()
+            { AdditionalProperties = new() { [AgentChatModelOptionKeys.ModeOptionId] = "pro" } }, toolAware: false));
     }
 
     [Theory]
     [InlineData("openai/gpt-5.6-sol", true)]
     [InlineData("openai/gpt-5.6-terra", true)]
     [InlineData("openai/gpt-5.6-luna", true)]
-    [InlineData("openai/gpt-5.6", false)]
     [InlineData("openai/gpt-5.5", false)]
     public void Build_UsesResponsesLiteOnlyForCatalogMarkedModels(string modelId, bool expected)
     {
@@ -142,42 +159,11 @@ public sealed class CodexResponsesRequestBuilderTests
     }
 
     [Fact]
-    public void Build_VersionedChatLatestRequest_DoesNotAddReasoningOptions()
+    public void Catalog_OSeriesKeepsItsApiReasoningWithoutAdvertisingConnectedAvailability()
     {
-        var request = CodexResponsesRequestBuilder.Build(
-            new AgentChatClientContext("openai", "openai/gpt-5.3-chat-latest"),
-            [
-                new ChatMessage(ChatRole.System, "System guidance."),
-                new ChatMessage(ChatRole.User, "Say hi.")
-            ],
-            new ChatOptions
-            {
-                Reasoning = new ReasoningOptions { Effort = ReasoningEffort.High },
-            },
-            toolAware: false);
-
-        using var document = JsonDocument.Parse(request.Body);
-        var root = document.RootElement;
-
-        Assert.False(root.TryGetProperty("reasoning", out _));
-        Assert.False(root.TryGetProperty("include", out _));
-        Assert.False(request.HasReasoningOptions);
-        Assert.False(request.HasIncludeOptions);
-        Assert.Equal("system", root.GetProperty("input")[0].GetProperty("role").GetString());
-    }
-
-    [Fact]
-    public void Build_OSeriesRequest_UsesCatalogReasoningCapabilityMetadata()
-    {
-        var request = CodexResponsesRequestBuilder.Build(
-            new AgentChatClientContext("openai", "openai/o3"),
-            [new ChatMessage(ChatRole.User, "Solve it.")],
-            new ChatOptions { Reasoning = new ReasoningOptions { Effort = ReasoningEffort.High } },
-            toolAware: false);
-
-        using var document = JsonDocument.Parse(request.Body);
-        Assert.Equal("high", document.RootElement.GetProperty("reasoning").GetProperty("effort").GetString());
-        Assert.Equal("reasoning.encrypted_content", document.RootElement.GetProperty("include")[0].GetString());
+        Assert.Equal(["low", "medium", "high"], OpenAiModelCatalog.Find("o3")!.Variants!.Select(variant => variant.VariantId));
+        Assert.Null(OpenAiModelCatalog.Find("o3", connected: true));
+        Assert.Null(OpenAiModelCatalog.Find("gpt-5.3-chat-latest")!.Variants);
     }
 
     [Fact]
@@ -214,7 +200,8 @@ public sealed class CodexResponsesRequestBuilderTests
         var reasoning = document.RootElement.GetProperty("reasoning");
 
         Assert.Equal(expectedEffort, reasoning.GetProperty("effort").GetString());
-        Assert.Equal("auto", reasoning.GetProperty("summary").GetString());
+        if (effort == ReasoningEffort.None) Assert.False(reasoning.TryGetProperty("summary", out _));
+        else Assert.Equal("auto", reasoning.GetProperty("summary").GetString());
     }
 
     [Fact]
@@ -249,7 +236,9 @@ public sealed class CodexResponsesRequestBuilderTests
               "type": "object",
               "properties": {
                 "path": { "type": "string" }
-              }
+              },
+              "required": ["path"],
+              "additionalProperties": false
             }
             """);
         var tool = AIFunctionFactory.CreateDeclaration(
@@ -348,7 +337,7 @@ public sealed class CodexResponsesRequestBuilderTests
         Assert.False(root.TryGetProperty("tools", out _));
         Assert.Equal("auto", root.GetProperty("tool_choice").GetString());
         Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
-        Assert.Equal("medium", root.GetProperty("reasoning").GetProperty("effort").GetString());
+        Assert.False(root.GetProperty("reasoning").TryGetProperty("effort", out _));
         Assert.Equal("all_turns", root.GetProperty("reasoning").GetProperty("context").GetString());
         Assert.Equal("additional_tools", input[0].GetProperty("type").GetString());
         Assert.Equal("developer", input[0].GetProperty("role").GetString());

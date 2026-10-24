@@ -10,6 +10,14 @@ internal sealed partial class TranscriptRowProjector<TRow>
         AgentTranscriptTrimDirection trimDirection,
         object? protectedAnchorKey = null)
     {
+        // A compact header needs at least two source members. Keeping only its
+        // first call preserves a source key but destroys the visible anchor.
+        var protectedTrailingRows = 0;
+        if (protectedAnchorKey is TranscriptActivityGroupAnchor groupAnchor)
+        {
+            protectedAnchorKey = groupAnchor.SourceAnchor;
+            protectedTrailingRows = 1;
+        }
         var visibleRows = _rows.Where(row => !ReferenceEquals(row, _activityRow)).ToArray();
         var retainedRowLimit = Math.Max(
             0,
@@ -24,7 +32,8 @@ internal sealed partial class TranscriptRowProjector<TRow>
             retainedRowLimit,
             trimDirection,
             protectedAnchorKey,
-            _factory.GetAnchorKey);
+            _factory.GetAnchorKey,
+            protectedTrailingRows);
         if (protectedAnchorKey is not null
             && visibleRows.FirstOrDefault(row => Equals(
                 _factory.GetAnchorKey(row),

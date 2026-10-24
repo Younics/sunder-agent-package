@@ -8,6 +8,31 @@
     <Setter Property="HorizontalContentAlignment" Value="Stretch" />
   </Style>
 
+  <Style Selector="ProgressBar.activity-group-processing">
+    <Setter Property="Width" Value="24" />
+    <Setter Property="Height" Value="2" />
+    <Setter Property="MinHeight" Value="0" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+  </Style>
+
+  <Style Selector="Button.activity-group-header">
+    <Setter Property="Margin" Value="0,0,0,12" />
+    <Setter Property="Padding" Value="8,6" />
+    <Setter Property="MinWidth" Value="0" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+    <Setter Property="FontSize" Value="12" />
+  </Style>
+
+  <Style Selector="Button.activity-group-header:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+  </Style>
+
   <Style Selector="Border.navigation-highlight-overlay">
     <Setter Property="Background" Value="#0DD79B42" />
     <Setter Property="BorderBrush" Value="#70D79B42" />

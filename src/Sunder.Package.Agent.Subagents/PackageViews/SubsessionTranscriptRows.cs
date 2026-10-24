@@ -253,6 +253,7 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
     }
 
     public string ToolLabel => _projection.ToolLabel;
+    internal TranscriptActivityMember ActivityMember => TranscriptActivityGrouping.Describe(_projection);
     public string StatusText => _projection.StatusText;
     public string StatusIconText => _projection.StatusIconText;
     public string HeaderDetailText => FirstNonBlank(_projection.ErrorSummary, _projection.HeaderHint) ?? string.Empty;
@@ -292,7 +293,7 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
             .Where(value => !string.IsNullOrWhiteSpace(value)));
     public IBrush? StateBrush { get; private set; }
     public IBrush? StateSoftBrush { get; private set; }
-    public bool IsAmbiguous => string.Equals(StatusText, "Ambiguous", StringComparison.OrdinalIgnoreCase);
+    public bool IsAmbiguous => StatusText is "Ambiguous" or "Unconfirmed";
     public Guid? ResultTurnId => _resultTurnId;
     public ObservableCollection<SubsessionChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
@@ -442,9 +443,10 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
     private static IBrush? ResolveStateBrush(string statusText)
         => SubagentThemeBrushes.Resolve(statusText switch
         {
-            "Completed" => SunderThemeKeys.SuccessBrush,
-            "Started" or "Running" => SunderThemeKeys.AccentBrush,
-            "Ambiguous" => SunderThemeKeys.WarningBrush,
+            "Completed" or "Applied" => SunderThemeKeys.SuccessBrush,
+            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.AccentBrush,
+            "Running (last observed)" => SunderThemeKeys.ForegroundMutedBrush,
+            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningBrush,
             "Prepared" => SunderThemeKeys.ForegroundMutedBrush,
             _ => SunderThemeKeys.DangerBrush,
         });
@@ -452,9 +454,10 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
     private static IBrush? ResolveStateSoftBrush(string statusText)
         => SubagentThemeBrushes.Resolve(statusText switch
         {
-            "Completed" => SunderThemeKeys.SuccessSoftBrush,
-            "Started" or "Running" => SunderThemeKeys.InfoSoftBrush,
-            "Ambiguous" => SunderThemeKeys.WarningSoftBrush,
+            "Completed" or "Applied" => SunderThemeKeys.SuccessSoftBrush,
+            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.InfoSoftBrush,
+            "Running (last observed)" => SunderThemeKeys.SurfacePopoverBrush,
+            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningSoftBrush,
             "Prepared" => SunderThemeKeys.SurfacePopoverBrush,
             _ => SunderThemeKeys.DangerSoftBrush,
         });

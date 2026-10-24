@@ -13,6 +13,9 @@ public interface ToolSourceService
     ValueTask<IReadOnlyList<AgentToolDescriptor>> ListToolsAsync(AgentToolSourceContext context, CancellationToken cancellationToken = default);
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     ValueTask<AgentToolReadiness?> GetReadinessAsync(string toolId, AgentToolSourceContext context, CancellationToken cancellationToken = default);
+    /// <summary>Validates arguments without resolving targets, reading resources or requesting authority. Null means valid; failures are corrective tool results, not permission requests.</summary>
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default);
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     ValueTask<AgentToolResult?> PreflightAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default);
     [SunderMethod(TimeoutSeconds = 2100)]

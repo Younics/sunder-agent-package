@@ -8,6 +8,63 @@ namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 public sealed class LMStudioModelCatalogServiceTests
 {
     [Fact]
+    public async Task NativeCatalog_UsesKeysLoadedContextAndModelSpecificCapabilities()
+    {
+        const string payload = """
+            {"models":[
+              {"key":"local/reasoner","id":"wrong-id","type":"llm","max_context_length":131072,
+               "loaded_instances":[{"config":{"context_length":16384}},{"config":{"context_length":32768}}],
+               "capabilities":{"vision":true,"trained_for_tool_use":false},
+               "reasoning":{"allowed_options":["off","on","low","high","max"],"default":"high"}},
+              {"key":"local/decision","type":"decision"}
+            ]}
+            """;
+        var context = CreateContext("http://lmstudio.test/proxy/v1");
+        var handler = new LMStudioTestHttpHandler((_, _, _) => LMStudioTestHttpHandler.Json(payload));
+        using var connection = new LMStudioConnection(context, handler);
+        var catalog = new LMStudioModelCatalogService(connection);
+        using var provider = new LMStudioAgentProvider(context, connection, catalog);
+
+        var model = Assert.Single(await provider.ListModelsAsync());
+        var capabilities = await provider.GetCapabilitiesAsync(model.ModelId);
+
+        Assert.Equal("/proxy/api/v1/models", Assert.Single(handler.Requests).Uri.AbsolutePath);
+        Assert.Equal("lmstudio/local/reasoner", model.ModelId);
+        Assert.Equal(16384, model.ContextWindow);
+        Assert.Equal(["low", "high"], model.Variants!.Select(variant => variant.VariantId));
+        Assert.Equal("high", model.DefaultReasoningVariantId);
+        Assert.Null(model.SpeedOptions);
+        Assert.True(capabilities.SupportsImageInput);
+        Assert.False(capabilities.SupportsNativeToolCalling);
+        Assert.False(capabilities.SupportsStreamingToolCalls);
+        Assert.False(capabilities.SupportsMultipleToolCalls);
+        Assert.Equal(16384, capabilities.ContextWindowTokens);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, true)]
+    [InlineData(HttpStatusCode.MethodNotAllowed, true)]
+    [InlineData(HttpStatusCode.NotImplemented, true)]
+    [InlineData(HttpStatusCode.Unauthorized, false)]
+    [InlineData(HttpStatusCode.Forbidden, false)]
+    [InlineData(HttpStatusCode.TooManyRequests, false)]
+    [InlineData(HttpStatusCode.InternalServerError, false)]
+    public async Task NativeCatalog_FallsBackOnlyWhenEndpointIsUnsupported(HttpStatusCode status, bool fallback)
+    {
+        var handler = new LMStudioTestHttpHandler((_, number, _) => LMStudioTestHttpHandler.Json(
+            number == 1 ? "{}" : "{\"data\":[{\"id\":\"legacy-model\"}]}", number == 1 ? status : HttpStatusCode.OK));
+        using var connection = new LMStudioConnection(CreateContext(), handler);
+        var catalog = new LMStudioModelCatalogService(connection);
+
+        var result = await catalog.GetCatalogAsync();
+
+        Assert.Equal(fallback, result.IsSuccess);
+        Assert.Equal(fallback ? 2 : 1, handler.Requests.Count);
+        if (fallback) Assert.Equal("/v1/models", handler.Requests[1].Uri.AbsolutePath);
+        else Assert.Equal(status, result.Failure?.StatusCode);
+    }
+
+    [Fact]
     public async Task Catalog_DistinguishesValidEmptyFromFailure()
     {
         var emptyHandler = new LMStudioTestHttpHandler((_, _, _) => LMStudioTestHttpHandler.Json("{\"data\":[]}"));

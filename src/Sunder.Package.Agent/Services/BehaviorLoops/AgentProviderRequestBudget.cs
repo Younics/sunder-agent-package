@@ -110,7 +110,21 @@ internal static class AgentProviderRequestBudget
                         break;
                     case FunctionResultContent result:
                         AddRequestText(result.CallId, ref textBytes, ref serializedTextBytes);
-                        AddRequestJson(result.Result, ref textBytes, ref serializedTextBytes);
+                        if (result.Result is IEnumerable<AIContent> parts)
+                        {
+                            foreach (var part in parts)
+                            {
+                                contentCount++;
+                                if (part is TextContent caption) AddRequestText(caption.Text, ref textBytes, ref serializedTextBytes);
+                                else if (part is DataContent image)
+                                {
+                                    binaryBytes = SaturatingAdd(binaryBytes, image.Data.Length);
+                                    encodedBinaryBytes = SaturatingAdd(encodedBinaryBytes, EstimateBase64EncodedLength(image.Data.Length));
+                                    AddRequestText(image.MediaType, ref textBytes, ref serializedTextBytes);
+                                }
+                            }
+                        }
+                        else AddRequestJson(result.Result, ref textBytes, ref serializedTextBytes);
                         break;
                     case DataContent data:
                         binaryBytes = SaturatingAdd(binaryBytes, data.Data.Length);

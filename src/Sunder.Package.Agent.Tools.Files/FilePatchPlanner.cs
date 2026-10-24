@@ -17,29 +17,77 @@ internal static class FilePatchPlanner
                 $"Patches support at most {FilePatchParser.MaximumOperations} file operations.");
         }
 
-        var duplicate = operations.GroupBy(operation => operation.Path, StringComparer.OrdinalIgnoreCase)
+        var paths = FilePatchPaths.Affected(operations);
+        var duplicate = paths.GroupBy(path => path.Path, StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicate is not null)
         {
             throw new InvalidOperationException($"Patch path appears more than once: {duplicate.Key}");
         }
-
-        var planned = new List<PlannedFilePatchOperation>(operations.Count);
-        for (var resourceIndex = 0; resourceIndex < operations.Count; resourceIndex++)
+        var resources = new Dictionary<string, (int Index, AgentResolvedResource Resource)>(StringComparer.Ordinal);
+        var canonicalPaths = new HashSet<string>(StringComparer.Ordinal);
+        for (var index = 0; index < paths.Count; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var operation = operations[resourceIndex];
-            var resource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
+            var path = paths[index].Path;
+            var resource = await target.Service.ResolveFileAsync(new() { Context = ForResource(context, index), Path = path }, cancellationToken);
+            var canonical = resource.ResourceClaim is { } claim
+                ? claim.NamespaceId + "\0" + claim.LogicalPath
+                : resource.CanonicalReference;
+            if (!canonicalPaths.Add(canonical))
+                throw new InvalidOperationException($"Patch paths resolve to the same target: {path}");
+            resources.Add(path, (index, resource));
+        }
+
+        var planned = new List<PlannedFilePatchOperation>(paths.Count);
+        foreach (var operation in operations)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (resourceIndex, resource) = resources[operation.Path];
+            var operationContext = ForResource(context, resourceIndex);
+            if (operation.MoveTo is { } destination)
+            {
+                var (destinationIndex, destinationResource) = resources[destination];
+                planned.AddRange(await PlanMoveAsync(target, operationContext, operation, resourceIndex, resource,
+                    destinationIndex, destinationResource, cancellationToken));
+                continue;
+            }
             planned.Add(operation.Kind switch
             {
                 FilePatchOperationKind.Add => PlanAdd(operation, resourceIndex, resource),
-                FilePatchOperationKind.Update => await PlanUpdateAsync(target, context, operation, resourceIndex, resource, cancellationToken),
-                FilePatchOperationKind.Delete => await PlanDeleteAsync(target, context, operation, resourceIndex, resource, cancellationToken),
+                FilePatchOperationKind.Update => await PlanUpdateAsync(target, operationContext, operation, resourceIndex, resource, cancellationToken),
+                FilePatchOperationKind.Delete => await PlanDeleteAsync(target, operationContext, operation, resourceIndex, resource, cancellationToken),
                 _ => throw new InvalidOperationException($"Unsupported patch operation for {operation.Path}."),
             });
         }
 
         return new FilePatchPlan(planned);
+    }
+
+    private static AgentExecutionTargetContext ForResource(AgentExecutionTargetContext context, int index)
+        => context with { ResourceOperation = context.ResourceOperation is { } operation ? operation with { ResourceIndex = index } : null };
+
+    private static async Task<IReadOnlyList<PlannedFilePatchOperation>> PlanMoveAsync(
+        FileExecutionTarget target, AgentExecutionTargetContext context, FilePatchOperation operation,
+        int sourceIndex, AgentResolvedResource source, int destinationIndex, AgentResolvedResource destination,
+        CancellationToken cancellationToken)
+    {
+        if (destination.Exists)
+            throw new InvalidOperationException($"Move destination already exists: {operation.MoveTo}");
+        var current = await ReadExistingFileAsync(target, context, operation.Path, source, cancellationToken);
+        var next = FileDiffPresentation.ApplyHunks(current, operation.Hunks, out var lines, allowUnchanged: true);
+        var mutationSource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
+        var move = new FilePatchMove(operation.Path, operation.MoveTo!, sourceIndex, mutationSource.CanonicalReference, current);
+        // OpenCode-style patch move, not a native rename: publish the destination
+        // create-only, then remove the exact preflight source with a content CAS.
+        return
+        [
+            new(FilePatchOperationKind.Add, operation.MoveTo!, destinationIndex, null, next, null,
+                destination.CanonicalReference, FileDiffPresentation.UpdatedFile(operation.MoveTo!,
+                    [new("collapsed", null, $"Moved from {operation.Path} (non-atomic write/delete)"), .. lines])) { Move = move },
+            new(FilePatchOperationKind.Delete, operation.Path, sourceIndex, current, null, FileOperation.ComputeContentHash(current),
+                mutationSource.DeleteCanonicalReference ?? mutationSource.CanonicalReference, FileDiffPresentation.DeletedFile(operation.Path)) { Move = move },
+        ];
     }
 
     private static PlannedFilePatchOperation PlanAdd(
@@ -129,6 +177,8 @@ internal static class FilePatchPlanner
         {
             throw new InvalidOperationException($"Patch target must be a file: {path}");
         }
+        if (current.WasTruncated)
+            throw new InvalidOperationException($"Patch preflight requires a complete file snapshot: {path}");
 
         return current.Content;
     }

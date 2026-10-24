@@ -61,20 +61,20 @@ internal static class CurrentPackagePolicyAssertions
         }
 
         var dependencies = manifest.GetProperty("dependsOn").EnumerateArray().ToArray();
-        if (package.PackageId is CurrentContractInventory.AgentId or "younics.sunder.package.maker") Assert.Empty(dependencies);
+        if (package.PackageId == CurrentContractInventory.AgentId) Assert.Empty(dependencies);
         else
         {
             var dependency = Assert.Single(dependencies);
             Assert.Equal(CurrentContractInventory.AgentId, Text(dependency, "packageId"));
             Assert.Equal(">=2.0.0 <3.0.0", Text(dependency, "versionRange"));
-            Assert.Equal("required", Text(dependency, "presence"));
+            Assert.Equal(package.PackageId == "younics.sunder.package.maker" ? "optional" : "required", Text(dependency, "presence"));
         }
         var apiImports = Items(manifest, "packageApiImports");
         if (package.PackageApi)
         {
             var api = Assert.Single(apiImports);
             Assert.Equal(CurrentContractInventory.AgentId, Text(api, "packageId"));
-            Assert.Equal("required", Text(api, "presence"));
+            Assert.Equal(package.PackageId == "younics.sunder.package.maker" ? "optional" : "required", Text(api, "presence"));
             foreach (var field in new[] { "bundleRefs", "useRefs" })
                 Assert.Equal(publicIds.Order(StringComparer.Ordinal), api.GetProperty(field).EnumerateArray().Select(value => Text(value, "contractId")).Order(StringComparer.Ordinal));
             Assert.All(api.GetProperty("useRefs").EnumerateArray(), value => Assert.Equal("runtime", Text(value, "role")));
@@ -84,7 +84,12 @@ internal static class CurrentPackagePolicyAssertions
             : package.Providers.Values.Where(publicIds.Contains).Distinct(StringComparer.Ordinal).ToArray();
         var providerImports = Items(manifest, "providerImports");
         Assert.Equal(importedProviders.Order(StringComparer.Ordinal), providerImports.Select(value => Text(value, "contractId")).Order(StringComparer.Ordinal));
-        Assert.All(providerImports, value => Assert.Equal(CurrentContractInventory.AgentId, Text(value, "packageId")));
+        Assert.All(providerImports, value =>
+        {
+            Assert.Equal(CurrentContractInventory.AgentId, Text(value, "packageId"));
+            Assert.Equal(package.PackageId == "younics.sunder.package.maker" ? "optional" : "required",
+                value.TryGetProperty("presence", out var presence) ? presence.GetString() : "required");
+        });
         var stacks = package.Providers.Where(value => value.Value == "sunder.stack.contributor").Select(value => value.Key).ToArray();
         var platformImports = Items(manifest, "platformImports");
         if (stacks.Length == 0) Assert.Empty(platformImports);
@@ -104,13 +109,18 @@ internal static class CurrentPackagePolicyAssertions
             Assert.Equal(System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, Text(target, "rid"));
             Assert.Equal(Text(target, "role") == "app" ? "avalonia" : "worker", Text(target, "kind"));
         });
+        if (package.PackageId == "younics.ai.agent")
+        {
+            var runtime = Assert.Single(targets, target => Text(target, "role") == "runtime");
+            Assert.Contains("rpc.call-ownership.v1", runtime.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
+        }
         if (package.PackageId == "younics.sunder.package.maker")
         {
             var app = Assert.Single(targets, target => Text(target, "role") == "app");
             var runtime = Assert.Single(targets, target => Text(target, "role") == "runtime");
             // Union equality alone cannot catch an App-only observation capability
             // accidentally moving onto the independently admitted Worker target.
-            foreach (var capability in new[] { "package-development-revisions.v1", "worker-execution-observations.v1" })
+            foreach (var capability in new[] { "app-activation-services.v1", "package-development-log-queries.v1", "package-development-logs.v1", "package-development-reload.v1", "package-development-revisions.v1", "package-development-views.v1", "worker-execution-observations.v1" })
             {
                 Assert.Contains(capability, app.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
                 Assert.DoesNotContain(capability, runtime.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));

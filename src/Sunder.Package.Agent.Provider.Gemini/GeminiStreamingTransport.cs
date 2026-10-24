@@ -36,6 +36,8 @@ internal sealed class GeminiStreamingTransport(
                 }
 
                 chunk = enumerator.Current;
+                if (chunk.SdkHttpResponse?.Headers?.FirstOrDefault(pair => string.Equals(pair.Key, "x-gemini-service-tier", StringComparison.OrdinalIgnoreCase)).Value is { } tier)
+                    await telemetry.ProcessingTierAsync(tier, cancellationToken);
                 translation = responseTranslator.Translate(chunk, allowMultipleToolCalls: true);
             }
             catch (Exception ex)

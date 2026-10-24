@@ -4,6 +4,7 @@ using System.ComponentModel;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed class TranscriptItemsProjection<TItem> : IDisposable
     where TItem : class
 {
@@ -418,6 +419,31 @@ internal sealed class TranscriptObservableCollection<TItem> : ObservableCollecti
         {
             RemoveAt(Count - 1);
         }
+    }
+
+    // Presentation-only regrouping must not issue Reset/Remove notifications:
+    // ItemsRepeater otherwise discards every realized anchor, including suffixes.
+    internal void ReconcilePresentation(IReadOnlyList<TItem> replacement)
+    {
+        var desired = replacement.ToHashSet(ReferenceEqualityComparer.Instance);
+        for (var target = 0; target < replacement.Count; target++)
+        {
+            if (target < Count && ReferenceEquals(this[target], replacement[target])) continue;
+            var existing = IndexOf(replacement[target]);
+            if (existing > target && Items.Skip(target).Take(existing - target).All(item => !desired.Contains(item)))
+                ReplaceRange(target, existing - target + 1, [replacement[target]]);
+            // ItemsRepeater's ElementManager handles Move, but its ViewManager
+            // does not update the corresponding virtualization indices. Replace
+            // only the reordered interval so the two maps cannot diverge.
+            else if (existing >= 0)
+                ReplaceRange(target, existing - target + 1,
+                    new[] { replacement[target] }.Concat(Items.Skip(target).Take(existing - target)).ToArray());
+            else Insert(target, replacement[target]);
+        }
+        if (Count > replacement.Count && replacement.Count > 0)
+            ReplaceRange(replacement.Count - 1, Count - replacement.Count + 1, [replacement[^1]]);
+        else if (replacement.Count == 0)
+            while (Count > 0) RemoveAt(Count - 1);
     }
 
     private sealed class DeferredReconciliation(TranscriptObservableCollection<TItem> owner) : IDisposable

@@ -275,7 +275,9 @@ public sealed partial class AgentToolService
                    advertisedOwnerPackageId,
                     candidate.Invocation.OwnerPackageId,
                    StringComparison.Ordinal)
-            || !IsAllowedForProfile(profile, descriptor))
+             // Exact prepared invocations were selected before approval. Profile edits
+             // must not revoke them; new/unprepared calls still require assignment.
+             || advertisedInvocation is null && !IsAllowedForProfile(profile, descriptor))
         {
             return null;
         }

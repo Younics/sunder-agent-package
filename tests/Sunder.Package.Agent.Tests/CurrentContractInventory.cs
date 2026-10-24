@@ -91,9 +91,9 @@ internal static class CurrentContractInventory
     }
 
     internal sealed record Contract(string ContractId, string PackageId, string Exposure, string Source,
-        string Service, string[] Methods, string[] Streams, bool Runtime, bool App)
+        string Service, string[] Methods, string[] Streams, bool Runtime, bool App, string? ContractVersion = null)
     {
-        internal string Version => Exposure == "public" ? PublicVersion : PackageVersion;
+        internal string Version => ContractVersion ?? (Exposure == "public" ? PublicVersion : PackageVersion);
         internal string[] Actions => Streams.Length == 0 ? ["discover", "invoke"] : ["discover", "invoke", "subscribe"];
     }
 

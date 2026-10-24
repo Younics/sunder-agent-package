@@ -23,7 +23,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private readonly IPresentationDispatcher _uiDispatcher;
     private readonly TranscriptTimelineState<SubsessionTranscriptRowViewModel> _timeline;
-    private readonly TranscriptItemsProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
+    private readonly TranscriptActivityProjection<SubsessionTranscriptRowViewModel> _transcriptItemsProjection;
     private readonly ActivityTicker _activityTicker = new();
     private readonly AgentRunActivityState _runActivity;
     private readonly AsyncOnce _initialization = new();
@@ -80,10 +80,12 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             uiDispatcher);
         RunActivityRow = new SubsessionActivityTranscriptRowViewModel(_activityTicker);
         TailSentinelRow = new SubsessionTranscriptTailSentinelRowViewModel();
-        _transcriptItemsProjection = new TranscriptItemsProjection<SubsessionTranscriptRowViewModel>(
+        _transcriptItemsProjection = new TranscriptActivityProjection<SubsessionTranscriptRowViewModel>(
             Messages,
+            static row => (row as SubsessionToolInvocationRowViewModel)?.ActivityMember,
+            static (first, state) => new SubsessionActivityGroupRowViewModel(first, state),
             RunActivityRow,
-            TailSentinelRow);
+            TailSentinelRow) { InitialNavigationAnchor = () => _timeline.SelectedAnchorKey };
         TranscriptItems = _transcriptItemsProjection.Items;
         _listDetail = new KeyedAdaptiveListDetailState<Guid, SubsessionListItemViewModel>(
             Subsessions,

@@ -2,12 +2,60 @@ using Google.GenAI.Types;
 using Microsoft.Extensions.AI;
 using System.Text.Json;
 using Sunder.Package.Agent.Provider.Gemini;
+using Sunder.Package.Agent.Contracts.Models;
 using Xunit;
 
 namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 
 public sealed class GeminiOptionsTranslatorTests
 {
+    [Theory]
+    [InlineData("gemini/gemini-4-argon", "low", "LOW")]
+    [InlineData("gemini/gemini-3.8-flash", "medium", "MEDIUM")]
+    [InlineData("gemini/gemini-3.6-flash", "minimal", "MINIMAL")]
+    public void CurrentModels_MapOnlyExactNativeThinkingAndProcessing(string model, string effort, string wireEffort)
+    {
+        var options = new ChatOptions { AdditionalProperties = new()
+        {
+            [AgentChatModelOptionKeys.ReasoningVariantId] = effort,
+            [AgentChatModelOptionKeys.SpeedOptionId] = "fast",
+        } };
+        var fast = new GeminiOptionsTranslator().Translate(options, true, null, model);
+        options.AdditionalProperties[AgentChatModelOptionKeys.SpeedOptionId] = "normal";
+        var normal = new GeminiOptionsTranslator().Translate(options, true, null, model);
+
+        Assert.Equal(wireEffort, fast.ThinkingConfig?.ThinkingLevel?.ToString());
+        Assert.Equal(fast.ThinkingConfig?.ThinkingLevel, normal.ThinkingConfig?.ThinkingLevel);
+        Assert.Equal(ServiceTier.Priority, fast.ServiceTier);
+        Assert.Equal(ServiceTier.Standard, normal.ServiceTier);
+        var defaults = new GeminiOptionsTranslator().Translate(null, false, null, model);
+        Assert.Null(defaults.ThinkingConfig);
+        Assert.Null(defaults.ServiceTier);
+    }
+
+    [Theory]
+    [InlineData("gemini/gemini-4-argon", "max", "normal")]
+    [InlineData("gemini/gemini-3.8-flash", "xhigh", "normal")]
+    [InlineData("gemini/gemini-4-argon", "minimal", "normal")]
+    [InlineData("gemini/gemini-3.5-flash-lite", "low", "fast")]
+    public void CurrentModels_RejectUnsupportedEffortAndPriority(string model, string effort, string speed)
+        => Assert.Throws<AgentChatProviderException>(() => new GeminiOptionsTranslator().Translate(
+            new() { AdditionalProperties = new()
+            {
+                [AgentChatModelOptionKeys.ReasoningVariantId] = effort,
+                [AgentChatModelOptionKeys.SpeedOptionId] = speed,
+            } }, false, null, model));
+
+    [Theory]
+    [InlineData(true, 32768)]
+    [InlineData(false, 65536)]
+    public void Argon_OutputLimitMatchesTheActualTransport(bool tools, int limit)
+    {
+        var config = new GeminiOptionsTranslator().Translate(new() { MaxOutputTokens = 262144 }, tools, null, "gemini-4-argon");
+        Assert.Equal(limit, config.MaxOutputTokens);
+        Assert.Equal(32768, GeminiModelCatalog.Find("gemini-4-argon")!.MaxOutputTokens);
+    }
+
     [Fact]
     public void Translate_MapsMaxOutputTokens()
     {

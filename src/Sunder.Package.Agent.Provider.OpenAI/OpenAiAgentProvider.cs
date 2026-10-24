@@ -149,7 +149,7 @@ public sealed partial class OpenAiAgentProvider(
                 },
                 cancellationToken: cancellationToken);
             var model = OpenAiModelIds.Normalize(context.ModelId);
-            return new OpenAiModelOptionsChatClient(_clientFactory(apiKey).GetResponsesClient().AsIChatClient(model));
+            return new OpenAiModelOptionsChatClient(_clientFactory(apiKey).GetResponsesClient().AsIChatClient(model), context);
         }
 
         var session = await codexConnectedAuthStrategy.TryEnsureAuthenticatedSilentlyAsync(cancellationToken);

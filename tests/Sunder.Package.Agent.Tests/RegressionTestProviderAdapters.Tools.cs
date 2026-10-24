@@ -4,6 +4,11 @@ using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
+internal interface IRegressionTestArgumentValidator
+{
+    ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default);
+}
+
 // A local domain collaborator implementing the actual generated service signature.
 // There is no request envelope, JSON conversion, endpoint or call-scope here.
 internal sealed class RegressionTestToolProvider(IAgentToolSource source) : AgentServices.IToolSourceService
@@ -20,6 +25,10 @@ internal sealed class RegressionTestToolProvider(IAgentToolSource source) : Agen
         => source.GetReadinessAsync(toolId, context, cancellationToken);
     public ValueTask<AgentToolResult> ExecuteAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
         => source.ExecuteAsync(context, request, cancellationToken);
+    public ValueTask<AgentToolResult?> ValidateArgumentsAsync(AgentToolRequest request, CancellationToken cancellationToken = default)
+        => source is IRegressionTestArgumentValidator validator
+            ? validator.ValidateArgumentsAsync(request, cancellationToken)
+            : ValueTask.FromResult<AgentToolResult?>(null);
     public ValueTask<AgentToolResult?> PreflightAsync(AgentToolExecutionContext context, AgentToolRequest request, CancellationToken cancellationToken = default)
         => source is IAgentToolExecutionPreflightSource preflight
             ? preflight.PreflightExecutionAsync(context, request, cancellationToken)

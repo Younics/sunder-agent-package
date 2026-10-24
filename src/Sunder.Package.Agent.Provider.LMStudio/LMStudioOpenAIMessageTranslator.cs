@@ -89,6 +89,17 @@ internal static class LMStudioOpenAIMessageTranslator
 
         foreach (var result in results)
         {
+            if (ProviderToolResult.Parts(result.Result) is { } parts)
+            {
+                messages.Add(OpenAIChatMessage.CreateToolMessage(result.CallId, parts.Select(part => part switch
+                {
+                    TextContent text => ChatMessageContentPart.CreateTextPart(text.Text),
+                    DataContent image when image.MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                        => ChatMessageContentPart.CreateImagePart(BinaryData.FromBytes(image.Data), image.MediaType),
+                    _ => throw new NotSupportedException("Unsupported tool result content."),
+                }).ToArray()));
+                continue;
+            }
             messages.Add(OpenAIChatMessage.CreateToolMessage(
                 result.CallId,
                 ProviderToolResult.RenderText(result.Result)));

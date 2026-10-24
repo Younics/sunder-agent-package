@@ -449,6 +449,9 @@ internal sealed class StreamingMarkdownPresenter : Panel, ITranscriptGeometrySou
         {
             Text = _requestedSource,
             TextWrapping = TextWrapping.Wrap,
+            // Temporary, selectable plain text must not monopolize the UI thread
+            // before the asynchronous Markdown renderer can publish the full body.
+            MaxLines = 256,
         };
         _fallback.Classes.Add("markdown-fallback");
         _fallback.PropertyChanged += OnFallbackPropertyChanged;

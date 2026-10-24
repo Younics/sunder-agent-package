@@ -120,7 +120,8 @@ public sealed class AgentPermissionService(
         TryClaimPendingRequestForApproval(
             Guid sessionId,
             string requestId,
-            IReadOnlyList<AgentPermissionActionDescriptor> actions)
+            IReadOnlyList<AgentPermissionActionDescriptor> actions,
+            bool approveForSession = false)
     {
         lock (_policySyncRoot)
         {
@@ -140,7 +141,7 @@ public sealed class AgentPermissionService(
                     denial);
             }
 
-            return (_store.TryClaimPendingPermissionRequest(sessionId, requestId), null);
+            return (_store.TryClaimPendingPermissionRequest(sessionId, requestId, approveForSession), null);
         }
     }
 
@@ -170,12 +171,16 @@ public sealed class AgentPermissionService(
     internal bool CommitApprovedExecution(
         AgentPendingPermissionRequestRecord request,
         IReadOnlyList<AgentPermissionActionDescriptor> actions,
-        bool approveForSession = false)
+        bool approveForSession = false,
+        AgentPermissionRequest? currentPermissionRequest = null)
     {
         lock (_policySyncRoot)
         {
             if (string.IsNullOrWhiteSpace(request.ClaimToken)
                 || EvaluateCore(request.SessionId, CreatePermissionRequest(request), actions).Decision
+                    == AgentPermissionDecision.Deny
+                || currentPermissionRequest is not null
+                    && EvaluateCore(request.SessionId, currentPermissionRequest, actions).Decision
                     == AgentPermissionDecision.Deny)
             {
                 return false;

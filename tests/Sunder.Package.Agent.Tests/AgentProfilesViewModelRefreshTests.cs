@@ -28,7 +28,7 @@ public sealed class AgentProfilesViewModelRefreshTests
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
                 && !viewModel.IsBusy
-                && viewModel.ShowSpeedOptions
+                && viewModel.ChatModels.Count == 2
                 && viewModel.ShowModeOptions);
             var selectedProvider = viewModel.SelectedChatProvider;
 
@@ -38,10 +38,12 @@ public sealed class AgentProfilesViewModelRefreshTests
 
             await WaitUntilAsync(() =>
                 !viewModel.IsBusy
-                && viewModel.ShowSpeedOptions
+                && viewModel.ChatModels.Count == 2
                 && viewModel.ShowModeOptions);
             Assert.Equal(2, viewModel.SpeedOptions.Count);
             Assert.Equal(2, viewModel.ModeOptions.Count);
+            Assert.False(viewModel.ShowSpeedOptions);
+            Assert.Equal(["Option Model", "Option Model · Fast"], viewModel.ChatModels.Select(model => model.Label));
             Assert.Null(viewModel.SelectedSpeedOption?.SpeedOptionId);
             Assert.Null(viewModel.SelectedModeOption?.ModeOptionId);
             Assert.Equal(provider.Descriptor.ProviderId, viewModel.SelectedChatProvider?.Id);
@@ -62,7 +64,7 @@ public sealed class AgentProfilesViewModelRefreshTests
             await WaitUntilAsync(() =>
                 viewModel.SelectedProfile?.ProfileId == profile.ProfileId
                 && !viewModel.IsBusy
-                && viewModel.ShowSpeedOptions
+                && viewModel.ChatModels.Count == 2
                 && viewModel.ShowModeOptions);
             var changedProperties = new List<string?>();
             viewModel.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
@@ -70,7 +72,7 @@ public sealed class AgentProfilesViewModelRefreshTests
             viewModel.HasChatProviderWarning = true;
 
             Assert.False(viewModel.ShowSpeedOptions);
-            Assert.False(viewModel.ShowModeOptions);
+            Assert.True(viewModel.ShowModeOptions); // Keep repair controls accessible alongside a warning.
             Assert.Contains(nameof(AgentProfilesViewModel.ShowSpeedOptions), changedProperties);
             Assert.Contains(nameof(AgentProfilesViewModel.ShowModeOptions), changedProperties);
         }

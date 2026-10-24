@@ -5,6 +5,7 @@ using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Media;
 using Avalonia.Styling;
 using Avalonia.Themes.Fluent;
+using System.Reflection;
 using Sunder.Sdk.Avalonia.Theming;
 
 [assembly: AvaloniaTestApplication(typeof(Sunder.Package.Agent.Presentation.Tests.TestApplicationBuilder))]
@@ -22,6 +23,12 @@ internal sealed class TestApplication : Application
 {
     public override void Initialize()
     {
+        // Optional scratch-run assertion for checking the production framework
+        // bytes without changing dependency pins or the xUnit adapter version.
+        if (Environment.GetEnvironmentVariable("SUNDER_TEST_AVALONIA_VERSION") is { Length: > 0 } expected
+            && typeof(Avalonia.Controls.Control).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                .StartsWith(expected, StringComparison.Ordinal) != true)
+            throw new InvalidOperationException($"The presentation test run did not load Avalonia {expected}.");
         RequestedThemeVariant = ThemeVariant.Dark;
         var baseUri = new Uri("avares://Sunder.Package.Agent.Presentation.Tests/");
         Resources.MergedDictionaries.Add(new ResourceInclude(baseUri)

@@ -42,6 +42,14 @@ internal sealed class TranscriptRowPresenter : ContentControl
     public static void SetIsExactAnchorTarget(Control control, bool value)
         => control.SetValue(IsExactAnchorTargetProperty, value);
 
+    // Focus-pinned elements remain available through TryGetElement after the
+    // repeater has parked them outside its content. That is not anchor geometry.
+    internal static bool HasLayoutGeometry(Control control)
+        => control.IsEffectivelyVisible
+           && control.Bounds is { Width: > 0, Height: > 0 } bounds
+           && (control is not TranscriptRowPresenter { IsRepeaterHosted: true }
+               || bounds.Right > 0 && bounds.Bottom > 0);
+
     private IScrollAnchorProvider? _anchorProvider;
     private bool _isManuallyRegistered;
 

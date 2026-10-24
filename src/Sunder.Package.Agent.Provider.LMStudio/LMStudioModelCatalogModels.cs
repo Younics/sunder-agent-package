@@ -8,6 +8,7 @@ internal enum LMStudioModelCapability
     Unknown = 0,
     Chat = 1,
     Embedding = 2,
+    Other = 4,
 }
 
 internal enum LMStudioCatalogFailureKind
@@ -25,7 +26,12 @@ internal sealed record LMStudioModelInfo(
     LMStudioModelCapability Capability,
     int? ContextWindow = null,
     int? MaxOutputTokens = null,
-    int? Dimensions = null)
+    int? Dimensions = null,
+    bool? SupportsVision = null,
+    bool? SupportsTools = null,
+    IReadOnlyList<string>? ReasoningOptions = null,
+    string? DefaultReasoning = null,
+    bool? IsLoaded = null)
 {
     public bool IsChatCandidate => Capability is LMStudioModelCapability.Unknown
         || Capability.HasFlag(LMStudioModelCapability.Chat);

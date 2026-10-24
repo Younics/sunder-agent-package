@@ -14,16 +14,19 @@ public sealed class AgentLocalStoreMigrationTests
         using var connection = OpenDatabase(store.DatabasePath);
 
         Assert.Equal("wal", ExecuteString(connection, "PRAGMA journal_mode;"));
-        Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
         Assert.Equal(
             $"{AgentLocalStore.BaselineVersion}|{AgentLocalStore.BaselineName}|{AgentLocalStore.BaselineChecksum}",
-            ExecuteString(connection, "SELECT Version || '|' || Name || '|' || Checksum FROM SchemaMigrations;"));
+            ExecuteString(connection, "SELECT Version || '|' || Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 1;"));
         Assert.Equal("4dc0cc925c4f25e7ba9cff537d434a733c017953042d97c8ab55ee9624ab5028", AgentLocalStore.BaselineChecksum);
         Assert.True(TableExists(connection, "AgentRuntimeGenerations"));
         Assert.True(TableExists(connection, "AgentLifecycleGenerationState"));
         Assert.True(TableExists(connection, "AgentSessionCleanupJobs"));
         Assert.True(ColumnExists(connection, "AgentLifecycleOutbox", "PayloadErasureGeneration"));
         Assert.True(ColumnExists(connection, "AgentToolExecutions", "ExecutionTargetOwnerPackageId"));
+        Assert.True(ColumnExists(connection, "AgentPendingPermissionRequests", "ApproveForSession"));
+        Assert.Equal(AgentLocalStore.ApprovalIntentChecksum,
+            ExecuteString(connection, "SELECT Checksum FROM SchemaMigrations WHERE Version = 2;"));
         Assert.True(IndexExists(connection, "IX_AgentTurns_RunIdentity"));
         Assert.True(IndexExists(connection, "IX_AgentLifecycleOutbox_ErasureGeneration"));
         Assert.True(TriggerExists(connection, "TR_AgentLifecycleOutbox_ImmutableDelete"));
@@ -37,7 +40,7 @@ public sealed class AgentLocalStoreMigrationTests
         Parallel.For(0, 12, _ => new AgentLocalStore(scope.Context));
 
         using var connection = OpenDatabase(GetDatabasePath(scope));
-        Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
     }
 
     [Fact]
@@ -51,7 +54,7 @@ public sealed class AgentLocalStoreMigrationTests
         _ = new AgentLocalStore(scope.Context);
 
         using var connection = OpenDatabase(databasePath);
-        Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
     }
 
     [Theory]
@@ -112,6 +115,28 @@ public sealed class AgentLocalStoreMigrationTests
             _ = new AgentLocalStore(scope.Context);
             Assert.Equal(appliedAt, ExecuteString(connection, "SELECT AppliedAtUtc FROM SchemaMigrations;"));
         }
+    }
+
+    [Fact]
+    public async Task BaselineStore_AddsApprovalIntentWithoutChangingExistingRows()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var first = new AgentLocalStore(scope.Context);
+        var session = new Sunder.Package.Agent.Services.AgentSessionService(first, new RegressionTestExtensionCatalog().SessionCleaners)
+            .CreateSession("retained session", workspaceId: "migration-test-workspace");
+        await first.DisposeAsync();
+        using (var connection = OpenDatabase(first.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            // Model the exact supported baseline, not pre-canonical history.
+            command.CommandText = "ALTER TABLE AgentPendingPermissionRequests DROP COLUMN ApproveForSession; DELETE FROM SchemaMigrations WHERE Version = 2;";
+            command.ExecuteNonQuery();
+        }
+        await using var upgraded = new AgentLocalStore(scope.Context);
+        Assert.Equal("retained session", upgraded.GetSession(session.SessionId)?.Title);
+        using var database = OpenDatabase(upgraded.DatabasePath);
+        Assert.Equal(2L, ExecuteInt64(database, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.True(ColumnExists(database, "AgentPendingPermissionRequests", "ApproveForSession"));
     }
 
     private static string GetDatabasePath(RegressionTestPackageScope scope)

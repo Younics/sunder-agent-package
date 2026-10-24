@@ -13,6 +13,16 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class AgentChatClientContextLoggingTests
 {
     [Fact]
+    public async Task ProcessingTierTelemetry_RejectsArbitraryResponseTextAndDeduplicatesChunkHeaders()
+    {
+        var logger = new RecordingEventLogger();
+        var telemetry = new ProviderStreamTelemetry(new("provider", "model", logger));
+        foreach (var value in new[] { "standard", "standard", null, ProviderFailureInputs.SecretCanary, "priority" })
+            await telemetry.ProcessingTierAsync(value, CancellationToken.None);
+        Assert.Equal(["standard", "priority"], logger.Entries.Select(entry => entry.Attributes["processing.effective_tier"]));
+    }
+
+    [Fact]
     public async Task LogProviderEventAsync_SwallowsAsynchronousLoggerFailure()
     {
         var context = new AgentChatClientContext("provider", "model", new ThrowingEventLogger(new InvalidOperationException("logger failed")));
@@ -99,6 +109,8 @@ public sealed class AgentChatClientContextLoggingTests
 
         Assert.Equal(ProviderFailureInputs.SecretCanary, handler.AccessToken);
         Assert.Contains(ProviderFailureInputs.RequestCanary, handler.RequestBody, StringComparison.Ordinal);
+        Assert.Equal("default", Assert.Single(logger.Entries, entry => entry.EventName == "provider.processing.tier")
+            .Attributes["processing.effective_tier"]);
 
         ProviderConformanceHarness.VerifyTelemetryAndRedaction(
             "OpenAI",
@@ -131,7 +143,7 @@ public sealed class AgentChatClientContextLoggingTests
                 Content = new StringContent("""
                     data: {"type":"response.output_text.delta","delta":"ok"}
 
-                    data: {"type":"response.completed","response":{"id":"response-id","status":"completed"}}
+                    data: {"type":"response.completed","response":{"id":"response-id","status":"completed","service_tier":"default"}}
 
                     """),
             };

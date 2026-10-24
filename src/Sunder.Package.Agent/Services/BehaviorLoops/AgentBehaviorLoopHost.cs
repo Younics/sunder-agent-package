@@ -102,7 +102,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     public ValueTask<AgentToolCallOutcome> HandleApprovedToolCallAsync(
         AgentPendingPermissionRequestRecord pending,
         CancellationToken cancellationToken,
-        Func<CancellationToken, ValueTask<bool>> beginExecutionAsync)
+        Func<AgentPermissionRequest?, CancellationToken, ValueTask<bool>> beginExecutionAsync)
         => new(PermissionSuspensionCoordinator.ResumeAsync(
             pending,
             cancellationToken,
@@ -214,6 +214,16 @@ internal sealed partial class AgentBehaviorLoopHost(
                 $"Tool '{toolCall.ToolId}' did not have one authoritative package owner when execution was prepared.",
                 AgentToolSecurityErrorCodes.AmbiguousOwnership,
                 cancellationToken);
+        }
+
+        // Argument-only validation has no execution/resource context. Authorized preflight
+        // remains below permission evaluation and must not be moved into this phase.
+        var validation = await _toolService.ValidateArgumentsAsync(toolCall, preparedInvocation, cancellationToken).ConfigureAwait(false);
+        if (validation is not null)
+        {
+            await _toolService.ReleasePreparedInvocationAsync(preparedExecution.ExecutionId).ConfigureAwait(false);
+            CompleteToolExecution(toolCall, validation, AgentToolExecutionStatus.Failed, validation.ErrorCode!);
+            return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: validation);
         }
 
         var permissionStopwatch = Stopwatch.StartNew();
@@ -438,7 +448,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     internal async Task<AgentToolCallOutcome> HandleApprovedToolCallCoreAsync(
         AgentPendingPermissionRequestRecord pending,
         CancellationToken cancellationToken,
-        Func<CancellationToken, ValueTask<bool>> beginExecutionAsync)
+        Func<AgentPermissionRequest?, CancellationToken, ValueTask<bool>> beginExecutionAsync)
     {
         var preparedExecution = pending.ToolExecutionId is { } preparedExecutionId
             ? _sessionService.GetToolExecution(preparedExecutionId)
@@ -548,27 +558,9 @@ internal sealed partial class AgentBehaviorLoopHost(
         _executionTargetConfigurationGenerationByCallId[pending.CallId] =
             permissionResolution.ExecutionTargetConfigurationGeneration;
 
-        var currentFingerprint = AgentPermissionFingerprint.Create(
-            pending.RunId,
-            pending.RunRevision,
-            permissionResolution.Descriptor,
-            pending.CallId,
-            pending.ArgumentsJson,
-            workspace,
-            permissionResolution.ExecutionBinding,
-            permissionResolution.ExecutionTarget,
-            permissionResolution.PermissionRequest,
-            _profile,
-            _provider.Descriptor!.ProviderId,
-            (_profile.ModelBindings ?? []).FirstOrDefault(binding => string.Equals(
-                binding.CapabilityKind,
-                AgentModelCapabilityKinds.Chat,
-                StringComparison.OrdinalIgnoreCase))?.ModelId,
-            preparedExecution.OwnerPackageId,
-            preparedInvocation.ExecutionTargetOwnerPackageId,
-            permissionResolution.ExecutionTargetConfigurationGeneration);
-        if (string.IsNullOrWhiteSpace(pending.ExecutionFingerprint)
-            || !string.Equals(pending.ExecutionFingerprint, currentFingerprint, StringComparison.Ordinal))
+        if (!AgentPermissionFingerprint.MatchesApprovedExecution(
+                pending, permissionResolution, workspace, preparedExecution.OwnerPackageId,
+                preparedInvocation.ExecutionTargetOwnerPackageId))
         {
             return await RecordApprovedSecurityDenialAsync(
                 pending,
@@ -650,7 +642,7 @@ internal sealed partial class AgentBehaviorLoopHost(
             SaveCheckpoint(AgentRunStatus.Running, preflightResult.Summary);
             return new AgentToolCallOutcome(AgentToolCallOutcomeKind.Executed, Result: preflightResult);
         }
-        if (!await beginExecutionAsync(cancellationToken).ConfigureAwait(false))
+        if (!await beginExecutionAsync(permissionResolution.PermissionRequest, cancellationToken).ConfigureAwait(false))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (_sessionService.GetToolExecutionResult(preparedExecution.ExecutionId) is { } concurrentResult)

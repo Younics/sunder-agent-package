@@ -249,6 +249,9 @@ internal class LocalSecurePathException(string message, Exception? innerExceptio
 internal sealed class LocalSecurePathNotFoundException(string path)
     : LocalSecurePathException($"Path does not exist: {path}");
 
+internal sealed class LocalSecureSymbolicLinkException(string path)
+    : LocalSecurePathException($"Symbolic links and reparse points are not followed by strict structured operations: {path}");
+
 internal sealed class LocalSecureFileAlreadyExistsException(string path)
     : LocalSecurePathException($"File already exists: {path}");
 

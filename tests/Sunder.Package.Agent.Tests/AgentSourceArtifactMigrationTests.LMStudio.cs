@@ -52,15 +52,31 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task ExerciseLMStudioWorkerProcess(string root, string runtimeRoot, JsonElement value)
     {
         var workspace = Directory.CreateDirectory(Path.Combine(root, "LMStudioProcessWorkspace")).FullName;
-        await using (var candidate = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
+        await using var endpoint = new LMStudioLoopbackCatalog();
+        var settings = new Dictionary<string, string?> { ["connection.baseUrl"] = endpoint.Endpoint + "v1" };
+        var secrets = new HashSet<string>(StringComparer.Ordinal) { "connection.apiKey" };
+        await using (var candidate = new PackageWorkerPeer(root, runtimeRoot, workspace, value, settings, secrets))
         { await candidate.Prepare(); await candidate.Shutdown(); }
-        await using (var active = new PackageWorkerPeer(root, runtimeRoot, workspace, value))
+        Assert.Empty(endpoint.Requests);
+        await using (var active = new PackageWorkerPeer(root, runtimeRoot, workspace, value, settings, secrets))
         {
             await active.Prepare(); Assert.Equal(JsonValueKind.Object, active.Contributions.GetProperty("settingsSchema").ValueKind);
             await active.Activate();
             Assert.Equal("lmstudio", (await active.Invoke("lmstudio.chat", "chat-provider", "describe", new { })).GetProperty("providerId").GetString());
             Assert.Equal("lmstudio", (await active.Invoke("lmstudio.embedding", "embedding-provider", "describe", new { })).GetProperty("providerId").GetString());
-            Assert.True((await active.Invoke("lmstudio.chat", "chat-provider", "get-capabilities", "lmstudio/artifact")).GetProperty("supportsStreamingToolCalls").GetBoolean());
+            Assert.Empty(endpoint.Requests);
+            var capabilities = await active.Invoke("lmstudio.chat", "chat-provider", "get-capabilities", "lmstudio/artifact");
+            Assert.False(capabilities.GetProperty("supportsNativeToolCalling").GetBoolean());
+            Assert.False(capabilities.GetProperty("supportsStreamingToolCalls").GetBoolean());
+            Assert.False(capabilities.GetProperty("supportsMultipleToolCalls").GetBoolean());
+            Assert.True(capabilities.GetProperty("supportsImageInput").GetBoolean());
+            Assert.Equal(16384, capabilities.GetProperty("contextWindowTokens").GetInt32());
+            var request = Assert.Single(endpoint.Requests);
+            Assert.Equal("GET", request.Method);
+            Assert.Equal("/api/v1/models", request.Path);
+            Assert.Null(request.Authorization);
+            Assert.NotEmpty(active.SecretReads);
+            Assert.All(active.SecretReads, key => Assert.Equal("connection.apiKey", key));
             await active.Shutdown();
         }
     }

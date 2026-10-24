@@ -29,8 +29,6 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     private string _editedPackageId;
     private string _statusText = "Ready to load";
     private string _error = string.Empty;
-    private string? _errorOperation;
-    private string _watchError = string.Empty;
     private string _sourceError = string.Empty;
     private string _output = string.Empty;
     private bool _busy;
@@ -38,9 +36,6 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     private bool _conflict;
     private bool _hasSession;
     private bool _releasePending;
-    private bool _watchRunning;
-    private bool _watchWaiting;
-    private BuilderJobConnectionState _watchConnection;
     private PackageDevelopmentStatus? _developmentStatus;
     private BuilderJobPhase _phase;
     private string _requestedOperation = "operation";
@@ -50,9 +45,14 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     private PackageDevelopmentRevision? _lastAppliedRevision;
     private DateTimeOffset? _lastAppliedObservedAtUtc;
     private bool _outputExpanded;
+    private readonly TimeProvider _time;
+    private long? _appPendingStarted;
 
-    public BuilderProjectViewModel(BuilderProjectRecord record)
+    public BuilderProjectViewModel(BuilderProjectRecord record) : this(record, TimeProvider.System) { }
+
+    internal BuilderProjectViewModel(BuilderProjectRecord record, TimeProvider time)
     {
+        _time = time;
         _record = record;
         _editedDisplayName = record.DisplayName;
         _editedPackageId = record.PackageId;
@@ -72,13 +72,14 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     public bool IsMissing => _missing;
     public bool HasSourceConflict => _conflict;
     public bool HasSession => _hasSession;
+    private bool _hotreloadPending;
+    public bool HotreloadPending => _hotreloadPending;
+    internal void SetHotreloadPending(bool value) { _hotreloadPending = value; ChangedAll(); }
     public bool IsLoaded => _developmentStatus?.IsLoaded == true;
     public bool IsBusy { get => _busy; internal set { if (Set(ref _busy, value)) ChangedAll(); } }
-    public bool Watch { get => _record.Watch; internal set { _record = _record with { Watch = value }; ChangedAll(); } }
-    public bool WatchRunning => _watchRunning;
-    public bool WatchWaitingForChanges => _watchWaiting;
-    public bool WatchReconnecting => _watchConnection == BuilderJobConnectionState.Reconnecting;
-    public bool CanOperate => !IsBusy && !IsMissing && Inspection is not null;
+    public bool CanOperate => !IsBusy && !IsMissing && Inspection is not null && !HotreloadPending;
+    public bool CanHotreload => !IsBusy && HasSession && !_releasePending && (Inspection is not null || HotreloadPending);
+    public string HotreloadActionText => HotreloadPending ? "Resolve Hotreload" : "Hotreload Package";
     public bool CanLoad => CanOperate && !HasSession;
     public bool CanUnload => !IsBusy && HasSession;
     public bool CanEditDisplayName => CanOperate && (_latestInspection ?? Inspection)?.CanEditDisplayName == true;
@@ -93,28 +94,35 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     public string EditedDisplayName { get => _editedDisplayName; set { if (Set(ref _editedDisplayName, value ?? string.Empty)) ChangedAll(); } }
     public string EditedPackageId { get => _editedPackageId; set { if (Set(ref _editedPackageId, value ?? string.Empty)) ChangedAll(); } }
     public string StatusText => _statusText;
-    public string ErrorMessage => string.Join(Environment.NewLine, new[] { _sourceError, _error, _watchError }.Where(message => message.Length > 0));
+    public string ErrorMessage => string.Join(Environment.NewLine, new[] { _sourceError, _error }.Where(message => message.Length > 0));
     public bool HasError => ErrorMessage.Length > 0;
     public string Output => _output;
     public bool HasOutput => _output.Length > 0;
     public bool IsOutputExpanded { get => _outputExpanded; set => Set(ref _outputExpanded, value); }
     public string? ArchivePath { get; private set; }
     public bool HasArchive => !string.IsNullOrEmpty(ArchivePath);
-    public string LoadStateText => _releasePending ? "Release unconfirmed" : HasSession ? (IsLoaded ? "Loaded" : "Connecting…") : "Unloaded";
+    public string LoadStateText => _releasePending ? "Release unconfirmed" : !HasSession ? "Unloaded" : !IsLoaded ? "Connecting…"
+        : _developmentStatus?.AppReadiness switch
+        {
+            PackageDevelopmentAppReadiness.Pending => "Runtime loaded · UI pending",
+            PackageDevelopmentAppReadiness.Quarantined => "Runtime loaded · UI failed",
+            PackageDevelopmentAppReadiness.Unavailable => "Runtime loaded · UI unavailable",
+            PackageDevelopmentAppReadiness.NotApplicable => "Loaded (Runtime only)",
+            PackageDevelopmentAppReadiness.Activated => "Loaded",
+            _ => "Runtime loaded · UI unknown",
+        };
+    private bool IsAppActivationDelayed => _appPendingStarted is { } started
+        && _time.GetElapsedTime(started) >= TimeSpan.FromSeconds(15);
     public string StateText => IsBusy ? _requestedOperation switch
         {
-            "load" => "Loading…", "unload" => "Unloading…", "build" => "Building…", "archive" => "Creating archive…",
+            "load" => "Loading…", "unload" => "Unloading…", "build" => "Building…", "hotreload" => "Hotreloading…", "archive" => "Creating archive…",
             "save-metadata" => "Saving…", "setup" => "Setting up…", _ => "Updating…",
         }
         : IsMissing ? "Folder missing" : HasSession ? LoadStateText
         : HasError ? "Needs attention" : SetupIncomplete ? "Setup required" : "Unloaded";
-    public bool IsBuildRunning => (IsBusy || WatchRunning) && _snapshotState == "running"
+    public bool IsBuildRunning => IsBusy && _snapshotState == "running"
         && _phase is BuilderJobPhase.Restoring or BuilderJobPhase.Building or BuilderJobPhase.Validating or BuilderJobPhase.Packaging;
-    public string BuildActionText => HasSession ? "Build + reload" : "Build";
-    public string WatchSummaryText => HasSession && _watchConnection == BuilderJobConnectionState.StopUnconfirmed ? "Stop unconfirmed"
-        : !Watch ? "Off" : !HasSession ? "Starts after Load"
-        : WatchReconnecting ? "Reconnecting" : WatchWaitingForChanges || _phase == BuilderJobPhase.BuildFailed ? "Waiting for an edit"
-        : WatchRunning ? "On" : "Stopped";
+    public string BuildActionText => "Build Package";
     public string ActivityText => IsBuildRunning ? _phase switch
         {
             BuilderJobPhase.Restoring => "Restoring dependencies…", BuilderJobPhase.Validating => "Validating package output…",
@@ -123,12 +131,11 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         : IsBusy ? StateText
         : _releasePending ? "Owner release is unconfirmed. Reconnect and retry Unload."
         : HasSession && !IsLoaded ? "Waiting for the Runtime…"
-        : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Pending ? "Opening package view…"
-        : HasSession && WatchReconnecting ? "Reconnecting; the last loaded package is retained."
-        : HasSession && _phase == BuilderJobPhase.BuildFailed ? "Build failed. Fix the source and save to retry; the last good package is retained."
-        : HasSession && WatchRunning ? "Watching for source changes"
-        : HasSession && WatchWaitingForChanges ? "Fix the source and save to retry. The last good package is retained."
-        : HasSession && Watch ? "Automatic rebuild is stopped" : HasSession ? "Automatic rebuild is off"
+        : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Quarantined ? "Package UI activation failed. Open package logs for details."
+        : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Unavailable ? "Package UI readiness is unavailable. Open package logs for details."
+        : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Pending
+            ? IsAppActivationDelayed ? "Package UI activation is taking longer than expected. Open package logs for details." : "Activating package UI…"
+        : HasSession ? "Use Build Package to compile, or Hotreload Package to apply a new revision."
         : "Load this project to run it in Sunder.";
     public DateTimeOffset? LastSourceChangeAtUtc => _lastSourceChangeAtUtc;
     public DateTimeOffset? LastSuccessfulBuildAtUtc => _lastSuccessfulBuildAtUtc;
@@ -143,13 +150,14 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         : "No applied output revision observed";
     public string ApplicationStatusText => !HasSession ? string.Empty
         : _releasePending ? "Development owner release is not yet confirmed. Last applied output is historical."
+        : _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Quarantined ? "Runtime output is loaded, but App UI activation failed. Open package logs for details."
+        : _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Unavailable ? "App UI activation cannot currently be observed. Applied output is not confirmed."
         : _developmentStatus?.RuntimeRevision is null ? "This Host has not supplied an applied-output revision."
         : _developmentStatus.AppliedRevision is null ? "Current Runtime output is not yet confirmed applied."
+        : _developmentStatus.AppReadiness == PackageDevelopmentAppReadiness.NotApplicable ? "Runtime matches this output revision; no App UI is required."
         : "Runtime and App activation match this output revision.";
     public bool HasDisplayNameEditReason => DisplayNameEditReason.Length > 0;
     public bool HasPackageIdEditReason => PackageIdEditReason.Length > 0;
-    public bool ShowWatchNotice => HasSession && (_watchConnection == BuilderJobConnectionState.StopUnconfirmed
-        || _developmentStatus is { HostState: PackageDevelopmentHostState.Ready, WatchEnabled: true, RequestedWatch: false });
     public string SdkText => Installation is { } sdk
         ? $"{(sdk.Kind == BuilderProjectKind.Dotnet ? ".NET SDK" : "Node.js")} {sdk.Version} · {(sdk.IsManaged ? "Builder managed" : "External")}"
         : "SDK checked when you set up or load this project.";
@@ -161,15 +169,6 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         => Enum.IsDefined(value) ? value.ToString() : "Unknown";
     public string RuntimeError => _developmentStatus?.ErrorMessage ?? string.Empty;
     public bool HasRuntimeError => RuntimeError.Length > 0;
-    public string WatchStatusText => !HasSession ? "Watch builds source and reloads the development package after Load."
-        : _releasePending ? "Development owner release is unconfirmed; retained ownership is not current loaded-state evidence. Retry Unload."
-        : WatchReconnecting ? "Reconnecting to the same Builder job; source ownership is retained."
-        : _watchConnection == BuilderJobConnectionState.StopUnconfirmed ? "Source watch shutdown is unconfirmed; project ownership is retained. Retry Unload after reconnecting."
-        : WatchWaitingForChanges ? "Waiting for a source edit before restarting builds. The last good package remains loaded."
-        : _developmentStatus is { HostState: PackageDevelopmentHostState.Ready, WatchEnabled: true, RequestedWatch: false }
-            ? "Your watch is stopped. Output watching is still enabled by another owner."
-            : WatchRunning ? "Source builds and package reload are being watched."
-            : "Source watch is stopped; the loaded package is retained.";
 
     internal long OperationGeneration { get; set; }
 
@@ -205,37 +204,28 @@ public sealed class BuilderProjectViewModel : BuilderObservable
 
     internal void ApplySnapshot(BuilderJobSnapshot snapshot, bool acceptEdits = false)
     {
-        if (snapshot.Operation == "watch" && snapshot.Phase == BuilderJobPhase.BuildFailed && _phase != BuilderJobPhase.BuildFailed)
-        {
-            _watchError = "Automatic build failed. See build output; the last good package is retained.";
-            IsOutputExpanded = true;
-        }
         _phase = snapshot.Phase;
         _snapshotState = snapshot.State;
         if (snapshot.LastSourceChangeAtUtc is { } changed) ObserveSourceChange(changed);
         if (snapshot.LastSuccessfulBuildAtUtc is { } built && (_lastSuccessfulBuildAtUtc is null || built > _lastSuccessfulBuildAtUtc))
         {
             _lastSuccessfulBuildAtUtc = built;
-            if (snapshot.Operation == "watch") ObserveSuccessfulWatchBuild();
         }
         if (snapshot.Project is { } project) ApplyInspection(project, acceptEdits);
         if (snapshot.Installation is { } installation) _record = _record with { Installation = installation };
         if (snapshot.ArchivePath is { } archive) ArchivePath = archive;
         _statusText = snapshot.ConnectionState == BuilderJobConnectionState.Reconnecting
             ? "Reconnecting to the same Builder job…" : snapshot.Message;
-        if (snapshot.Operation == "watch") _watchConnection = snapshot.ConnectionState;
         _output = BoundOutput(snapshot.Output);
         if (snapshot.State == "failed") IsOutputExpanded = true;
-        if (snapshot.State == "failed" && snapshot.Operation == "watch") _watchError = "Source watch stopped: " + (snapshot.Error ?? snapshot.Message);
-        else if (snapshot.State == "failed") { _error = snapshot.Error ?? snapshot.Message; _errorOperation = snapshot.Operation; }
-        else if (snapshot.State == "succeeded") { _error = string.Empty; _errorOperation = null; }
+        if (snapshot.State == "failed") _error = snapshot.Error ?? snapshot.Message;
+        else if (snapshot.State == "succeeded") _error = string.Empty;
         if (snapshot.Operation is "create" or "setup" && snapshot.State != "running")
             _record = _record with { SetupIncomplete = snapshot.State != "succeeded" };
-        // Polling can miss BuildReady. A live Watching snapshot carries the same
-        // validated-build evidence, independently of Runtime/App application.
+        // Validated-build evidence is independent of Runtime/App application.
         if (snapshot.DevelopmentFolder is not null && (snapshot.State == "succeeded"
             || snapshot.State == "running" && snapshot.LastSuccessfulBuildAtUtc is not null
-                && snapshot.Phase is BuilderJobPhase.BuildReady or BuilderJobPhase.Watching))
+                && snapshot.Phase == BuilderJobPhase.BuildReady))
             _record = _record with { SetupIncomplete = false };
         _record = _record with { UpdatedAtUtc = DateTimeOffset.UtcNow };
         ChangedAll();
@@ -247,8 +237,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         _requestedOperation = operation;
         _phase = BuilderJobPhase.Queued;
         _snapshotState = string.Empty;
-        _statusText = _output = _error = _watchError = string.Empty;
-        _errorOperation = null;
+        _statusText = _output = _error = string.Empty;
         IsOutputExpanded = false;
     }
     internal void ObserveSourceChange(DateTimeOffset value)
@@ -257,24 +246,17 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         _lastSourceChangeAtUtc = value;
         ChangedAll();
     }
-    internal void SetError(string message) { _error = message; _errorOperation = null; ChangedAll(); }
+    internal void SetError(string message) { _error = message; ChangedAll(); }
     internal void SetError(Exception error)
     {
         _output = BuilderJobText.Safe(_output + $"\n[{_requestedOperation}] App operation failed:\n" + error + "\n", MaximumOutputCharacters);
         IsOutputExpanded = true;
         SetError(BuilderJobText.Safe(error.Message, 8192));
     }
-    internal void SetWatchError(string message) { _watchError = message; ChangedAll(); }
-    internal void SetWatchWaitingForChanges(bool value) { _watchWaiting = value; ChangedAll(); }
-    internal void ObserveSuccessfulWatchBuild()
-    {
-        _watchError = string.Empty;
-        if (_errorOperation is "build" or "setup" or "watch") { _error = string.Empty; _errorOperation = null; }
-        ChangedAll();
-    }
     internal void SetStatus(string message) { _statusText = message; ChangedAll(); }
     internal void SetSession(bool hasSession)
     {
+        if (!hasSession) _appPendingStarted = null;
         _hasSession = hasSession;
         if (!hasSession) { _developmentStatus = null; _releasePending = false; }
         ChangedAll();
@@ -289,6 +271,13 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     }
     internal void SetDevelopmentStatus(PackageDevelopmentStatus status)
     {
+        if (status.IsLoaded && status.AppReadiness == PackageDevelopmentAppReadiness.Pending)
+        {
+            if (_appPendingStarted is null || status.RuntimeRevision?.RuntimeInstanceId != _developmentStatus?.RuntimeRevision?.RuntimeInstanceId
+                || status.RuntimeRevision?.SourceContentIdentity != _developmentStatus?.RuntimeRevision?.SourceContentIdentity)
+                _appPendingStarted = _time.GetTimestamp();
+        }
+        else _appPendingStarted = null;
         _developmentStatus = status;
         if (status.AppliedRevision is { } applied)
         {
@@ -299,13 +288,6 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         }
         ChangedAll();
     }
-    internal void SetWatchRunning(bool value)
-    {
-        _watchRunning = value;
-        if (value || _watchConnection == BuilderJobConnectionState.Reconnecting) _watchConnection = BuilderJobConnectionState.Connected;
-        ChangedAll();
-    }
-    internal void SetWatchConnectionState(BuilderJobConnectionState value) { _watchConnection = value; ChangedAll(); }
     internal static string BoundOutput(string value) => value.Length <= MaximumOutputCharacters ? value : value[^MaximumOutputCharacters..];
 }
 

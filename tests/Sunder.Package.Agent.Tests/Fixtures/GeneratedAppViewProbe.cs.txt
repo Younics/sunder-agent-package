@@ -6,6 +6,7 @@ using System.Windows.Input;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Headless;
+using Avalonia.Themes.Fluent;
 using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
@@ -68,6 +69,8 @@ if (executionObservations.Attempts != 0) throw new Exception("Registration acces
 if (agentState is AgentStateProbe { Calls: not 0 }) throw new Exception("Registration accessed Agent selection state.");
 if (navigationService.Opens != 0) throw new Exception("Registration performed settings navigation.");
 AppBuilder.Configure<Application>().UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = true }).SetupWithoutStarting();
+// Match the real shell's base control themes; package item themes inherit them.
+Application.Current!.Styles.Add(new FluentTheme());
 if (agent)
 {
     VerifyAgentViews(assembly, services, registry, blocked!, shellService, navigationService);

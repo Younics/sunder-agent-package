@@ -12,6 +12,8 @@ internal static class AgentFailurePresentationPolicy
     internal const string GenericFailureMarkdown =
         "### Agent run failed\n\nThe agent run could not be completed. You can retry or continue this session.";
     internal const string GenericFailureSummary = "The agent run could not be completed.";
+    internal const string DeadlineInterruptedMarkdown =
+        "### Response timed out\n\nThe provider response exceeded its RPC deadline. Recorded tool results are preserved. You can continue this session.";
 
     private static readonly FailurePresentation StreamInterrupted = new(
         StreamInterruptedMarkdown,
@@ -28,10 +30,18 @@ internal static class AgentFailurePresentationPolicy
     internal static FailurePresentation Create(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
-        return IsStreamQueueLimit(exception) ? StreamInterrupted : GenericFailure;
+        if (IsStreamQueueLimit(exception)) return StreamInterrupted;
+        return ContainsRpcFailure(exception, error => error.Kind == SunderRpcErrorKind.DeadlineExceeded
+                   && error.Code == "rpc.call.deadline-exceeded")
+            ? new(DeadlineInterruptedMarkdown, "The provider response exceeded its RPC deadline.",
+                AgentRunStatus.Interrupted, AgentLifecycleEventKind.RunInterrupted)
+            : GenericFailure;
     }
 
     internal static bool IsStreamQueueLimit(Exception exception)
+        => ContainsRpcFailure(exception, error => error.Code == AgentChatFailureProjection.StreamQueueLimitErrorCode);
+
+    private static bool ContainsRpcFailure(Exception exception, Func<SunderRpcError, bool> predicate)
     {
         ArgumentNullException.ThrowIfNull(exception);
         var pending = new Stack<Exception>();
@@ -39,10 +49,7 @@ internal static class AgentFailurePresentationPolicy
         while (pending.TryPop(out var current))
         {
             if (current is SunderRpcException rpcException
-                && string.Equals(
-                    rpcException.Error.Code,
-                    AgentChatFailureProjection.StreamQueueLimitErrorCode,
-                    StringComparison.Ordinal))
+                && predicate(rpcException.Error))
             {
                 return true;
             }

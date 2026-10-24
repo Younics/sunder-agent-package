@@ -5,7 +5,8 @@ namespace Sunder.Package.Agent.Contracts.Models;
 /// </summary>
 /// <remarks>
 /// Option identifiers are resolved against the selected <see cref="AgentModelDescriptor" />.
-/// A missing or unrecognized identifier leaves that option at the provider default. When a
+/// A missing identifier leaves that option at the provider default. An unrecognized selection
+/// must be preserved for repair and rejected before inference, never silently defaulted. When a
 /// selected mode has <see cref="AgentModelModeOptionDescriptor.DisablesReasoning" /> set, the
 /// runtime does not apply the reasoning variant. These settings contain identifiers, not secrets.
 /// </remarks>

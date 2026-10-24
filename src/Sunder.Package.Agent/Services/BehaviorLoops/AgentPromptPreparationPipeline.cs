@@ -108,7 +108,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
             useBoundedHistoricalWindow: _sessionContextProjectionService is null,
             evictHistoricalAttachments: preparation.Projection.ContextCheckpoint is not null,
             context.RunCapabilities,
-            cancellationToken)).ToList();
+            cancellationToken, context.RunId, context.RunRevision)).ToList();
         IReadOnlyList<AgentPromptContextReceiptBlock> receiptBlocks = [];
         if (preparation.SupplementaryContextBlocks.Count > 0)
         {
@@ -299,15 +299,19 @@ internal sealed partial class AgentPromptPreparationPipeline(
         => previous.ContextCheckpoint?.ContextCheckpointId
            != current.ContextCheckpoint?.ContextCheckpointId;
 
-    private async Task<IReadOnlyList<ChatMessage>> BuildPromptMessagesAsync(
+    internal async Task<IReadOnlyList<ChatMessage>> BuildPromptMessagesAsync(
         IReadOnlyList<AgentTurnRecord> turns,
         Guid activeUserTurnId,
         bool useBoundedHistoricalWindow,
         bool evictHistoricalAttachments,
         AgentProviderRunCapabilities runCapabilities,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid runId, long runRevision)
     {
         var promptTurns = BuildPromptTurns(turns, activeUserTurnId, useBoundedHistoricalWindow);
+        var activeIndex = promptTurns.ToList().FindIndex(turn => turn.TurnId == activeUserTurnId);
+        var newestImage = promptTurns.Skip(activeIndex < 0 ? promptTurns.Count : activeIndex).Where(turn => turn.RunId == runId && turn.RunRevision == runRevision)
+            .SelectMany(turn => turn.Items.OrderBy(item => item.SequenceNumber))
+            .LastOrDefault(item => AgentToolService.ReadStoredToolImage(item.StructuredPayloadJson) is not null)?.ItemId;
         var messages = new List<ChatMessage>(promptTurns.Count);
         foreach (var turn in promptTurns)
         {
@@ -315,7 +319,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
                 turn,
                 includeAttachmentContent: !evictHistoricalAttachments || turn.TurnId == activeUserTurnId,
                 runCapabilities,
-                cancellationToken).ConfigureAwait(false));
+                cancellationToken, newestImage).ConfigureAwait(false));
         }
 
         return MergeAdjacentToolMessages(messages);
@@ -439,7 +443,7 @@ internal sealed partial class AgentPromptPreparationPipeline(
         AgentTurnRecord turn,
         bool includeAttachmentContent,
         AgentProviderRunCapabilities runCapabilities,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? newestToolImage = null)
     {
         var contents = new List<AIContent>();
         foreach (var item in turn.Items.OrderBy(item => item.SequenceNumber))
@@ -462,7 +466,20 @@ internal sealed partial class AgentPromptPreparationPipeline(
                     break;
 
                 case AgentTurnItemKind.ToolResult when !string.IsNullOrWhiteSpace(item.CallId):
-                    contents.Add(new FunctionResultContent(item.CallId, BuildToolResultContent(item)));
+                    var resultText = BuildToolResultContent(item);
+                    if (AgentToolService.ReadStoredToolImage(item.StructuredPayloadJson) is { } image)
+                    {
+                        DataContent? part = null;
+                        if (item.ItemId == newestToolImage)
+                        {
+                            try { part = await BuildToolImageAsync(turn, item, image, runCapabilities, cancellationToken).ConfigureAwait(false); }
+                            catch (Exception error) when (error is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException)
+                            { resultText += "\n[Image unavailable: stored bytes could not be validated or read.]"; }
+                        }
+                        contents.Add(new FunctionResultContent(item.CallId, part is null ? resultText + "\n[Image not included: historical or unsupported for this model.]"
+                            : (object)new List<AIContent> { new TextContent(resultText), part }));
+                    }
+                    else contents.Add(new FunctionResultContent(item.CallId, resultText));
                     break;
 
                 case AgentTurnItemKind.Attachment:
@@ -480,6 +497,20 @@ internal sealed partial class AgentPromptPreparationPipeline(
             MessageId = turn.TurnId.ToString("N"),
             CreatedAt = turn.CreatedAtUtc,
         };
+    }
+
+    private async Task<DataContent?> BuildToolImageAsync(AgentTurnRecord turn, AgentTurnItemRecord item, AgentAttachmentMetadata image,
+        AgentProviderRunCapabilities capabilities, CancellationToken token)
+    {
+        if (_attachmentStore is null || !SupportsAttachmentInput(capabilities, AgentAttachmentKind.Image) || turn.RunId is not { } run
+            || image.MediaType != "image/png" || image.SizeBytes is < 33 or > 2 * 1024 * 1024) return null;
+        var prefix = turn.SessionId.ToString("N") + "/" + AgentToolService.ToolImageOwner(run, item.CallId!).ToString("N") + "/";
+        if (!image.StorageRelativePath.StartsWith(prefix, StringComparison.Ordinal)) throw new InvalidDataException("Tool image belongs to a different session/call.");
+        var bytes = await _attachmentStore.ReadToolImageAsync(image, token).ConfigureAwait(false);
+        if (bytes.LongLength != image.SizeBytes || Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes)) != image.Sha256)
+            throw new InvalidDataException("Stored tool image integrity mismatch.");
+        AgentToolService.ValidateToolPng(bytes);
+        return new DataContent(bytes, image.MediaType) { Name = image.FileName };
     }
 
     private async Task<AIContent> BuildAttachmentContentAsync(
@@ -666,6 +697,14 @@ internal sealed partial class AgentPromptPreparationPipeline(
                 : AgentToolExecutionStatus.Completed;
 
         var builder = new StringBuilder();
+        var operationStatus = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Read(item.PresentationPayloadJson);
+        if (operationStatus is not null)
+        {
+            builder.AppendLine("[Tool request returned; operation outcome is in the untrusted result below.]");
+            if (status == AgentToolExecutionStatus.Ambiguous) builder.AppendLine("Effects may have occurred. Observe the original operation; never replay its mutation.");
+            else if (status == AgentToolExecutionStatus.Failed) builder.AppendLine("Do not report this invocation as successful.");
+            return builder.AppendLine("--- Untrusted tool output ---").Append(outputContent.Trim()).ToString().TrimEnd();
+        }
         builder.Append("[Sunder execution status: ")
             .Append(status.ToString().ToUpperInvariant())
             .AppendLine("]");

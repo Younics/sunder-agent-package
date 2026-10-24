@@ -19,7 +19,7 @@ internal static class AgentRuntimeUsePolicyAssertions
             Assert.Equal("runtime", use.GetProperty("role").GetString());
             var contract = contracts[use.GetProperty("contractKey").GetString()!];
             var policy = Assert.Single(expected, value => value.ContractId == contract.GetProperty("contractId").GetString());
-            Assert.Equal(CurrentContractInventory.PublicVersion, contract.GetProperty("contractVersion").GetString());
+            Assert.Equal(CurrentContractInventory.Find(policy.ContractId).Version, contract.GetProperty("contractVersion").GetString());
             Assert.Equal(policy.Required, use.GetProperty("required").GetBoolean());
             Assert.Equal(policy.Actions, use.GetProperty("actions").EnumerateArray().Select(value => value.GetString()));
             Assert.Equal(policy.Required, contract.GetProperty("runtimeUse").GetProperty("required").GetBoolean());

@@ -138,9 +138,6 @@ internal static class AgentPermissionFingerprint
     public static bool MatchesExecutionContext(
         string snapshotJson,
         AgentPendingPermissionRequestRecord pending,
-        AgentProfileRecord profile,
-        string? providerId,
-        string? modelId,
         AgentWorkspaceRecord workspace,
         AgentWorkspaceBindingRecord? binding)
     {
@@ -157,11 +154,52 @@ internal static class AgentPermissionFingerprint
                    && snapshot.RunRevision == pending.RunRevision
                    && string.Equals(snapshot.CallId, pending.CallId, StringComparison.Ordinal)
                    && string.Equals(snapshot.ArgumentsJson, NormalizeJson(pending.ArgumentsJson), StringComparison.Ordinal)
-                   && JsonEquals(snapshot.Profile, profile)
-                   && string.Equals(snapshot.ProviderId, providerId, StringComparison.OrdinalIgnoreCase)
-                   && string.Equals(snapshot.ModelId, modelId, StringComparison.OrdinalIgnoreCase)
-                   && JsonEquals(snapshot.Workspace, workspace)
+                    && JsonEquals(snapshot.Workspace, workspace)
                    && JsonEquals(snapshot.Binding, binding);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    internal static bool MatchesApprovedExecution(
+        AgentPendingPermissionRequestRecord pending,
+        AgentToolPermissionResolution current,
+        AgentWorkspaceRecord workspace,
+        string toolOwnerPackageId,
+        string? executionTargetOwnerPackageId)
+    {
+        try
+        {
+            var snapshot = JsonSerializer.Deserialize<PermissionExecutionSnapshot>(pending.ExecutionSnapshotJson, SnapshotJsonOptions);
+            if (snapshot is null || snapshot.Version != SnapshotVersion) return false;
+            var permission = current.PermissionRequest;
+            // A retained generic mutation grant also covers a later, narrower policy for
+            // the same prepared call, but cannot mint resource authority absent at approval.
+            if (snapshot.PermissionRequest is
+                { ActionId: AgentPermissionService.GenericMutationActionId, BoundaryId: AgentPermissionService.GenericMutationBoundaryId } generic
+                && (generic.ResourceClaims?.Count ?? 0) == 0
+                && (permission?.ResourceClaims?.Count ?? 0) == 0
+                && (permission?.ResourceReferences?.Count ?? 0) == 0
+                && (permission?.ResourceCapabilities?.Count ?? 0) == 0
+                && (string.IsNullOrWhiteSpace(permission?.ResourceReference)
+                    || string.Equals(generic.ResourceReference, permission.ResourceReference, StringComparison.Ordinal))
+                && permission?.BoundaryId != AgentPermissionBoundaryIds.OutsideConfiguredScope)
+            {
+                permission = generic;
+            }
+
+            // Keep the V2 receipt format, including existing pending requests. Profile
+            // edits affect future selection, not an action the user has already approved.
+            // The current owners, arguments, target configuration and resource claims
+            // still have to match the original execution fingerprint.
+            var fingerprint = Create(pending.RunId, pending.RunRevision, current.Descriptor,
+                pending.CallId, pending.ArgumentsJson, workspace, current.ExecutionBinding,
+                current.ExecutionTarget, permission, snapshot.Profile, snapshot.ProviderId,
+                snapshot.ModelId, toolOwnerPackageId, executionTargetOwnerPackageId,
+                current.ExecutionTargetConfigurationGeneration);
+            return string.Equals(pending.ExecutionFingerprint, fingerprint, StringComparison.Ordinal);
         }
         catch (JsonException)
         {

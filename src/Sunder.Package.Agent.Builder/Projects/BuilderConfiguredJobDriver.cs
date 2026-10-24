@@ -8,12 +8,12 @@ internal sealed class BuilderConfiguredJobDriver(IBuilderProjectDriverToolchains
     {
         request = BuilderJobValidation.Normalize(request);
         var selected = options;
-        if (request.Operation is "ensure-sdk" or "create" or "setup" or "build" or "archive" or "watch")
+        if (request.Operation is "ensure-sdk" or "create" or "setup" or "build" or "archive")
             selected = request.Kind == BuilderProjectKind.Dotnet
                 ? await BuilderLocalNuGet.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false)
                 : await BuilderLocalNpm.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false);
         // JobManager executes a job only once (including exact-ID retries). The driver and
-        // retained source selection live for the whole operation, including a long watch.
+        // retained source selection live until the finite operation and its children drain.
         await new BuilderProjectDriver(toolchains, processes, selected)
             .ExecuteAsync(request, reporter, cancellationToken).ConfigureAwait(false);
     }

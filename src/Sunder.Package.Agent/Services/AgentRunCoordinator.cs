@@ -149,6 +149,10 @@ public sealed partial class AgentRunCoordinator(
     public Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(Guid sessionId, string requestId)
         => _permissionResumeCoordinator.ApproveAsync(sessionId, requestId);
 
+    internal Task<AgentRunCheckpointRecord?> AdmitPermissionDecisionAsync(Guid sessionId, string requestId,
+        bool approve, bool approveForSession, CancellationToken cancellationToken)
+        => _permissionResumeCoordinator.AdmitDecisionAsync(sessionId, requestId, approve, approveForSession, cancellationToken);
+
     internal Task<AgentRunCheckpointRecord?> ApprovePendingPermissionAsync(
         Guid sessionId,
         string requestId,

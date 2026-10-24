@@ -33,7 +33,9 @@ Agent derives model tool declarations from the public descriptors and JSON Schem
 Framework-native tool objects stay process-local; the generated service boundary
 transfers business values, not AI framework instances.
 
-Agent re-lists and re-resolves a tool immediately before permission evaluation and execution. The current descriptor must match the advertised `ToolId`, `SourceKind`, `SourceId`, and `IsReadOnly` values, be ready, and remain assigned to the profile. This prevents stale or replaced tools from executing under an earlier advertisement.
+Agent re-lists and re-resolves a tool before preparing an invocation. New calls require a ready tool assigned to the profile. Prepared calls retain their exact package owners and advertised descriptor; profile saves, assignment edits and model changes do not revoke an already pending action. Execution still checks the original arguments, descriptor, workspace/binding, target configuration and resource claims, and honors current deny policies. A missing continuation model does not prevent the approved action from executing: its result is recorded first, then the current model is selected for continuation. This prevents stale or replaced tools from executing without making approval depend on a profile revision.
+
+Permission descriptions must be deterministic before authorized preflight. Do not depend on a cached preflight plan to decide whether to return a permission request; preflight may resolve resources only after authorization. A tool result acknowledging UI input is presented as **Input dispatched**. It does not establish that the application effect was applied; verify that separately.
 
 Use `PreflightAsync` for bounded checks after permission resolution and before the
 durable execution ledger is marked started, including approved resume. Return null
@@ -121,12 +123,65 @@ Shell permission includes a bounded command summary and the selected binding. St
 
 First-party package composition constructs `FilesToolSource` with `IPackageContext` and resolves targets through the Agent RPC catalog. Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` require `IAgentStructuredFileSearchExecutionTarget` and never fall back to process or broad shell authorization.
 
+## First-Party File Tools
+
+- `read` uses 1-based file-line or directory-entry offsets, up to 2,000 per page.
+  Model-visible output is bounded to 50 KiB, with explicit long-line shortening
+  and continuation guidance. Display pages are not complete mutation snapshots.
+  Image/PDF reads are not supported by these text tools.
+  Directories over the 10,000-entry enumeration bound fail with narrowing guidance
+  instead of claiming a complete total or a continuation beyond the captured set.
+- `grep` supports literal text and invariant case-insensitive matching as explicit
+  options. Regex uses bounded .NET non-backtracking syntax, not ripgrep syntax;
+  lookarounds/backreferences are unsupported. `glob` supports explicit hidden-file
+  inclusion; wildcard matches otherwise exclude hidden segments.
+- Search defaults to 100 results, accepts at most 1,000, and has a 30-second
+  deadline. Incomplete results report their limiting bound and narrowing guidance.
+  Secure traversal and exact execution-target selection still apply.
+- `edit` requires a unique exact/LF-aware match, including overlapping matches.
+  Repeated replacements require explicit `replaceAll`. Planning preserves original
+  source offsets, UTF-8 BOMs and unchanged mixed line endings. There is no fuzzy
+  edit or automatic formatter.
+- `apply_patch` supports contextual updates, insertions/deletions, EOF anchors and
+  no-final-newline markers. All operations preflight before mutation, and each path
+  appears at most once. Strict parsing rejects malformed or trailing patch content.
+- Existing-file writes/edits/patches require complete bounded text snapshots and
+  compare-and-swap checks. Invalid UTF-8, binary or incomplete snapshots are not
+  writable through these tools. A new-path write is create-only. Concurrent changes
+  fail without a blind retry; partial patch outcomes retain existing compensation
+  and ambiguity reporting.
+
+**Patch moves:** immediately follow `*** Update File: <source>` with
+`*** Move to: <destination>`, with optional edit hunks. As in OpenCode, this is a
+text-content move: create the destination, then remove the source. It is **not an
+atomic native rename**, and filesystem identity/metadata are not guaranteed to
+survive. UTF-8 BOMs and unchanged line endings are preserved.
+
+Both paths participate in permission, scope/instruction and 64-path limit checks.
+Unlike OpenCode's overwrite behavior, a destination must not exist; publication
+is create-only, and source deletion checks its complete preflight content hash.
+Source/destination overlap, case-only moves and compound AGENTS.md changes are
+rejected. A failed move uses guarded best-effort compensation, not a transaction:
+if source restoration or destination ownership cannot be confirmed, recovery
+files are retained and the partial/uncertain outcome is reported. Never blindly
+retry it. Rejected create/CAS operations are not treated as applied merely because
+another writer's content happens to match the planned result.
+
 ## Discovery And Presentation
 
 - Return `null` readiness when a source does not own the requested id; return `Failed` for an owned but unavailable tool.
 - Cache external discovery only with explicit invalidation and bounded lifetime. A stale cache is never authority to execute.
 - Dynamic sources that alter selectable groups should also implement `IAgentProfileSelectableCapabilityProvider` and `IAgentProfileSelectableCapabilityChangeNotifier`.
 - `IAgentToolPresentationResolver` must be pure and tolerate malformed historical arguments/results. Presentation failure must not be needed to understand execution security.
+
+Agent and Subsession transcripts default to compact activity. Adjacent safe-status
+`read`, `grep` and `glob` calls within one execution scope form an expandable group
+between commentary boundaries. Expanding a group reveals original individual call
+rows; expanding a call separately loads its existing lazy details. Failures,
+ambiguous outcomes, permission controls, child-session links and shell/background
+activity remain separate. **Detailed activity** shows the individual rows directly.
+This switch changes only presentation, never stored history, correlation or model
+context. Group state is bounded by the retained transcript window.
 
 ## Security Checklist
 

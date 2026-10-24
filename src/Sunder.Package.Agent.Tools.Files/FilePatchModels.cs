@@ -9,15 +9,32 @@ internal enum FilePatchOperationKind
     Delete,
 }
 
-internal sealed record FilePatchHunk(string OldText, string NewText);
+internal sealed record FilePatchHunk(string OldText, string NewText, string? Context = null, bool EndOfFile = false, bool IsInsertion = false, bool IsDeletion = false, bool RemoveFinalNewline = false, bool AddFinalNewline = false);
 
 internal sealed record FilePatchOperation(
     FilePatchOperationKind Kind,
     string Path,
     string? Content,
-    IReadOnlyList<FilePatchHunk> Hunks);
+    IReadOnlyList<FilePatchHunk> Hunks)
+{
+    public string? MoveTo { get; init; }
+}
 
-internal sealed record FilePatchPlan(IReadOnlyList<PlannedFilePatchOperation> Operations);
+internal sealed record FilePatchPlan(IReadOnlyList<PlannedFilePatchOperation> Operations)
+{
+    public IEnumerable<PlannedFilePatchOperation> DisplayOperations
+        => Operations.Where(operation => operation.Move is null || operation.Kind == FilePatchOperationKind.Add);
+}
+
+internal sealed record FilePatchMove(
+    string SourcePath,
+    string DestinationPath,
+    int SourceResourceIndex,
+    string SourceResourceReference,
+    string OriginalContent)
+{
+    public bool SourceRestored { get; set; }
+}
 
 internal sealed record PlannedFilePatchOperation(
     FilePatchOperationKind Kind,
@@ -30,6 +47,8 @@ internal sealed record PlannedFilePatchOperation(
     FileDiffPayloadFile PresentationFile)
 {
     public AgentResolvedResource? PostMutationResource { get; set; }
+    public FilePatchMove? Move { get; init; }
+    public bool RejectedWithoutMutation { get; set; }
 }
 
 internal sealed record FileDiffPresentationPayload(string Schema, IReadOnlyList<FileDiffPayloadFile> Files);

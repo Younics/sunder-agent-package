@@ -47,5 +47,6 @@ public sealed partial class AgentLocalStore
             ToolExecutionId = reader.IsDBNull(34) ? null : Guid.Parse(reader.GetString(34)),
             ResourceClaimSetVersion = reader.GetInt32(35),
             ResourceClaims = DeserializeResourceClaims(reader.GetString(36)),
+            ApproveForSession = reader.GetInt64(37) != 0,
         };
 }

@@ -23,10 +23,11 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.False(description.GetProperty("supportsInterruptibleRuns").GetBoolean());
         Assert.False(description.TryGetProperty("packageId", out _));
         fixture.Probe.Replies["ListModelsAsync"] = """
-            [{"modelId":"model.one","displayName":"Model","contextWindow":8192,"maxOutputTokens":1024,"isRecommended":false,"variants":[{"variantId":"deep","displayName":"Deep","description":null,"reasoningEffort":"extra-high"}],"modeOptions":[{"modeOptionId":"fast","displayName":"Fast","description":null,"disablesReasoning":false}],"speedOptions":null,"releaseDate":"2026-09-18"}]
+            [{"modelId":"model.one","displayName":"Model","contextWindow":8192,"maxOutputTokens":1024,"isRecommended":false,"variants":[{"variantId":"deep","displayName":"Deep","description":null,"reasoningEffort":"extra-high"}],"modeOptions":[{"modeOptionId":"fast","displayName":"Fast","description":null,"disablesReasoning":false}],"speedOptions":null,"releaseDate":"2026-09-18","defaultReasoningVariantId":"deep"}]
             """;
         var models = await fixture.Call("ListModelsAsync", EmptyRequest());
         Assert.Equal("2026-09-18", models[0].GetProperty("releaseDate").GetString());
+        Assert.Equal("deep", models[0].GetProperty("defaultReasoningVariantId").GetString());
         Assert.Equal("extra-high", models[0].GetProperty("variants")[0].GetProperty("reasoningEffort").GetString());
         fixture.Probe.Replies["GetReadinessAsync"] = "{\"providerId\":\"chat.one\",\"status\":\"needs-configuration\",\"message\":\"Configure\"}";
         Assert.Equal("needs-configuration", (await fixture.Call("GetReadinessAsync", EmptyRequest())).GetProperty("status").GetString());

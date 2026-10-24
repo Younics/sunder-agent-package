@@ -113,6 +113,8 @@ public partial class AgentChatView : UserControl,
             exception => ViewModel?.ReportTranscriptPagingFailure(exception),
             enumerateRealizedAnchors: EnumerateRealizedTranscriptAnchors,
             realizeAnchorVisual: RealizeTranscriptAnchor,
+            realizePreservedAnchorVisual: RealizePreservedTranscriptAnchor,
+            resolvePreservedAnchorKey: key => ViewModel?.ResolveVisibleTranscriptAnchor(key) ?? key,
             realizeTailVisual: RealizeTranscriptTailSentinel,
             presentationStateChanged: isActive => ViewModel?.SetTranscriptPresentationActive(isActive),
             anchorHost: TranscriptAnchorHost);

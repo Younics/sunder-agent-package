@@ -17,7 +17,7 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 
 #pragma warning disable OPENAI001, SCME0001
 
-public sealed class OpenAiAgentProviderTests
+public sealed partial class OpenAiAgentProviderTests
 {
     [Fact]
     public void AgentChatProviderException_ExistingConstructorDefaultsFailureKindToUnknown()
@@ -494,7 +494,7 @@ public sealed class OpenAiAgentProviderTests
     {
         var modelIds = OpenAiProviderConfiguration.UtilityModelOptions.Select(option => option.Value).ToArray();
 
-        Assert.Equal("openai/gpt-5.6", modelIds[0]);
+        Assert.Equal("openai/gpt-6.1-sol", modelIds[0]);
         Assert.Equal("openai/codex-mini-latest", modelIds[^1]);
         Assert.True(Array.IndexOf(modelIds, "openai/gpt-5.4-mini") < Array.IndexOf(modelIds, "openai/gpt-5.4"));
     }

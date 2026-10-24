@@ -41,6 +41,7 @@ internal static class ProviderStreamFailureClassifier
 
 internal sealed class ProviderStreamTelemetry(AgentChatClientContext context)
 {
+    private string? _reportedProcessingTier;
     private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
     private bool _firstEventRecorded;
 
@@ -106,6 +107,18 @@ internal sealed class ProviderStreamTelemetry(AgentChatClientContext context)
             _firstEventRecorded ? null : emptyMessage,
             ElapsedMilliseconds,
             cancellationToken: cancellationToken);
+
+    public ValueTask ProcessingTierAsync(string? actualTier, CancellationToken cancellationToken)
+    {
+        // Response metadata is untrusted, too. Never log arbitrary header/body
+        // text, and never report the requested tier as proof of the actual tier.
+        var tier = actualTier is { Length: <= 32 } ? actualTier.Trim().ToLowerInvariant() : null;
+        if (tier is not ("default" or "standard" or "priority" or "fast" or "flex" or "scale" or "auto" or "batch")
+            || tier == _reportedProcessingTier) return ValueTask.CompletedTask;
+        _reportedProcessingTier = tier;
+        return WriteAsync(PackageLogLevel.Debug, "provider.processing.tier", "Provider reported its effective processing tier.",
+            attributes: new Dictionary<string, object?> { ["processing.effective_tier"] = tier }, cancellationToken: cancellationToken);
+    }
 
     public ValueTask CanceledAsync()
         => WriteAsync(

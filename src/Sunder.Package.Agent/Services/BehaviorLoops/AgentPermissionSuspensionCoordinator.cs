@@ -21,7 +21,7 @@ internal sealed class AgentPermissionSuspensionCoordinator(AgentBehaviorLoopHost
     public Task<AgentToolCallOutcome> ResumeAsync(
         AgentPendingPermissionRequestRecord pending,
         CancellationToken cancellationToken,
-        Func<CancellationToken, ValueTask<bool>> beginExecutionAsync)
+        Func<AgentPermissionRequest?, CancellationToken, ValueTask<bool>> beginExecutionAsync)
         => _host.HandleApprovedToolCallCoreAsync(
             pending,
             cancellationToken,

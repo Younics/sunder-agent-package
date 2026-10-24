@@ -21,7 +21,7 @@ public interface IBuilderBackend
 
 public sealed class BuilderJobCleanupException(string message, Exception innerException) : IOException(message, innerException);
 
-/// <summary>Journal-admitted job gateway. A watch is polled, but never occupies the finite operation queue.</summary>
+/// <summary>Journal-admitted finite job gateway. Accepted execution and uncertain-start evidence outlive presentation.</summary>
 public sealed class BuilderProjectApplicationService(
     IBuilderBackend backend,
     IBuilderProjectStore projectStore,
@@ -50,7 +50,7 @@ public sealed class BuilderProjectApplicationService(
     public Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default)
         => backend.GetToolchainsAsync(kind, checkUpdates, cancellationToken);
 
-    /// <summary>Reconciles an uncertain watcher stop after transport recovery, using bounded independent cleanup.</summary>
+    /// <summary>Reconciles an uncertain job stop after transport recovery, using bounded independent cleanup.</summary>
     public Task<BuilderJobStopResult> StopJobAsync(string jobId) => StopJobAsync(jobId, null);
 
     private async Task<BuilderJobStopResult> StopJobAsync(string jobId, BuilderJobScope? scope)
@@ -118,9 +118,7 @@ public sealed class BuilderProjectApplicationService(
                         context.SettlementRequested, context.CancellationToken);
                     try
                     {
-                        return request.Operation == "watch"
-                            ? await ReconcileAndRunAsync(run, changed, job.Token).ConfigureAwait(false)
-                            : await EnqueueFiniteJobAsync(run, projectId, changed, job.Token).ConfigureAwait(false);
+                        return await EnqueueFiniteJobAsync(run, projectId, changed, job.Token).ConfigureAwait(false);
                     }
                     catch (OperationCanceledException error) when (error.CancellationToken == job.Token && job.IsCancellationRequested)
                     {
@@ -489,11 +487,23 @@ public sealed class BuilderProjectApplicationService(
             && (error.InnerException is null || IsRecoverable(error.InnerException));
 
     internal bool HasUnconfirmedJob(string projectFolder)
+        => UnconfirmedProjectJobs(projectFolder).Length != 0;
+
+    internal IReadOnlyList<string> UnconfirmedProjectJobIds(string projectFolder)
+        => UnconfirmedProjectJobs(projectFolder).Select(job => job.Request.Id!).ToArray();
+
+    private OwnedJob[] UnconfirmedProjectJobs(string projectFolder)
     {
         OwnedJob[] uncertain;
         lock (_sync) uncertain = _uncertain.Values.ToArray();
         var scope = new BuilderJobExclusionScope(Path.TrimEndingDirectorySeparator(new BuilderPathService().CanonicalEntryPoint(projectFolder)), false);
-        return uncertain.Any(owned => owned.Reservation.Scope.Overlaps(scope));
+        return uncertain.Where(owned => owned.Reservation.Scope.Overlaps(scope)).ToArray();
+    }
+
+    internal async Task ReconcileProjectJobsAsync(string projectFolder)
+    {
+        var uncertain = UnconfirmedProjectJobs(projectFolder);
+        foreach (var job in uncertain) await StopJobAsync(job.Request.Id!).ConfigureAwait(false);
     }
 
     private static bool OwnershipOverlaps(BuilderJobRequest left, BuilderJobRequest right)

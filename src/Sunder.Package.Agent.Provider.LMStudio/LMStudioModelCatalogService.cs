@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Net;
 
 namespace Sunder.Package.Agent.Provider.LMStudio;
 
@@ -151,7 +152,29 @@ internal sealed class LMStudioModelCatalogService
     {
         try
         {
-            using var request = _connection.CreateRequest(HttpMethod.Get, "models", options);
+            var native = await FetchEndpointAsync(options.NativeModelsUri.AbsoluteUri, options, cancellationToken).ConfigureAwait(false);
+            if (native.Failure?.StatusCode is not (HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed or HttpStatusCode.NotImplemented))
+                return native;
+            return await FetchEndpointAsync("models", options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (TimeoutException ex)
+        {
+            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(LMStudioCatalogFailureKind.Timeout, ex.Message, Exception: ex));
+        }
+        catch (JsonException ex)
+        {
+            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(LMStudioCatalogFailureKind.InvalidResponse, "LM Studio returned an invalid model catalog.", Exception: ex));
+        }
+        catch (Exception ex)
+        {
+            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(LMStudioCatalogFailureKind.Network, $"LM Studio is not reachable: {ex.Message}", Exception: ex));
+        }
+    }
+
+    private async Task<LMStudioModelCatalogResult> FetchEndpointAsync(string path, LMStudioConnectionOptions options, CancellationToken cancellationToken)
+    {
+            using var request = _connection.CreateRequest(HttpMethod.Get, path, options);
             using var response = await _connection.SendAsync(request, options, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
@@ -164,32 +187,6 @@ internal sealed class LMStudioModelCatalogService
             await using var content = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             using var document = await JsonDocument.ParseAsync(content, cancellationToken: cancellationToken).ConfigureAwait(false);
             return ParseCatalog(document.RootElement);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (TimeoutException ex)
-        {
-            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(
-                LMStudioCatalogFailureKind.Timeout,
-                ex.Message,
-                Exception: ex));
-        }
-        catch (JsonException ex)
-        {
-            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(
-                LMStudioCatalogFailureKind.InvalidResponse,
-                "LM Studio returned an invalid model catalog.",
-                Exception: ex));
-        }
-        catch (Exception ex)
-        {
-            return LMStudioModelCatalogResult.Failed(new LMStudioCatalogFailure(
-                LMStudioCatalogFailureKind.Network,
-                $"LM Studio is not reachable: {ex.Message}",
-                Exception: ex));
-        }
     }
 
     private static LMStudioModelCatalogResult ParseCatalog(JsonElement root)
@@ -207,18 +204,31 @@ internal sealed class LMStudioModelCatalogService
         foreach (var item in modelsElement.EnumerateArray())
         {
             itemCount++;
-            if (item.ValueKind != JsonValueKind.Object || GetString(item, "id") is not { Length: > 0 } id)
+            if (itemCount > 4096) throw new JsonException("The LM Studio model catalog exceeds its entry limit.");
+            if (item.ValueKind != JsonValueKind.Object || GetString(item, "key", "id") is not { Length: > 0 } id)
             {
                 continue;
             }
 
+            var loaded = TryGetArray(item, "loaded_instances", out var instances);
+            var loadedLimits = loaded ? instances.EnumerateArray().Select(instance =>
+                TryGetProperty(instance, "config", out var config) ? GetPositiveInt(config, "context_length") : null)
+                .OfType<int>().ToArray() : [];
+            TryGetProperty(item, "capabilities", out var capabilities);
+            TryGetProperty(item, "reasoning", out var reasoning);
+            var allowed = TryGetArray(reasoning, "allowed_options", out var allowedOptions)
+                ? allowedOptions.EnumerateArray().Where(value => value.ValueKind == JsonValueKind.String)
+                    .Select(value => value.GetString()!).Where(value => value is "off" or "on" or "low" or "medium" or "high")
+                    .Distinct(StringComparer.Ordinal).ToArray() : [];
             var model = new LMStudioModelInfo(
                 id,
                 GetString(item, "display_name", "name") ?? id,
                 Classify(item, id),
-                GetPositiveInt(item, "max_context_length", "context_length", "loaded_context_length"),
+                loadedLimits.Length > 0 ? loadedLimits.Min() : GetPositiveInt(item, "max_context_length", "context_length", "loaded_context_length"),
                 GetPositiveInt(item, "max_output_tokens", "max_completion_tokens"),
-                GetPositiveInt(item, "dimensions", "embedding_dimension", "embedding_dimensions"));
+                GetPositiveInt(item, "dimensions", "embedding_dimension", "embedding_dimensions"),
+                GetBoolean(capabilities, "vision"), GetBoolean(capabilities, "trained_for_tool_use"),
+                allowed, GetString(reasoning, "default"), loaded ? instances.GetArrayLength() > 0 : null);
             if (models.TryGetValue(id, out var existing))
             {
                 model = model with
@@ -319,6 +329,7 @@ internal sealed class LMStudioModelCatalogService
     private static LMStudioModelCapability ClassifyToken(string value)
     {
         var normalized = value.Trim().Replace('_', '-').ToLowerInvariant();
+        if (normalized == "decision") return LMStudioModelCapability.Other;
         if (normalized.Contains("embed", StringComparison.Ordinal))
         {
             return LMStudioModelCapability.Embedding;
@@ -380,6 +391,7 @@ internal sealed class LMStudioModelCatalogService
         foreach (var name in names)
         {
             if (TryGetProperty(element, name, out var value)
+                && value.ValueKind == JsonValueKind.Number
                 && value.TryGetInt32(out var parsed)
                 && parsed > 0)
             {
@@ -392,6 +404,9 @@ internal sealed class LMStudioModelCatalogService
 
     private static bool TryGetArray(JsonElement element, string name, out JsonElement value)
         => TryGetProperty(element, name, out value) && value.ValueKind == JsonValueKind.Array;
+
+    private static bool? GetBoolean(JsonElement element, string name)
+        => TryGetProperty(element, name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False ? value.GetBoolean() : null;
 
     private static bool TryGetProperty(JsonElement element, string name, out JsonElement value)
     {

@@ -15,7 +15,7 @@
       "key": "agent-builder",
       "packageId": "younics.sunder.package.maker",
       "projectPath": "src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj",
-      "providerIds": ["builder.runtime"],
+      "providerIds": ["builder.runtime", "maker.permissions", "maker.tools"],
       "releaseTitle": "Sunder Package Maker",
       "artifactName": "sunder-agent-builder-package",
       "artifactType": "sunderpkg"
@@ -141,13 +141,13 @@
   "capabilities": {
     "younics.ai.agent": [
       "background-services.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1",
-      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v1", "runtime-generations.v1",
+      "notifications.v1", "packaging.v1", "role-local-workspace.v1", "rpc.call-ownership.v1", "rpc.extended-deadline.v1", "rpc.v1", "runtime-generations.v1",
       "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1",
       "stacks.rpc.v1", "stacks.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-protocol.v1"
     ],
     "younics.sunder.package.maker": [
-      "app-state-updates.v1", "background-processes.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1",
-      "package-development-revisions.v1", "package-development.v1", "package-log-navigation.v1", "packaging.v1", "role-local-workspace.v1", "rpc.v1",
+      "app-activation-services.v1", "app-state-updates.v1", "background-processes.v1", "contributions.v1", "core.v1", "execution-runtime.v1", "logging.v1", "notifications.v1",
+      "package-development-feedback.v1", "package-development-log-queries.v1", "package-development-logs.v1", "package-development-reload.v1", "package-development-revisions.v1", "package-development-views.v1", "package-development.v1", "package-log-navigation.v1", "packaging.v1", "role-local-workspace.v1", "rpc.extended-deadline.v1", "rpc.v1",
       "sdk-baseline-1-1.v1", "settings-navigation.v1", "settings-views.v1", "shell-view.v1", "storage.v1", "theming.v1", "view-navigation-preparation.v1", "views.v1", "worker-execution-observations.v1", "worker-protocol.v1"
     ],
     "younics.ai.agent.execution.docker": [

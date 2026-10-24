@@ -8,6 +8,15 @@ internal sealed partial class TranscriptScrollCoordinator
     private long _queuedPagingReevaluationGeneration;
     private object? _activePageProtectedAnchorKey;
     private Task _pagingReevaluationOperation = Task.CompletedTask;
+    private const int MaximumConsecutiveEdgePages = 8;
+    private int _consecutiveEdgePages;
+
+    private void ResetPagingContinuation()
+    {
+        _consecutiveEdgePages = 0;
+        _isOlderEdgeArmed = true;
+        _isNewerEdgeArmed = true;
+    }
 
     internal Task PendingPagingOperations => WaitForPendingOperationsAsync();
 
@@ -22,8 +31,17 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
-        QueueLoadOlderRowsIfNearTop();
-        QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
+        // Reflow and bounded-window trimming can put the viewport at the other
+        // edge without any new input. Do not reverse the reader's paging intent.
+        if (_lastUserScrollDirection != UserScrollDirection.TowardTail
+            && QueueLoadOlderRowsIfNearTop())
+        {
+            return;
+        }
+        if (_lastUserScrollDirection != UserScrollDirection.TowardHistory)
+        {
+            QueueLoadNewerRowsIfAtBottom(requireActualBottom: false);
+        }
     }
 
     private async Task WaitForPendingOperationsAsync()
@@ -211,6 +229,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 Volatile.Write(ref _activePageProtectedAnchorKey, null);
                 _anchorHost?.SetFollowingTail(IsFollowingTail);
                 ReleaseOlderPagingAnchor(anchor);
+                ContinuePagingAtEdge(loaded, older: true, interactionRevision, pagingContextRevision, anchor.AuthorityRevision);
             }
         }
     }
@@ -267,27 +286,21 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 if (!cancellationToken.IsCancellationRequested && !_disposed)
                 {
+                    var tailPlaced = false;
                     var tailIntentIsCurrent = IsCurrentNewerTailIntent(
                         anchor,
                         interactionRevision,
                         pagingContextRevision);
                     if (loaded
-                        && interactionRevision == _interactionRevision
                         && anchor.AuthorityRevision == _viewportAuthorityRevision
                         && pagingContextRevision == _pagingContextRevision)
                     {
-                        if (wasFollowingTail || tailIntentIsCurrent)
+                        if (wasFollowingTail && interactionRevision == _interactionRevision || tailIntentIsCurrent)
                         {
-                            await YieldForRenderedContent(cancellationToken);
-                            cancellationToken.ThrowIfCancellationRequested();
-                            if (!_disposed
-                                && interactionRevision == _interactionRevision
-                                && anchor.AuthorityRevision == _viewportAuthorityRevision)
-                            {
-                                ScrollToBottom(resumeFollowing: true);
-                            }
+                            await PlaceNewerPageTailAsync(anchor, cancellationToken);
+                            tailPlaced = true;
                         }
-                        else
+                        else if (interactionRevision == _interactionRevision)
                         {
                             await RestoreScrollAnchorAfterRenderedContentAsync(
                                 anchor,
@@ -304,11 +317,10 @@ internal sealed partial class TranscriptScrollCoordinator
                         && loaded
                         && pagingContextRevision == _pagingContextRevision)
                     {
-                        if (anchor.AuthorityRevision == _viewportAuthorityRevision
-                            && _loadNewerResumeInteractionRevision == _interactionRevision
-                            && !_hasNewerRows())
+                        if (!tailPlaced
+                            && IsCurrentNewerTailIntent(anchor, interactionRevision, pagingContextRevision))
                         {
-                            ScrollToBottom(resumeFollowing: true);
+                            await PlaceNewerPageTailAsync(anchor, cancellationToken);
                         }
                     }
                 }
@@ -352,11 +364,23 @@ internal sealed partial class TranscriptScrollCoordinator
                 _loadNewerPending = false;
                 if (continueToLatest)
                 {
-                    QueueLoadNewerRows(resumeFollowingWhenCaughtUp: true);
+                    if (ReserveEdgeContinuation()) QueueLoadNewerRows(resumeFollowingWhenCaughtUp: true);
                 }
                 ReleaseNewerPagingAnchor(anchor);
+                if (!continueToLatest)
+                    ContinuePagingAtEdge(loaded, older: false, interactionRevision, pagingContextRevision, anchor.AuthorityRevision);
             }
         }
+    }
+
+    private Task PlaceNewerPageTailAsync(ScrollAnchor anchor, CancellationToken cancellationToken)
+    {
+        // Hand the page's existing authority from reading-row preservation to
+        // tail placement. Starting a new authority here would invalidate paging
+        // continuation and the user's current tail intent.
+        anchor.Dispose();
+        var version = BeginBottomPlacementLock();
+        return CompleteSettledScrollAsync(version, _interactionRevision, anchor.AuthorityRevision, cancellationToken);
     }
 
     private TranscriptPageAnchorResolution ResolveActivePageAnchor()
@@ -364,6 +388,27 @@ internal sealed partial class TranscriptScrollCoordinator
             ? TranscriptPageAnchorResolution.Relinquish()
             : TranscriptPageAnchorResolution.Preserve(
                 Volatile.Read(ref _activePageProtectedAnchorKey));
+
+    private void ContinuePagingAtEdge(bool progressed, bool older, long interaction, long context, long authority)
+    {
+        if (!progressed || _disposed || !_presentationActive || _scrollViewer.Viewport.Height <= 0
+            || interaction != _interactionRevision || context != _pagingContextRevision || authority != _viewportAuthorityRevision)
+            return;
+        if (older) _isOlderEdgeArmed = true;
+        else _isNewerEdgeArmed = true;
+        var needsPage = older
+            ? !IsFollowingTail && IsNearLoadTop() && _canLoadOlderRows()
+            : IsNearLoadBottom() && _hasNewerRows() && _canLoadNewerRows();
+        if (!needsPage) { _consecutiveEdgePages = 0; return; }
+        if (ReserveEdgeContinuation()) QueueReevaluatePagingEdges(authority);
+    }
+
+    private bool ReserveEdgeContinuation()
+    {
+        if (++_consecutiveEdgePages < MaximumConsecutiveEdgePages) return true;
+        ReportPagingFailure(new InvalidDataException("Transcript paging paused after eight consecutive pages. Scroll again to continue."));
+        return false;
+    }
 
     private object? ResolveActivePageProtectedAnchorKey()
         => Volatile.Read(ref _activePageProtectedAnchorKey);

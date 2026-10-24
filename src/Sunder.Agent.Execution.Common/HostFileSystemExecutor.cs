@@ -46,7 +46,7 @@ internal static class HostFileSystemExecutor
             using var target = session.OpenTarget();
             if (target.Handle.Kind == LocalSecureNodeKind.Directory)
             {
-                return ListDirectory(session, target.Handle, displayPath, cancellationToken);
+                return ListDirectory(session, target.Handle, displayPath, request, cancellationToken);
             }
 
             await using var stream = OpenReadStream(target.Handle);
@@ -78,6 +78,10 @@ internal static class HostFileSystemExecutor
                     $"File changed while it was being read: {displayPath}");
             }
             return result;
+        }
+        catch (DecoderFallbackException)
+        {
+            return FileOperation.ReadFailure(displayPath, AgentFileReadErrorCodes.BinaryFile, "The file is not valid UTF-8 text. Its bytes were not modified.");
         }
         catch (LocalSecurePathNotFoundException)
         {
@@ -197,6 +201,8 @@ internal static class HostFileSystemExecutor
             {
                 await using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true))
                 {
+                    if (target is not null && !request.Content.StartsWith('\uFEFF') && HasUtf8Bom(target.Handle))
+                        await writer.WriteAsync("\uFEFF".AsMemory(), cancellationToken).ConfigureAwait(false);
                     await writer.WriteAsync(request.Content.AsMemory(), cancellationToken).ConfigureAwait(false);
                     await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
                 }
@@ -224,6 +230,10 @@ internal static class HostFileSystemExecutor
         catch (LocalSecureFileAlreadyExistsException)
         {
             return FileOperation.Failure(path, "File already exists.", FileOperation.FileExistsErrorCode);
+        }
+        catch (DecoderFallbackException)
+        {
+            return FileOperation.Failure(path, "The existing file is not valid UTF-8 text. No mutation was applied.", AgentFileReadErrorCodes.BinaryFile);
         }
         catch (LocalSecureApprovalChangedException ex)
         {
@@ -400,6 +410,7 @@ internal static class HostFileSystemExecutor
         LocalSecurePathSession session,
         LocalSecureHandle directory,
         string path,
+        AgentFileReadRequest request,
         CancellationToken cancellationToken)
     {
         var budget = new HostTraversalBudget(cancellationToken);
@@ -411,9 +422,10 @@ internal static class HostFileSystemExecutor
             {
                 continue;
             }
-            if (entries.Count > HostFileSystemLimits.MaxDirectoryEntries)
+            if (entries.Count == HostFileSystemLimits.MaxDirectoryEntries)
             {
-                break;
+                return FileOperation.ReadFailure(path, AgentFileReadErrorCodes.TooLarge,
+                    $"Directory contains more than {HostFileSystemLimits.MaxDirectoryEntries} entries; choose a narrower directory. A complete paged listing is unavailable.");
             }
             using var child = session.OpenChild(directory, name);
             entries.Add(EscapeEntryName(name)
@@ -422,14 +434,21 @@ internal static class HostFileSystemExecutor
                             : string.Empty));
         }
 
-        var wasTruncated = entries.Count > HostFileSystemLimits.MaxDirectoryEntries;
+        var offset = checked((int)(request.Offset ?? 1));
+        var limit = checked((int)(request.Limit ?? FileOperation.DefaultReadLimit));
+        if (offset > entries.Count && !(offset == 1 && entries.Count == 0))
+            return FileOperation.ReadFailure(path, AgentFileReadErrorCodes.RangeOutsideFile,
+                $"Entry offset {offset} is outside the directory's {entries.Count} entries.");
+        var selected = entries.OrderBy(entry => entry, StringComparer.Ordinal)
+            .Skip(offset - 1).Take(limit).ToArray();
         return FileOperation.ReadResult(
             path,
             string.Join(
                 Environment.NewLine,
-                entries.Take(HostFileSystemLimits.MaxDirectoryEntries).OrderBy(entry => entry, StringComparer.Ordinal)),
+                selected),
             isDirectory: true,
-            wasTruncated: wasTruncated);
+            wasTruncated: (long)offset - 1 + selected.Length < entries.Count,
+            startLine: offset, endLine: selected.Length == 0 ? 0 : offset + selected.Length - 1, totalLines: entries.Count);
     }
 
     private static void CapturePostMutationAuthority(
@@ -591,9 +610,19 @@ internal static class HostFileSystemExecutor
             }
             offset += read;
         }
-        using var memory = new MemoryStream(bytes, 0, offset, writable: false);
-        using var reader = new StreamReader(memory, detectEncodingFromByteOrderMarks: true);
-        return await reader.ReadToEndAsync(cancellationToken).ConfigureAwait(false);
+        var text = new UTF8Encoding(false, throwOnInvalidBytes: true).GetString(bytes, 0, offset);
+        if (text.Contains('\0')) throw new DecoderFallbackException("Binary content is not editable text.");
+        // Keep a UTF-8 BOM as U+FEFF in complete mutation snapshots. Its UTF-8
+        // content hash then covers the original bytes, including the BOM.
+        return text;
+    }
+
+    private static bool HasUtf8Bom(LocalSecureHandle handle)
+    {
+        using var stream = OpenReadStream(handle);
+        stream.Position = 0;
+        Span<byte> prefix = stackalloc byte[3];
+        return stream.Read(prefix) == 3 && prefix.SequenceEqual(new byte[] { 0xEF, 0xBB, 0xBF });
     }
 
     private static async Task<AgentFileReadResult> ReadRangeAsync(
@@ -605,16 +634,26 @@ internal static class HostFileSystemExecutor
         var offset = checked((int)(request.Offset ?? 1));
         var limit = checked((int)(request.Limit ?? FileOperation.DefaultReadLimit));
         var lines = new List<string>(limit);
+        var pageBytes = 0;
+        var pageBound = false;
+        var shortened = false;
         var scan = await HostBoundedLineReader.ScanAsync(
             stream,
             HostFileSystemLimits.MaxRangedReadBytes,
             HostFileSystemLimits.MaxLineCharacters,
-            throwOnInvalidBytes: false,
+            throwOnInvalidBytes: true,
             (lineNumber, line) =>
             {
-                if (lineNumber >= offset && lines.Count < limit)
+                if (lineNumber >= offset && lines.Count < limit && !pageBound)
                 {
-                    lines.Add(line);
+                    var length = Math.Min(line.Length, 2000);
+                    if (length < line.Length && length > 0 && char.IsHighSurrogate(line[length - 1])) length--;
+                    var selected = length < line.Length ? line[..length] + " [line shortened; use grep]" : line;
+                    shortened |= length < line.Length;
+                    var bytes = Encoding.UTF8.GetByteCount(selected) + 16;
+                    if (pageBytes + bytes > 50 * 1024) { pageBound = true; return; }
+                    lines.Add(selected);
+                    pageBytes += bytes;
                 }
             },
             cancellationToken).ConfigureAwait(false);
@@ -626,6 +665,8 @@ internal static class HostFileSystemExecutor
                 $"Ranged reads support at most {HostFileSystemLimits.MaxRangedReadBytes} bytes and {HostFileSystemLimits.MaxLineCharacters} characters per line.");
         }
         var totalLines = scan.TotalLines;
+        if (scan.ContainsNull || scan.InvalidEncoding)
+            return FileOperation.ReadFailure(path, AgentFileReadErrorCodes.BinaryFile, "The file is not valid UTF-8 text.");
         if (offset > totalLines && !(offset == 1 && totalLines == 0))
         {
             return FileOperation.ReadFailure(
@@ -638,7 +679,7 @@ internal static class HostFileSystemExecutor
         }
 
         var endLine = lines.Count == 0 ? 0 : offset + lines.Count - 1;
-        return FileOperation.ReadResult(path, string.Join('\n', lines), wasTruncated: endLine < totalLines,
+        return FileOperation.ReadResult(path, string.Join('\n', lines), wasTruncated: endLine < totalLines || pageBound || shortened,
             startLine: offset, endLine: endLine, totalLines: totalLines);
     }
 

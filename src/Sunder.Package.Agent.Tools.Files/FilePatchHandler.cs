@@ -33,7 +33,11 @@ internal static class FilePatchHandler
 
         try
         {
-            return await ApplyPlanAsync(target, context, request.ToolId, operations, plan, cancellationToken);
+            var result = await ApplyPlanAsync(target, context, request.ToolId, operations, plan, cancellationToken);
+            return !result.IsError || !plan.Operations.Any(operation => operation.Move is not null)
+                ? result
+                : result with { Content = result.Content + Environment.NewLine
+                    + "Move steps are non-atomic: create the destination, then remove the source. Inspect reported source/destination recovery state before replanning; do not blindly retry." };
         }
         finally
         {
@@ -58,6 +62,8 @@ internal static class FilePatchHandler
                 currentOperation = operation;
                 var result = await ApplyOperationAsync(target, context, operation, cancellationToken);
                 operation.PostMutationResource = result.PostMutationResource;
+                operation.RejectedWithoutMutation = result.IsError && result.PostMutationResource is null
+                    && result.ErrorCode is FileOperation.FileExistsErrorCode or FileOperation.ContentChangedErrorCode;
                 if (result.IsError)
                 {
                     return await BuildApplicationFailureAsync(target, context, toolId, plan, applied, operation, result.Summary);
@@ -104,8 +110,8 @@ internal static class FilePatchHandler
         return FileToolResult.Success(
             toolId,
             FilePatchParser.BuildSummary(operations),
-            string.Join(Environment.NewLine, plan.Operations.Select(FormatSuccessSummary)), FileToolResult.BackendId(target),
-            presentationPayloadJson: FileDiffPresentation.BuildPayload(plan.Operations.Select(operation => operation.PresentationFile).ToArray()));
+            string.Join(Environment.NewLine, plan.DisplayOperations.Select(FormatSuccessSummary)), FileToolResult.BackendId(target),
+            presentationPayloadJson: FileDiffPresentation.BuildPayload(plan.DisplayOperations.Select(operation => operation.PresentationFile).ToArray()));
     }
 
     private static async ValueTask<AgentFileMutationResult> ApplyOperationAsync(
@@ -228,6 +234,7 @@ internal static class FilePatchHandler
         CancellationToken cancellationToken,
         bool requireOriginalStateForNoMutation)
     {
+        if (operation.RejectedWithoutMutation) return false;
         if (operation.PostMutationResource is { } postMutationResource)
         {
             var reachedNextState = operation.Kind == FilePatchOperationKind.Delete
@@ -247,6 +254,8 @@ internal static class FilePatchHandler
         {
             if (!resource.Exists)
             {
+                if (operation.Move is not null)
+                    throw new InvalidOperationException($"Move source '{operation.Path}' removal ownership could not be confirmed; the destination was retained for recovery.");
                 return true;
             }
             if (!requireOriginalStateForNoMutation)
@@ -279,6 +288,11 @@ internal static class FilePatchHandler
                 ? throw UncertainCanceledOperationState(operation.Path)
                 : false;
         }
+
+        // A destination created by somebody else can have identical text. A
+        // failed/unacknowledged create is not proof that this call owns it.
+        if (operation.Move is not null && operation.Kind == FilePatchOperationKind.Add)
+            throw new InvalidOperationException($"Move destination '{operation.Path}' ownership could not be confirmed; any destination was retained for recovery.");
 
         var currentContent = await ReadCurrentContentAsync(
             target,
@@ -319,6 +333,8 @@ internal static class FilePatchHandler
                 }
                 else
                 {
+                    if (operation.Move is { } move && operation.Kind == FilePatchOperationKind.Delete)
+                        move.SourceRestored = true;
                     restored.Add(operation.Path);
                 }
             }
@@ -337,6 +353,26 @@ internal static class FilePatchHandler
         PlannedFilePatchOperation operation,
         CancellationToken cancellationToken)
     {
+        if (operation.Move is { } move && operation.Kind == FilePatchOperationKind.Add && !move.SourceRestored)
+        {
+            var sourceContext = context with
+            {
+                ApprovedResourceReferences = [move.SourceResourceReference],
+                ResourceOperation = context.ResourceOperation is { } sourceOperation
+                    ? sourceOperation with { ResourceIndex = move.SourceResourceIndex } : null,
+            };
+            try
+            {
+                var sourceContent = await ReadCurrentContentAsync(target, sourceContext, move.SourcePath,
+                    cancellationToken, requireCompleteRead: true);
+                if (!string.Equals(sourceContent, move.OriginalContent, StringComparison.Ordinal))
+                    return RetainMoveDestination(move, "the source no longer matches its preflight snapshot");
+            }
+            catch (Exception exception)
+            {
+                return RetainMoveDestination(move, "the source could not be verified: " + exception.Message);
+            }
+        }
         var resource = operation.PostMutationResource
                        ?? await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         var operationContext = CreateCompensationContext(context, operation, resource);
@@ -460,6 +496,10 @@ internal static class FilePatchHandler
         => new() { Path = path, Summary = "Current target state no longer matches the applied patch; automatic compensation was skipped.",
             IsError = true, ErrorCode = "patch-compensation-unsafe", PostMutationResource = null };
 
+    private static AgentFileMutationResult RetainMoveDestination(FilePatchMove move, string reason)
+        => new() { Path = move.DestinationPath, IsError = true, ErrorCode = "patch-compensation-unsafe", PostMutationResource = null,
+            Summary = $"Move destination '{move.DestinationPath}' retained for recovery because {reason}; source '{move.SourcePath}' was not confirmed restored." };
+
     private static AgentToolResult BuildCancellationFailure(
         string toolId,
         FilePatchPlan plan,
@@ -527,7 +567,9 @@ internal static class FilePatchHandler
         FilePatchCompensationProbeFailure? ProbeFailure);
 
     private static string FormatSuccessSummary(PlannedFilePatchOperation operation)
-        => operation.Kind switch
+        => operation.Move is { } move
+            ? $"Moved {move.SourcePath} to {move.DestinationPath} (non-atomic write/delete; file identity and metadata are not guaranteed to be preserved)"
+            : operation.Kind switch
         {
             FilePatchOperationKind.Add => $"Added {operation.Path}",
             FilePatchOperationKind.Update => $"Updated {operation.Path}",

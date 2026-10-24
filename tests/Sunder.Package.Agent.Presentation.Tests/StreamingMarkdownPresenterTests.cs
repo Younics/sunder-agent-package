@@ -16,6 +16,32 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 public sealed class StreamingMarkdownPresenterTests
 {
     [AvaloniaFact]
+    public async Task WrappedFallbackHasBoundedLayoutUntilFullMarkdownIsReady()
+    {
+        var source = "### Section\n\n" + string.Join(" ", Enumerable.Repeat("Variable wrapping text with **Markdown** and `code`.", 11));
+        using var release = new ManualResetEventSlim();
+        var presenter = new StreamingMarkdownPresenter(() => StableMarkdownRenderer.Create(text =>
+        {
+            release.Wait(TimeSpan.FromSeconds(10));
+            return Markdown.Parse(text);
+        })) { MarkdownBuilder = new ObservableStringBuilder(source) };
+        var window = new Window { Width = 350, Height = 500, Content = presenter };
+        window.Show();
+        try
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var fallback = Assert.Single(presenter.GetVisualDescendants().OfType<SelectableTextBlock>(), block => block.Classes.Contains("markdown-fallback"));
+            Assert.Equal(256, fallback.MaxLines);
+            Assert.Equal(source, fallback.Text);
+            release.Set();
+            await WaitUntilAsync(window, () => !presenter.IsRenderPending);
+            Assert.True(presenter.Bounds.Height > 0);
+            Assert.Equal(source, Assert.Single(presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()).RenderedSource);
+        }
+        finally { release.Set(); await CloseWindowAsync(window); }
+    }
+
+    [AvaloniaFact]
     public async Task Presenter_RendersHeadingListTableAndCodeBlock()
     {
         var builder = new ObservableStringBuilder(
@@ -564,6 +590,16 @@ public sealed class StreamingMarkdownPresenterTests
             Assert.True(prepared.Presenter.IsHitTestVisible);
             Assert.True(prepared.Presenter.IsEffectivelyVisible);
             Assert.Equal(1, markdown.RendererCreationCount);
+
+            foreach (var width in new[] { 340d, 720d })
+            {
+                window.Width = width;
+                await PumpLayoutUntilAsync(window, () =>
+                    !markdown.IsGeometryPending
+                    && prepared.Presenter.Bounds.Width <= host.Bounds.Width + 0.5);
+                Assert.InRange(prepared.Presenter.Bounds.Width, host.Bounds.Width - 0.5, host.Bounds.Width + 0.5);
+                Assert.Equal(1, markdown.RendererCreationCount);
+            }
 
             owner.Invalidate();
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);

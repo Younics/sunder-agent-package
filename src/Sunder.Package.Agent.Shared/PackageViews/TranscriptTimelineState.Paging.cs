@@ -202,7 +202,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         if (hasMore && !cursorAdvanced)
         {
             SetHasOlderRows(true);
-            return false;
+            throw new InvalidDataException("The older transcript page did not advance its cursor. Scroll again to retry.");
         }
         if (turns.Count == 0)
         {
@@ -290,7 +290,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         if (hasMore && !continuationAdvanced)
         {
             SetHasNewerRows(true);
-            return false;
+            throw new InvalidDataException("The newer transcript page did not advance its cursor. Scroll again to retry.");
         }
         var pendingTurns = _pendingTurnsById.Values
             .Where(turn => turn.SessionId == sessionId);

@@ -24,6 +24,10 @@ internal static class GeminiModelCatalog
     private static readonly IReadOnlyDictionary<string, DateOnly> ReleaseDates =
         new Dictionary<string, DateOnly>(StringComparer.OrdinalIgnoreCase)
         {
+            ["gemini/gemini-4-argon"] = new(2026, 10, 13),
+            ["gemini/gemini-3.8-flash"] = new(2026, 9, 2),
+            ["gemini/gemini-3.6-flash"] = new(2026, 7, 21),
+            ["gemini/gemini-3.5-flash-lite"] = new(2026, 7, 21),
             ["gemini/gemini-3.5-flash"] = new(2026, 5, 19),
             ["gemini/gemini-3.1-flash-lite"] = new(2026, 5, 7),
             ["gemini/gemma-4-31b-it"] = new(2026, 4, 2),
@@ -40,6 +44,14 @@ internal static class GeminiModelCatalog
 
     private static readonly IReadOnlyList<AgentModelDescriptor> VendorModels =
         ProviderModelCatalog.ApplyReleaseDates([
+        new() { ModelId = "gemini/gemini-4-argon", DisplayName = "Gemini 4 Argon", ContextWindow = 1048576, MaxOutputTokens = 32768,
+            IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "gemini/gemini-3.8-flash", DisplayName = "Gemini 3.8 Flash", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "gemini/gemini-3.6-flash", DisplayName = "Gemini 3.6 Flash", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = false, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null },
+        new() { ModelId = "gemini/gemini-3.5-flash-lite", DisplayName = "Gemini 3.5 Flash Lite", ContextWindow = 1048576, MaxOutputTokens = 65536,
+            IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null },
         new() { ModelId = "gemini/gemini-3.5-flash", DisplayName = "Gemini 3.5 Flash", ContextWindow = 1048576, MaxOutputTokens = 65536,
             IsRecommended = true, Variants = ThinkingLevelVariants, SpeedOptions = null, ModeOptions = null, ReleaseDate = null },
         new() { ModelId = "gemini/gemini-3.1-pro-preview", DisplayName = "Gemini 3.1 Pro Preview", ContextWindow = 1048576, MaxOutputTokens = 65536,
@@ -67,11 +79,35 @@ internal static class GeminiModelCatalog
     ], ReleaseDates, requireEveryModel: true);
 
     private static readonly ProviderModelCatalogSnapshot Catalog = ProviderModelCatalog.ValidateAndOrder(
-        VendorModels,
+        VendorModels.Select(ReviewCapabilities),
         GeminiProviderConfiguration.DefaultUtilityModelId,
         static _ => true);
 
     public static IReadOnlyList<AgentModelDescriptor> Models => Catalog.Models;
+
+    internal static AgentModelDescriptor? Find(string modelId)
+        => ProviderModelCatalog.FindByNormalizedId(Models, modelId, static id => ProviderModelId.RemovePrefix(id, "gemini"));
+
+    internal static bool IsArgon(string modelId) => ProviderModelId.RemovePrefix(modelId, "gemini") == "gemini-4-argon";
+
+    private static AgentModelDescriptor ReviewCapabilities(AgentModelDescriptor model)
+    {
+        var id = ProviderModelId.RemovePrefix(model.ModelId, "gemini");
+        var priority = id is "gemini-4-argon" or "gemini-3.8-flash" or "gemini-3.6-flash";
+        var current = priority || id == "gemini-3.5-flash-lite";
+        return model with
+        {
+            Variants = id is "gemini-3.6-flash" or "gemini-3.5-flash-lite"
+                ? ProviderModelReasoning.Create("minimal", "low", "medium", "high") : model.Variants,
+            DefaultReasoningVariantId = current ? "medium" : null,
+            IsRecommended = current && model.IsRecommended,
+            SpeedOptions = priority ? [new AgentModelSpeedOptionDescriptor
+            {
+                SpeedOptionId = "fast", DisplayName = "Fast",
+                Description = "Request Priority inference at premium pricing (75–100% above Standard). Requires Tier 2/3 access; capacity overflow may be served at Standard speed and price.",
+            }] : null,
+        };
+    }
 
     public static IReadOnlyList<PackageSettingsOption> UtilityModelOptions { get; } =
         Catalog.UtilityModelOptions;

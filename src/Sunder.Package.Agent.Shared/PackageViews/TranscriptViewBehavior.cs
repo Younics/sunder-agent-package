@@ -71,7 +71,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         Func<object, Control?>? realizeAnchorVisual = null,
         Func<Control?>? realizeTailVisual = null,
         Action<bool>? presentationStateChanged = null,
-        TranscriptScrollAnchorHost? anchorHost = null)
+        TranscriptScrollAnchorHost? anchorHost = null,
+        Func<object, Control?>? realizePreservedAnchorVisual = null,
+        Func<object, object>? resolvePreservedAnchorKey = null)
     {
         _owner = owner;
         _scrollViewer = scrollViewer;
@@ -105,7 +107,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
             enumerateRealizedAnchors,
             realizeAnchorVisual,
             realizeTailVisual: realizeTailVisual,
-            anchorHost: anchorHost);
+            anchorHost: anchorHost,
+            realizePreservedAnchorVisual: realizePreservedAnchorVisual,
+            resolvePreservedAnchorKey: resolvePreservedAnchorKey);
         _owner.Loaded += OnLoaded;
         _owner.AttachedToVisualTree += OnPresentationStateChanged;
         _owner.DetachedFromVisualTree += OnPresentationStateChanged;

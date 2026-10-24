@@ -47,6 +47,9 @@ internal sealed class AnthropicFastTransport(
         string modelId,
         CancellationToken cancellationToken)
     {
+        if (AnthropicModelCatalog.UsesStableFast(modelId))
+            return new AnthropicStandardTransport(client, responseTranslator).SendAsync(
+                request with { Parameters = AnthropicOptionsTranslator.TranslateStableFast(request.Parameters) }, modelId, cancellationToken);
         var parameters = AnthropicOptionsTranslator.TranslateFast(request.Parameters);
         return request.IncludeTools
             ? responseTranslator.TranslateToolResponseAsync(

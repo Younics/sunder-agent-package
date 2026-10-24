@@ -7,7 +7,7 @@ using Sunder.Sdk.Logging;
 
 namespace Sunder.Package.Agent.Services;
 
-public sealed class AgentPermissionResumeCoordinator(
+public sealed partial class AgentPermissionResumeCoordinator(
     AgentSessionService sessionService,
     AgentWorkspaceService workspaceService,
     AgentProfileService profileService,
@@ -62,25 +62,32 @@ public sealed class AgentPermissionResumeCoordinator(
         Guid sessionId,
         string requestId,
         bool approveForSession,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CancellationToken? admissionCancellationToken = null,
+        Action? admitted = null)
     {
         AgentPendingPermissionClaimResult claim;
         AgentPendingPermissionDecisionResult? policyDenial;
-        var permissionActions = await _permissionService.ListActionsAsync(cancellationToken).ConfigureAwait(false);
-        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
+        var claimToken = admissionCancellationToken ?? cancellationToken;
+        var permissionActions = await _permissionService.ListActionsAsync(claimToken).ConfigureAwait(false);
+        using (await _transitionGate.EnterAsync(sessionId, claimToken).ConfigureAwait(false))
         {
+            claimToken.ThrowIfCancellationRequested();
             if (_sessionService.GetSession(sessionId) is { } claimSession
                 && _deletionFence.IsFenced(claimSession))
             {
+                admitted?.Invoke();
                 return _sessionService.GetLatestCheckpoint(sessionId);
             }
             (claim, policyDenial) = _permissionService.TryClaimPendingRequestForApproval(
                 sessionId,
                 requestId,
-                permissionActions);
+                permissionActions,
+                approveForSession);
         }
         if (policyDenial is not null)
         {
+            admitted?.Invoke();
             return await CompleteDeniedDecisionAsync(policyDenial, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -95,14 +102,17 @@ public sealed class AgentPermissionResumeCoordinator(
                 PublishPermissionFinalization(expiration.Finalization);
             }
 
+            admitted?.Invoke();
             return _sessionService.GetLatestCheckpoint(sessionId);
         }
 
         try
         {
+            // The claim and session-approval intent are durable. Acknowledge
+            // admission before running the independently owned continuation.
+            admitted?.Invoke();
             return await ApproveClaimedAsync(
                 pending,
-                approveForSession,
                 cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
@@ -149,7 +159,6 @@ public sealed class AgentPermissionResumeCoordinator(
 
     private async Task<AgentRunCheckpointRecord?> ApproveClaimedAsync(
         AgentPendingPermissionRequestRecord pending,
-        bool approveForSession,
         CancellationToken cancellationToken)
     {
         var sessionId = pending.SessionId;
@@ -228,20 +237,9 @@ public sealed class AgentPermissionResumeCoordinator(
                    ?? _sessionService.GetLatestCheckpoint(sessionId);
         }
 
-        var providerSelection = await _providerResolver.ResolveChatProviderAsync(profile, cancellationToken).ConfigureAwait(false);
-        var chatBinding = providerSelection.ChatBinding;
-        if (
-            !providerSelection.IsAvailable
-            || chatBinding is null
-            || string.IsNullOrWhiteSpace(chatBinding.ModelId)
-        )
-        {
-            return await FinalizeSuspensionAsync(
-                       AgentPendingPermissionStatus.Failed,
-                       AgentRunStatus.Failed,
-                       "No installed provider matches this profile yet, or no model is selected.").ConfigureAwait(false)
-                   ?? _sessionService.GetLatestCheckpoint(sessionId);
-        }
+        // The approved action does not need a model. Select one only when its
+        // recorded result is ready to be returned to the provider loop.
+        var providerSelection = new AgentRunProviderSelection(null);
 
         AgentActiveRunHandle? runHandle = null;
         AgentDurableRunLease? runLease = null;
@@ -282,9 +280,7 @@ public sealed class AgentPermissionResumeCoordinator(
                 runStartedAtUtc,
                 profile.ProfileId,
                 pending.UserMessage,
-                CancellationTokenSource.CreateLinkedTokenSource(
-                    cancellationToken,
-                    providerSelection.RetirementToken))
+                CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
             {
                 DurableLease = runLease,
             };
@@ -333,18 +329,7 @@ public sealed class AgentPermissionResumeCoordinator(
         );
         try
         {
-            var host = _behaviorLoopHostFactory.Create(
-                providerSelection,
-                session,
-                profile,
-                workspace,
-                pending.RunId,
-                pending.RunRevision,
-                runStartedAtUtc,
-                pending.UserMessage,
-                pending.UserTurnId,
-                ResolveExecutionBinding(workspace)
-            );
+            var host = CreateHost();
             var approvedToolOutcome = await host.HandleApprovedToolCallAsync(
                     pending,
                     runCancellationToken,
@@ -407,6 +392,21 @@ public sealed class AgentPermissionResumeCoordinator(
                     ? AgentPendingPermissionStatus.Failed
                     : AgentPendingPermissionStatus.Executed,
                 approvedToolOutcome.Result?.Summary ?? "Approved tool executed.").ConfigureAwait(false);
+
+            profile = ResolveProfile(pending.ProfileId) ?? profile;
+            providerSelection = await _providerResolver.ResolveChatProviderAsync(profile, runCancellationToken).ConfigureAwait(false);
+            var chatBinding = providerSelection.ChatBinding;
+            if (!providerSelection.IsAvailable || string.IsNullOrWhiteSpace(chatBinding?.ModelId))
+            {
+                var interrupted = TransitionOrLatest(AgentRunStatus.Interrupted,
+                    "Approved tool completed. Select an available chat model to continue.");
+                return await _parentRunContinuationService.TryResumeAfterChildCompletionAsync(
+                    session, interrupted, workspace.WorkspaceId, runCancellationToken).ConfigureAwait(false) ?? interrupted;
+            }
+            using var continuationLifetime = CancellationTokenSource.CreateLinkedTokenSource(
+                runCancellationToken, providerSelection.RetirementToken);
+            runCancellationToken = continuationLifetime.Token;
+            host = CreateHost();
 
             AgentProviderRunCapabilities runCapabilities;
             AgentModelVariantDescriptor? modelVariant;
@@ -592,30 +592,24 @@ public sealed class AgentPermissionResumeCoordinator(
             runHandle.CancellationTokenSource.Dispose();
         }
 
-        async ValueTask<bool> BeginApprovedExecutionAsync(CancellationToken cancellationToken)
+        async ValueTask<bool> BeginApprovedExecutionAsync(AgentPermissionRequest? currentPermission, CancellationToken cancellationToken)
         {
             // Discover remote defaults before taking the local transition gate. The final
             // context check, current overrides and durable approval commit stay atomic.
             var currentPermissionActions = await _permissionService.ListActionsAsync(cancellationToken).ConfigureAwait(false);
-            await providerSelection.Provider!.EnsureCurrentAsync(cancellationToken).ConfigureAwait(false);
             using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
             {
-                var currentProfile = ResolveProfile(pending.ProfileId);
                 var currentWorkspace = ResolveWorkspace(pending.WorkspaceId);
-                if (currentProfile is null || currentWorkspace is null)
+                if (currentWorkspace is null)
                 {
                     return false;
                 }
                 var currentBinding = ResolveExecutionBinding(currentWorkspace);
                 if (cancellationToken.IsCancellationRequested
-                    || !providerSelection.IsAvailable
                     || !AgentPermissionFingerprint.MatchesExecutionContext(
                         pending.ExecutionSnapshotJson,
                         pending,
-                        currentProfile,
-                        providerSelection.Descriptor?.ProviderId,
-                        chatBinding.ModelId,
-                        currentWorkspace,
+                         currentWorkspace,
                         currentBinding)
                     || !_activeRunRegistry.IsCurrent(
                         sessionId,
@@ -628,9 +622,14 @@ public sealed class AgentPermissionResumeCoordinator(
                 return _permissionService.CommitApprovedExecution(
                     pending,
                     currentPermissionActions,
-                    approveForSession);
+                    pending.ApproveForSession,
+                    currentPermission);
             }
         }
+
+        AgentBehaviorLoopHost CreateHost() => _behaviorLoopHostFactory.Create(
+            providerSelection, session, profile, workspace, pending.RunId, pending.RunRevision,
+            runStartedAtUtc, pending.UserMessage, pending.UserTurnId, ResolveExecutionBinding(workspace));
 
         AgentRunCheckpointRecord TransitionOrLatest(AgentRunStatus status, string summary)
             => _sessionService.TryTransitionRun(runLease, status, summary)?.Checkpoint
@@ -651,16 +650,21 @@ public sealed class AgentPermissionResumeCoordinator(
     private async Task<AgentRunCheckpointRecord?> DenyCoreAsync(
         Guid sessionId,
         string requestId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        CancellationToken? admissionCancellationToken = null,
+        Action? admitted = null)
     {
         AgentPendingPermissionDecisionResult decision;
-        using (await _transitionGate.EnterAsync(sessionId, cancellationToken).ConfigureAwait(false))
+        var decisionToken = admissionCancellationToken ?? cancellationToken;
+        using (await _transitionGate.EnterAsync(sessionId, decisionToken).ConfigureAwait(false))
         {
+            decisionToken.ThrowIfCancellationRequested();
             decision = _permissionService.TryDenyPendingRequest(
                 sessionId,
                 requestId,
                 "Permission request denied.");
         }
+        admitted?.Invoke();
         if (!decision.IsDecided || decision.Request is null)
         {
             return _sessionService.GetLatestCheckpoint(sessionId);

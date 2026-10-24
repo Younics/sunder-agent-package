@@ -1,7 +1,268 @@
 {
   "lockVersion": 1,
-  "packageArtifacts": {},
-  "packageImports": {},
-  "providerImports": {},
+  "packageArtifacts": {
+    "younics.ai.agent": {
+      "requestedVersionRange": ">=2.0.0 <3.0.0",
+      "includePrerelease": false,
+      "selectedPackageVersion": "2.0.0",
+      "selectedPackageContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+      "publicContractCount": 19,
+      "publicInventorySha256": "71b9557ff7fe5f65d6e24021580cd65206173fa67fef971df8eaa885bc046e57",
+      "modelProjectionBytes": 30989,
+      "modelProjectionSha256": "485f4ea125252205adce5f935f2a122c9a9e2a20d835d47ded84ac529b1cca67",
+      "contracts": {
+        "sunder.stack.contributor": {
+          "artifactSource": "imported",
+          "authorityKind": "platform",
+          "authorityId": "sunder.core",
+          "selectedAuthorityRelease": "1.1.0",
+          "selectedAuthorityContentIdentity": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+          "resolvedContractVersion": "2.0.0",
+          "descriptorBytes": 11553,
+          "descriptorSha256": "38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898",
+          "abiSha256": "6ca6d6385c720290548592de890f3e3ceb86f3d999167f4e80c6afb15f8a02d8",
+          "etag": "\"38c8f49840f951aec29398d3641ff2306c906aee12ea80c2277db734bce49898\""
+        },
+        "younics.ai.agent.behavior.loop": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 12181,
+          "descriptorSha256": "9a8d1db6072fb1306e2a26a649476d051990fa54f61ffd2ffccfe47cebf47f1f",
+          "abiSha256": "6f5c73a652ae0bf0971a44f3ce957c6525a1d5e76f7bb78995108f7e6bef18bd",
+          "etag": "\"9a8d1db6072fb1306e2a26a649476d051990fa54f61ffd2ffccfe47cebf47f1f\""
+        },
+        "younics.ai.agent.chat.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "2.0.0",
+          "descriptorBytes": 10863,
+          "descriptorSha256": "aa527fa6651c2e272c2e29ef5b5c6b209b2d2f8dad55339b9d39a09c28a0df84",
+          "abiSha256": "f3532833e97d2cc171efaf58c20a07864997ab3ed29b94add0f9c5b3a939cb86",
+          "etag": "\"aa527fa6651c2e272c2e29ef5b5c6b209b2d2f8dad55339b9d39a09c28a0df84\""
+        },
+        "younics.ai.agent.child.run.executor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 3805,
+          "descriptorSha256": "2eba6673ad084195d9795156ec9e68c11bf5887bdae32532704caee16e5ce99c",
+          "abiSha256": "dd7f715d3fd8a6e3cb409f414c3b519d959c96d0001fd5377f8c80ef8e19470c",
+          "etag": "\"2eba6673ad084195d9795156ec9e68c11bf5887bdae32532704caee16e5ce99c\""
+        },
+        "younics.ai.agent.durable.lifecycle.observer": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 8913,
+          "descriptorSha256": "b91cf2e7c9fa7d46f99d76e6612f975d544aa8ea0b27821c57435979612775fa",
+          "abiSha256": "f478a7322ba0e855afb7c497d9be212d45c21ed4d68273129c59b50d8bea8aaf",
+          "etag": "\"b91cf2e7c9fa7d46f99d76e6612f975d544aa8ea0b27821c57435979612775fa\""
+        },
+        "younics.ai.agent.embedding.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 3726,
+          "descriptorSha256": "a97d2a4b288c8cee1229e9a30dd655c0002420de26318c92908ba931737c4a1c",
+          "abiSha256": "46f612dbab8e8999894279b36b4494a330432f8107045044fa8456300cdae4ad",
+          "etag": "\"a97d2a4b288c8cee1229e9a30dd655c0002420de26318c92908ba931737c4a1c\""
+        },
+        "younics.ai.agent.execution.target": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "2.0.0",
+          "descriptorBytes": 23940,
+          "descriptorSha256": "62fdc7556e03f72c620f1256ec3ccce7c989fc39976878fa5cced999d86cb7e2",
+          "abiSha256": "587b17017b89e6fd802ebcae56d7ed7458d8f08cee168d5caa6c30ca131b5c4c",
+          "etag": "\"62fdc7556e03f72c620f1256ec3ccce7c989fc39976878fa5cced999d86cb7e2\""
+        },
+        "younics.ai.agent.permission.surface": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 1571,
+          "descriptorSha256": "811d1236ebb824a909f592005b919d51eb8bf81507bd913f252e4689b3b16e5f",
+          "abiSha256": "7a8ce3b9ae2fffcc12fe7318bbe70eb92757e55bc3d54b8c4b14a29e082bd381",
+          "etag": "\"811d1236ebb824a909f592005b919d51eb8bf81507bd913f252e4689b3b16e5f\""
+        },
+        "younics.ai.agent.profile.capability.consumer": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 1125,
+          "descriptorSha256": "96f67524a329d8f4996d5c55aaef10f1248db80aa97fd9a6c1759b6a5f9e0286",
+          "abiSha256": "ebad50fc5bfe46ac0459fe2ccef3f56b429265fc1599b20dc2d50b335c479573",
+          "etag": "\"96f67524a329d8f4996d5c55aaef10f1248db80aa97fd9a6c1759b6a5f9e0286\""
+        },
+        "younics.ai.agent.prompt.context.contributor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 17495,
+          "descriptorSha256": "8e8e277c592016e38c69bb9b4dc7e3d38823c42106b6a6ebb47b01b21702bfa0",
+          "abiSha256": "29222fdaa9e8bca22c1d344f4891d80b686a034dcc489b7f0c7eb302fbb4310b",
+          "etag": "\"8e8e277c592016e38c69bb9b4dc7e3d38823c42106b6a6ebb47b01b21702bfa0\""
+        },
+        "younics.ai.agent.run.control": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 36576,
+          "descriptorSha256": "e5156f0d83bf8eb89862ef808ce706b5488ff9ae932bb6063c38f993416db765",
+          "abiSha256": "f928fdc392a7b44287f4cf5fe1c7da6a7fef9b7a21195159e4204de08d80f0ea",
+          "etag": "\"e5156f0d83bf8eb89862ef808ce706b5488ff9ae932bb6063c38f993416db765\""
+        },
+        "younics.ai.agent.runtime.catalog": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 23894,
+          "descriptorSha256": "261e7061f4314681efa1db6c040b9a271733613ea57dc95e580920d3ebaf82ad",
+          "abiSha256": "8e314cd77690e36355be6e920b34cd1ce7bfcb360fc116cd46361880f25e542e",
+          "etag": "\"261e7061f4314681efa1db6c040b9a271733613ea57dc95e580920d3ebaf82ad\""
+        },
+        "younics.ai.agent.selectable.capability.provider": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 4554,
+          "descriptorSha256": "263872b4a71a689ef3ca6d3579a313af0423b0928f94e245210d0bcec082defa",
+          "abiSha256": "70c2845e5cf579faaf298bad4463c8f965f30f23f6c24df485eec6c7b704e817",
+          "etag": "\"263872b4a71a689ef3ca6d3579a313af0423b0928f94e245210d0bcec082defa\""
+        },
+        "younics.ai.agent.session.cleaner": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 927,
+          "descriptorSha256": "d253e962bb2287cf36b0633255fe17b58626fc5b325dc09d648402731ba91816",
+          "abiSha256": "a370084dc52cb4ad214d125c5991e36e56b92780edb643243bed03c48d49b95b",
+          "etag": "\"d253e962bb2287cf36b0633255fe17b58626fc5b325dc09d648402731ba91816\""
+        },
+        "younics.ai.agent.system.prompt.contributor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 14043,
+          "descriptorSha256": "edb3a35e9c61cb4b46cb297ece56f61b0757f9a29ec802aecd6ccaf48df012dd",
+          "abiSha256": "f3d1f4b339cd2b7f57130ab70d4307b02504eab2df2caa7ad7e5786d7391de2d",
+          "etag": "\"edb3a35e9c61cb4b46cb297ece56f61b0757f9a29ec802aecd6ccaf48df012dd\""
+        },
+        "younics.ai.agent.tool.execution.observed": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 9548,
+          "descriptorSha256": "6179ed3f63b2cc8e708852511d94b18a422b686be600b7d4da129d8673e9121b",
+          "abiSha256": "ac621bdd5c19b6548227c2f6999af99a3348457cf08bb208afb0e431c151420a",
+          "etag": "\"6179ed3f63b2cc8e708852511d94b18a422b686be600b7d4da129d8673e9121b\""
+        },
+        "younics.ai.agent.tool.source": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "2.0.0",
+          "descriptorBytes": 19167,
+          "descriptorSha256": "89c6429656dbfdb6f00b4a417c0ecf1d01ae0cb96e1f177482027d7798ac1f12",
+          "abiSha256": "0f010875e9e62057dbf80537b507bd572b1025061d221ac1d0d97ab7a100e4db",
+          "etag": "\"89c6429656dbfdb6f00b4a417c0ecf1d01ae0cb96e1f177482027d7798ac1f12\""
+        },
+        "younics.ai.agent.workspace.editor": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 6853,
+          "descriptorSha256": "bff318e641a1b2967c65664ec8d2352084d8abe8b3d5da54bceebb9c492cb066",
+          "abiSha256": "1ea0d9477579897830e7ed88eaa351b1c90ee8d0c4c78af0f0d1ef0c2d92a914",
+          "etag": "\"bff318e641a1b2967c65664ec8d2352084d8abe8b3d5da54bceebb9c492cb066\""
+        },
+        "younics.ai.agent.workspace.execution.resolver": {
+          "artifactSource": "owned",
+          "authorityKind": "package",
+          "authorityId": "younics.ai.agent",
+          "selectedAuthorityRelease": "2.0.0",
+          "selectedAuthorityContentIdentity": "43bca0205e03272a715cf355c37e857c1b44034263b4f64d14207ce9816f571b",
+          "resolvedContractVersion": "1.0.0",
+          "descriptorBytes": 5360,
+          "descriptorSha256": "1eee6dc76825d467a85a858b044b43fe7f3373cc35315d2522bc3b25f3ef4fa4",
+          "abiSha256": "ee498da23e74b6dbed066f0ee0df51fcf58dc5316fd486165fa3694ec202b3fd",
+          "etag": "\"1eee6dc76825d467a85a858b044b43fe7f3373cc35315d2522bc3b25f3ef4fa4\""
+        }
+      }
+    }
+  },
+  "packageImports": {
+    "younics.ai.agent": {
+      "localName": "agent",
+      "presence": "optional",
+      "requiredContracts": [],
+      "consumerRoles": [
+        "runtime"
+      ]
+    }
+  },
+  "providerImports": {
+    "permissions": {
+      "packageId": "younics.ai.agent",
+      "contractId": "younics.ai.agent.permission.surface",
+      "presence": "optional"
+    },
+    "tools": {
+      "packageId": "younics.ai.agent",
+      "contractId": "younics.ai.agent.tool.source",
+      "presence": "optional"
+    }
+  },
   "platformImports": {}
 }

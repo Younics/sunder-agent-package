@@ -7,6 +7,28 @@ namespace Sunder.Package.Agent.Provider.OpenAI.Tests;
 public sealed class OpenAiStrictToolSchemaNormalizerTests
 {
     [Fact]
+    public void NonStrictToolsKeepOptionalFiltersOptionalWithoutNullBoilerplate()
+    {
+        const string schema = """{"type":"object","properties":{"package":{"type":"string"},"source":{"type":"string","enum":["runtime","app"]},"limit":{"type":"integer","default":10}},"required":["package"],"additionalProperties":false}""";
+        var normalized = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(schema, strict: false);
+        Assert.Equal(new[] { "package" }, normalized.GetProperty("required").EnumerateArray().Select(value => value.GetString()));
+        Assert.Equal("string", normalized.GetProperty("properties").GetProperty("source").GetProperty("type").GetString());
+        Assert.False(normalized.GetProperty("properties").GetProperty("source").TryGetProperty("anyOf", out _));
+    }
+    [Theory]
+    [InlineData("{\"enum\":[\"runtime\",\"app\"]}")]
+    [InlineData("{\"type\":\"string\",\"enum\":[\"runtime\",\"app\"]}")]
+    [InlineData("{\"type\":\"string\",\"const\":\"runtime\"}")]
+    public void OptionalConstrainedValuesUseANullBranchWithoutWeakeningTheOriginal(string property)
+    {
+        var normalized = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters("{\"type\":\"object\",\"properties\":{\"source\":" + property + "}}");
+        var branches = normalized.GetProperty("properties").GetProperty("source").GetProperty("anyOf");
+        Assert.Equal(2, branches.GetArrayLength());
+        Assert.Equal("null", branches[1].GetProperty("type").GetString());
+        using var original = JsonDocument.Parse(property);
+        Assert.Equal(original.RootElement.GetRawText(), branches[0].GetRawText());
+    }
+    [Fact]
     public void NormalizeFunctionParameters_EmptySchema_ReturnsStrictEmptyObject()
     {
         var schema = OpenAiStrictToolSchemaNormalizer.NormalizeFunctionParameters(null);

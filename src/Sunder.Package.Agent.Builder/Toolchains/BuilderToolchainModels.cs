@@ -32,7 +32,7 @@ public sealed record BuilderToolchainStatus(
 public sealed record BuilderToolchainOperation(
     string Operation, string Version, string Outcome, DateTimeOffset AtUtc, string? Error);
 
-/// <summary>Dispose only after the selected process, including watch and child processes, has stopped.</summary>
+/// <summary>Dispose only after the selected process and all its child processes have stopped.</summary>
 public sealed class BuilderToolchainSelection : IDisposable, IAsyncDisposable
 {
     private Action? release;

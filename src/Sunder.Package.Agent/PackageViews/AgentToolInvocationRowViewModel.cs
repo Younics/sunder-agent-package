@@ -46,6 +46,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     }
 
     public string ToolLabel => _projection.ToolLabel;
+    internal TranscriptActivityMember ActivityMember => TranscriptActivityGrouping.Describe(_projection);
     public string StatusText => _projection.StatusText;
     public string StatusIconText => _projection.StatusIconText;
     public string HeaderDetailText => FirstNonBlank(_projection.ErrorSummary, _projection.HeaderHint) ?? string.Empty;
@@ -92,11 +93,9 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     public bool IsFailed => string.Equals(StatusText, "Failed", StringComparison.OrdinalIgnoreCase);
     public bool IsPrepared => string.Equals(StatusText, "Prepared", StringComparison.OrdinalIgnoreCase);
     public bool IsStarted => string.Equals(StatusText, "Started", StringComparison.OrdinalIgnoreCase);
-    public bool IsRunning => IsPrepared
-                             || IsStarted
-                             || string.Equals(StatusText, "Running", StringComparison.OrdinalIgnoreCase);
-    public bool IsCompleted => string.Equals(StatusText, "Completed", StringComparison.OrdinalIgnoreCase);
-    public bool IsAmbiguous => string.Equals(StatusText, "Ambiguous", StringComparison.OrdinalIgnoreCase);
+    public bool IsRunning => _projection.IsRunning;
+    public bool IsCompleted => StatusText is "Completed" or "Applied";
+    public bool IsAmbiguous => StatusText is "Ambiguous" or "Unconfirmed";
     public ObservableCollection<AgentChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
     public AgentChildSessionLinkViewModel? ChildSessionLink => ChildSessionLinks.FirstOrDefault();
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
@@ -271,9 +270,10 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     private static IBrush? ResolveStateBrush(string statusText)
         => AgentThemeBrushes.Resolve(statusText switch
         {
-            "Completed" => SunderThemeKeys.SuccessBrush,
-            "Started" or "Running" => SunderThemeKeys.AccentBrush,
-            "Ambiguous" => SunderThemeKeys.WarningBrush,
+            "Completed" or "Applied" => SunderThemeKeys.SuccessBrush,
+            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.AccentBrush,
+            "Running (last observed)" => SunderThemeKeys.ForegroundMutedBrush,
+            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningBrush,
             "Prepared" => SunderThemeKeys.ForegroundMutedBrush,
             _ => SunderThemeKeys.DangerBrush,
         });
@@ -281,9 +281,10 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     private static IBrush? ResolveStateSoftBrush(string statusText)
         => AgentThemeBrushes.Resolve(statusText switch
         {
-            "Completed" => SunderThemeKeys.SuccessSoftBrush,
-            "Started" or "Running" => SunderThemeKeys.InfoSoftBrush,
-            "Ambiguous" => SunderThemeKeys.WarningSoftBrush,
+            "Completed" or "Applied" => SunderThemeKeys.SuccessSoftBrush,
+            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.InfoSoftBrush,
+            "Running (last observed)" => SunderThemeKeys.SurfacePopoverBrush,
+            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningSoftBrush,
             "Prepared" => SunderThemeKeys.SurfacePopoverBrush,
             _ => SunderThemeKeys.DangerSoftBrush,
         });

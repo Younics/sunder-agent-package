@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
-    <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentExecution)BoundedValue.cs;$(_AgentExecution)FileOperation.cs;$(_AgentExecution)FileSearchRequestValidation.cs;$(_AgentShared)Execution\AgentExecutionFacetIds.cs" LinkBase="Domain" />
+    <Compile Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Tools\AgentFileReadErrorCodes.cs;$(_AgentExecution)BoundedValue.cs;$(_AgentExecution)FileOperation.cs;$(_AgentExecution)FileSearchRequestValidation.cs;$(_AgentShared)Execution\AgentExecutionFacetIds.cs" LinkBase="Domain" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Presentation\AgentToolPresentationMarkdown.cs"
              Link="Presentation\AgentToolPresentationMarkdown.cs" />
   </ItemGroup>

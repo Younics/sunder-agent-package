@@ -108,12 +108,29 @@ internal static class AnthropicMessageTranslator
         };
 
     private static ToolResultBlockParam TranslateFunctionResult(FunctionResultContent functionResult)
-        => new()
+    {
+        if (ProviderToolResult.Parts(functionResult.Result) is { } parts)
+        {
+            // The SDK's tool-result content union has a narrower block type than
+            // general message content. Deserialize that exact typed union, never
+            // a JSON string containing image data presented as text.
+            var blocks = parts.Select(part => part switch
+            {
+                TextContent text => JsonSerializer.SerializeToElement(new { type = "text", text = text.Text }),
+                DataContent image when image.MediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                    => JsonSerializer.SerializeToElement(new { type = "image", source = new { type = "base64", media_type = image.MediaType, data = image.Base64Data.ToString() } }),
+                _ => throw new NotSupportedException("Unsupported tool result content."),
+            }).ToArray();
+            return JsonSerializer.Deserialize<ToolResultBlockParam>(JsonSerializer.Serialize(new { type = "tool_result", tool_use_id = functionResult.CallId,
+                content = blocks, is_error = functionResult.Exception is not null }))!;
+        }
+        return new()
         {
             ToolUseID = functionResult.CallId,
             Content = ProviderToolResult.RenderText(functionResult.Result),
             IsError = functionResult.Exception is not null,
         };
+    }
 
     private static void FlushTextBlock(ICollection<ContentBlockParam> blocks, StringBuilder textBuilder)
     {
