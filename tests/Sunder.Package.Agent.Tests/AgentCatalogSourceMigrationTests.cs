@@ -44,7 +44,7 @@ public sealed class AgentCatalogSourceMigrationTests
             Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
             File.WriteAllBytes(destination, entryBytes);
             Assert.Equal(entryBytes, File.ReadAllBytes(entry));
-            if (family.StartsWith("Provider.", StringComparison.Ordinal))
+            if (family.StartsWith("Provider.", StringComparison.Ordinal) || family == "Mcp")
             {
                 var app = CanonicalPackageRoles.Output(snapshot, "app");
                 Directory.CreateDirectory(app);
@@ -60,6 +60,7 @@ public sealed class AgentCatalogSourceMigrationTests
                     "Provider.Gemini" => AgentSourceArtifactMigrationTests.VerifyGeminiRoles(snapshot),
                     "Provider.Anthropic" => AgentSourceArtifactMigrationTests.VerifyAnthropicRoles(snapshot),
                     "Provider.LMStudio" => AgentSourceArtifactMigrationTests.VerifyLMStudioRoles(snapshot),
+                    "Mcp" => AgentSourceArtifactMigrationTests.VerifyMcpRoles(snapshot),
                     _ => throw new InvalidOperationException("Unrecognized provider role probe: " + family),
                 });
             }

@@ -34,14 +34,16 @@ internal static class FileToolPresentationAdapter
     private static AgentToolPresentation ResolveWrite(AgentToolPresentationRequest request)
     {
         var parsed = FileToolArguments.TryParseWrite(request.ArgumentsJson, out var args, out var error);
-        return Create(
-            request,
-            parsed ? args.Path : null,
-            parsed
-                ? AgentToolPresentationMarkdown.BuildRequestMarkdown(
-                    ("Path", args.Path),
-                    ("Content", FormatTextStats(args.Content)))
-                : AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error));
+        return new AgentToolPresentation
+        {
+            HeaderText = parsed ? args.Path : request.ResultSummary,
+            DetailMarkdown = parsed
+                 ? AgentToolPresentationMarkdown.BuildRequestMarkdown(
+                     ("Path", args.Path),
+                     ("Content", FormatTextStats(args.Content)))
+                 : AgentToolPresentationMarkdown.BuildRawRequestMarkdown(request.ArgumentsJson, error),
+            OutputText = request.TextContent,
+        };
     }
 
     private static AgentToolPresentation ResolveEdit(AgentToolPresentationRequest request)

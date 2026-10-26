@@ -639,14 +639,14 @@ public sealed partial class RepositoryArchitectureTests
         var avaloniaVersions = packageProperties.Descendants("PackageVersion")
             .Where(static reference => reference.Attribute("Include")?.Value == "Avalonia")
             .ToArray();
-        Assert.Equal(2, avaloniaVersions.Length);
-        Assert.All(avaloniaVersions, reference =>
-        {
-            var condition = Assert.IsType<string>(reference.Attribute("Condition")?.Value);
-            Assert.Contains("$(SunderPackageFamilyId)", condition, StringComparison.Ordinal);
-            Assert.Contains("$(SunderPackageRole)", condition, StringComparison.Ordinal);
-            Assert.DoesNotContain("$(MSBuildProjectName)", condition, StringComparison.Ordinal);
-        });
+        var avaloniaVersion = Assert.Single(avaloniaVersions);
+        Assert.Null(avaloniaVersion.Attribute("Condition"));
+        // Product and headless tests now share one patched Avalonia release; keep
+        // its theme and adapter aligned instead of preserving the old test-only split.
+        foreach (var package in new[] { "Avalonia.Themes.Fluent", "Avalonia.Headless.XUnit" })
+            Assert.Equal(avaloniaVersion.Attribute("Version")?.Value,
+                Assert.Single(packageProperties.Descendants("PackageVersion"), reference =>
+                    reference.Attribute("Include")?.Value == package).Attribute("Version")?.Value);
         var presentationTestProject = XDocument.Load(Path.Combine(
             repositoryRoot,
             "tests",

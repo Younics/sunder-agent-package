@@ -112,7 +112,8 @@ internal static class HostResourceClaim
         string expectedLogicalPath,
         string? expectedConfiguredRoot,
         LocalSecureApprovalLease authority,
-        AgentExecutionTargetContext context)
+        AgentExecutionTargetContext context,
+        LocalCreatedDirectoryAuthority? createdDirectories = null)
     {
         var operation = context.ResourceOperation;
         var pathComparison = claim.CaseSensitivePath || !OperatingSystem.IsWindows()
@@ -122,10 +123,11 @@ internal static class HostResourceClaim
             || !string.Equals(claim.NamespaceId, expectedNamespaceId, StringComparison.Ordinal)
             || !string.Equals(claim.LogicalPath, expectedLogicalPath, pathComparison)
             || !string.Equals(claim.ConfiguredRoot, expectedConfiguredRoot, pathComparison)
-            || !string.Equals(
+            || (!string.Equals(
                 claim.RootIdentityChainFingerprint,
                 FingerprintIdentityChain(authority.RetainedPathIdentities),
                 StringComparison.Ordinal)
+                && (claim.TargetExists || createdDirectories?.AllowsExtension(claim.RootIdentityChainFingerprint, authority) != true))
             || claim.TargetExists != authority.Binding.Exists
             || !string.Equals(claim.TargetKind, authority.Binding.TargetKind?.ToString(), StringComparison.Ordinal)
             || !string.Equals(claim.TargetIdentity, authority.Binding.TargetIdentity?.ToString(), StringComparison.Ordinal)

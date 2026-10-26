@@ -10,10 +10,15 @@ internal sealed partial class TranscriptScrollCoordinator
         {
             return;
         }
+        // Background activity changes must not cancel an explicit tail jump or
+        // initial placement. Genuine live mutations can still supersede paging.
+        if (_isProgrammaticScroll || _bottomPlacementLockActive
+            || _forceScrollToBottomOnNextTranscriptChanged || _pendingScrollToBottomRequest?.Force == true) return;
         if (_activeViewportMutation is
             {
                 Kind: TranscriptViewportMutationKind.ToolExpansion
-                    or TranscriptViewportMutationKind.StructuralLayout,
+                    or TranscriptViewportMutationKind.StructuralLayout
+                    or TranscriptViewportMutationKind.LiveTranscript,
             } explicitMutation
             && IsCurrentViewportMutation(explicitMutation))
         {

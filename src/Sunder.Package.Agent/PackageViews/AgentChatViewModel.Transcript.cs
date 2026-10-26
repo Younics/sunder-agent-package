@@ -576,15 +576,6 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private void OnRunActivityStateChanged()
-        => ApplyRunActivityState();
-
-    private void ApplyRunActivityState()
-        => RunActivityRow.SetPresentation(
-            _runActivity.Text,
-            _runActivity.IsReasoning,
-            _runActivity.ShouldShow);
-
     private void UpdateActivityRowForCurrentState() => ApplyRunActivityState();
 
     private void TrackCheckpointActivity(AgentRunCheckpointRecord? checkpoint)

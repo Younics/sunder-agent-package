@@ -401,14 +401,17 @@
           </ItemsControl>
 
           <TextBlock Classes="tool-detail-load-error"
-                     Text="{Binding DetailLoadFailureText}"
-                     IsVisible="{Binding IsDetailLoadFailed}" />
+                      Text="{Binding DetailLoadFailureText}"
+                      IsVisible="{Binding IsDetailLoadFailed}" />
+          <Button Classes="secondary-action compact-action" Content="Retry details"
+                  IsVisible="{Binding IsDetailLoadFailed}" Click="OnToolDetailRefreshRequested" />
           <TextBlock Height="0"
                      Opacity="0"
                      IsHitTestVisible="False"
                      Text="{Binding ExpansionAnnouncement}"
                      AutomationProperties.LiveSetting="Polite" />
           <shared:TranscriptToolDetailHost MinWidth="0"
+                                           RefreshRequested="OnToolDetailRefreshRequested"
                                            HorizontalAlignment="Stretch" />
         </StackPanel>
       </Grid>

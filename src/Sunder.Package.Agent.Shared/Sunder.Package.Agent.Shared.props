@@ -41,6 +41,8 @@
              Link="PackageViews\TranscriptRowProjector.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.Tools.cs"
              Link="PackageViews\TranscriptRowProjector.Tools.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.Operations.cs"
+             Link="PackageViews\TranscriptRowProjector.Operations.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.Mutations.cs"
              Link="PackageViews\TranscriptRowProjector.Mutations.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)PackageViews\TranscriptRowProjector.Trimming.cs"

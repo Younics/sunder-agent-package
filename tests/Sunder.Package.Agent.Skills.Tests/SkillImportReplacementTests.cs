@@ -290,7 +290,7 @@ public sealed class SkillImportReplacementTests
             var client = new BoundedGitHubSkillClient(files);
             var acquirer = new SkillSourceAcquirer(client, context);
 
-            var error = await Assert.ThrowsAsync<InvalidDataException>(() => acquirer.AcquireGitHubAsync(
+            var error = await AssertInvalidSourceAsync(() => acquirer.AcquireGitHubAsync(
                 new GitHubSkillFolder("owner", "repo", "main", "skill", "commit", "tree"),
                 CancellationToken.None));
 
@@ -426,7 +426,7 @@ public sealed class SkillImportReplacementTests
                     }
                 });
 
-            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
 
             Assert.True(swapped);
@@ -468,7 +468,7 @@ public sealed class SkillImportReplacementTests
                     Directory.CreateSymbolicLink(source, parkedSource);
                 });
 
-            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
 
             Assert.True(swapped);
@@ -523,7 +523,7 @@ public sealed class SkillImportReplacementTests
                     Directory.CreateSymbolicLink(Path.Combine(stagingRoot, "nested"), external);
                 });
 
-            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
 
             Assert.True(swapped);
@@ -575,7 +575,7 @@ public sealed class SkillImportReplacementTests
                     }
                 });
 
-            await Assert.ThrowsAsync<InvalidDataException>(() =>
+            await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
 
             Assert.True(mutated);
@@ -603,7 +603,7 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var acquirer = new SkillSourceAcquirer(new UnusedGitHubSkillClient(), context);
 
-            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            var exception = await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
 
             Assert.Contains("hard-linked", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -791,7 +791,7 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(Path.Combine(root, "install"));
             var acquirer = new SkillSourceAcquirer(new UnusedGitHubSkillClient(), context);
 
-            var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            var exception = await AssertInvalidSourceAsync(() =>
                 acquirer.AcquireLocalAsync(source, CancellationToken.None));
             Assert.Contains(
                 $"{SkillSourceAcquirer.Limits.MaxDirectories}-directory limit",
@@ -802,6 +802,13 @@ public sealed class SkillImportReplacementTests
         {
             TryDeleteDirectory(root);
         }
+    }
+
+    private static async Task<InvalidDataException> AssertInvalidSourceAsync(Func<Task> action)
+    {
+        var failure = await Assert.ThrowsAsync<SkillImportOperationException>(action);
+        Assert.False(string.IsNullOrWhiteSpace(failure.Phase));
+        return Assert.IsType<InvalidDataException>(failure.InnerException);
     }
 
     private static async Task AssertReplacementFailureRestoresPriorStateAsync(SkillImportFaultPoint faultPoint)

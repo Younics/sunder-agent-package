@@ -10,6 +10,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRowViewModel,
     ITranscriptToolExpansionOwner,
+    ITranscriptToolDetailRefreshSource,
     IDisposable
 {
     private readonly Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>>? _childSessionLinksResolver;
@@ -40,6 +41,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
             presentationService.ResolveAsync);
         _detailState.Changed += OnDetailStateChanged;
         _detailState.Invalidated += OnDetailVisualInvalidated;
+        _detailState.RefreshRequested += OnDetailRefreshRequested;
         ApplyHeaderProjection();
         RefreshChildSessionLinks();
         TranscriptToolDiagnostics.HeaderViewModelCreated();
@@ -49,7 +51,9 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     internal TranscriptActivityMember ActivityMember => TranscriptActivityGrouping.Describe(_projection);
     public string StatusText => _projection.StatusText;
     public string StatusIconText => _projection.StatusIconText;
-    public string HeaderDetailText => FirstNonBlank(_projection.ErrorSummary, _projection.HeaderHint) ?? string.Empty;
+    public string HeaderDetailText => string.Equals(_projection.ToolId, "write", StringComparison.OrdinalIgnoreCase)
+        ? string.Join(" · ", new[] { _projection.HeaderHint, _projection.ErrorSummary }.Where(value => !string.IsNullOrWhiteSpace(value)))
+        : FirstNonBlank(_projection.ErrorSummary, _projection.HeaderHint) ?? string.Empty;
     public string SummaryText => string.IsNullOrWhiteSpace(HeaderDetailText)
         ? ToolLabel
         : $"{ToolLabel} {HeaderDetailText}";
@@ -70,7 +74,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         }
     }
     public bool IsPreparing => _detailState.IsPreparing;
-    public bool IsDetailLoadFailed => ExpansionState == TranscriptToolExpansionState.DetailLoadFailed;
+    public bool IsDetailLoadFailed => !string.IsNullOrEmpty(_detailState.FailureText);
     internal TranscriptToolDetailViewModel? ExpandedDetails => IsExpanded ? _detailState.Details : null;
     public bool HasMaterializedDetails => _detailState.Details is not null;
     public string DetailLoadFailureText => _detailState.FailureText;
@@ -79,6 +83,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     {
         TranscriptToolExpansionState.Preparing => $"Preparing {ToolLabel} details.",
         TranscriptToolExpansionState.Expanded => $"{ToolLabel} details expanded.",
+        TranscriptToolExpansionState.Refreshing => $"Updating {ToolLabel} details. Previous details remain visible.",
         TranscriptToolExpansionState.DetailLoadFailed => $"{ToolLabel} details failed to load. {DetailLoadFailureText}",
         _ => $"{ToolLabel} details collapsed.",
     };
@@ -137,6 +142,8 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     }
 
     private event Action? DetailVisualInvalidated;
+    public event Action? DetailRefreshRequested;
+    private void OnDetailRefreshRequested() => DetailRefreshRequested?.Invoke();
 
     void ITranscriptToolExpansionOwner.OnDetailVisualInvalidated() => CollapseDetails();
 
@@ -298,8 +305,10 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         _disposed = true;
         _detailState.Changed -= OnDetailStateChanged;
         _detailState.Invalidated -= OnDetailVisualInvalidated;
+        _detailState.RefreshRequested -= OnDetailRefreshRequested;
         _detailState.Dispose();
         DetailVisualInvalidated = null;
+        DetailRefreshRequested = null;
         ChildSessionLinks.Clear();
         TranscriptToolDiagnostics.HeaderViewModelDestroyed();
     }

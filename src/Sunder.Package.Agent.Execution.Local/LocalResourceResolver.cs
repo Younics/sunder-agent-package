@@ -148,6 +148,12 @@ internal static class LocalResourceResolver
                 throw new InvalidOperationException(
                     "Outside Local authority requires an exact host-owned invocation binding.");
             }
+            if (scope.Classification == LocalConfiguredScopeClassification.Configured
+                && operation is { CanIssueOutsideAuthority: true, ActionId: "files.mutate" }
+                && context is not null && resourceReferences is not null)
+            {
+                authorityReferences = [.. authorityReferences, resourceReferences.IssueDirectoryOperation(context)];
+            }
             var resourceReference = HostResourceClaim.CreateReference(claim);
             return new AgentResolvedResource
             {

@@ -82,6 +82,8 @@ public partial class AgentChatView
         }
 
         _preparedHistoryNavigation = null;
+        CancelPendingToolExpansion();
+        _pendingToolRefreshHeaders.Clear();
         var wasInitialized = viewModel.IsInitialized;
         var displayedTranscriptSessionId = viewModel.DisplayedTranscriptSessionId;
         var usesLoadedHistoryWindow = target is not null

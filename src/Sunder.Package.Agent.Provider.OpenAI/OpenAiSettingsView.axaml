@@ -54,7 +54,6 @@
                          Text="{Binding CodexStatusLabel}" />
             </Border>
           </Grid>
-          <Border Classes="settings-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
                          Text="Select ChatGPT Plus/Pro above, click Authorize, then finish sign-in in the browser. You can return here while Sunder waits for the callback."
@@ -63,7 +62,6 @@
                          Text="{Binding CodexStatusDetail}"
                          TextWrapping="Wrap" />
             </StackPanel>
-          </Border>
           <StackPanel Orientation="Horizontal"
                       Spacing="10">
             <Button x:Name="AuthorizeButton"

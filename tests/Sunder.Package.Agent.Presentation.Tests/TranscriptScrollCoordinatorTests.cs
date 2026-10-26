@@ -1467,7 +1467,7 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
-    public async Task TailIntentDuringBlockedNewerPageContinuesUntilLatest()
+    public async Task ContinuedDownwardInputDuringBlockedPageDoesNotNavigateThroughNewerPages()
     {
         var firstLoadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseFirstLoad = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -1494,6 +1494,7 @@ public sealed class TranscriptScrollCoordinatorTests
                 {
                     firstLoadStarted.TrySetResult();
                     await releaseFirstLoad.Task.WaitAsync(cancellationToken);
+                    content.Height += 200;
                 }
                 else
                 {
@@ -1521,15 +1522,17 @@ public sealed class TranscriptScrollCoordinatorTests
         var resumeRevision = (long)coordinatorType.GetField(
             "_loadNewerResumeInteractionRevision",
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(coordinator)!;
-        Assert.Equal(interactionRevision, resumeRevision);
+        Assert.NotEqual(interactionRevision, resumeRevision);
         Assert.NotNull(pageAuthority);
-        Assert.False(pageAuthority.ResolveCurrentAnchor().PreserveAnchor);
+        Assert.True(pageAuthority.ResolveCurrentAnchor().PreserveAnchor);
         releaseFirstLoad.TrySetResult();
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
+        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
 
-        Assert.Equal(2, loadCount);
-        Assert.False(hasNewerRows);
-        Assert.True(isFollowingLatest);
+        Assert.Equal(1, loadCount);
+        Assert.True(hasNewerRows);
+        Assert.False(isFollowingLatest);
+        Assert.True(scrollViewer.Offset.Y < scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
         window.Close();
     }
 
@@ -2033,8 +2036,10 @@ public sealed class TranscriptScrollCoordinatorTests
         window.Close();
     }
 
-    [AvaloniaFact]
-    public async Task OffscreenKeyboardFocus_DetachesTailFollowing()
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OffscreenKeyboardFocus_DetachesTailFollowing(bool bringIntoViewOnFocusChange)
     {
         var first = new Button { Height = 100, Content = "first" };
         var last = new Button { Height = 100, Content = "last" };
@@ -2047,11 +2052,17 @@ public sealed class TranscriptScrollCoordinatorTests
                 last,
             },
         };
-        var scrollViewer = new ScrollViewer { Content = rows };
+        var scrollViewer = new ScrollViewer
+        {
+            Content = rows,
+            BringIntoViewOnFocusChange = bringIntoViewOnFocusChange,
+        };
         var window = new Window { Width = 240, Height = 240, Content = scrollViewer };
         window.Show();
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        Assert.True(last.Focus(NavigationMethod.Pointer));
         scrollViewer.Offset = new Vector(0, scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
+        var focusStartOffset = scrollViewer.Offset.Y;
         var isFollowingLatest = true;
         using var coordinator = new TranscriptScrollCoordinator(
             scrollViewer,
@@ -2067,10 +2078,12 @@ public sealed class TranscriptScrollCoordinatorTests
                 return true;
             });
 
-        first.Focus(NavigationMethod.Tab);
+        Assert.False(first.IsFocused);
+        Assert.True(first.Focus(NavigationMethod.Tab));
         await coordinator.PendingPagingOperations;
 
-        Assert.False(isFollowingLatest);
+        Assert.False(isFollowingLatest,
+            $"Focus moved the offset from {focusStartOffset} to {scrollViewer.Offset.Y} without detaching.");
         Assert.True(scrollViewer.Offset.Y < scrollViewer.Extent.Height - scrollViewer.Viewport.Height);
         window.Close();
     }
@@ -2271,7 +2284,7 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [AvaloniaFact]
-    public async Task TailIntentDuringNewerLoad_ResumesWhenCaughtUpAtBottom()
+    public async Task DownwardInputDuringNewerLoadKeepsReadingPositionWhenCaughtUp()
     {
         var hasNewerRows = true;
         var isFollowingLatest = false;
@@ -2306,16 +2319,15 @@ public sealed class TranscriptScrollCoordinatorTests
         await loadStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
         window.MouseMove(new Point(120, 120), RawInputModifiers.None);
         window.MouseWheel(new Point(120, 120), new Vector(0, -1), RawInputModifiers.None);
+        await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+        var readingOffset = scrollViewer.Offset.Y;
         hasNewerRows = false;
         content.Height = 1600;
         releaseLoad.TrySetResult();
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.True(isFollowingLatest);
-        Assert.Equal(
-            scrollViewer.Extent.Height - scrollViewer.Viewport.Height,
-            scrollViewer.Offset.Y,
-            precision: 3);
+        Assert.False(isFollowingLatest);
+        Assert.Equal(readingOffset, scrollViewer.Offset.Y, precision: 3);
         coordinator.Dispose();
         window.Close();
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);

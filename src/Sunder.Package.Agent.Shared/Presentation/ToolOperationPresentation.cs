@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace Sunder.Package.Agent.Shared.Presentation;
 
@@ -6,6 +7,7 @@ namespace Sunder.Package.Agent.Shared.Presentation;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class ToolOperationPresentation
 {
+    private static readonly JsonSerializerOptions Json = new() { DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull };
     internal static string? Read(string? payload)
     {
         if (payload is null || payload.Length > 256) return null;
@@ -27,5 +29,30 @@ internal static class ToolOperationPresentation
         using var json = JsonDocument.Parse(payload!);
         return json.RootElement.TryGetProperty("operationRef", out var reference) && reference.ValueKind == JsonValueKind.String
             && reference.GetString() is { Length: > 0 and <= 40 } text ? text : null;
+    }
+
+    internal static bool ObservationUnavailable(string? payload)
+    {
+        if (Read(payload) is null) return false;
+        using var json = JsonDocument.Parse(payload!);
+        return json.RootElement.TryGetProperty("operationObservation", out var observation)
+            && observation.ValueKind == JsonValueKind.String && observation.GetString() == "unavailable";
+    }
+
+    internal static bool IsTerminal(string? payload)
+        => Read(payload) is "Applied" or "Opened" or "Input dispatched" or "Failed" or "Cancelled";
+
+    internal static string Correlate(string? original, string observed)
+    {
+        using var json = JsonDocument.Parse(observed);
+        var root = json.RootElement;
+        return JsonSerializer.Serialize(new
+        {
+            operationStatus = root.GetProperty("operationStatus").GetString(),
+            operationRef = Reference(observed),
+            operationPhase = root.TryGetProperty("operationPhase", out var phase) && phase.ValueKind == JsonValueKind.String
+                && phase.GetString() is { Length: <= 32 } text ? text : null,
+            operationObservation = ObservationUnavailable(original) ? "unavailable" : null,
+        }, Json);
     }
 }

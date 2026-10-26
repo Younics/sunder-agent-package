@@ -51,7 +51,6 @@
                            Text="{Binding ConnectionStatusLabel}" />
               </Border>
             </Grid>
-            <Border Classes="settings-detail-card">
               <StackPanel Spacing="6">
                 <TextBlock Classes="caption"
                            Text="Point the provider at an LM Studio OpenAI-compatible endpoint. Endpoint behavior remains local-provider specific."
@@ -60,7 +59,6 @@
                            Text="{Binding ConnectionStatusDetail}"
                            TextWrapping="Wrap" />
               </StackPanel>
-            </Border>
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
                          Text="Base URL" />

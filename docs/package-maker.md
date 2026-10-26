@@ -93,6 +93,13 @@ Hotreload** observes or resolves that operation without rebuilding. Other projec
 mutations are blocked until it is resolved or unloaded. A successful build alone
 is not evidence that the new revision has been applied.
 
+The page and operation checks share activation-owned progress: loading, reloading,
+waiting for the matching App revision, applied, or unconfirmed. Previous applied
+output remains explicitly historical while a reload is pending. Reload's bounded
+execution budget is separate from owner-release cleanup and from a tool's brief
+wait. Only the originally admitted reload resolves lost stage/commit replies,
+using its exact original identity; status checks never acquire a replacement owner.
+
 An unconfirmed release keeps its exact ownership. Reconnect and retry **Unload**;
 do not replace the handle or assume a successor Worker completed the old job.
 
@@ -187,6 +194,14 @@ another project mutation. Observation can confirm its matching applied revision
 without restarting the action. Original operation receipts are never evicted to
 make capacity for new mutations. Neither a replacement App nor a replacement view
 inherits an old operation or element's authority.
+
+A successful `maker_operation` read is a **check**, not another mutation. It may
+report an unresolved original outcome without marking the read ambiguously
+dispatched. If checking is unavailable, its observation error is separate from the
+retained original failure. Transcript headers follow later correlated observations
+without rewriting the original receipts; an unavailable later check cannot erase
+an already observed definite effect. Compact activity starts with the first call
+and counts an unresolved operation once, even when it has several status checks.
 
 Queries return bounded semantic matches, not DOM dumps. View queries default to
 20 items, cap at 50 and page bounded results. Repeat the same filters with the

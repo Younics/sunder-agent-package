@@ -2,6 +2,9 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Presenters;
 using Avalonia.VisualTree;
+using Avalonia.Interactivity;
+using Avalonia.Threading;
+using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
 
@@ -12,12 +15,25 @@ internal interface ITranscriptToolExpansionOwner
     void OnDetailVisualInvalidated();
 }
 
+internal interface ITranscriptToolDetailRefreshSource
+{
+    event Action? DetailRefreshRequested;
+}
+
 internal sealed class TranscriptToolDetailHost : Panel
 {
+    public static readonly RoutedEvent<RoutedEventArgs> RefreshRequestedEvent =
+        RoutedEvent.Register<TranscriptToolDetailHost, RoutedEventArgs>(nameof(RefreshRequested), RoutingStrategies.Bubble);
+    public event EventHandler<RoutedEventArgs>? RefreshRequested
+    {
+        add => AddHandler(RefreshRequestedEvent, value);
+        remove => RemoveHandler(RefreshRequestedEvent, value);
+    }
     private Control? _detailVisual;
     private ITranscriptToolExpansionOwner? _owner;
     private double _collapseCompensatorHeight;
     private bool _clearing;
+    private PresentationTaskScope? _refreshTasks;
 
     internal bool HasDetailVisual => _detailVisual is not null;
 
@@ -31,6 +47,7 @@ internal sealed class TranscriptToolDetailHost : Panel
         Clear(notifyOwner: false);
         _owner = owner;
         owner.DetailVisualInvalidated += OnDetailVisualInvalidated;
+        if (owner is ITranscriptToolDetailRefreshSource refresh) refresh.DetailRefreshRequested += OnDetailRefreshRequested;
         _detailVisual = detailVisual;
         Children.Add(detailVisual);
         InvalidateMeasure();
@@ -71,6 +88,7 @@ internal sealed class TranscriptToolDetailHost : Panel
         if (owner is not null)
         {
             owner.DetailVisualInvalidated -= OnDetailVisualInvalidated;
+            if (owner is ITranscriptToolDetailRefreshSource refresh) refresh.DetailRefreshRequested -= OnDetailRefreshRequested;
         }
         try
         {
@@ -109,6 +127,16 @@ internal sealed class TranscriptToolDetailHost : Panel
     private void OnDetailVisualInvalidated()
         => Clear(notifyOwner: false);
 
+    private void OnDetailRefreshRequested()
+    {
+        var owner = _owner;
+        _refreshTasks?.Run(async token => await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                if (_detailVisual is not null && ReferenceEquals(owner, _owner) && this.IsAttachedToVisualTree())
+                    RaiseEvent(new RoutedEventArgs(RefreshRequestedEvent));
+            }, DispatcherPriority.Background, token));
+    }
+
     protected override Size MeasureOverride(Size availableSize)
     {
         if (_detailVisual is not { } detailVisual)
@@ -141,8 +169,15 @@ internal sealed class TranscriptToolDetailHost : Panel
         }
     }
 
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+        _refreshTasks = new PresentationTaskScope(PresentationTaskScope.IgnoreExpectedFailure, PresentationDispatcher.Capture().ShutdownToken);
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        Interlocked.Exchange(ref _refreshTasks, null)?.Dispose();
         Clear();
         base.OnDetachedFromVisualTree(e);
     }

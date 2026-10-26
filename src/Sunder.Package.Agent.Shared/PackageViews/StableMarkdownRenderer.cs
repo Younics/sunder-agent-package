@@ -1,5 +1,3 @@
-using Avalonia;
-using Avalonia.LogicalTree;
 using Avalonia.Threading;
 using LiveMarkdown.Avalonia;
 using Markdig;
@@ -9,9 +7,8 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed class StableMarkdownRenderer : MarkdownRenderer
 {
-    private readonly DocumentNode _documentNode;
-    private readonly MarkdownPipeline _pipeline;
     private readonly Func<string, MarkdownDocument> _parseMarkdown;
+    private MarkdownDocumentUpdate? _renderedUpdate;
     private ObservableStringBuilder? _sourceBuilder;
     private ObservableStringBuilderChangedEventArgs? _pendingChange;
     private Task _renderOperation = Task.CompletedTask;
@@ -24,42 +21,14 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
         Func<string, MarkdownDocument>? parseMarkdown = null)
     {
         Dispatcher.UIThread.VerifyAccess();
-        MarkdownPipelineBuilder? pipelineBuilder = null;
-        void CapturePipelineBuilder(MarkdownPipelineBuilder builder) => pipelineBuilder = builder;
-
-        MarkdownRenderer.ConfigurePipeline += CapturePipelineBuilder;
-        try
-        {
-            return new StableMarkdownRenderer(
-                parseMarkdown,
-                () => pipelineBuilder);
-        }
-        finally
-        {
-            MarkdownRenderer.ConfigurePipeline -= CapturePipelineBuilder;
-        }
+        return new StableMarkdownRenderer(parseMarkdown);
     }
 
     private StableMarkdownRenderer(
-        Func<string, MarkdownDocument>? parseMarkdown,
-        Func<MarkdownPipelineBuilder?> getPipelineBuilder)
+        Func<string, MarkdownDocument>? parseMarkdown)
     {
-        foreach (var child in VisualChildren.ToArray())
-        {
-            if (child is ILogical logical)
-            {
-                LogicalChildren.Remove(logical);
-            }
-            VisualChildren.Remove(child);
-        }
-
-        _documentNode = new DocumentNode(this);
-        var pipelineBuilder = getPipelineBuilder()
-            ?? throw new InvalidOperationException("LiveMarkdown did not configure its Markdown pipeline.");
-        _pipeline = pipelineBuilder.Build();
-        _parseMarkdown = parseMarkdown ?? (source => Markdown.Parse(source, _pipeline));
-        LogicalChildren.Add(_documentNode.Control);
-        VisualChildren.Add(_documentNode.Control);
+        var pipeline = MarkdownUpdateProducer.DefaultPipeline;
+        _parseMarkdown = parseMarkdown ?? (source => Markdown.Parse(source, pipeline));
     }
 
     internal Task PendingRenderOperations => _renderOperation;
@@ -93,6 +62,7 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
             _sourceGeneration++;
             _pendingChange = null;
             _deferredRender = null;
+            _renderedUpdate = null;
             RenderedSource = string.Empty;
             HasTerminalRenderFailure = false;
             if (value is null)
@@ -246,14 +216,18 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
             return true;
         }
 
-        _documentNode.Update(
-            _documentNode,
-            document,
-            request.Change,
-            CancellationToken.None);
+        // Use the renderer's public update path so its document, selection and text
+        // projection all describe the same tree. Keep parsing and cancellation here.
+        MarkdownDocumentUpdate update = _renderedUpdate is { } previous
+            ? new MarkdownDocumentUpdate.Incremental(previous, document, request.Change)
+            : new MarkdownDocumentUpdate.Full(document, request.Change.Version);
+        // DocumentUpdate raises PropertyChanged synchronously. Consume the deferred
+        // handoff first, before the presenter can try to resume it from that event.
+        _deferredRender = null;
+        DocumentUpdate = update;
+        _renderedUpdate = update;
         TranscriptToolDiagnostics.MarkdownApplied();
         _pendingChange = null;
-        _deferredRender = null;
         RenderedSource = request.Source;
         HasTerminalRenderFailure = false;
         _renderLoopRunning = false;

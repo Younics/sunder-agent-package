@@ -175,13 +175,14 @@ public sealed class TranscriptToolDetailStateTests
     }
 
     [Fact]
-    public async Task ExpandedRevisionChange_InvalidatesAttachedVisualBeforeDisposingDetails()
+    public async Task ExpandedRevisionChange_KeepsVisibleDetailsUntilExactReplacementCommitsAndCollapseRejectsLateRefresh()
     {
         var projection = CreateProjection(revision: 31);
+        var currentRevision = 31L;
         using var state = new CorePresentation.TranscriptToolDetailState(
             projection,
             (request, _) => Task.FromResult<AgentTranscriptToolDetailRecord?>(
-                CreateDetail(request, revision: 31)),
+                CreateDetail(request, revision: currentRevision)),
             (_, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -192,21 +193,69 @@ public sealed class TranscriptToolDetailStateTests
         Assert.True(state.TryMaterialize(request, detail, out var materialized));
         Assert.True(state.CommitExpanded(request));
         var invalidations = 0;
-        var detailsWereAliveAtInvalidation = false;
         state.Invalidated += () =>
         {
             invalidations++;
-            detailsWereAliveAtInvalidation = ReferenceEquals(materialized, state.Details)
-                                             && materialized!.DetailMarkdownBuilder.Length > 0;
+            Assert.True(state.Details!.DetailMarkdownBuilder.Length > 0);
         };
 
+        var refreshes = 0;
+        state.RefreshRequested += () => refreshes++;
+        currentRevision = 32;
         state.UpdateProjection(projection with { DetailRevision = 32 });
+        Assert.Equal(1, refreshes);
+        Assert.Equal(0, invalidations);
+        Assert.True(state.IsExpanded);
+        Assert.Same(materialized, state.Details);
+        var refresh = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
+        Assert.True(state.IsExpanded);
+        var replacement = await state.LoadAsync(refresh, CancellationToken.None);
+        Assert.True(state.TryMaterialize(refresh, replacement, out var prepared));
+        Assert.Same(materialized, state.Details);
+        Assert.True(materialized!.DetailMarkdownBuilder.Length > 0);
+        Assert.True(state.CommitExpanded(refresh));
+        Assert.Same(prepared, state.Details);
+        Assert.Equal(0, materialized.DetailMarkdownBuilder.Length);
 
+        currentRevision = 33;
+        state.UpdateProjection(projection with { DetailRevision = 33 });
+        var pending = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
+        var late = await state.LoadAsync(pending, CancellationToken.None);
+        state.Collapse();
+        Assert.False(state.TryMaterialize(pending, late, out _));
+        Assert.False(state.CommitExpanded(pending));
         Assert.Equal(1, invalidations);
-        Assert.True(detailsWereAliveAtInvalidation);
-        Assert.Equal(CorePresentation.TranscriptToolExpansionState.Collapsed, state.State);
         Assert.Null(state.Details);
-        Assert.Equal(0, materialized!.DetailMarkdownBuilder.Length);
+    }
+
+    [Fact]
+    public async Task FailedRefreshKeepsPreviousDetailsButChangedIdentityAndCollapseRemainAuthoritative()
+    {
+        var projection = CreateProjection(revision: 40);
+        var revision = 40L;
+        using var state = new CorePresentation.TranscriptToolDetailState(projection,
+            (request, _) => Task.FromResult<AgentTranscriptToolDetailRecord?>(CreateDetail(request, revision)),
+            (_, _) => ValueTask.FromResult(new AgentToolPresentation("header", "recorded detail", "output")));
+        var initial = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
+        Assert.True(state.TryMaterialize(initial, await state.LoadAsync(initial, CancellationToken.None), out var visible));
+        Assert.True(state.CommitExpanded(initial));
+        state.UpdateProjection(projection with { DetailRevision = ++revision });
+        var refresh = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
+        state.Fail(refresh, new IOException("read unavailable"));
+        Assert.True(state.IsExpanded);
+        Assert.Same(visible, state.Details);
+        Assert.True(visible!.DetailMarkdownBuilder.Length > 0);
+        Assert.Contains("Showing the previous details", state.FailureText, StringComparison.Ordinal);
+        var retry = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
+        var replacement = await state.LoadAsync(retry, CancellationToken.None);
+        Assert.True(state.TryMaterialize(retry, replacement, out var staged));
+        state.UpdateProjection(projection with { CallId = "different-call", DetailRevision = revision });
+        Assert.False(state.IsExpanded);
+        Assert.Null(state.Details);
+        Assert.Equal(0, visible.DetailMarkdownBuilder.Length);
+        Assert.Equal(0, staged!.DetailMarkdownBuilder.Length);
+        Assert.False(state.CommitExpanded(retry));
+        Assert.False(state.TryMaterialize(retry, replacement, out _));
     }
 
     private static CorePresentation.TranscriptToolProjection CreateProjection(long revision)

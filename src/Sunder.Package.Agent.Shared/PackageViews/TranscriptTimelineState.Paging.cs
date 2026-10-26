@@ -218,7 +218,10 @@ internal sealed partial class TranscriptTimelineState<TRow>
             return !hasMore || cursorAdvanced;
         }
 
+        (protectedAnchorKey as TranscriptPageAnchorAuthority)?.PreparePublication();
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken)) return false;
         var trimProtectedAnchorKey = ResolveTrimProtectedAnchorKey(protectedAnchorKey);
+        var trimmed = TranscriptTrimResult.None;
         _isApplyingPageRows = true;
         try
         {
@@ -236,7 +239,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
                 {
                     return false;
                 }
-                ApplyTrim(AgentTranscriptTrimDirection.Newest, trimProtectedAnchorKey);
+                trimmed = ApplyTrim(AgentTranscriptTrimDirection.Newest, trimProtectedAnchorKey);
                 if (!IsPageApplicationCurrent(sessionId, cancellationToken))
                 {
                     return false;
@@ -249,14 +252,18 @@ internal sealed partial class TranscriptTimelineState<TRow>
         }
         finally
         {
-            _isApplyingPageRows = false;
+            try { (protectedAnchorKey as TranscriptPageAnchorAuthority)?.CompletePublication(); }
+            finally { _isApplyingPageRows = false; }
         }
         RowsChanged?.Invoke();
         if (!IsPageApplicationCurrent(sessionId, cancellationToken))
         {
             return false;
         }
-        _olderPageCursor = nextCursor;
+        // The reader may have moved while fetching. If protecting their current
+        // row evicted part of this page, resume from the retained boundary, not
+        // beyond fetched-but-discarded history.
+        _olderPageCursor = trimmed.HasFlag(TranscriptTrimResult.Oldest) ? null : nextCursor;
         return true;
     }
 
@@ -301,7 +308,10 @@ internal sealed partial class TranscriptTimelineState<TRow>
 
         var pendingTurnsById = pendingTurns.ToDictionary(turn => turn.TurnId);
         var turnsToApply = SelectFreshestTurns(pendingTurnsById.Values.Concat(serverPage));
+        (protectedAnchorKey as TranscriptPageAnchorAuthority)?.PreparePublication();
+        if (!IsPageApplicationCurrent(sessionId, cancellationToken)) return false;
         var trimProtectedAnchorKey = ResolveTrimProtectedAnchorKey(protectedAnchorKey);
+        var trimmed = TranscriptTrimResult.None;
         _isApplyingPageRows = true;
         try
         {
@@ -335,7 +345,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
                 {
                     return false;
                 }
-                ApplyTrim(AgentTranscriptTrimDirection.Oldest, trimProtectedAnchorKey);
+                trimmed = ApplyTrim(AgentTranscriptTrimDirection.Oldest, trimProtectedAnchorKey);
                 if (!IsPageApplicationCurrent(sessionId, cancellationToken))
                 {
                     return false;
@@ -348,7 +358,8 @@ internal sealed partial class TranscriptTimelineState<TRow>
         }
         finally
         {
-            _isApplyingPageRows = false;
+            try { (protectedAnchorKey as TranscriptPageAnchorAuthority)?.CompletePublication(); }
+            finally { _isApplyingPageRows = false; }
         }
         RowsChanged?.Invoke();
         if (!IsPageApplicationCurrent(sessionId, cancellationToken))
@@ -359,7 +370,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         {
             _pendingTurnsOverflowed = false;
         }
-        if (continuationAdvanced)
+        if (continuationAdvanced && !trimmed.HasFlag(TranscriptTrimResult.Newest))
         {
             _newerPageCursor = nextCursor;
         }

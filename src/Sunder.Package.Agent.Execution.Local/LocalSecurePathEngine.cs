@@ -91,6 +91,7 @@ internal static class LocalSecurePathEngine
                 $"Local file operations support at most {MaxApprovedResourceReferences} approved resource leases.");
         }
         LocalSecureApprovalLease? authority = null;
+        LocalResourceReference.DirectoryLease? directoryLease = null;
         var redeemedOutsideAuthority = false;
         try
         {
@@ -173,6 +174,7 @@ internal static class LocalSecurePathEngine
             var exactOperation = operation with { ResourceIndex = claim.ResourceIndex };
             var exactContext = authorizationContext with { ResourceOperation = exactOperation };
             var configuredRoot = scope.ConfiguredRoot;
+            if (insideConfiguredScope) directoryLease = resourceReferences?.BorrowDirectoryOperation(exactContext);
             if (!insideConfiguredScope
                 && string.Equals(exactOperation.ActionId, "files.mutate", StringComparison.Ordinal))
             {
@@ -196,12 +198,17 @@ internal static class LocalSecurePathEngine
                         configuredRoot,
                         claim.CaseSensitivePath),
                 authority,
-                exactContext);
+                exactContext,
+                directoryLease?.Authority);
+            authority.CreatedDirectories = directoryLease?.Authority;
+            authority.CreatedDirectoryLifetime = directoryLease;
+            directoryLease = null;
             return Detach(ref authority);
         }
         finally
         {
             authority?.Dispose();
+            directoryLease?.Dispose();
         }
     }
 

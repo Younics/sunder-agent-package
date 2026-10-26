@@ -90,7 +90,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var usage = Assert.Single(updates.SelectMany(value => value.Contents).OfType<UsageContent>()).Details;
             Assert.Equal(6, usage.InputTokenCount); Assert.Equal(2, usage.OutputTokenCount); Assert.Equal(3, usage.CachedInputTokenCount);
             var captured = handler.Requests.Last();
-            Assert.Equal("artifact-anthropic-secret", captured.Headers["x-api-key"]);
+            // Anthropic 13 sends explicitly selected API keys as Bearer credentials.
+            Assert.Equal("Bearer artifact-anthropic-secret", captured.Headers["Authorization"]);
             Assert.Equal("claude-opus-4-8", captured.Body.GetProperty("model").GetString());
             Assert.Equal(1234, captured.Body.GetProperty("max_tokens").GetInt32());
             Assert.Equal("Be precise.", captured.Body.GetProperty("system").GetString());

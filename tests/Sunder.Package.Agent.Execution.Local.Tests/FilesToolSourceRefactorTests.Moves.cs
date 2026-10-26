@@ -91,7 +91,8 @@ public sealed partial class FilesToolSourceRefactorTests
         Assert.Equal("patch-partial-application", result.ErrorCode);
         Assert.Equal("one", target.Files["old.txt"]);
         Assert.False(target.Files.ContainsKey("nested/new.txt"));
-        Assert.Contains("No applied patch changes remain", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Applied patch file changes were restored", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("No applied patch changes remain", result.Content, StringComparison.Ordinal);
         Assert.Equal(3, target.MutationCallCount);
     }
 
@@ -354,7 +355,8 @@ public sealed partial class FilesToolSourceRefactorTests
         Assert.False(target.Files.ContainsKey("nested/new.txt"));
         Assert.False(target.Files.ContainsKey("trigger.txt"));
         Assert.Equal(5, target.MutationCallCount);
-        Assert.Contains("No applied patch changes remain", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Applied patch file changes were restored", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("No applied patch changes remain", result.Content, StringComparison.Ordinal);
     }
 
     [Fact]

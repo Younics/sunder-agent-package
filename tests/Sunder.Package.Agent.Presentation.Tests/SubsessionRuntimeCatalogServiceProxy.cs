@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 // implementations are added explicitly below so the registered provider remains typed.
 internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRuntimeCatalogService
 {
-    private readonly IAgentRuntimeCatalog _catalog;
+    private readonly IAgentRuntimeCatalog? _catalog;
     private readonly RegressionTestRuntimeCatalogProvider _fallback;
 
     internal SubsessionRuntimeCatalogServiceProxy(IAgentRuntimeCatalog catalog)
@@ -18,7 +18,12 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
         _fallback = new RegressionTestRuntimeCatalogProvider(catalog);
     }
 
+    internal SubsessionRuntimeCatalogServiceProxy(AgentServices.IRuntimeCatalogService service)
+        => _fallback = new RegressionTestRuntimeCatalogProvider(service);
+
     internal static AgentServices.IRuntimeCatalogService Create(IAgentRuntimeCatalog catalog) => new SubsessionRuntimeCatalogServiceProxy(catalog);
+
+    internal Func<AgentTranscriptToolDetailRequest, CancellationToken, ValueTask<AgentTranscriptToolDetailRecord?>>? ToolDetailOverride { get; set; }
 
     public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken token = default) => _fallback.ListSessionsAsync(token);
     public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForProfileAsync(string profileId, CancellationToken token = default) => _fallback.ListSessionsForProfileAsync(profileId, token);
@@ -34,12 +39,16 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default) => _fallback.ListTurnsBeforeAsync(sessionId, createdAtUtc, turnId, limit, token);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default) => _fallback.ListTurnsAfterAsync(sessionId, createdAtUtc, turnId, limit, token);
     public async ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTranscriptHeadersAsync(Guid sessionId, int limit, CancellationToken token = default)
-        => await Task.Run(() => _catalog.ListRecentTurns(sessionId, limit), token);
+        => _catalog is null ? await _fallback.ListRecentTranscriptHeadersAsync(sessionId, limit, token)
+            : await Task.Run(() => _catalog.ListRecentTurns(sessionId, limit), token);
     public async ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default)
-        => await Task.Run(() => _catalog.ListTurnsBefore(sessionId, createdAtUtc, turnId, limit), token);
+        => _catalog is null ? await _fallback.ListTranscriptHeadersBeforeAsync(sessionId, createdAtUtc, turnId, limit, token)
+            : await Task.Run(() => _catalog.ListTurnsBefore(sessionId, createdAtUtc, turnId, limit), token);
     public async ValueTask<IReadOnlyList<AgentTurnRecord>> ListTranscriptHeadersAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default)
-        => await Task.Run(() => _catalog.ListTurnsAfter(sessionId, createdAtUtc, turnId, limit), token);
-    public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token = default) => _fallback.GetTranscriptToolDetailAsync(request, token);
+        => _catalog is null ? await _fallback.ListTranscriptHeadersAfterAsync(sessionId, createdAtUtc, turnId, limit, token)
+            : await Task.Run(() => _catalog.ListTurnsAfter(sessionId, createdAtUtc, turnId, limit), token);
+    public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token = default)
+        => ToolDetailOverride?.Invoke(request, token) ?? _fallback.GetTranscriptToolDetailAsync(request, token);
     public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken token = default) => _fallback.ListProfilesAsync(token);
     public ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken token = default) => _fallback.GetProfileAsync(profileId, token);
     public ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(Guid sessionId, string capabilityKind, CancellationToken token = default) => _fallback.GetSessionModelBindingAsync(sessionId, capabilityKind, token);

@@ -4,47 +4,67 @@
   <UserControl.Styles>
     <Style Selector="TextBlock"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
     <Style Selector="TextBlock.caption"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" /></Style>
-    <Style Selector="Border.sdk-card"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="20" /><Setter Property="Margin" Value="0,0,0,16" /></Style>
   </UserControl.Styles>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Spacing="18">
-      <TextBlock Text="Package Maker SDKs" FontSize="26" FontWeight="SemiBold" />
+    <StackPanel Spacing="16">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Text="Package Maker SDKs" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center" />
+        <Button Grid.Column="1" Content="Check for updates" Classes="secondary-action"
+                Click="OnRefreshClicked" VerticalAlignment="Center" />
+      </Grid>
       <TextBlock Text="Manage local SDKs used by your package projects. Builder-managed installations are isolated; externally installed SDKs are read-only." Classes="caption" />
-      <Button Content="Check for updates" Click="OnRefreshClicked" HorizontalAlignment="Left" />
       <ItemsControl ItemsSource="{Binding Cards}">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:BuilderSdkCardViewModel">
-            <Border Classes="sdk-card">
+            <Border Classes="card-surface" Margin="0,0,0,12">
               <StackPanel Spacing="12">
-                <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding Description}" Classes="caption" />
-                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="16" RowSpacing="6">
-                  <TextBlock Text="Current" Classes="caption" /><TextBlock Grid.Column="1" Text="{Binding CurrentVersion}" />
-                  <TextBlock Grid.Row="1" Text="Recommended" Classes="caption" /><TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding RecommendedVersion}" />
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
+                  <Border Width="48" Height="48" CornerRadius="8" Background="{DynamicResource Sunder.Brush.Surface.Raised}">
+                    <TextBlock Text="{Binding Glyph}" FontSize="14" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Status}" />
+                  </StackPanel>
+                  <Button Grid.Column="2" Content="{Binding PrimaryActionText}" Classes="primary-action"
+                          Click="OnInstallClicked" IsEnabled="{Binding CanManage}" VerticalAlignment="Center" />
                 </Grid>
-                <TextBlock Text="{Binding UpdateText}" Classes="caption" />
-                <TextBlock Text="{Binding LastCheckText}" Classes="caption" FontSize="12" />
+                <TextBlock Text="{Binding VersionText}" Classes="caption" />
                 <ProgressBar IsVisible="{Binding IsRefreshing}" IsIndeterminate="True" />
-                <TextBlock Text="No SDK installations found." IsVisible="{Binding IsEmpty}" Classes="caption" />
-                <ItemsControl ItemsSource="{Binding Installations}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:BuilderSdkInstallationViewModel">
-                      <Border BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,1,0,0" Padding="0,12" Margin="0,6,0,0">
-                        <StackPanel Spacing="6">
-                          <WrapPanel><TextBlock Text="{Binding Version}" FontWeight="SemiBold" Margin="0,0,12,0" /><TextBlock Text="{Binding Origin}" Classes="caption" /></WrapPanel>
-                          <SelectableTextBlock Text="{Binding ExecutablePath}" TextWrapping="Wrap" FontSize="12" />
-                          <TextBlock Text="{Binding NpmText}" Classes="caption" />
-                          <TextBlock Text="{Binding HealthText}" />
-                          <WrapPanel><Button Content="Repair" Click="OnRepairClicked" IsEnabled="{Binding CanManage}" Margin="0,0,8,0" /><Button Content="Remove" Click="OnRemoveClicked" IsEnabled="{Binding CanManage}" /></WrapPanel>
-                        </StackPanel>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <WrapPanel><Button Content="Install / update supported SDK" Click="OnInstallClicked" IsEnabled="{Binding CanManage}" Margin="0,0,8,0" /><Button Content="Cancel operation" Click="OnCancelClicked" IsVisible="{Binding IsBusy}" /></WrapPanel>
                 <ProgressBar IsVisible="{Binding IsBusy}" IsIndeterminate="True" />
-                <TextBlock Text="{Binding Message}" IsVisible="{Binding ShowMessage}" />
-                <Border Background="{DynamicResource Sunder.Brush.Warning.Soft}" Padding="12" CornerRadius="6" IsVisible="{Binding HasError}"><TextBlock Text="{Binding ErrorMessage}" /></Border>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" IsVisible="{Binding ShowOperationStatus}">
+                  <TextBlock Text="{Binding Message}" IsVisible="{Binding ShowMessage}" VerticalAlignment="Center" />
+                  <Button Grid.Column="1" Content="Cancel operation" Classes="secondary-action"
+                          Click="OnCancelClicked" IsVisible="{Binding IsBusy}" />
+                </Grid>
+                <TextBlock Text="{Binding ErrorMessage}" IsVisible="{Binding HasError}"
+                           Foreground="{DynamicResource Sunder.Brush.Warning}" />
+                <Expander Header="Details" HorizontalAlignment="Stretch">
+                  <StackPanel Spacing="10" Margin="0,8,0,0">
+                    <TextBlock Text="{Binding Description}" Classes="caption" />
+                    <TextBlock Text="{Binding LastCheckText}" Classes="caption" />
+                    <TextBlock Text="No SDK installations found." IsVisible="{Binding IsEmpty}" Classes="caption" />
+                    <ItemsControl ItemsSource="{Binding Installations}">
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BuilderSdkInstallationViewModel">
+                          <Border BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,1,0,0" Padding="0,12" Margin="0,6,0,0">
+                            <StackPanel Spacing="6">
+                              <WrapPanel><TextBlock Text="{Binding Version}" FontWeight="SemiBold" Margin="0,0,12,0" /><TextBlock Text="{Binding Origin}" Classes="caption" /></WrapPanel>
+                              <SelectableTextBlock Text="{Binding ExecutablePath}" TextWrapping="Wrap" FontSize="12" />
+                              <TextBlock Text="{Binding NpmText}" Classes="caption" />
+                              <TextBlock Text="{Binding HealthText}" />
+                              <WrapPanel>
+                                <Button Content="Repair" Classes="secondary-action" Click="OnRepairClicked" IsEnabled="{Binding CanManage}" Margin="0,0,8,0" />
+                                <Button Content="Remove" Classes="secondary-action" Click="OnRemoveClicked" IsEnabled="{Binding CanManage}" />
+                              </WrapPanel>
+                            </StackPanel>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </StackPanel>
+                </Expander>
                 <Expander Header="SDK operation output" IsVisible="{Binding HasOutput}" HorizontalAlignment="Stretch"><ScrollViewer MaxHeight="220"><SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontSize="12" /></ScrollViewer></Expander>
               </StackPanel>
             </Border>

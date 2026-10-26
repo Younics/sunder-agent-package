@@ -515,6 +515,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
         if (!IsFollowingLatest)
         {
+            if (_projector.ApplyOperationObservation(turn)) RowsChanged?.Invoke();
             if (_projector.TurnWindow.NewestTurnId is null)
             {
                 _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
@@ -659,7 +660,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         => SessionId == ticket.SessionId
            && _initialOperation.TryReport(ticket.Generation);
 
-    private void ApplyTrim(
+    private TranscriptTrimResult ApplyTrim(
         AgentTranscriptTrimDirection direction,
         object? protectedAnchorKey = null,
         bool allowLiveOverflow = false)
@@ -669,7 +670,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             && direction == AgentTranscriptTrimDirection.Oldest
             && _projector.Rows.Count <= _visibleRowLimit + _pageSize)
         {
-            return;
+            return TranscriptTrimResult.None;
         }
 
         var result = _projector.EnforceLimit(_visibleRowLimit, direction, protectedAnchorKey);
@@ -688,6 +689,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             _newerPageCursor = null;
             SetHasNewerRows(true);
         }
+        return result;
     }
 
     private void PruneExpandedAnchorKeys()

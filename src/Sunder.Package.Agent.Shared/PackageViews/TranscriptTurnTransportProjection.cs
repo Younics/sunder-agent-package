@@ -171,7 +171,8 @@ internal static class TranscriptTurnTransportProjection
             ToolOwnerPackageId = null,
             ToolSchemaId = null,
             ToolSchemaVersion = null,
-            ToolHeaderHint = isFailure ? null : summary,
+            ToolHeaderHint = Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.FromArguments(item.ToolId, item.ArgumentsJson)
+                             ?? (isFailure ? null : summary),
             ToolErrorSummary = isFailure ? summary ?? CompactHeader(item.ErrorCode) : null,
             ToolDetailRevision = revision,
             ToolHasDetails = hasDetails,

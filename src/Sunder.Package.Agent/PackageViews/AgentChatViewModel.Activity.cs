@@ -23,4 +23,19 @@ public sealed partial class AgentChatViewModel
 
     internal object RevealTranscriptAnchor(object anchor) => _transcriptItemsProjection.RevealAnchor(anchor);
     internal object ResolveVisibleTranscriptAnchor(object anchor) => _transcriptItemsProjection.ResolveVisibleAnchor(anchor);
+
+    private void OnRunActivityStateChanged() => ApplyRunActivityState();
+
+    private void ApplyRunActivityState()
+    {
+        if (RunActivityRow.MatchesPresentation(_runActivity.Text, _runActivity.IsReasoning, _runActivity.ShouldShow)) return;
+        // Initial/replacement presentation owns activity layout until this exact
+        // session's transcript is loaded. Do not complete an empty old viewport.
+        var changesLayout = _isInitialized && !_timeline.IsInitialLoading
+                            && _timeline.SessionId is { } activitySession && activitySession == DisplayedSession?.SessionId
+                            && (RunActivityRow.IsVisible || _runActivity.ShouldShow);
+        if (changesLayout) OnTimelineRowsChanging(false);
+        try { RunActivityRow.SetPresentation(_runActivity.Text, _runActivity.IsReasoning, _runActivity.ShouldShow); }
+        finally { if (changesLayout) OnTimelineRowsChanged(); }
+    }
 }

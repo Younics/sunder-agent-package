@@ -91,11 +91,9 @@ internal static class AnthropicMessageTranslator
         FlushTextBlock(blocks, textBuilder);
         if (blocks.Count > 0)
         {
-            messages.Add(new MessageParam
-            {
-                Role = message.Role == AIChatRole.Assistant ? Role.Assistant : Role.User,
-                Content = blocks,
-            });
+            messages.Add(message.Role == AIChatRole.Assistant
+                ? new AssistantMessageParam { Content = blocks }
+                : new UserMessageParam { Content = blocks });
         }
     }
 

@@ -1403,6 +1403,7 @@ internal sealed class BuilderUiBackend : IBuilderBackend
     public Func<BuilderJobRequest, CancellationToken, Task>? BeforeGet { get; set; }
     public Func<string, CancellationToken, Task>? BeforeCancel { get; set; }
     public Func<BuilderProjectKind, BuilderToolchainStatus>? Toolchains { get; set; }
+    public Func<BuilderProjectKind, bool, CancellationToken, Task>? BeforeToolchainCheck { get; set; }
     public Action<BuilderJobRequest>? OnStart { get; set; }
     public bool LoseFirstStartResponse { get; set; }
     public bool HoldBuilds { get; set; }
@@ -1413,10 +1414,11 @@ internal sealed class BuilderUiBackend : IBuilderBackend
     public Task<BuilderProjectInspection> InspectAsync(string entryPoint, CancellationToken cancellationToken = default)
         => Inspection?.Invoke(entryPoint, cancellationToken)
             ?? Task.FromResult(Projects.TryGetValue(entryPoint, out var source) ? source : throw new FileNotFoundException("Source missing"));
-    public Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default)
+    public async Task<BuilderToolchainStatus> GetToolchainsAsync(BuilderProjectKind kind, bool checkUpdates, CancellationToken cancellationToken = default)
     {
         Interlocked.Increment(ref ToolchainChecks);
-        return Task.FromResult(Toolchains?.Invoke(kind) ?? new(kind, [BuilderUiFixture.Sdk(kind)], "recommended", DateTimeOffset.UtcNow, false, null));
+        if (BeforeToolchainCheck is { } before) await before(kind, checkUpdates, cancellationToken);
+        return Toolchains?.Invoke(kind) ?? new(kind, [BuilderUiFixture.Sdk(kind)], "recommended", DateTimeOffset.UtcNow, false, null);
     }
     public Task<string> StartJobAsync(BuilderJobRequest request, CancellationToken cancellationToken = default)
     {

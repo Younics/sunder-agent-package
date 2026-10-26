@@ -12,6 +12,7 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 internal sealed partial class TranscriptScrollCoordinator
 {
     private long _interactionRevision;
+    private long _manualScrollAuthorityRevision = -1;
     private long _bottomPlacementInteractionRevision;
     private long _forceScrollToBottomInteractionRevision;
     private Point? _touchScrollStart;
@@ -27,6 +28,7 @@ internal sealed partial class TranscriptScrollCoordinator
     private UserScrollDirection _pendingUserScrollDirection;
     private UserScrollDirection _lastUserScrollDirection;
     private Task _focusBringIntoViewOperation = Task.CompletedTask;
+    private (Control Control, double OffsetY)? _pendingFocusScroll;
 
     private bool IsFollowingTail => !_userDetached && _isFollowingLatest();
 
@@ -60,6 +62,7 @@ internal sealed partial class TranscriptScrollCoordinator
         ResetPagingContinuation();
         _anchorHost?.ReleaseTrailingCompensator();
         _interactionRevision++;
+        _manualScrollAuthorityRevision = _viewportAuthorityRevision;
         _loadNewerResumeInteractionRevision = -1;
         _pendingScrollToBottomRequest = null;
         _scrollToBottomPending = false;
@@ -217,8 +220,23 @@ internal sealed partial class TranscriptScrollCoordinator
         _scrollBarInteractionActive = false;
     }
 
+    private void OnDescendantGettingFocus(object? sender, FocusChangingEventArgs eventArgs)
+    {
+        // ScrollViewer can bring the target into view in its GotFocus class
+        // handler, before our bubbling handler runs. Retain the pre-focus offset
+        // without claiming authority for a focus change that may be canceled.
+        _pendingFocusScroll = !_disposed
+            && eventArgs.NavigationMethod != NavigationMethod.Pointer
+            && eventArgs.NewFocusedElement is Control control
+            && control.GetVisualAncestors().Contains(_scrollViewer)
+                ? (control, _scrollViewer.Offset.Y)
+                : null;
+    }
+
     private void OnDescendantGotFocus(object? sender, FocusChangedEventArgs eventArgs)
     {
+        var focusScroll = _pendingFocusScroll;
+        _pendingFocusScroll = null;
         if (_disposed
             || eventArgs.NavigationMethod == NavigationMethod.Pointer
             || eventArgs.Source is not Control control
@@ -227,6 +245,9 @@ internal sealed partial class TranscriptScrollCoordinator
             return;
         }
 
+        var previousOffset = focusScroll is { } pending && ReferenceEquals(pending.Control, control)
+            ? pending.OffsetY
+            : _scrollViewer.Offset.Y;
         CancelPendingPagingForViewportAuthority();
         SupersedeViewportMutationForAuthority();
         _anchorHost?.ReleaseTrailingCompensator();
@@ -241,7 +262,6 @@ internal sealed partial class TranscriptScrollCoordinator
                     && control.IsAttachedToVisualTree()
                     && control.IsFocused)
                 {
-                    var previousOffset = _scrollViewer.Offset.Y;
                     control.BringIntoView();
                     var offsetDelta = _scrollViewer.Offset.Y - previousOffset;
                     if (Math.Abs(offsetDelta) > 0.01)
@@ -389,7 +409,7 @@ internal sealed partial class TranscriptScrollCoordinator
                 _lastUserScrollDirection = direction;
                 if (_hasNewerRows())
                 {
-                    QueueLoadNewerRows(resumeFollowingWhenCaughtUp: IsAtBottom());
+                    if (IsNearLoadBottom()) QueueLoadNewerRows();
                 }
                 else
                 {

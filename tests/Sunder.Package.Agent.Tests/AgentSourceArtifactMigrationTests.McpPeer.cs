@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -12,6 +13,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         private readonly CancellationTokenSource _stop = new();
         private readonly List<Task> _requests = [];
         private readonly Task _serve;
+        internal int DiscoveryCalls;
         internal int ToolCalls;
         internal TaskCompletionSource BlockedCall { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal string Endpoint { get; }
@@ -49,7 +51,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 if (!value.TryGetProperty("id", out var id)) { context.Response.StatusCode = 202; return; }
                 var method = value.GetProperty("method").GetString();
                 object result;
-                if (method == "initialize") result = new
+                if (method == "server/discover")
+                {
+                    Assert.Equal("2026-07-28", context.Request.Headers["MCP-Protocol-Version"]);
+                    Interlocked.Increment(ref DiscoveryCalls);
+                    result = new
+                    {
+                        supportedVersions = new[] { "2026-07-28" },
+                        capabilities = new { tools = new { listChanged = false } },
+                        _meta = new Dictionary<string, object>
+                        {
+                            ["io.modelcontextprotocol/serverInfo"] = new { name = "sunder-artifact-test", version = "1.0.0" },
+                        },
+                    };
+                }
+                else if (method == "initialize") result = new
                 {
                     protocolVersion = value.GetProperty("params").GetProperty("protocolVersion").GetString(),
                     capabilities = new { tools = new { listChanged = false } }, serverInfo = new { name = "sunder-artifact-test", version = "1.0.0" },
@@ -67,7 +83,19 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     result = new { content = new[] { new { type = "text", text = "artifact:" + message } }, isError = false };
                 }
                 else throw new InvalidOperationException("Unexpected MCP fixture method: " + method);
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(new { jsonrpc = "2.0", id = id.Clone(), result });
+                var resultNode = JsonSerializer.SerializeToNode(result)!;
+                if (context.Request.Headers["MCP-Protocol-Version"] == "2026-07-28")
+                {
+                    resultNode["resultType"] = "complete";
+                    if (method is "server/discover" or "tools/list")
+                    {
+                        // Match the SDK server's safe defaults for cacheable
+                        // results, without changing legacy initialize responses.
+                        resultNode["ttlMs"] = 0;
+                        resultNode["cacheScope"] = "private";
+                    }
+                }
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(new { jsonrpc = "2.0", id = id.Clone(), result = resultNode });
                 context.Response.ContentType = "application/json";
                 context.Response.ContentLength64 = bytes.Length;
                 await context.Response.OutputStream.WriteAsync(bytes, _stop.Token);

@@ -180,7 +180,9 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         Assert.Equal("patch-partial-application", result.ErrorCode);
         Assert.Contains("partially applied", result.Content, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Compensation restored 1 operation", result.Content, StringComparison.Ordinal);
-        Assert.Contains("No applied patch changes remain", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Applied patch file changes were restored", result.Content, StringComparison.Ordinal);
+        Assert.Contains("directory cleanup is not proved by file restoration", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("No applied patch changes remain", result.Content, StringComparison.Ordinal);
         Assert.Equal(3, target.MutationCallCount);
         Assert.Equal("old first", target.Files["first.txt"]);
         Assert.Equal("old second", target.Files["second.txt"]);

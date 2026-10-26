@@ -82,13 +82,31 @@ internal static partial class BoundedImportIO
     }
 
     [DllImport("libc", EntryPoint = "open", SetLastError = true)]
-    private static extern int Open(string path, int flags, uint mode);
+    private static extern int Open(string path, int flags);
+
+    private static int OpenAt(int directoryFileDescriptor, string path, int flags, uint mode)
+        => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? OpenAtAppleArm64(directoryFileDescriptor, path, flags, 0, 0, 0, 0, 0, mode)
+            : OpenAtNative(directoryFileDescriptor, path, flags, mode);
 
     [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
-    private static extern int OpenAt(
+    private static extern int OpenAtNative(
         int directoryFileDescriptor,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
         int flags,
+        uint mode);
+
+    // Apple ARM64 puts variadic arguments on the stack, unlike fixed arguments.
+    // Fill x3-x7 so mode occupies the first stack slot read by openat's va_arg.
+    // A four-argument fixed P/Invoke instead passes mode in x3 and creates files
+    // with whatever permissions happen to be in that stack slot.
+    // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
+    [DllImport("libc", EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAtAppleArm64(
+        int directoryFileDescriptor,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int flags,
+        nint unused3, nint unused4, nint unused5, nint unused6, nint unused7,
         uint mode);
 
     [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]

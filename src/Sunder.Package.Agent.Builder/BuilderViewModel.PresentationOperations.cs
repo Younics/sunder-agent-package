@@ -192,6 +192,7 @@ public sealed partial class BuilderViewModel
                 if (row is null) return;
                 row.SetSession(!session.Released && session.HasHandle);
                 row.SetHotreloadPending(session.PendingHotreload is not null && !session.Released);
+                row.SetReloadProgress(session.Released ? null : session.ReloadProgress);
                 if (session.ReleaseStarted && !session.Released) row.SetReleasePending();
                 else if (session.Status is { } status) row.SetDevelopmentStatus(status);
             }).ConfigureAwait(false);
@@ -200,9 +201,22 @@ public sealed partial class BuilderViewModel
             if (_sourceObservations.TryGetValue(row.Id, out var last) && now - last < TimeSpan.FromSeconds(3)) return;
             _sourceObservations[row.Id] = now;
             var generation = await ReadUiAsync(() => row.IsBusy ? -1 : row.OperationGeneration).ConfigureAwait(false);
-            if (generation >= 0) await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
+            if (generation >= 0)
+            {
+                await RefreshSourceAsync(row, generation, token).ConfigureAwait(false);
+                await UpdateUiAsync(() => row.SetObservationError(null)).ConfigureAwait(false);
+            }
             }
             catch (OperationCanceledException error) when (PresentationCancellation.IsExpected(error, token)) { }
+            catch (Exception error) when (error is IOException or Sunder.Sdk.Rpc.SunderRpcException
+                { Error.Kind: Sunder.Sdk.Rpc.SunderRpcErrorKind.Unavailable or Sunder.Sdk.Rpc.SunderRpcErrorKind.StaleEndpoint or Sunder.Sdk.Rpc.SunderRpcErrorKind.DeadlineExceeded })
+            {
+                await UpdateUiAsync(() =>
+                {
+                    var current = Projects.SingleOrDefault(item => item.EntryPoint == session.SourceEntryPoint);
+                    current?.SetObservationError("Source observation unavailable; will retry. " + BuilderJobText.Safe(error.Message, 512));
+                }).ConfigureAwait(false);
+            }
             catch (Exception error)
             {
                 // The activation, not an event handler or the current page, owns

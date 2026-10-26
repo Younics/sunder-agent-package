@@ -24,6 +24,46 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 
 public sealed partial class ViewLifecycleTests
 {
+    // Tool-detail/viewport regressions first reveal compact members, just as a
+    // user now must for a singleton. Individual details remain collapsed/lazy.
+    private static async Task RevealCompactCallsAsync(AgentChatView view, IEnumerable<AgentActivityGroupRowViewModel> groups)
+    {
+        foreach (var group in groups) group.IsExpanded = true;
+        await Dispatcher.UIThread.InvokeAsync(view.UpdateLayout, DispatcherPriority.Render);
+        await WaitForPendingCoordinatorOperationsAsync(view);
+        await Dispatcher.UIThread.InvokeAsync(view.UpdateLayout, DispatcherPriority.Render);
+    }
+
+    [AvaloniaFact]
+    public async Task AgentActivityGroups_FirstCallIsAlreadyHiddenBehindItsCompactHeader()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profiles = services.ProfileService;
+        await profiles.CreateProfileAsync("First call");
+        var workspace = services.WorkspaceService.CreateWorkspace("First call");
+        var session = services.SessionService.CreateSession("First call", workspaceId: workspace.WorkspaceId);
+        services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.User, "Inspect one file.");
+        services.SessionService.AppendToolCallTurn(session.SessionId, AgentMessageRole.Assistant, "first", "read", "{}");
+        using var view = CreateAgentChatView(scope, services, profiles);
+        var window = new Window { Width = 800, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            await view.OnNavigatedToAsync(new("younics.ai.agent.chat", new Dictionary<string, string?>()));
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            var group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
+            Assert.Equal("1 Read", group.Summary);
+            Assert.False(group.IsExpanded);
+            Assert.Empty(model.TranscriptItems.OfType<AgentToolInvocationRowViewModel>());
+            Assert.DoesNotContain(view.GetVisualDescendants().OfType<Button>(), button => button.Classes.Contains("tool-step-header"));
+            Assert.False(Assert.Single(model.Messages.OfType<AgentToolInvocationRowViewModel>()).HasMaterializedDetails);
+        }
+        finally { window.Close(); }
+    }
+
     [AvaloniaFact]
     public async Task AgentActivityGroups_HistoricalOperationReceiptsDoNotKeepIdleHistoryAnimating()
     {
@@ -54,11 +94,11 @@ public sealed partial class ViewLifecycleTests
                 var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
                 var group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
                 Assert.False(group.IsRunning);
-                Assert.Equal("2 Unverified", group.StatusText);
+                Assert.Equal("1 Unverified", group.StatusText); // Two checks of one operation.
                 Assert.All(model.Messages.OfType<AgentToolInvocationRowViewModel>(), tool =>
                 {
                     Assert.False(tool.IsRunning);
-                    Assert.Equal("Running (last observed)", tool.StatusText);
+                    Assert.Equal("Checked · pending", tool.StatusText);
                     Assert.False(tool.IsCompleted);
                 });
                 var header = Assert.Single(view.GetVisualDescendants().OfType<Button>(), button => ReferenceEquals(button.DataContext, group));

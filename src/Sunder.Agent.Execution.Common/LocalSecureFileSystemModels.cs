@@ -61,6 +61,15 @@ internal sealed class LocalSecureHandle(
 
     public SafeFileHandle DuplicateHandle() => duplicateHandle();
 
+    public LocalSecureHandle Retain()
+    {
+        var copy = DuplicateHandle();
+        return new LocalSecureHandle(copy, FullPath, Kind, Identity, Length, LinkCount, Mode, UserId, GroupId,
+            () => OperatingSystem.IsWindows() ? LocalWindowsNative.Duplicate(copy)
+                : new SafeFileHandle(new IntPtr(LocalUnixNative.Duplicate(copy.DangerousGetHandle().ToInt32())), ownsHandle: true),
+            CaseSensitiveDirectory);
+    }
+
     public void Dispose() => Handle.Dispose();
 }
 

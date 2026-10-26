@@ -22,6 +22,26 @@ using SubagentModels = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Age
 public sealed class AgentTranscriptLazyDetailTests
 {
     [Fact]
+    public void HistoricalWriteHeaderKeepsBoundedPathWhileArgumentsAndPersistedDiffRemainLazy()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        var sessions = new AgentSessionService(store);
+        var workspace = new AgentWorkspaceService(store).CreateWorkspace("Write history");
+        var session = sessions.CreateSession("Write history", workspaceId: workspace.WorkspaceId);
+        var args = System.Text.Json.JsonSerializer.Serialize(new { path = "Services/WeatherService.cs", content = new string('x', 64 * 1024) });
+        var turn = sessions.AppendToolResultTurn(session.SessionId, "write-history", "write", args, "Wrote 65536 characters",
+            "Write completed", null, null, false, false, null, null,
+            "{\"schema\":\"younics.ai.agent.tools.files.diff.v1\",\"files\":[]}");
+        var header = Assert.Single(Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, turn.TurnId, 0, 0).Turns).Items);
+        Assert.Equal("Services/WeatherService.cs", header.ToolHeaderHint);
+        Assert.Null(header.ArgumentsJson);
+        Assert.Null(header.TextContent);
+        Assert.Null(header.PresentationPayloadJson);
+        Assert.Equal(args, Assert.Single(store.GetTurn(turn.TurnId)!.Items).ArgumentsJson);
+    }
+
+    [Fact]
     public void LaterOperationObservationUpdatesOnlySameSessionHeadersNotOriginalReceipts()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -33,6 +53,8 @@ public sealed class AgentTranscriptLazyDetailTests
             false, false, null, null, "{\"operationStatus\":\"running\",\"operationRef\":\"o-original\"}");
         sessions.AppendToolResultTurn(session.SessionId, "observe", "maker_operation", "{}", "later-applied-observation", "Package operation applied", null, null,
             false, false, null, null, "{\"operationStatus\":\"applied\",\"operationRef\":\"o-original\"}");
+        var unavailable = sessions.AppendToolResultTurn(session.SessionId, "unavailable", "maker_operation", "{}", "check-unavailable", "Check unavailable", null, null,
+            false, true, "maker.observation-unavailable", null, "{\"operationStatus\":\"unknown\",\"operationRef\":\"o-original\",\"operationObservation\":\"unavailable\"}");
         var foreign = sessions.CreateSession("Other session", workspaceId: workspace.WorkspaceId);
         sessions.AppendToolResultTurn(foreign.SessionId, "foreign", "maker_operation", "{}", "foreign-failure", "Foreign failure", null, null,
             false, true, null, null, "{\"operationStatus\":\"failed\",\"operationRef\":\"o-original\"}");
@@ -43,6 +65,10 @@ public sealed class AgentTranscriptLazyDetailTests
         var raw = Assert.Single(store.GetTurn(original.TurnId)!.Items);
         Assert.Equal("original-running-receipt", raw.TextContent);
         Assert.Contains("running", raw.PresentationPayloadJson);
+        var check = Assert.Single(Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, unavailable.TurnId, 0, 0).Turns).Items);
+        Assert.Contains("applied", check.PresentationPayloadJson);
+        Assert.Contains("unavailable", check.PresentationPayloadJson);
+        Assert.Equal("Check unavailable", check.ToolErrorSummary);
     }
     [Fact]
     public async Task RuntimeCatalogPagingPreservesPayloadsWhileSubsessionsReadHeaders()

@@ -8,7 +8,7 @@ using TranscriptPageCursor = AgentCore::Sunder.Package.Agent.Runtime.TranscriptP
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class TranscriptPresentationStateTests
+public sealed partial class TranscriptPresentationStateTests
 {
     [Fact]
     public void ToolDispatchReceiptIsPresentedSeparatelyFromApplicationEffect()
@@ -140,6 +140,7 @@ public sealed class TranscriptPresentationStateTests
         var initial = timeline.BeginAnchoredInitialLoad(sessionId);
         var capturedKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[30].TurnId);
         var currentKey = capturedKey;
+        var publications = 0;
         Assert.True(timeline.TryCompleteAnchoredInitialLoad(
             initial,
             turns[30..],
@@ -150,11 +151,15 @@ public sealed class TranscriptPresentationStateTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var load = timeline.LoadOlderAsync(
             (_, _, _, _, _) => releasePage.Task,
-            new CorePresentation.TranscriptPageAnchorAuthority(capturedKey, () => currentKey));
-
-        currentKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[85].TurnId);
+            new CorePresentation.TranscriptPageAnchorAuthority(capturedKey, () => currentKey, () =>
+            {
+                publications++;
+                currentKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[85].TurnId);
+            }));
         releasePage.TrySetResult(new CorePresentation.TranscriptTurnPage(turns[..30], false));
         Assert.True(await load);
+
+        Assert.Equal(1, publications);
 
         Assert.Equal(60, timeline.Projector.Rows.Count);
         Assert.Contains(timeline.Projector.Rows, row => Equals(row.AnchorKey, currentKey));
@@ -172,6 +177,7 @@ public sealed class TranscriptPresentationStateTests
         var initial = timeline.BeginAnchoredInitialLoad(sessionId);
         var capturedKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[55].TurnId);
         var currentKey = capturedKey;
+        var publications = 0;
         Assert.True(timeline.TryCompleteAnchoredInitialLoad(
             initial,
             turns[..60],
@@ -182,11 +188,15 @@ public sealed class TranscriptPresentationStateTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var load = timeline.LoadNewerAsync(
             (_, _, _, _, _) => releasePage.Task,
-            new CorePresentation.TranscriptPageAnchorAuthority(capturedKey, () => currentKey));
-
-        currentKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[5].TurnId);
+            new CorePresentation.TranscriptPageAnchorAuthority(capturedKey, () => currentKey, () =>
+            {
+                publications++;
+                currentKey = CorePresentation.TranscriptRowAnchorKey.Text(turns[5].TurnId);
+            }));
         releasePage.TrySetResult(new CorePresentation.TranscriptTurnPage(turns[60..], false));
         Assert.True(await load);
+
+        Assert.Equal(1, publications);
 
         Assert.Equal(60, timeline.Projector.Rows.Count);
         Assert.Contains(timeline.Projector.Rows, row => Equals(row.AnchorKey, currentKey));
@@ -543,7 +553,7 @@ public sealed class TranscriptPresentationStateTests
 
         Assert.Equal(6, timeline.Projector.Rows.Count);
         Assert.Contains(first, timeline.Projector.Rows);
-        Assert.Contains(second, timeline.Projector.Rows); // One member alone removes the compact header.
+        Assert.DoesNotContain(second, timeline.Projector.Rows); // One retained member now preserves its compact header.
         Assert.InRange(timeline.Projector.TurnWindow.Count, 1, 12);
         Assert.Equal(group, timeline.ViewportAnchor?.AnchorKey);
     }
@@ -2337,6 +2347,7 @@ public sealed class TranscriptPresentationStateTests
         public Guid? ResultTurnId { get; set; } = resultTurnId;
         public bool IsExpanded { get; set; }
         public bool HasDetails { get; set; }
+        public string? Status { get; set; }
 
         public event Action? DetailVisualInvalidated;
 
@@ -2377,6 +2388,7 @@ public sealed class TranscriptPresentationStateTests
                 item.Kind == AgentTurnItemKind.ToolResult ? turn.TurnId : null)
             {
                 HasDetails = projection.HasDetails,
+                Status = projection.StatusText,
             };
 
         public void ApplyToolResult(
@@ -2387,6 +2399,7 @@ public sealed class TranscriptPresentationStateTests
         {
             row.ResultTurnId = turn.TurnId;
             row.HasDetails = projection.HasDetails;
+            row.Status = projection.StatusText;
         }
 
         public void UpdateTool(

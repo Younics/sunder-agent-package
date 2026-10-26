@@ -36,7 +36,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True(raced); Assert.True(failed.IsError);
         Assert.Equal("a\n", await File.ReadAllTextAsync(Path.Combine(workspace, "a.txt")));
         Assert.Equal("raced\n", await File.ReadAllTextAsync(Path.Combine(workspace, "b.txt")));
-        Assert.Contains("No applied patch changes remain", failed.Content!, StringComparison.Ordinal);
+        Assert.Contains("Applied patch file changes were restored", failed.Content!, StringComparison.Ordinal);
+        Assert.DoesNotContain("No applied patch changes remain", failed.Content!, StringComparison.Ordinal);
         Assert.Contains(target.Calls, call => call.Method == "write-file" && call.Request.GetProperty("context").GetProperty("capturePostMutationResource").GetBoolean()
             && call.Response.GetProperty("postMutationResource").ValueKind == JsonValueKind.Object);
 

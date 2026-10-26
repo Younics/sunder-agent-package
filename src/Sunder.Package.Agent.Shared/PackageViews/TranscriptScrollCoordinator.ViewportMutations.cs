@@ -64,6 +64,9 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         var wasFollowingTail = IsFollowingTail;
+        var preserveReadingAnchor = kind == TranscriptViewportMutationKind.LiveTranscript
+                                    && _settledExactAnchorLease is not null && _anchorHost?.ExactAnchorKey is not null;
+        if (preserveReadingAnchor) preferredAnchorKey = _anchorHost!.ExactAnchorKey;
         var exactToolAnchor = kind == TranscriptViewportMutationKind.ToolExpansion
                               && preferredAnchorKey is not null
                               && _anchorHost is not null
@@ -74,11 +77,14 @@ internal sealed partial class TranscriptScrollCoordinator
             : wasFollowingTail
                 ? TranscriptViewportMutationMode.FollowingNativeObserver
                 : TranscriptViewportMutationMode.DetachedLogicalRestore;
+        if (preserveReadingAnchor) mode = TranscriptViewportMutationMode.DetachedNativeAnchor;
         var protectedAnchor = mode switch
         {
             TranscriptViewportMutationMode.ToolExpansionNativeAnchor =>
                 exactToolAnchor,
             TranscriptViewportMutationMode.DetachedLogicalRestore =>
+                CaptureRealizedMutationAnchor(preferredAnchorKey, scope),
+            TranscriptViewportMutationMode.DetachedNativeAnchor =>
                 CaptureRealizedMutationAnchor(preferredAnchorKey, scope),
             _ => null,
         };
@@ -655,7 +661,9 @@ internal sealed partial class TranscriptScrollCoordinator
         FinalizeTrailingCompensator(transaction);
         if (ShouldRetainExactAnchorLease(transaction, status))
         {
-            var retainedLease = transaction.TakeViewportAuthorityLease();
+            var retainedLease = transaction.TakeViewportAuthorityLease()
+                ?? (transaction.ProtectedAnchor is { } retained && _anchorHost is not null
+                    ? _anchorHost.AcquireExactAnchorLease(retained.Item) : null);
             Interlocked.Exchange(ref _settledExactAnchorLease, retainedLease)?.Dispose();
         }
         _lastViewportMutation = CreateMutationDiagnostic(transaction);
@@ -676,7 +684,6 @@ internal sealed partial class TranscriptScrollCoordinator
         TranscriptViewportMutationStatus status)
         => transaction.Mode is TranscriptViewportMutationMode.ToolExpansionNativeAnchor
                 or TranscriptViewportMutationMode.DetachedNativeAnchor
-           && transaction.IsExpanding != false
            && status == TranscriptViewportMutationStatus.Completed;
 
     private void ReleaseSettledExactAnchorLease()
@@ -706,7 +713,7 @@ internal sealed partial class TranscriptScrollCoordinator
             ObserveTerminalHeaderDisplacement(transaction, previousHeaderTop);
             return;
         }
-        using (_anchorHost.SuspendAnchoring())
+        using (SuspendAnchoringForManualScroll(transaction.ProtectedAnchor?.Item))
         {
             transaction.TakeViewportAuthorityLease()?.Dispose();
             detailHost?.ReleaseCollapseCompensator();

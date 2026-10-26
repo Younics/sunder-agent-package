@@ -8,6 +8,23 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderPackageOperationsTests
 {
+    [Fact]
+    public async Task RetiredSourceObservationIsRetryableAndDoesNotBecomeAnActivationCleanupFailure()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var row = await fixture.OpenAsync("observation-recovery");
+        await fixture.Model.LoadSelectedProjectAsync();
+        var attempts = 0;
+        fixture.Backend.Inspection = (_, _) => Interlocked.Increment(ref attempts) == 1
+            ? Task.FromException<BuilderProjectInspection>(new Sunder.Sdk.Rpc.SunderRpcException(new(Sunder.Sdk.Rpc.SunderRpcErrorKind.Unavailable,
+                "rpc.binding.retired", "The selected service lifetime ended.")))
+            : Task.FromResult(row.Inspection!);
+        await BuilderUiFixture.WaitAsync(() => row.ErrorMessage.Contains("Source observation unavailable", StringComparison.Ordinal));
+        await BuilderUiFixture.WaitAsync(() => attempts >= 2 && !row.HasError);
+        Assert.True(row.HasSession);
+        Assert.False(Assert.Single(fixture.Development.Sessions).Disposed);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

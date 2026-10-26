@@ -17,11 +17,7 @@
                  TextWrapping="Wrap" />
     </StackPanel>
 
-    <Border Grid.Row="1"
-            Classes="workspace-surface"
-            BorderThickness="0"
-            CornerRadius="0">
-      <Grid RowDefinitions="Auto,*">
+      <Grid Grid.Row="1" RowDefinitions="Auto,*">
         <Grid ColumnDefinitions="2*,3*,Auto,Auto"
               ColumnSpacing="12"
               Margin="8,0,8,8">
@@ -59,7 +55,6 @@
           </ListBox.ItemTemplate>
         </ListBox>
       </Grid>
-    </Border>
 
     <StackPanel Grid.Row="2"
                 Orientation="Horizontal"

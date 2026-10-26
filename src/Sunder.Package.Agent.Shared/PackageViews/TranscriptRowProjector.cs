@@ -41,6 +41,8 @@ internal readonly record struct TranscriptToolProjection(
 {
     // A display receipt describes the last observed effect, not a live execution.
     public bool IsRunning { get; init; }
+    public string? OperationReference { get; init; }
+    public string? OperationStatus { get; init; }
 }
 
 internal readonly record struct TranscriptActivityProjection(
@@ -232,9 +234,11 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                 break;
         }
 
+        ApplyOperationObservation(turn, force: true);
         TrimTurnWindow(insertMode == TranscriptInsertMode.Append
             ? AgentTranscriptTrimDirection.Oldest
             : AgentTranscriptTrimDirection.Newest);
+        PruneOperationHeaders();
 
         return insertedRows;
     }
@@ -399,6 +403,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         _activityProjection = null;
         _messageRowsByTurnId.Clear();
         _toolRowsByKey.Clear();
+        _operationHeaders.Clear();
         _turnWindow.Reset();
         // Keep reset/cancellation state changes without publishing an empty-to-empty reset.
         if (_rows.Count > 0)
@@ -586,6 +591,8 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         }
 
         ReconcileRows(desiredRows);
+        PruneOperationHeaders();
+        foreach (var turn in orderedTurns) ApplyOperationObservation(turn, force: true);
         _activityRow = activityRow;
         if (activityRow is not null)
         {
@@ -773,15 +780,6 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             _ => "?",
         };
 
-    private static string HumanizeToolName(string? toolId)
-    {
-        var parts = (toolId ?? string.Empty)
-            .Split(['_', '-', '.'], StringSplitOptions.RemoveEmptyEntries);
-        return parts.Length == 0
-            ? "Tool"
-            : string.Join(' ', parts.Select(part =>
-                char.ToUpperInvariant(part[0]) + part[1..].ToLowerInvariant()));
-    }
 }
 
 internal enum TranscriptInsertMode

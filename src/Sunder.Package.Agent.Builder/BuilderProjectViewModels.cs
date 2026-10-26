@@ -73,12 +73,16 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     public bool HasSourceConflict => _conflict;
     public bool HasSession => _hasSession;
     private bool _hotreloadPending;
+    private BuilderReloadProgress? _reloadProgress;
+    private string _observationError = string.Empty;
+    internal void SetReloadProgress(BuilderReloadProgress? progress) { _reloadProgress = progress; ChangedAll(); }
+    internal void SetObservationError(string? message) { _observationError = message ?? string.Empty; ChangedAll(); }
     public bool HotreloadPending => _hotreloadPending;
     internal void SetHotreloadPending(bool value) { _hotreloadPending = value; ChangedAll(); }
     public bool IsLoaded => _developmentStatus?.IsLoaded == true;
     public bool IsBusy { get => _busy; internal set { if (Set(ref _busy, value)) ChangedAll(); } }
     public bool CanOperate => !IsBusy && !IsMissing && Inspection is not null && !HotreloadPending;
-    public bool CanHotreload => !IsBusy && HasSession && !_releasePending && (Inspection is not null || HotreloadPending);
+    public bool CanHotreload => !IsBusy && _reloadProgress?.State != "running" && HasSession && !_releasePending && (Inspection is not null || HotreloadPending);
     public string HotreloadActionText => HotreloadPending ? "Resolve Hotreload" : "Hotreload Package";
     public bool CanLoad => CanOperate && !HasSession;
     public bool CanUnload => !IsBusy && HasSession;
@@ -94,14 +98,16 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     public string EditedDisplayName { get => _editedDisplayName; set { if (Set(ref _editedDisplayName, value ?? string.Empty)) ChangedAll(); } }
     public string EditedPackageId { get => _editedPackageId; set { if (Set(ref _editedPackageId, value ?? string.Empty)) ChangedAll(); } }
     public string StatusText => _statusText;
-    public string ErrorMessage => string.Join(Environment.NewLine, new[] { _sourceError, _error }.Where(message => message.Length > 0));
+    public string ErrorMessage => string.Join(Environment.NewLine, new[] { _sourceError, _error, _observationError,
+        _reloadProgress?.State is "unknown" or "failed" ? _reloadProgress.Error ?? string.Empty : string.Empty }.Where(message => message.Length > 0).Distinct());
     public bool HasError => ErrorMessage.Length > 0;
     public string Output => _output;
     public bool HasOutput => _output.Length > 0;
     public bool IsOutputExpanded { get => _outputExpanded; set => Set(ref _outputExpanded, value); }
     public string? ArchivePath { get; private set; }
     public bool HasArchive => !string.IsNullOrEmpty(ArchivePath);
-    public string LoadStateText => _releasePending ? "Release unconfirmed" : !HasSession ? "Unloaded" : !IsLoaded ? "Connecting…"
+    public string LoadStateText => _releasePending ? "Release unconfirmed" : !HasSession ? "Unloaded"
+        : _reloadProgress?.State == "unknown" ? "Reload unconfirmed" : _reloadProgress?.State == "running" ? "Reload pending" : !IsLoaded ? "Connecting…"
         : _developmentStatus?.AppReadiness switch
         {
             PackageDevelopmentAppReadiness.Pending => "Runtime loaded · UI pending",
@@ -128,6 +134,13 @@ public sealed class BuilderProjectViewModel : BuilderObservable
             BuilderJobPhase.Restoring => "Restoring dependencies…", BuilderJobPhase.Validating => "Validating package output…",
             BuilderJobPhase.Packaging => "Checking contracts and creating archive…", _ => "Building package…",
         }
+        : _reloadProgress?.State is "running" or "unknown" ? _reloadProgress.Phase switch
+        {
+            "loading" => "Loading the selected output…",
+            "reloading" => _reloadProgress.State == "unknown" ? "Reload outcome unconfirmed. Resolve the original Hotreload; do not rebuild or load another owner." : "Retiring the old UI and committing the selected output…",
+            "waiting-for-app" => "Waiting for the exact Runtime/App revision to be confirmed applied.",
+            _ => "Observing the original package operation…",
+        }
         : IsBusy ? StateText
         : _releasePending ? "Owner release is unconfirmed. Reconnect and retry Unload."
         : HasSession && !IsLoaded ? "Waiting for the Runtime…"
@@ -150,6 +163,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         : "No applied output revision observed";
     public string ApplicationStatusText => !HasSession ? string.Empty
         : _releasePending ? "Development owner release is not yet confirmed. Last applied output is historical."
+        : _reloadProgress?.State is "running" or "unknown" ? "The selected reload is not yet confirmed applied. Last applied output is historical."
         : _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Quarantined ? "Runtime output is loaded, but App UI activation failed. Open package logs for details."
         : _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Unavailable ? "App UI activation cannot currently be observed. Applied output is not confirmed."
         : _developmentStatus?.RuntimeRevision is null ? "This Host has not supplied an applied-output revision."
@@ -258,7 +272,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
     {
         if (!hasSession) _appPendingStarted = null;
         _hasSession = hasSession;
-        if (!hasSession) { _developmentStatus = null; _releasePending = false; }
+        if (!hasSession) { _developmentStatus = null; _releasePending = false; _reloadProgress = null; }
         ChangedAll();
     }
     internal void SetReleasePending()

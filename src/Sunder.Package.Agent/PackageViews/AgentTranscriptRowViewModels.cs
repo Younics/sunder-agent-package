@@ -282,6 +282,10 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
         IsVisible = isVisible;
     }
 
+    internal bool MatchesPresentation(string text, bool isReasoning, bool isVisible)
+        => IsVisible == isVisible && _isReasoningActivity == isReasoning
+           && string.Equals(_activityTextBase, string.IsNullOrWhiteSpace(text) ? "Processing" : text.Trim(), StringComparison.Ordinal);
+
     public void SetActivityTextBase(string activityTextBase, bool isReasoningActivity = false)
     {
         var normalized = string.IsNullOrWhiteSpace(activityTextBase) ? "Processing" : activityTextBase.Trim();

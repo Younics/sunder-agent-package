@@ -21,7 +21,6 @@
             </Border>
           </Grid>
 
-          <Border Classes="settings-detail-card">
             <StackPanel Spacing="6">
               <TextBlock Classes="caption"
                          Text="{Binding Description}"
@@ -30,7 +29,6 @@
                          Text="{Binding CredentialStatusDetail}"
                          TextWrapping="Wrap" />
             </StackPanel>
-          </Border>
 
           <TextBox Classes="secret-field"
                    Text="{Binding EnteredCredential, Mode=TwoWay}"

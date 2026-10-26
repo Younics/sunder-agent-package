@@ -65,7 +65,8 @@ internal sealed class LocalSecurePathSession : IDisposable
         bool createParents,
         bool allowMissingSuffix,
         ILocalSecureFileSystemHooks? hooks,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        LocalCreatedDirectoryAuthority? createdDirectories = null)
     {
         var parent = retainedAncestors.Count == 0 ? root.Handle : retainedAncestors[^1];
         if (parent.Identity != binding.AnchorIdentity)
@@ -133,15 +134,22 @@ internal sealed class LocalSecurePathSession : IDisposable
                             requireDirectory: true,
                             out var unexpectedlyExisting))
                     {
-                        unexpectedlyExisting!.Dispose();
-                        throw new LocalSecureApprovalChangedException(binding.FullPath);
+                        if (createdDirectories?.OwnsChild(current, unexpectedlyExisting!) != true)
+                        {
+                            unexpectedlyExisting!.Dispose();
+                            throw new LocalSecureApprovalChangedException(binding.FullPath);
+                        }
+                        descendants.Add(unexpectedlyExisting!);
+                        current = unexpectedlyExisting!;
+                        continue;
                     }
-                    root.Platform.CreateDirectory(current, segment);
-                    var created = root.Platform.OpenChild(
-                        current,
-                        segment,
-                        root.Volume,
-                        requireDirectory: true);
+                    LocalSecureHandle created;
+                    if (createdDirectories is not null) created = createdDirectories.CreateChild(root.Platform, current, segment, root.Volume);
+                    else
+                    {
+                        root.Platform.CreateDirectory(current, segment);
+                        created = root.Platform.OpenChild(current, segment, root.Volume, requireDirectory: true);
+                    }
                     descendants.Add(created);
                     current = created;
                 }

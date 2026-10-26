@@ -328,7 +328,10 @@ public sealed partial class AgentLocalStore
                        substr(i.PresentationPayloadJson, 1, 256) AS Payload,
                        substr(i.ResultSummary, 1, 240) AS Summary, t.UpdatedAtUtc,
                        ROW_NUMBER() OVER (PARTITION BY t.SessionId, {operationReference}
-                           ORDER BY t.CreatedAtUtc COLLATE BINARY DESC, t.TurnId COLLATE BINARY DESC, i.SequenceNumber DESC) AS Position
+                            ORDER BY CASE WHEN json_valid(i.PresentationPayloadJson) THEN
+                                CASE WHEN json_extract(i.PresentationPayloadJson, '$.operationStatus') IN ('applied','opened','dispatched','failed','rejected','cancelled') THEN 1 ELSE 0 END
+                                ELSE 0 END DESC,
+                                t.CreatedAtUtc COLLATE BINARY DESC, t.TurnId COLLATE BINARY DESC, i.SequenceNumber DESC) AS Position
                 FROM AgentTurnItems i INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
                 WHERE i.Kind = 'ToolResult' AND length(i.PresentationPayloadJson) <= 256
                   AND {operationReference} IN ({string.Join(",", referenceNames)})
@@ -345,9 +348,10 @@ public sealed partial class AgentLocalStore
             if (reference is null || !observations.TryGetValue((item.TurnId, reference), out var observation)) return item;
             var status = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Read(observation.Payload);
             if (status is null) return item;
-            return item with { PresentationPayloadJson = observation.Payload,
-                ToolHeaderHint = status is "Failed" or "Cancelled" or "Unconfirmed" ? null : observation.Summary,
-                ToolErrorSummary = status is "Failed" or "Cancelled" or "Unconfirmed" ? observation.Summary : null,
+            var unavailableCheck = item.ToolId == "maker_operation" && Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.ObservationUnavailable(item.PresentationPayloadJson);
+            return item with { PresentationPayloadJson = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Correlate(item.PresentationPayloadJson, observation.Payload),
+                ToolHeaderHint = unavailableCheck ? item.ToolHeaderHint : status is "Failed" or "Cancelled" or "Unconfirmed" ? null : observation.Summary,
+                ToolErrorSummary = unavailableCheck ? item.ToolErrorSummary : status is "Failed" or "Cancelled" or "Unconfirmed" ? observation.Summary : null,
                 ToolDetailRevision = Math.Max(item.ToolDetailRevision, CreateDetailRevision(observation.Updated)) };
         }).ToArray();
     }
@@ -521,7 +525,18 @@ public sealed partial class AgentLocalStore
                          INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
                          WHERE peer.Kind = 'ToolResult' AND {peerPredicate}
                          ORDER BY peerTurn.CreatedAtUtc COLLATE BINARY DESC, peerTurn.TurnId COLLATE BINARY DESC, peer.SequenceNumber DESC
-                          LIMIT 1)
+                           LIMIT 1),
+                        CASE WHEN lower(i.ToolId) = 'write' THEN (
+                            SELECT CASE WHEN json_valid(peer.ArgumentsJson)
+                                THEN CASE WHEN json_type(peer.ArgumentsJson, '$.path') = 'text'
+                                    THEN substr(json_extract(peer.ArgumentsJson, '$.path'), 1, 241) END END
+                            FROM AgentTurnItems peer
+                            INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
+                            WHERE peer.Kind IN ('ToolCall', 'ToolResult') AND {peerPredicate}
+                              AND peer.ArgumentsJson IS NOT NULL
+                            ORDER BY CASE WHEN peer.Kind = 'ToolCall' THEN 0 ELSE 1 END,
+                                     peer.SequenceNumber
+                            LIMIT 1) END
                 FROM AgentTurnItems i
                 INNER JOIN AgentTurns owner ON owner.TurnId = i.TurnId
                 LEFT JOIN AgentToolExecutions e
@@ -562,7 +577,8 @@ public sealed partial class AgentLocalStore
                 {
                     ToolExecutionId = reader.IsDBNull(7) ? null : Guid.Parse(reader.GetString(7)),
                     ToolExecutionStatus = status,
-                    ToolHeaderHint = isFailure ? null : summary,
+                    ToolHeaderHint = Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.BoundPath(reader.IsDBNull(15) ? null : reader.GetString(15))
+                                     ?? (isFailure ? null : summary),
                     ToolErrorSummary = isFailure ? summary : null,
                     ToolDetailRevision = CreateDetailRevision(
                         reader.IsDBNull(10) ? null : reader.GetString(10),

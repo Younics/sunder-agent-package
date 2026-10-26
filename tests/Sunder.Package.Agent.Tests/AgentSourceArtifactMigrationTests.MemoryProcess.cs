@@ -79,9 +79,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         internal JsonElement Contributions { get; private set; }
         internal int StateReads { get; private set; }
         internal List<string> SecretReads { get; } = [];
+        internal List<JsonElement> ProviderFaults { get; } = [];
+        internal List<JsonElement> RegisteredContent { get; } = [];
+        internal List<JsonElement> PackageLogs { get; } = [];
 
         internal PackageWorkerPeer(string root, string runtimeRoot, string workspace, JsonElement manifest,
-            IReadOnlyDictionary<string, string?>? settings = null, IReadOnlySet<string>? allowedSecretReads = null)
+            IReadOnlyDictionary<string, string?>? settings = null, IReadOnlySet<string>? allowedSecretReads = null,
+            Action<ProcessStartInfo>? configureStart = null)
         {
             _workspace = workspace;
             _packageId = manifest.GetProperty("id").GetString()!;
@@ -107,6 +111,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             start.Environment["HOME"] = temporary;
             start.Environment["USERPROFILE"] = temporary;
             start.Environment["APPDATA"] = temporary;
+            configureStart?.Invoke(start);
             _process = Process.Start(start)!;
             _diagnostics = ReadDiagnostics(_process.StandardError, _deadline.Token);
         }
@@ -142,6 +147,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
 
         internal async Task<JsonElement> Invoke(string providerId, string serviceId, string methodId, object request)
+            => (await InvokeFrame(providerId, serviceId, methodId, request, "worker.result")).GetProperty("value").Clone();
+
+        internal async Task<JsonElement> InvokeError(string providerId, string serviceId, string methodId, object request)
+            => (await InvokeFrame(providerId, serviceId, methodId, request, "worker.error")).GetProperty("error").Clone();
+
+        private async Task<JsonElement> InvokeFrame(string providerId, string serviceId, string methodId, object request, string expected)
         {
             var declaration = Assert.Single(_providers, value => value.GetProperty("providerId").GetString() == providerId);
             var id = "invoke-" + ++_call;
@@ -151,9 +162,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
                         contractId = declaration.GetProperty("contractId").GetString(), contractVersion = declaration.GetProperty("contractVersion").GetString(),
                         descriptorSha256 = declaration.GetProperty("descriptorSha256").GetString(), abiSha256 = declaration.GetProperty("abiSha256").GetString(),
                         activationId = _activation, activationEpoch = 1, sessionGeneration = 1, endpointReference = "rpc_memory_source", catalogRevision = 1, state = "active", faultCode = (string?)null } } });
-            var result = await Until("worker.result");
+            var result = await Until(expected);
             Assert.Equal(id, result.GetProperty("id").GetString());
-            return result.GetProperty("value").Clone();
+            return result;
         }
 
         internal async Task Shutdown()
@@ -215,7 +226,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
                         await Send(new { type = "host.result", id, value = new { kind = "inline", keys = Array.Empty<string>() } });
                         break;
                     case "worker.logging-write":
+                        PackageLogs.Add(message.Clone());
                         await Send(new { type = "host.result", id, value = (object?)null });
+                        break;
+                    case "worker.provider-fault-diagnostic":
+                        ProviderFaults.Add(message.Clone());
+                        await Send(new { type = "host.result", id, value = (object?)null });
+                        break;
+                    case "worker.content-register":
+                        var bytes = await File.ReadAllBytesAsync(message.GetProperty("filePath").GetString()!, _deadline.Token);
+                        using (var content = JsonDocument.Parse(bytes)) RegisteredContent.Add(content.RootElement.Clone());
+                        var options = message.GetProperty("options");
+                        await Send(new { type = "host.result", id, value = new { id = "rpc_test_" + Guid.NewGuid().ToString("N"),
+                            length = bytes.LongLength, sha256 = Convert.ToHexStringLower(SHA256.HashData(bytes)),
+                            mediaType = options.GetProperty("mediaType").GetString(), fileName = options.GetProperty("fileName").GetString(),
+                            expiresAtUtc = DateTimeOffset.UtcNow.AddMinutes(1).UtcDateTime.ToString("O", CultureInfo.InvariantCulture), repeatability = "single-use" } });
                         break;
                     default: Assert.Fail($"Unexpected Worker frame for '{_packageId}': {message}"); break;
                 }

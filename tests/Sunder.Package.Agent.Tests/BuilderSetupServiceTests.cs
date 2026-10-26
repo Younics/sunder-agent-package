@@ -9,7 +9,7 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderSetupServiceTests
 {
     [Fact]
-    public async Task SettingsAreCold_CheckOnNavigation_RefreshRetainsBothCardsAndInstallationRowsWhenOffline()
+    public async Task SettingsAreCold_NavigationStartsOwnedRefresh_RetainsBothCardsAndInstallationRowsWhenOffline()
     {
         await using var fixture = new BuilderUiFixture();
         await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
@@ -17,7 +17,8 @@ public sealed class BuilderSetupServiceTests
         var dotnet = settings.Cards[0];
         var node = settings.Cards[1];
         Assert.Equal(0, fixture.Backend.ToolchainChecks);
-        await settings.PrepareNavigationAsync(new("settings:younics.sunder.package.maker", new Dictionary<string, string?>()));
+        Assert.True(await settings.PrepareNavigationAsync(Navigation()));
+        await settings.RefreshAsync();
         var installed = Assert.Single(dotnet.Installations);
         fixture.Backend.Toolchains = kind => new(kind, [BuilderUiFixture.Sdk(kind)], null, DateTimeOffset.UtcNow, null, "Offline");
         await settings.RefreshAsync();
@@ -26,7 +27,114 @@ public sealed class BuilderSetupServiceTests
         Assert.Same(installed, Assert.Single(dotnet.Installations));
         Assert.Contains("unknown", dotnet.UpdateText, StringComparison.Ordinal);
         Assert.Contains("Offline", dotnet.UpdateText, StringComparison.Ordinal);
+        Assert.Contains("Offline", dotnet.Status, StringComparison.Ordinal);
+        Assert.Equal(".NET", dotnet.Glyph);
+        Assert.Equal("JS", node.Glyph);
+        Assert.Contains(dotnet.CurrentVersion, dotnet.VersionText, StringComparison.Ordinal);
         Assert.Empty(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task NavigationDoesNotWaitForSdkChecks_ReopeningAndManualRefreshJoinWork_CancelledWaiterDoesNotCancelIt()
+    {
+        await using var fixture = new BuilderUiFixture();
+        await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
+        var settings = new BuilderSettingsViewModel(manager);
+        var entered = BuilderUiFixture.Signal();
+        var release = BuilderUiFixture.Signal();
+        var checks = 0;
+        fixture.Backend.BeforeToolchainCheck = async (_, checkUpdates, token) =>
+        {
+            Assert.True(checkUpdates);
+            if (Interlocked.Increment(ref checks) == 2) entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+        try
+        {
+            using var navigation = new CancellationTokenSource();
+            var preparation = settings.PrepareNavigationAsync(Navigation(), navigation.Token);
+            Assert.True(preparation.IsCompletedSuccessfully);
+            Assert.True(await preparation);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.All(settings.Cards, card =>
+            {
+                Assert.True(card.IsRefreshing);
+                Assert.False(card.IsEmpty);
+                Assert.Equal("Checking…", card.CurrentVersion);
+                Assert.Equal("Checking SDKs…", card.Status);
+            });
+            navigation.Cancel();
+            var reopened = new BuilderSettingsViewModel(manager);
+            Assert.True(await reopened.PrepareNavigationAsync(Navigation()));
+            Assert.Same(settings.Cards, reopened.Cards);
+            using var waiter = new CancellationTokenSource();
+            var cancelledWait = settings.RefreshAsync(waiter.Token);
+            waiter.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => cancelledWait);
+            var refresh = reopened.RefreshAsync();
+            Assert.False(refresh.IsCompleted);
+            Assert.Equal(2, fixture.Backend.ToolchainChecks);
+            release.TrySetResult();
+            await refresh.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.All(settings.Cards, card =>
+            {
+                Assert.False(card.IsRefreshing);
+                Assert.Single(card.Installations);
+                Assert.False(card.HasError);
+            });
+            Assert.Equal(2, fixture.Backend.ToolchainChecks);
+            Assert.Empty(fixture.Backend.Starts);
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
+    public async Task DisposingManagerCancelsAndDrainsNavigationRefresh()
+    {
+        await using var fixture = new BuilderUiFixture();
+        await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
+        var entered = BuilderUiFixture.Signal();
+        var checks = 0;
+        var stopped = 0;
+        fixture.Backend.BeforeToolchainCheck = async (_, _, token) =>
+        {
+            if (Interlocked.Increment(ref checks) == 2) entered.TrySetResult();
+            try { await Task.Delay(Timeout.Infinite, token); }
+            finally { Interlocked.Increment(ref stopped); }
+        };
+        var settings = new BuilderSettingsViewModel(manager);
+        Assert.True(await settings.PrepareNavigationAsync(Navigation()));
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        await manager.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+
+        Assert.Equal(2, stopped);
+        Assert.Empty(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public async Task InitialRefreshFailureIsNotReportedAsEmpty_ConfirmedEmptyStatusCanRecover()
+    {
+        await using var fixture = new BuilderUiFixture();
+        await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
+        fixture.Backend.Toolchains = _ => throw new IOException("SDK discovery unavailable");
+        await manager.RefreshAsync();
+        Assert.All(manager.Cards, card =>
+        {
+            Assert.True(card.HasError);
+            Assert.False(card.IsEmpty);
+            Assert.Contains("unavailable", card.ErrorMessage, StringComparison.Ordinal);
+            Assert.Equal("SDK discovery unavailable", card.Status);
+        });
+        fixture.Backend.Toolchains = kind => new(kind, [], null, null, null, null);
+        await manager.RefreshAsync();
+        Assert.All(manager.Cards, card =>
+        {
+            Assert.False(card.HasError);
+            Assert.True(card.IsEmpty);
+            Assert.Equal("Not installed", card.Status);
+            Assert.Equal("Install SDK", card.PrimaryActionText);
+        });
     }
 
     [Fact]
@@ -69,4 +177,7 @@ public sealed class BuilderSetupServiceTests
         Assert.All(fixture.Backend.Starts, request => { Assert.Equal("ensure-sdk", request.Operation); Assert.Equal(BuilderProjectKind.Node, request.Kind); });
         Assert.Empty(fixture.Store.Saves);
     }
+
+    private static PackageViewNavigationContext Navigation()
+        => new("settings:younics.sunder.package.maker", new Dictionary<string, string?>());
 }

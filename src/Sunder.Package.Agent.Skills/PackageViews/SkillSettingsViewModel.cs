@@ -68,6 +68,20 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     public bool HasSelectedSkill => SelectedSkill is not null;
 
+    public string DetailTitle => HasSelectedSkill ? "Skill Details" : "Install Skill";
+
+    public string DetailDescription => HasSelectedSkill
+        ? "Installed skill metadata is read-only."
+        : "Import a skill from a GitHub link or a local folder.";
+
+    public bool HasStatus => !string.IsNullOrWhiteSpace(StatusText);
+
+    public bool IsLocalSource
+    {
+        get => !IsGitHubSource;
+        set => IsGitHubSource = !value;
+    }
+
     public bool IsListActive => _listDetail.IsList;
 
     public bool ShowWideLayout => _listDetail.Layout == AdaptiveListDetailLayout.Wide;
@@ -134,9 +148,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
     internal long IntentRevision => _listDetail.IntentRevision;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(IsLocalSource))]
+    private bool _isGitHubSource = true;
+
+    [ObservableProperty]
     private string _githubUrl = string.Empty;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasStatus))]
     private string _statusText = string.Empty;
 
     [ObservableProperty]
@@ -199,7 +218,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     [RelayCommand]
     private Task ImportCommonSkillFoldersAsync()
-        => RunImportAsync(token => _gateway.ImportCommonAsync(token), "Imported common skill folder(s).");
+        => RunImportAsync(token => _gateway.ImportCommonAsync(token), "Imported common skill folder(s).", stayOnOverview: true);
 
     [RelayCommand(CanExecute = nameof(CanDeleteSelectedSkill))]
     private async Task DeleteSelectedSkillAsync()
@@ -301,7 +320,8 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     private async Task RunImportAsync(
         Func<CancellationToken, Task<IReadOnlyList<InstalledSkillRecord>>> action,
-        string successMessage)
+        string successMessage,
+        bool stayOnOverview = false)
     {
         if (_disposed)
         {
@@ -318,7 +338,9 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
                 return;
             }
 
-            var intentRevision = _listDetail.ShowNewDetail();
+            // Common-folder discovery belongs to the overview. Do not route it
+            // through the single-skill import form, even temporarily or on failure.
+            var intentRevision = stayOnOverview ? _listDetail.ShowList() : _listDetail.ShowNewDetail();
             mutation = _requests.Begin(MutationChannel);
             mutationStarted = true;
             if (_disposed || !_requests.IsCurrent(mutation))
@@ -327,6 +349,7 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
             }
 
             IsBusy = true;
+            if (stayOnOverview) SetStatus("Importing common skill folders…", SkillStatusKind.None);
             var imported = await action(mutation.CancellationToken);
             if (_disposed || !_requests.IsCurrent(mutation))
             {
@@ -354,10 +377,14 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
                 _listDetail.Reconcile(snapshot.Select(static skill =>
                     new InstalledSkillItemViewModel(skill, skill.RelativeRootPath)).ToArray());
-                var createdDetailShown = _listDetail.TryShowCreatedDetail(
+                var createdDetailShown = !stayOnOverview && _listDetail.TryShowCreatedDetail(
                     imported[0].SkillId,
                     intentRevision);
-                if (IsCompactLayout)
+                if (stayOnOverview)
+                {
+                    SetStatus($"Imported {imported.Count} skill(s) from common folders.", SkillStatusKind.Success, autoClear: true);
+                }
+                else if (IsCompactLayout)
                 {
                     _listDetail.ShowList();
                     ClearStatus();
@@ -382,9 +409,20 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         }
         catch (Exception ex)
         {
+            var message = ex.Message;
+            if (stayOnOverview && !_disposed && _requests.IsCurrent(mutation))
+            {
+                // Common roots commit independently. A later root can fail after
+                // earlier skills were installed, so reconcile the actual state.
+                try { await RefreshListAsync(mutation.CancellationToken); }
+                catch (Exception refreshError) when (!SkillRuntimeExceptionPolicy.IsFatal(refreshError))
+                {
+                    message += " The skills list could not be refreshed.";
+                }
+            }
             if (!_disposed && _requests.IsCurrent(mutation))
             {
-                SetStatus(ex.Message, SkillStatusKind.Error);
+                SetStatus(message, SkillStatusKind.Error);
             }
         }
         finally
@@ -526,6 +564,8 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
         {
             OnPropertyChanged(nameof(SelectedSkill));
             OnPropertyChanged(nameof(HasSelectedSkill));
+            OnPropertyChanged(nameof(DetailTitle));
+            OnPropertyChanged(nameof(DetailDescription));
             DeleteSelectedSkillCommand.NotifyCanExecuteChanged();
             MarkCurrentDetailReady();
         }

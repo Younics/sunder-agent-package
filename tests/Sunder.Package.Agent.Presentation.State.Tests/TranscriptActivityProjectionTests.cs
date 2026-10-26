@@ -25,19 +25,20 @@ public sealed class TranscriptActivityProjectionTests
         using var projection = Create(source, activity, tail);
 
         var groups = projection.Items.OfType<GroupRow>().ToArray();
-        Assert.Equal(2, groups.Length);
+        Assert.Equal(3, groups.Length);
         Assert.Equal("1 Read · 1 Search", groups[0].State.Summary);
         Assert.Equal(string.Empty, groups[0].State.StatusText);
-        Assert.Equal("1 Read · 1 Shell", groups[1].State.Summary);
-        Assert.Equal("1 Failed", groups[1].State.StatusText);
-        Assert.True(groups[1].State.IsRunning);
-        Assert.Contains(nextRun, projection.Items); // Isolated call in a different run stays a normal row.
+        Assert.Equal("1 Glob", groups[1].State.Summary);
+        Assert.Equal("1 Read · 1 Shell", groups[2].State.Summary);
+        Assert.Equal("1 Failed", groups[2].State.StatusText);
+        Assert.True(groups[2].State.IsRunning);
+        Assert.DoesNotContain(nextRun, projection.Items);
         Assert.DoesNotContain(error, projection.Items);
         Assert.DoesNotContain(background, projection.Items);
         Assert.Contains(permission, projection.Items);
         Assert.Equal(8, source.Count);
         groups[0].State.IsExpanded = true;
-        Assert.Equal([commentary, groups[0], read, grep, nextCommentary, nextRun, groups[1], permission, activity, tail], projection.Items);
+        Assert.Equal([commentary, groups[0], read, grep, nextCommentary, groups[1], groups[2], permission, activity, tail], projection.Items);
         Assert.Same(read, source[1]);
     }
 
@@ -138,7 +139,7 @@ public sealed class TranscriptActivityProjectionTests
     }
 
     [Fact]
-    public void CountsInvocationsByToolCategoryAndLeavesSingleCallsUngrouped()
+    public void CountsInvocationsByToolCategoryAndRetainsTheHeaderForASingleRemainingCall()
     {
         var tools = new[] { "read", "read", "glob", "shell", "shell", "web_search", "web_search", "edit", "apply_patch", "write", "skill", "task", "custom_tool",
             McpToolCardPresentation.CreateStableToolId("server", "read"), McpToolCardPresentation.CreateStableToolId("another", "edit") };
@@ -151,9 +152,46 @@ public sealed class TranscriptActivityProjectionTests
         Assert.Equal(tools.Length, source.Count);
         using (source.DeferReconciliation())
             while (source.Count > 1) source.RemoveAt(source.Count - 1);
-        Assert.Same(source[0], projection.Items[0]);
-        Assert.True(group.Disposed);
-        Assert.Same(source[0].Anchor, projection.RevealAnchor(group.State.Anchor));
+        Assert.Same(group, projection.Items[0]);
+        Assert.False(group.Disposed);
+        Assert.Equal("1 Read", group.State.Summary);
+        Assert.DoesNotContain(source[0], projection.Items);
+        Assert.Same(group.State.Anchor, projection.RevealAnchor(group.State.Anchor));
+    }
+
+    [Fact]
+    public void RepeatedChecksCountOneUncertainOperationWithoutHidingIndividualCalls()
+    {
+        var group = new TranscriptActivityGroupState(new(new object()));
+        group.Update(Enumerable.Range(0, 3).Select(index => new TranscriptActivityMember(new object(), "run",
+            index == 0 ? "maker_apply" : "maker_operation", "Unconfirmed", false)
+            { OperationReference = "o-original", OperationStatus = "Unconfirmed" }).ToArray());
+        Assert.Equal("1 Uncertain", group.StatusText);
+        Assert.Contains("2 Maker Operation Calls", group.Summary);
+        Assert.False(group.IsRunning);
+    }
+
+    [Fact]
+    public void FirstRunningCallIsCollapsedImmediatelyAndGrowthPreservesItsHeaderAndExpansion()
+    {
+        var first = new Row("read", "Running");
+        var source = new TranscriptObservableCollection<Row>([first]);
+        using var projection = Create(source, new Row(), new Row());
+        var group = Assert.IsType<GroupRow>(projection.Items[0]);
+        Assert.True(group.State.IsRunning);
+        Assert.False(group.State.IsExpanded);
+        Assert.DoesNotContain(first, projection.Items);
+        group.State.IsExpanded = true;
+        source.Add(new Row("glob"));
+        Assert.Same(group, projection.Items[0]);
+        Assert.True(group.State.IsExpanded);
+        first.SetStatus("Completed");
+        Assert.False(group.State.IsRunning);
+        projection.SetDetailed(true);
+        Assert.DoesNotContain(group, projection.Items);
+        projection.SetDetailed(false);
+        Assert.Same(group, projection.Items[0]);
+        Assert.True(group.State.IsExpanded);
     }
 
     [Fact]

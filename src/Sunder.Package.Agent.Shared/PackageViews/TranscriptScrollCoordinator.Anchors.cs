@@ -39,10 +39,15 @@ internal sealed partial class TranscriptScrollCoordinator
         _anchorRestorationWaitCancellation = restorationBudget;
         try
         {
+            if (_disposed || anchor.InteractionRevision != _interactionRevision || anchor.AuthorityRevision != _viewportAuthorityRevision)
+                return false;
             _isRestoringAnchor = true;
             var previousExtentHeight = -1d;
             var stablePasses = 0;
-            var restoredAtLeastOnce = false;
+            // Correct the available (including plain-text fallback) geometry
+            // before awaiting Markdown. Otherwise a slow parser can leave the
+            // first published page frame at an unrelated estimated offset.
+            RestoreAvailableAnchor(anchor);
             for (var pass = 0; pass < AnchorRestorationMaxRenderPasses; pass++)
             {
                 await YieldForRenderedContent(restorationBudget.Token);
@@ -77,7 +82,6 @@ internal sealed partial class TranscriptScrollCoordinator
                 }
 
                 var anchorWasStable = RestoreScrollAnchor(anchor);
-                restoredAtLeastOnce = true;
                 var extentHeight = _scrollViewer.Extent.Height;
                 if (pass > 0
                     && anchorWasStable
@@ -98,16 +102,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
                 previousExtentHeight = extentHeight;
             }
-            if (!restoredAtLeastOnce
-                && !_disposed
-                && anchor.InteractionRevision == _interactionRevision
-                && anchor.AuthorityRevision == _viewportAuthorityRevision)
-            {
-                RestoreScrollAnchor(anchor);
-                restoredAtLeastOnce = true;
-            }
-
-            return restoredAtLeastOnce && !HasPendingRenderedContent();
+            return !HasPendingRenderedContent();
         }
         catch (OperationCanceledException) when (restorationBudget.IsCancellationRequested
                                                   && !cancellationToken.IsCancellationRequested)
@@ -120,6 +115,30 @@ internal sealed partial class TranscriptScrollCoordinator
             _isRestoringAnchor = false;
             _anchorRestorationGate.Release();
         }
+    }
+
+    private void RestoreAvailableAnchor(ScrollAnchor anchor)
+    {
+        var wasRestoring = _isRestoringAnchor;
+        _isRestoringAnchor = true;
+        try
+        {
+            // One synchronous publication owns both the layout and its offset
+            // correction, before yielding a render frame. Keep the repeater's
+            // row recommendation but prevent a delayed native correction from
+            // adding the same prepend shift to our numeric write a second time.
+            using (SuspendAnchoringForManualScroll(anchor.Items.FirstOrDefault()?.Item))
+            {
+                TryRealizeAnchorVisual(anchor);
+                for (var pass = 0; pass < 4; pass++)
+                {
+                    _scrollViewer.UpdateLayout();
+                    if (RestoreScrollAnchor(anchor)) break;
+                }
+            }
+            _ = _scrollViewer.CurrentAnchor;
+        }
+        finally { _isRestoringAnchor = wasRestoring; }
     }
 
     private async Task RestorePendingScrollAnchorAfterRenderedContentAsync(

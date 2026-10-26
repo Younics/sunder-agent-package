@@ -8,6 +8,7 @@ internal enum TranscriptToolExpansionState
     Collapsed,
     Preparing,
     Expanded,
+    Refreshing,
     DetailLoadFailed,
 }
 
@@ -82,6 +83,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
     private readonly Func<AgentTurnItemRecord, CancellationToken, ValueTask<AgentToolPresentation>> _resolvePresentation;
     private TranscriptToolProjection _projection;
     private TranscriptToolDetailViewModel? _details;
+    private TranscriptToolDetailViewModel? _pendingDetails;
     private CancellationTokenSource? _requestCancellation;
     private long _generation;
     private bool _disposed;
@@ -98,24 +100,40 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
     internal event Action? Changed;
     internal event Action? Invalidated;
+    internal event Action? RefreshRequested;
 
     internal TranscriptToolExpansionState State { get; private set; }
-    internal TranscriptToolDetailViewModel? Details => _details;
+    internal TranscriptToolDetailViewModel? Details => _details ?? _pendingDetails;
     internal string FailureText { get; private set; } = string.Empty;
-    internal bool IsExpanded => State == TranscriptToolExpansionState.Expanded;
-    internal bool IsPreparing => State == TranscriptToolExpansionState.Preparing;
+    internal bool IsExpanded => State is TranscriptToolExpansionState.Expanded or TranscriptToolExpansionState.Refreshing;
+    internal bool IsPreparing => State is TranscriptToolExpansionState.Preparing or TranscriptToolExpansionState.Refreshing;
 
     internal void UpdateProjection(TranscriptToolProjection projection)
     {
-        var invalidatesDetail = projection.SessionId != _projection.SessionId
-                                || !Equals(projection.AnchorKey, _projection.AnchorKey)
-                                || projection.DetailRevision != _projection.DetailRevision
-                                || projection.ToolExecutionId != _projection.ToolExecutionId
-                                || projection.ItemId != _projection.ItemId;
+        var identityChanged = projection.SessionId != _projection.SessionId
+                                 || !Equals(projection.AnchorKey, _projection.AnchorKey)
+                                 || projection.ToolExecutionId != _projection.ToolExecutionId
+                                 || projection.RunId != _projection.RunId || projection.RunRevision != _projection.RunRevision
+                                 || projection.CallId != _projection.CallId || projection.ToolId != _projection.ToolId;
+        var revisionChanged = projection.DetailRevision != _projection.DetailRevision;
         _projection = projection;
-        if (invalidatesDetail)
+        if (identityChanged || !projection.HasDetails)
         {
             Collapse();
+        }
+        else if (revisionChanged)
+        {
+            if (_details is not null && IsExpanded)
+            {
+                ++_generation;
+                CancelRequest();
+                DestroyPendingDetails();
+                State = TranscriptToolExpansionState.Expanded;
+                FailureText = string.Empty;
+                Changed?.Invoke();
+                RefreshRequested?.Invoke();
+            }
+            else Collapse();
         }
     }
 
@@ -128,9 +146,11 @@ internal sealed class TranscriptToolDetailState : IDisposable
         }
 
         CancelRequest();
-        DestroyDetails();
+        DestroyPendingDetails();
+        var refreshing = _details is not null && IsExpanded;
+        if (!refreshing) DestroyDetails();
         _requestCancellation = new CancellationTokenSource();
-        State = TranscriptToolExpansionState.Preparing;
+        State = refreshing ? TranscriptToolExpansionState.Refreshing : TranscriptToolExpansionState.Preparing;
         FailureText = string.Empty;
         var request = new TranscriptToolExpansionRequest(
             ++_generation,
@@ -189,7 +209,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
     internal bool IsCurrent(TranscriptToolExpansionRequest request)
         => !_disposed
-           && State == TranscriptToolExpansionState.Preparing
+           && State is TranscriptToolExpansionState.Preparing or TranscriptToolExpansionState.Refreshing
            && request.Generation == _generation
            && request.SessionId == _projection.SessionId
            && request.Revision == _projection.DetailRevision
@@ -216,7 +236,8 @@ internal sealed class TranscriptToolDetailState : IDisposable
             detail.IsError,
             detail.PresentationPayloadJson);
         details = new TranscriptToolDetailViewModel(detail, loaded.Presentation, diff);
-        _details = details;
+        DestroyPendingDetails();
+        _pendingDetails = details;
         Changed?.Invoke();
         return true;
     }
@@ -274,13 +295,17 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
     internal bool CommitExpanded(TranscriptToolExpansionRequest request)
     {
-        if (!IsCurrent(request) || Details is null)
+        if (!IsCurrent(request) || _pendingDetails is null)
         {
             return false;
         }
 
+        var previous = _details;
+        _details = _pendingDetails;
+        _pendingDetails = null;
         State = TranscriptToolExpansionState.Expanded;
         CancelRequest(disposeOnly: true);
+        previous?.Dispose();
         Changed?.Invoke();
         return true;
     }
@@ -292,9 +317,10 @@ internal sealed class TranscriptToolDetailState : IDisposable
             return;
         }
         CancelRequest(disposeOnly: true);
-        DestroyDetails();
-        FailureText = BoundFailure(exception.Message);
-        State = TranscriptToolExpansionState.DetailLoadFailed;
+        DestroyPendingDetails();
+        FailureText = _details is null ? BoundFailure(exception.Message)
+            : "Showing the previous details. Refresh failed: " + BoundFailure(exception.Message);
+        State = _details is null ? TranscriptToolExpansionState.DetailLoadFailed : TranscriptToolExpansionState.Expanded;
         Changed?.Invoke();
     }
 
@@ -303,11 +329,12 @@ internal sealed class TranscriptToolDetailState : IDisposable
         _generation++;
         CancelRequest();
         FailureText = string.Empty;
-        var invalidated = State != TranscriptToolExpansionState.Collapsed || _details is not null;
+        var invalidated = State != TranscriptToolExpansionState.Collapsed || _details is not null || _pendingDetails is not null;
         State = TranscriptToolExpansionState.Collapsed;
         if (invalidated)
         {
             Invalidated?.Invoke();
+            DestroyPendingDetails();
             DestroyDetails();
             Changed?.Invoke();
         }
@@ -332,6 +359,8 @@ internal sealed class TranscriptToolDetailState : IDisposable
         Interlocked.Exchange(ref _details, null)?.Dispose();
     }
 
+    private void DestroyPendingDetails() => Interlocked.Exchange(ref _pendingDetails, null)?.Dispose();
+
     private static string BoundFailure(string? value)
     {
         var text = string.IsNullOrWhiteSpace(value)
@@ -350,5 +379,6 @@ internal sealed class TranscriptToolDetailState : IDisposable
         Collapse();
         Changed = null;
         Invalidated = null;
+        RefreshRequested = null;
     }
 }

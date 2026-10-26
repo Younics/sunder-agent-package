@@ -9,6 +9,95 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class SkillSettingsRaceTests
 {
+    [Theory]
+    [InlineData(true, 2, false)]
+    [InlineData(false, 2, false)]
+    [InlineData(true, 0, false)]
+    [InlineData(false, 0, false)]
+    [InlineData(true, 0, true)]
+    [InlineData(false, 0, true)]
+    public async Task CommonFolderImportStaysOnOverviewDuringWorkAndShowsSuccessEmptyOrFailure(bool compact, int count, bool fail)
+    {
+        var gateway = new CommonImportGateway();
+        using var viewModel = new SkillSettingsViewModel(gateway) { IsCompactLayout = compact };
+        await viewModel.InitializeAsync();
+        var import = viewModel.ImportCommonSkillFoldersCommand.ExecuteAsync(null);
+        await gateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(viewModel.IsListActive);
+        Assert.Null(viewModel.SelectedSkill);
+        Assert.True(viewModel.IsBusy);
+        Assert.True(viewModel.HasStatus);
+        Assert.Contains("Importing", viewModel.StatusText, StringComparison.Ordinal);
+
+        if (fail) gateway.Release.SetException(new IOException("Common folders unavailable."));
+        else gateway.Release.SetResult(Enumerable.Range(0, count).Select(index => Skill($"imported-{index}", $"Imported {index}")).ToArray());
+        await import.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.True(viewModel.IsListActive);
+        Assert.Null(viewModel.SelectedSkill);
+        Assert.False(viewModel.IsBusy);
+        Assert.True(viewModel.HasStatus);
+        Assert.Equal(count, viewModel.Skills.Count);
+        if (fail) Assert.True(viewModel.IsStatusError);
+        else if (count == 0) Assert.True(viewModel.IsStatusWarning);
+        else Assert.True(viewModel.IsStatusSuccess);
+    }
+
+    [Fact]
+    public async Task CommonImportCompletionCannotReopenOverviewAfterUserChoosesSingleSkillImport()
+    {
+        var gateway = new CommonImportGateway();
+        using var viewModel = new SkillSettingsViewModel(gateway) { IsCompactLayout = true };
+        await viewModel.InitializeAsync();
+        var import = viewModel.ImportCommonSkillFoldersCommand.ExecuteAsync(null);
+        await gateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        viewModel.NewSkillCommand.Execute(null);
+        var status = viewModel.StatusText;
+        gateway.Release.SetResult([Skill("late", "Late skill")]);
+        await import.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(viewModel.IsDetailActive);
+        Assert.Equal(status, viewModel.StatusText);
+        Assert.Empty(viewModel.Skills);
+    }
+
+    [Fact]
+    public async Task CommonImportFailureShowsEarlierCommittedSkillsWithoutLosingTheError()
+    {
+        var gateway = new CommonImportGateway();
+        using var viewModel = new SkillSettingsViewModel(gateway) { IsCompactLayout = true };
+        await viewModel.InitializeAsync();
+        var import = viewModel.ImportCommonSkillFoldersCommand.ExecuteAsync(null);
+        await gateway.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        gateway.PublishCommittedSkills([Skill("committed", "Committed")]);
+        const string failure = "Imported 1 skill(s) before the failure. The second root is inaccessible.";
+        gateway.Release.SetException(new IOException(failure));
+        await import.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Equal("committed", Assert.Single(viewModel.Skills).SkillId);
+        Assert.Equal(failure, viewModel.StatusText);
+        Assert.True(viewModel.IsStatusError);
+        Assert.True(viewModel.IsListActive);
+        Assert.False(viewModel.IsBusy);
+    }
+
+    private sealed class CommonImportGateway : ISkillManagementGateway
+    {
+        private IReadOnlyList<InstalledSkillRecord> _skills = [];
+        public event Action? SkillsChanged { add { } remove { } }
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<IReadOnlyList<InstalledSkillRecord>> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public void PublishCommittedSkills(IReadOnlyList<InstalledSkillRecord> skills) => _skills = skills;
+        public Task<IReadOnlyList<InstalledSkillRecord>> ListAsync(CancellationToken cancellationToken = default) => Task.FromResult(_skills);
+        public async Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonAsync(CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            return _skills = await Release.Task;
+        }
+        public Task<IReadOnlyList<InstalledSkillRecord>> ImportGitHubAsync(string url, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<InstalledSkillRecord>> ImportLocalAsync(string path, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+        public Task DeleteAsync(string skillId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
     [Fact]
     public async Task RuntimeRefresh_StaleInitializationSnapshotCannotOverwriteLatestRows()
     {

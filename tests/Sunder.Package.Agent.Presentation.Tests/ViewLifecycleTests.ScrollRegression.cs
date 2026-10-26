@@ -260,11 +260,12 @@ public sealed partial class ViewLifecycleTests
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext("younics.ai.agent.chat", new Dictionary<string, string?>()));
             var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            await RevealCompactCallsAsync(view, model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
             var row = Assert.Single(model.Messages.OfType<AgentToolInvocationRowViewModel>());
             var repeater = view.FindControl<ItemsRepeater>("TranscriptItemsControl")!;
             var viewer = GetTranscriptScrollViewer(view);
             var coordinator = GetTranscriptScrollCoordinator(view);
-            var element = repeater.GetOrCreateElement(model.Messages.IndexOf(row));
+            var element = repeater.GetOrCreateElement(model.TranscriptItems.IndexOf(row));
             element.BringIntoView();
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             Button Header() => Assert.Single(view.GetVisualDescendants().OfType<Button>(),

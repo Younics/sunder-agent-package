@@ -291,7 +291,7 @@ public sealed partial class TranscriptViewportMutationTests
 
         Assert.Equal(baseline.ProgrammaticOffsetWrites, coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites);
         Assert.False(host.IsTrailingCompensatorActive);
-        Assert.False(host.HasExactAnchorLease);
+        Assert.True(host.HasExactAnchorLease);
         Assert.InRange(Math.Abs(Top(tool, scrollViewer) - headerTop), 0, 0.1);
         var writesAfterCollapse = coordinator.DiagnosticSnapshot.ProgrammaticOffsetWrites;
         source.AdvanceGeometry();
@@ -363,7 +363,7 @@ public sealed partial class TranscriptViewportMutationTests
         await LayoutAsync(window);
 
         Assert.False(host.IsTrailingCompensatorActive);
-        Assert.False(host.HasExactAnchorLease);
+        Assert.True(host.HasExactAnchorLease);
         Assert.Equal(0, MaxOffset(scrollViewer), precision: 3);
         Assert.InRange(Math.Abs(Top(tool, scrollViewer) - headerTop), 0, 0.1);
         window.Close();

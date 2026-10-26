@@ -26,6 +26,7 @@ internal sealed class BuilderDevelopmentSession(
     internal PackageDevelopmentStatus? Status { get; private set; }
     internal BuilderJobSnapshot? PendingHotreload { get; set; }
     internal PackageDevelopmentRevision? ReloadCommittedRevision { get; set; }
+    internal BuilderReloadProgress? ReloadProgress { get; set; }
 
     internal async Task LoadAsync(string folder, CancellationToken token)
     {

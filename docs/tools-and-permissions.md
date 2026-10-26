@@ -119,6 +119,16 @@ Transient authority is separate. First-party Local planning issues random `local
 
 `apply_patch` accepts at most 64 operations and 64 distinct paths. Permission planning checks those bounds before resource resolution, requests at most two outside capabilities per path, and never transfers more than 128 capabilities into one invocation. Multi-path planning owns issued capabilities transactionally: a later resolution failure, cancellation, capability overflow, or failed durable permission suspension revokes every capability already issued. After each successful patch mutation, Local and Docker can return a JSON-ignored post-mutation resource receipt. Compensation replaces the pre-state claim with that exact created/deleted-state claim; outside Local compensation additionally receives one capability backed by the published target handle or retained missing-target parent. Successful completion and compensation cleanup revoke unused receipt authority. Cancellation is rethrown only after every observed mutation is restored and the interrupted operation is proven unchanged or restored. A rollback conflict, unavailable probe, or other uncertain state returns `patch-partial-application` with the exact completed, failed, and uncertain rollback paths.
 
+Local configured-scope patch siblings may reuse parent directories created by the
+same exact approved invocation. Retained executor handles must prove both the
+original identity-chain prefix and every appended ancestor; matching names alone
+never establish ownership. Optional capabilities expire and release independently
+of in-flight borrows. An operation owns at most 512 new parent directories.
+Release only attempts nonrecursive, identity-checked retirement of empty owned
+directories. Populated directories and the existing secure quarantine/recovery
+entries are retained. Restoring patch files therefore does not prove physical
+directory cleanup or a pristine filesystem; compensation reports these separately.
+
 Shell permission includes a bounded command summary and the selected binding. Structured process invocation is safer than caller-authored shell quoting but still requires execution permission. Shell commands are not parsed into trustworthy file paths and are outside Local and Docker no-follow structured-files guarantees, so scoped `AGENTS.md` mutation enforcement applies only to structured Files tools. Shell completion refreshes workspace roots and known claims; it does not claim arbitrary command paths.
 
 First-party package composition constructs `FilesToolSource` with `IPackageContext` and resolves targets through the Agent RPC catalog. Local/Docker use also requires `IAgentScopedInstructionDiscoveryTarget` and `IAgentExecutionScopeProvider`. Files `grep`/`glob` require `IAgentStructuredFileSearchExecutionTarget` and never fall back to process or broad shell authorization.
@@ -182,6 +192,13 @@ ambiguous outcomes, permission controls, child-session links and shell/backgroun
 activity remain separate. **Detailed activity** shows the individual rows directly.
 This switch changes only presentation, never stored history, correlation or model
 context. Group state is bounded by the retained transcript window.
+
+Older/newer transcript paging preserves the current visible row and its viewport
+position, including input received while a page is in flight. Loading indicators
+overlay the retained content rather than replacing it. Reaching the edge of a
+historical window loads another page without navigating through it automatically;
+**Jump to latest** remains an explicit action. Window trimming does not advance a
+page cursor past fetched rows that were not retained.
 
 ## Security Checklist
 

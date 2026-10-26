@@ -15,7 +15,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
-public sealed class TranscriptPagingProgressTests
+public sealed partial class TranscriptPagingProgressTests
 {
     [AvaloniaTheory]
     [InlineData(false)]

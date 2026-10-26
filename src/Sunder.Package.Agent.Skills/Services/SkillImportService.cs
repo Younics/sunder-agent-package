@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Sunder.Package.Agent.Skills.Runtime;
 using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Skills.Services;
@@ -54,7 +55,7 @@ public sealed partial class SkillImportService
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
         {
-            throw new InvalidOperationException("Select an existing skill folder.");
+            throw new SkillOwnerOperationException("Select an existing skill folder.");
         }
 
         return InstallFromFolderAsync(
@@ -71,7 +72,7 @@ public sealed partial class SkillImportService
         cancellationToken.ThrowIfCancellationRequested();
         if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
         {
-            throw new InvalidOperationException("Select an existing skill folder.");
+            throw new SkillOwnerOperationException("Select an existing skill folder.");
         }
 
         if (File.Exists(Path.Combine(folderPath, "SKILL.md")))
@@ -82,7 +83,7 @@ public sealed partial class SkillImportService
         var skillFolders = FindSkillFolders(folderPath, cancellationToken).ToArray();
         if (skillFolders.Length == 0)
         {
-            throw new InvalidOperationException("Selected folder does not contain any skill folders with SKILL.md files.");
+            throw new SkillOwnerOperationException("Selected folder does not contain any skill folders with SKILL.md files.");
         }
 
         return await ImportLocalFolderSetAsync(skillFolders, includeSourceUri: true, cancellationToken).ConfigureAwait(false);
@@ -107,7 +108,7 @@ public sealed partial class SkillImportService
         var skillFolders = FindSkillFolders(folderPath, cancellationToken).ToArray();
         if (skillFolders.Length == 0)
         {
-            throw new InvalidOperationException("Transferred folder does not contain any skill folders with SKILL.md files.");
+            throw new SkillOwnerOperationException("Transferred folder does not contain any skill folders with SKILL.md files.");
         }
 
         return await ImportLocalFolderSetAsync(skillFolders, includeSourceUri: false, cancellationToken).ConfigureAwait(false);
@@ -116,14 +117,31 @@ public sealed partial class SkillImportService
     public async Task<IReadOnlyList<InstalledSkillRecord>> ImportCommonSkillFoldersAsync(CancellationToken cancellationToken = default)
     {
         var imported = new List<InstalledSkillRecord>();
-        foreach (var folder in EnumerateCommonSkillRoots().Where(Directory.Exists).Distinct(StringComparer.Ordinal))
+        foreach (var folder in EnumerateCommonSkillRoots().Distinct(StringComparer.Ordinal))
         {
-            if (!File.Exists(Path.Combine(folder, "SKILL.md")) && !FindSkillFolders(folder, cancellationToken).Any())
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                continue;
+                try
+                {
+                    if ((File.GetAttributes(folder) & FileAttributes.Directory) == 0) continue;
+                }
+                catch (FileNotFoundException) { continue; }
+                catch (DirectoryNotFoundException) { continue; }
+                catch (Exception error) when (SkillImportOperationException.IsSourceFailure(error))
+                {
+                    throw new SkillImportOperationException("inspect common skill folder", folder, error);
+                }
+                if (!File.Exists(Path.Combine(folder, "SKILL.md")) && !FindSkillFolders(folder, cancellationToken).Any())
+                    continue;
+                imported.AddRange(await ImportLocalSkillsAsync(folder, cancellationToken).ConfigureAwait(false));
             }
-
-            imported.AddRange(await ImportLocalSkillsAsync(folder, cancellationToken).ConfigureAwait(false));
+            catch (SkillOwnerOperationException error) when (imported.Count > 0)
+            {
+                var sourceError = error as SkillImportOperationException;
+                throw new SkillImportOperationException(sourceError?.Phase ?? "import common skill folder",
+                    sourceError?.SourcePath ?? folder, sourceError?.InnerException ?? error, imported.Count);
+            }
         }
 
         return imported;
@@ -296,7 +314,7 @@ public sealed partial class SkillImportService
                 var skillId = ResolveSkillId(manifest.Name, folderPath, manifest.RawContent);
                 if (!skillIds.Add(skillId))
                 {
-                    throw new InvalidDataException($"Skill import contains duplicate or case-colliding id '{skillId}'.");
+                    throw new SkillOwnerOperationException($"Skill import contains duplicate or case-colliding id '{skillId}'.");
                 }
             }
 
@@ -416,12 +434,21 @@ public sealed partial class SkillImportService
     }
 
     private static IEnumerable<string> FindSkillFolders(string rootPath, CancellationToken cancellationToken)
-        => Sunder.Package.Agent.Shared.Importing.BoundedImportIO.ValidateTree(rootPath, SkillSourceAcquirer.Limits, cancellationToken)
-            .Where(file => string.Equals(Path.GetFileName(file.RelativePath), "SKILL.md", StringComparison.Ordinal)
-                           && !file.RelativePath.Split('/').Any(segment => segment is ".git" or ".svn" or ".hg"))
-            .Select(file => Path.GetDirectoryName(file.SourcePath)!)
-            .Distinct(StringComparer.Ordinal)
-            .OrderBy(path => path, StringComparer.Ordinal);
+    {
+        try
+        {
+            return Sunder.Package.Agent.Shared.Importing.BoundedImportIO.ValidateTree(rootPath, SkillSourceAcquirer.Limits, cancellationToken)
+                .Where(file => string.Equals(Path.GetFileName(file.RelativePath), "SKILL.md", StringComparison.Ordinal)
+                               && !file.RelativePath.Split('/').Any(segment => segment is ".git" or ".svn" or ".hg"))
+                .Select(file => Path.GetDirectoryName(file.SourcePath)!)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(path => path, StringComparer.Ordinal).ToArray();
+        }
+        catch (Exception error) when (SkillImportOperationException.IsSourceFailure(error))
+        {
+            throw new SkillImportOperationException("discover skills", rootPath, error);
+        }
+    }
 
     private static IEnumerable<string> EnumerateCommonSkillRoots()
     {

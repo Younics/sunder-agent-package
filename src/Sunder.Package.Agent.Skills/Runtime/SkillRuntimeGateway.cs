@@ -269,7 +269,15 @@ internal sealed partial class SkillRuntimeHandler(
             var imported = await import().ConfigureAwait(false);
             return SkillProjectionContent.Create(Project(imported.Select(skill => skill.SkillId).ToArray()));
         }
-        catch (SkillOwnerOperationException error) { throw OwnerJson.Map(error); }
+        catch (SkillOwnerOperationException error)
+        {
+            if (error is SkillImportOperationException importError)
+                _logger.LogWarning("Skill import failed: phase={ImportPhase}; path={ImportPath}; exceptionType={ExceptionType}; completedCount={CompletedCount}; nativeError={NativeError}; reason={FailureMessage}",
+                    importError.Phase, importError.SourcePath, importError.InnerException?.GetType().FullName,
+                    importError.CompletedCount, (importError.InnerException?.InnerException as System.ComponentModel.Win32Exception)?.NativeErrorCode,
+                    importError.FailureMessage);
+            throw OwnerJson.Map(error);
+        }
     }
 
     [SunderMethod(Errors = ["skills.owner.operation-failed"])]
@@ -555,6 +563,6 @@ internal static class OwnerJson
     }
 }
 
-internal sealed class SkillOwnerOperationException(
+internal class SkillOwnerOperationException(
     string message,
     Exception? innerException = null) : InvalidOperationException(message, innerException);

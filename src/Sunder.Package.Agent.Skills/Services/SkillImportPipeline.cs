@@ -30,9 +30,10 @@ internal sealed class SkillSourceAcquirer(
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var stagingRoot = CreateStagingRoot();
+        string? stagingRoot = null;
         try
         {
+            stagingRoot = CreateStagingRoot();
             var files = BoundedImportIO.ValidateTree(sourceRoot, Limits, cancellationToken);
             var selected = files.Where(file => !IsIgnoredPath(file.RelativePath)).ToArray();
             EnsureRootManifest(selected.Select(file => file.RelativePath));
@@ -46,9 +47,11 @@ internal sealed class SkillSourceAcquirer(
                 stagingRoot,
                 selected.Length == files.Count ? [] : ["Skipped source-control metadata while staging the skill."]);
         }
-        catch
+        catch (Exception error)
         {
             SkillImportFileSystem.TryDeleteDirectory(stagingRoot);
+            if (SkillImportOperationException.IsSourceFailure(error))
+                throw new SkillImportOperationException("read or stage local skill", sourceRoot, error);
             throw;
         }
     }
@@ -57,12 +60,13 @@ internal sealed class SkillSourceAcquirer(
         GitHubSkillFolder folder,
         CancellationToken cancellationToken)
     {
-        var remoteFiles = await gitHubClient.ListFilesAsync(folder, cancellationToken).ConfigureAwait(false);
-        var selected = ValidateRemoteFiles(remoteFiles);
-        EnsureRootManifest(selected.Select(file => file.RelativePath));
-        var stagingRoot = CreateStagingRoot();
+        string? stagingRoot = null;
         try
         {
+            var remoteFiles = await gitHubClient.ListFilesAsync(folder, cancellationToken).ConfigureAwait(false);
+            var selected = ValidateRemoteFiles(remoteFiles);
+            EnsureRootManifest(selected.Select(file => file.RelativePath));
+            stagingRoot = CreateStagingRoot();
             using var writer = BoundedImportIO.OpenTreeWriter(stagingRoot);
             long totalBytes = 0;
             foreach (var file in selected)
@@ -90,9 +94,11 @@ internal sealed class SkillSourceAcquirer(
                 stagingRoot,
                 selected.Count == remoteFiles.Count ? [] : ["Skipped source-control metadata while staging the skill."]);
         }
-        catch
+        catch (Exception error)
         {
             SkillImportFileSystem.TryDeleteDirectory(stagingRoot);
+            if (SkillImportOperationException.IsSourceFailure(error))
+                throw new SkillImportOperationException("read or stage GitHub skill", folder.FolderPath, error);
             throw;
         }
     }
@@ -163,8 +169,15 @@ internal static class SkillManifestReader
     public static async Task<ParsedSkillMarkdown> ReadAsync(string stagedRoot, CancellationToken cancellationToken)
     {
         var path = Path.Combine(stagedRoot, "SKILL.md");
-        var rawContent = await BoundedImportIO.ReadUtf8FileAsync(path, MaxManifestBytes, cancellationToken).ConfigureAwait(false);
-        return SkillMarkdownParser.Parse(rawContent);
+        try
+        {
+            var rawContent = await BoundedImportIO.ReadUtf8FileAsync(path, MaxManifestBytes, cancellationToken).ConfigureAwait(false);
+            return SkillMarkdownParser.Parse(rawContent);
+        }
+        catch (Exception error) when (SkillImportOperationException.IsSourceFailure(error))
+        {
+            throw new SkillImportOperationException("read skill manifest", path, error);
+        }
     }
 }
 
@@ -494,21 +507,27 @@ internal static class SkillContentHasher
 {
     public static async Task<string> ComputeAsync(string rootPath, CancellationToken cancellationToken)
     {
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        foreach (var file in BoundedImportIO.ValidateTree(rootPath, SkillSourceAcquirer.Limits, cancellationToken))
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var pathBytes = Encoding.UTF8.GetBytes(file.RelativePath);
-            hash.AppendData(pathBytes);
-            hash.AppendData([0]);
-            await BoundedImportIO.CopyFileToAsync(
-                file,
-                Stream.Null,
-                cancellationToken,
-                copiedContentHash: hash).ConfigureAwait(false);
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            foreach (var file in BoundedImportIO.ValidateTree(rootPath, SkillSourceAcquirer.Limits, cancellationToken))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var pathBytes = Encoding.UTF8.GetBytes(file.RelativePath);
+                hash.AppendData(pathBytes);
+                hash.AppendData([0]);
+                await BoundedImportIO.CopyFileToAsync(
+                    file,
+                    Stream.Null,
+                    cancellationToken,
+                    copiedContentHash: hash).ConfigureAwait(false);
+            }
+            return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
         }
-
-        return Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant();
+        catch (Exception error) when (SkillImportOperationException.IsSourceFailure(error))
+        {
+            throw new SkillImportOperationException("hash staged skill", rootPath, error);
+        }
     }
 }
 

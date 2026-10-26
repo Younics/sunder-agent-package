@@ -24,25 +24,41 @@ internal readonly record struct TranscriptPageAnchorResolution(
 internal sealed class TranscriptPageAnchorAuthority
 {
     private readonly Func<TranscriptPageAnchorResolution> _resolveCurrentAnchor;
+    private readonly Action? _preparePublication;
+    private readonly Action? _completePublication;
 
     public TranscriptPageAnchorAuthority(
         object? capturedAnchorKey,
-        Func<object?> resolveCurrentAnchorKey)
+        Func<object?> resolveCurrentAnchorKey,
+        Action? preparePublication = null,
+        Action? completePublication = null)
         : this(
             capturedAnchorKey,
-            () => TranscriptPageAnchorResolution.Preserve(resolveCurrentAnchorKey()))
+            () => TranscriptPageAnchorResolution.Preserve(resolveCurrentAnchorKey()),
+            preparePublication,
+            completePublication)
     {
     }
 
     public TranscriptPageAnchorAuthority(
         object? capturedAnchorKey,
-        Func<TranscriptPageAnchorResolution> resolveCurrentAnchor)
+        Func<TranscriptPageAnchorResolution> resolveCurrentAnchor,
+        Action? preparePublication = null,
+        Action? completePublication = null)
     {
         CapturedAnchorKey = capturedAnchorKey;
         _resolveCurrentAnchor = resolveCurrentAnchor;
+        _preparePublication = preparePublication;
+        _completePublication = completePublication;
     }
 
     public object? CapturedAnchorKey { get; }
+
+    // Called on the presentation thread after response validation, immediately
+    // before insertion/trim. Fetch-time geometry is not current user authority.
+    public void PreparePublication() => _preparePublication?.Invoke();
+
+    public void CompletePublication() => _completePublication?.Invoke();
 
     public TranscriptPageAnchorResolution ResolveCurrentAnchor()
     {

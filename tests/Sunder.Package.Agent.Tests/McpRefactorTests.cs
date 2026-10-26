@@ -68,6 +68,31 @@ public sealed class McpRefactorTests
         var options = await oauth.CreateClientOptionsAsync(server, allowInteractive: false);
 
         Assert.NotNull(options);
+        Assert.NotNull(options.AuthorizationCallbackHandler);
+        Assert.Null(await options.AuthorizationCallbackHandler(new()
+        {
+            AuthorizationUri = new("https://auth.example/authorize"),
+            RedirectUri = options.RedirectUri,
+        }, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("received-state", "https://issuer.example/")]
+    [InlineData("wrong-state", "https://different-issuer.example/")]
+    [InlineData(null, "https://issuer.example/")]
+    [InlineData("received-state", null)]
+    public void OAuthCallbackResult_PreservesReceivedStateAndIssuerWithoutFabricatingThem(string? state, string? issuer)
+    {
+        var response = McpOAuthService.ReadAuthorizationResult(new Dictionary<string, string?>
+        {
+            ["code"] = "received-code",
+            ["state"] = state,
+            ["iss"] = issuer,
+        });
+
+        Assert.Equal("received-code", response.Code);
+        Assert.Equal(state, response.State);
+        Assert.Equal(issuer, response.Iss);
     }
 
     [Fact]

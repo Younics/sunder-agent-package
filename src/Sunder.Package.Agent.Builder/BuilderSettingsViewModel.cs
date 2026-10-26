@@ -10,6 +10,8 @@ public sealed class BuilderSdkManager : IAsyncDisposable
     private readonly BuilderProjectApplicationService _application;
     private readonly IBuilderUiDispatcher _ui;
     private readonly PresentationTaskScope _tasks;
+    private readonly object _refreshSync = new();
+    private Task? _refresh;
 
     public BuilderSdkManager(BuilderProjectApplicationService application, IBuilderUiDispatcher ui)
     {
@@ -23,7 +25,13 @@ public sealed class BuilderSdkManager : IAsyncDisposable
 
     public Task RefreshAsync(bool checkUpdates = true, CancellationToken cancellationToken = default)
     {
-        var refresh = _tasks.Track(token => Task.WhenAll(Cards.Select(card => RefreshCardAsync(card, checkUpdates, token))));
+        cancellationToken.ThrowIfCancellationRequested();
+        Task refresh;
+        lock (_refreshSync)
+        {
+            refresh = _refresh is { IsCompleted: false } ? _refresh
+                : _refresh = _tasks.Track(token => Task.WhenAll(Cards.Select(card => RefreshCardAsync(card, checkUpdates, token))));
+        }
         return cancellationToken.CanBeCanceled ? refresh.WaitAsync(cancellationToken) : refresh;
     }
 
@@ -105,10 +113,14 @@ public sealed class BuilderSettingsViewModel(BuilderSdkManager manager) : IPacka
     public Task RemoveAsync(BuilderToolchainInstallation installation) => manager.RemoveAsync(installation);
     public void Cancel(BuilderProjectKind kind) => manager.Cancel(kind);
 
-    public async ValueTask<bool> PrepareNavigationAsync(PackageViewNavigationContext context, CancellationToken cancellationToken = default)
+    public ValueTask<bool> PrepareNavigationAsync(PackageViewNavigationContext context, CancellationToken cancellationToken = default)
     {
-        await RefreshAsync(cancellationToken).ConfigureAwait(false);
-        return true;
+        cancellationToken.ThrowIfCancellationRequested();
+        // Both cards (and any cached observations) are already present. SDK probes
+        // and remote update checks are activation-owned observations, not a gate
+        // on presenting Settings. The manager tracks, coalesces and drains this work.
+        _ = manager.RefreshAsync();
+        return ValueTask.FromResult(true);
     }
     public ValueTask OnNavigationPresentedAsync(PackageViewNavigationContext context, CancellationToken cancellationToken = default)
         => ValueTask.CompletedTask;
@@ -124,15 +136,20 @@ public sealed class BuilderSdkCardViewModel(BuilderProjectKind kind) : BuilderOb
     private string _message = string.Empty;
     private string _output = string.Empty;
     public BuilderProjectKind Kind { get; } = kind;
+    public string Glyph => Kind == BuilderProjectKind.Dotnet ? ".NET" : "JS";
     public string Title => Kind == BuilderProjectKind.Dotnet ? ".NET SDK" : "Node.js + npm";
     public string Description => Kind == BuilderProjectKind.Dotnet ? "UI-ready Avalonia packages" : "UI-ready React / TypeScript packages";
     public ObservableCollection<BuilderSdkInstallationViewModel> Installations { get; } = [];
     public bool IsBusy { get => _busy; internal set { _busy = value; Notify(); } }
     public bool IsRefreshing { get => _refreshing; internal set { _refreshing = value; Notify(); } }
     public bool CanManage => !IsBusy && !IsRefreshing;
-    public bool IsEmpty => Installations.Count == 0;
-    public string CurrentVersion => _status is null ? "Not checked" : string.Join(", ", _status.Installed.Where(item => item.IsHealthy).Select(item => item.Version).Distinct()) is { Length: > 0 } versions ? versions : "Not installed";
-    public string RecommendedVersion => _status?.RecommendedVersion ?? "Unknown";
+    public bool IsEmpty => _status is not null && Installations.Count == 0;
+    public string CurrentVersion => _status is null ? IsRefreshing ? "Checking…" : "Not checked" : string.Join(", ", _status.Installed.Where(item => item.IsHealthy).Select(item => item.Version).Distinct()) is { Length: > 0 } versions ? versions : "Not installed";
+    public string RecommendedVersion => _status?.RecommendedVersion ?? (IsRefreshing ? "Checking…" : "Unknown");
+    public string VersionText => $"Current: {CurrentVersion} · Recommended: {RecommendedVersion}";
+    public string PrimaryActionText => IsEmpty ? "Install SDK" : _status?.UpdateAvailable == true ? "Update SDK" : "Install / update SDK";
+    public string Status => IsRefreshing ? "Checking SDKs…" : _status is null ? _refreshError.Length > 0 ? "SDK discovery unavailable" : "Not checked"
+        : IsEmpty ? "Not installed" : _status.Installed.Any(item => !item.IsHealthy) ? "One or more SDKs need repair" : UpdateText;
     public string UpdateText => _status?.CatalogError is { } error ? "Update status unknown · " + error
         : _status?.UpdateAvailable switch { true => "Update available", false => "Up to date", null => "Update status unknown" };
     public string LastCheckText => _status?.LastCheckedAtUtc is { } checkedAt ? "Last check: " + checkedAt.ToLocalTime().ToString("g") : "No check yet";
@@ -140,6 +157,7 @@ public sealed class BuilderSdkCardViewModel(BuilderProjectKind kind) : BuilderOb
     public bool HasError => ErrorMessage.Length > 0;
     public string Message => _message;
     public bool ShowMessage => !HasError && _message.Length > 0;
+    public bool ShowOperationStatus => IsBusy || ShowMessage;
     public string Output => _output;
     public bool HasOutput => _output.Length > 0;
     internal CancellationTokenSource? Cancellation { get; set; }

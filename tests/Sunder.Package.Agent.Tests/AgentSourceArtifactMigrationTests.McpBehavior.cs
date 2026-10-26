@@ -22,7 +22,7 @@ using McpWorker::Sunder.Package.Agent.Mcp.Runtime;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static async Task VerifyMcpRoles(string worker)
+    internal static async Task VerifyMcpRoles(string worker)
     {
         var wireJson = new JsonSerializerOptions(MemoryProviderJson)
         { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never };
@@ -112,6 +112,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var sourceWire = new { sessionId = session, profile, workspace = (object?)null, executionBinding = (object?)null,
                 executionTarget = (object?)null, executionTargetConfigurationGeneration = (string?)null };
             var tools = await Rpc("mcp.tools", "tool-source", "list-tools", sourceWire);
+            Assert.True(peer.DiscoveryCalls > 0, "The upgraded client must discover the loopback server before using its tools.");
             var toolId = Assert.Single(tools.EnumerateArray()).GetProperty("toolId").GetString()!;
             var ready = await Rpc("mcp.tools", "tool-source", "get-readiness", new { toolId, context = sourceWire });
             Assert.Equal("ready", ready.GetProperty("status").GetString());

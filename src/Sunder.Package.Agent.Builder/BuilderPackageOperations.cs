@@ -142,37 +142,62 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     private async Task<PackageDevelopmentRevision> ApplyPendingHotreloadAsync(BuilderDevelopmentSession session, CancellationToken token)
     {
         var output = session.PendingHotreload!;
-        // A second explicit reload while an outcome is unresolved queries the
-        // same operation. It never reruns the compiler or stages different bytes.
-        session.ReloadCommittedRevision ??= await session.Handle.ReloadAsync(output.Id, output.DevelopmentContentIdentity!, token).ConfigureAwait(false);
-        var committed = session.ReloadCommittedRevision;
-        if (committed.SourceContentIdentity != output.DevelopmentContentIdentity)
-            throw new InvalidDataException("The reload acknowledgement did not identify the built output.");
-        using var observation = CancellationTokenSource.CreateLinkedTokenSource(token);
-        observation.CancelAfter(TimeSpan.FromSeconds(10));
+        SetReloadProgress(session, output.Id, "running", "reloading");
         try
         {
-            while (true)
+            // Explicit resolution retains the same operation and exact bytes.
+            session.ReloadCommittedRevision ??= await session.Handle.ReloadAsync(output.Id, output.DevelopmentContentIdentity!, token).ConfigureAwait(false);
+            var committed = session.ReloadCommittedRevision;
+            if (committed.SourceContentIdentity != output.DevelopmentContentIdentity)
+                throw new InvalidDataException("The reload acknowledgement did not identify the built output.");
+            SetReloadProgress(session, output.Id, "running", "waiting-for-app");
+            using var observation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            observation.CancelAfter(TimeSpan.FromSeconds(10));
+            try
             {
-                var status = await session.Handle.GetStatusAsync(observation.Token).ConfigureAwait(false);
-                if (status.AppliedRevision is { } applied && applied.RuntimeInstanceId == committed.RuntimeInstanceId
-                    && applied.SessionGeneration >= committed.SessionGeneration && applied.SourceContentIdentity == committed.SourceContentIdentity)
+                while (true)
                 {
-                    session.PendingHotreload = null;
-                    session.ReloadCommittedRevision = null;
-                    Notify(session);
-                    return applied;
+                    var status = await session.Handle.GetStatusAsync(observation.Token).ConfigureAwait(false);
+                    if (IsCurrentlyApplied(status, committed.SourceContentIdentity) && status.AppliedRevision is { } applied && applied.RuntimeInstanceId == committed.RuntimeInstanceId
+                        && applied.SessionGeneration >= committed.SessionGeneration && applied.SourceContentIdentity == committed.SourceContentIdentity)
+                    {
+                        session.PendingHotreload = null;
+                        session.ReloadCommittedRevision = null;
+                        SetReloadProgress(session, output.Id, "succeeded", "applied");
+                        return applied;
+                    }
+                    if (status.RuntimeRevision is { } actual && actual.RuntimeInstanceId != committed.RuntimeInstanceId)
+                        throw new InvalidOperationException("The Runtime was replaced before this exact reload could be observed. Do not replay its mutation.");
+                    if (status.RuntimeRevision is { } failed && failed.RuntimeInstanceId == committed.RuntimeInstanceId
+                        && failed.SessionGeneration >= committed.SessionGeneration && failed.SourceContentIdentity == committed.SourceContentIdentity
+                        && (status.RuntimeReadiness == PackageDevelopmentRuntimeReadiness.Failed || status.AppReadiness == PackageDevelopmentAppReadiness.Quarantined))
+                    {
+                        session.PendingHotreload = null;
+                        session.ReloadCommittedRevision = null;
+                        SetReloadProgress(session, output.Id, "failed", "activation-failed", status.ErrorMessage ?? "The selected Runtime/App activation failed.");
+                        throw new InvalidOperationException(session.ReloadProgress!.Error);
+                    }
+                    await Task.Delay(TimeSpan.FromMilliseconds(100), observation.Token).ConfigureAwait(false);
                 }
-                if (status.RuntimeRevision is { } actual && actual.RuntimeInstanceId != committed.RuntimeInstanceId)
-                    throw new InvalidOperationException("The Runtime was replaced before this exact reload could be observed. Do not replay its mutation.");
-                await Task.Delay(TimeSpan.FromMilliseconds(100), observation.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException error) when (error.CancellationToken == observation.Token && observation.IsCancellationRequested)
+            {
+                if (token.IsCancellationRequested) throw new OperationCanceledException(error.Message, error, token);
+                throw new TimeoutException("Reload committed, but the exact Runtime/App revision is not yet applied. Observe this operation before another mutation.", error);
             }
         }
-        catch (OperationCanceledException error) when (error.CancellationToken == observation.Token && observation.IsCancellationRequested)
+        catch (Exception error)
         {
-            if (token.IsCancellationRequested) throw new OperationCanceledException(error.Message, error, token);
-            throw new TimeoutException("Reload committed, but the exact Runtime/App revision is not yet applied. Observe this operation before another mutation.", error);
+            if (session.ReloadProgress?.State != "failed")
+                SetReloadProgress(session, output.Id, "unknown", session.ReloadProgress?.Phase ?? "reloading", BuilderJobText.Safe(error.Message, 512));
+            throw;
         }
+    }
+
+    private void SetReloadProgress(BuilderDevelopmentSession session, string id, string state, string phase, string? error = null)
+    {
+        session.ReloadProgress = new(id, state, phase, error);
+        Notify(session);
     }
 
     private static bool IsIdentity(string? value) => value is { Length: 64 } && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');

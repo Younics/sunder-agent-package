@@ -8,50 +8,42 @@
              x:DataType="vm:AgentMcpSettingsViewModel"
              mc:Ignorable="d">
   <UserControl.Styles>
-    <Style Selector="Border.mcp-shell">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-      <Setter Property="ClipToBounds" Value="True" />
-    </Style>
-
-    <Style Selector="Border.mcp-pane">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
-    </Style>
-
     <Style Selector="Border.mcp-list-pane">
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,1,0" />
+      <Setter Property="Padding" Value="0,0,20,0" />
+    </Style>
+
+    <Style Selector="Border.mcp-editor-pane">
+      <Setter Property="Padding" Value="20,0,0,0" />
+    </Style>
+
+    <Style Selector="Border.mcp-pane.compact">
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <Style Selector="Border.mcp-pane-header">
-      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="Padding" Value="0,0,0,16" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.mcp-list-body">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="0,16,0,0" />
     </Style>
 
     <Style Selector="Border.mcp-editor-body">
-      <Setter Property="Padding" Value="28,24" />
+      <Setter Property="Padding" Value="0,16" />
     </Style>
 
     <Style Selector="Border.mcp-actions">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="0,16,0,0" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
-    <Style Selector="Border.mcp-card">
-      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" />
-      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
-      <Setter Property="BorderThickness" Value="1" />
-      <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="16" />
-    </Style>
-
     <Style Selector="TextBlock.mcp-title">
-      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontSize" Value="24" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
@@ -130,18 +122,19 @@
     </Style>
   </UserControl.Styles>
 
-  <Border Classes="mcp-shell">
+  <Grid RowDefinitions="*,Auto" RowSpacing="12" ClipToBounds="True">
     <Grid x:Name="McpAdaptiveLayout"
           ColumnDefinitions="320,*"
           ColumnSpacing="4">
       <Border x:Name="McpListPane"
-              Classes="mcp-pane mcp-list-pane"
+               Classes="mcp-pane mcp-list-pane"
+               Classes.compact="{Binding IsCompactLayout}"
               IsVisible="{Binding ShowListPane}">
         <Grid RowDefinitions="Auto,*">
           <Border Grid.Row="0"
                   Classes="mcp-pane-header">
             <Grid ColumnDefinitions="*,Auto"
-                  RowDefinitions="Auto,Auto"
+                  RowDefinitions="Auto,Auto,Auto"
                   ColumnSpacing="12"
                   RowSpacing="8">
               <TextBlock Grid.Column="0"
@@ -156,7 +149,15 @@
               <TextBlock Grid.Row="1"
                          Grid.ColumnSpan="2"
                          Classes="mcp-caption"
-                         Text="Configure shared Model Context Protocol servers once, then enable them per agent." />
+                          Text="Configure shared Model Context Protocol servers once, then enable them per agent." />
+              <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
+                <Button x:Name="ImportCommonConfigsButton" Content="Import Common Configs"
+                        Classes="secondary-action compact-action" Margin="0,0,8,8"
+                        Command="{Binding ImportCommonConfigurationsCommand}" />
+                <Button x:Name="ImportConfigFileButton" Content="Import Config File"
+                        Classes="secondary-action compact-action" Margin="0,0,8,8"
+                        IsEnabled="{Binding CanStartOperation}" Click="OnImportConfigFileClick" />
+              </WrapPanel>
             </Grid>
           </Border>
 
@@ -193,7 +194,8 @@
 
       <Border x:Name="McpEditorPane"
               Grid.Column="1"
-              Classes="mcp-pane"
+              Classes="mcp-pane mcp-editor-pane"
+              Classes.compact="{Binding IsCompactLayout}"
               IsVisible="{Binding ShowEditorPane}">
         <Grid RowDefinitions="Auto,*,Auto">
           <Border Grid.Row="0"
@@ -213,7 +215,6 @@
             <Border Classes="mcp-editor-body">
               <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                     RowSpacing="14">
-                <Border Classes="mcp-card">
                   <StackPanel Spacing="6">
                     <TextBlock Classes="mcp-field-label"
                                Text="Machine name" />
@@ -223,11 +224,8 @@
                     <TextBlock Classes="mcp-field-help"
                                Text="Use a stable machine-readable name for profile assignments and runtime connection state." />
                   </StackPanel>
-                </Border>
 
-                <Border Grid.Row="1"
-                        Classes="mcp-card">
-                  <StackPanel Spacing="10">
+                  <StackPanel Grid.Row="1" Spacing="10">
                     <StackPanel Spacing="4">
                       <TextBlock Classes="mcp-field-label"
                                  Text="Editor tools" />
@@ -244,16 +242,8 @@
                       <Button Content="Format"
                                Margin="0,0,10,10"
                                Command="{Binding FormatCommand}" />
-                      <Button Content="Import Common Configs"
-                              Margin="0,0,10,10"
-                              Command="{Binding ImportCommonConfigurationsCommand}" />
-                       <Button Content="Import Config File"
-                               Margin="0,0,10,10"
-                               IsEnabled="{Binding CanStartOperation}"
-                               Click="OnImportConfigFileClick" />
                     </WrapPanel>
                   </StackPanel>
-                </Border>
 
                 <Border Grid.Row="2"
                         BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
@@ -279,9 +269,7 @@
                                   WordWrap="False" />
                 </Border>
 
-                <Border Grid.Row="3"
-                        Classes="mcp-card">
-                  <StackPanel Spacing="6">
+                  <StackPanel Grid.Row="3" Spacing="6">
                     <TextBlock Classes="mcp-field-label"
                                Text="Connection status" />
                     <TextBlock Classes="mcp-status-message"
@@ -315,12 +303,8 @@
                               IsVisible="{Binding HasSelectedOAuthServer}" />
                     </WrapPanel>
                   </StackPanel>
-                </Border>
 
-                <Border Grid.Row="4"
-                        Classes="mcp-card"
-                        IsVisible="{Binding HasSelectedServer}">
-                  <Grid RowDefinitions="Auto,*"
+                  <Grid Grid.Row="4" IsVisible="{Binding HasSelectedServer}" RowDefinitions="Auto,*"
                         RowSpacing="8">
                     <StackPanel Spacing="4">
                       <TextBlock Classes="mcp-field-label"
@@ -346,7 +330,6 @@
                       </ScrollViewer>
                     </Border>
                   </Grid>
-                </Border>
               </Grid>
             </Border>
           </ScrollViewer>
@@ -359,14 +342,6 @@
                       Classes="secondary-action compact-action danger-action"
                       Content="Delete Server"
                       Command="{Binding DeleteCommand}" />
-              <TextBlock Grid.Column="1"
-                         Classes="mcp-status-message"
-                         Classes.success="{Binding IsStatusSuccess}"
-                         Classes.warning="{Binding IsStatusWarning}"
-                         Classes.error="{Binding IsStatusError}"
-                         Text="{Binding StatusText}"
-                         TextWrapping="Wrap"
-                         VerticalAlignment="Center" />
               <Button Grid.Column="2"
                       Classes="secondary-action compact-action"
                       Content="Back"
@@ -381,5 +356,12 @@
         </Grid>
       </Border>
     </Grid>
-  </Border>
+    <StackPanel Grid.Row="1" Spacing="8">
+      <ProgressBar IsVisible="{Binding IsBusy}" IsIndeterminate="True" Height="3" />
+      <TextBlock x:Name="McpOperationStatus" Classes="mcp-status-message"
+                 Classes.success="{Binding IsStatusSuccess}" Classes.warning="{Binding IsStatusWarning}"
+                 Classes.error="{Binding IsStatusError}" Text="{Binding StatusText}"
+                 IsVisible="{Binding HasStatus}" />
+    </StackPanel>
+  </Grid>
 </UserControl>

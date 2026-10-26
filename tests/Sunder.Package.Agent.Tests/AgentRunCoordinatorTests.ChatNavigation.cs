@@ -1384,7 +1384,8 @@ public sealed partial class AgentRunCoordinatorTests
         void ObserveRunningState()
         {
             if (viewModel.SelectedSubsession?.IsRunActive == true
-                && viewModel.RunActivityRow.IsVisible)
+                && viewModel.RunActivityRow.IsVisible
+                && viewModel.RunActivityRow.ThinkingText.StartsWith("Running Task", StringComparison.Ordinal))
             {
                 runningApplied.TrySetResult();
             }

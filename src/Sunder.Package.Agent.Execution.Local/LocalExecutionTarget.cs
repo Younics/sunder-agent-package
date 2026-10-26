@@ -142,10 +142,14 @@ public sealed partial class LocalExecutionTarget : IExecutionTargetService, IDis
     public ValueTask ReleaseResourceAuthorityAsync(IReadOnlyList<string> resourceCapabilities, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
+        var failures = new List<Exception>();
         foreach (var capability in resourceCapabilities)
         {
-            _resourceReferences.Revoke(capability);
+            try { _resourceReferences.Revoke(capability); }
+            catch (Exception exception) when (exception is InvalidOperationException or IOException) { failures.Add(exception); }
         }
+        if (failures.Count > 0) throw new InvalidOperationException("Resource authority was released, but directory cleanup could not be confirmed. "
+            + string.Join(" | ", failures.Take(4).Select(failure => failure.Message)));
         return ValueTask.CompletedTask;
     }
 

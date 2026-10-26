@@ -63,12 +63,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
             <Project Sdk="Microsoft.NET.Sdk">
               <PropertyGroup><TargetFramework>net10.0</TargetFramework><OutputType>Exe</OutputType><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><NuGetAudit>false</NuGetAudit></PropertyGroup>
               <ItemGroup>
-                <PackageReference Include="Avalonia.Headless" Version="12.0.3" />
-                <PackageReference Include="Avalonia.Themes.Fluent" Version="12.0.3" />
+                <PackageReference Include="Avalonia.Headless" Version="12.1.4" />
+                <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.4" />
                 <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
-                <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
+                <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.13" />
                 {{(family == "Mcp" ? "<PackageReference Include=\"Avalonia.AvaloniaEdit\" Version=\"12.0.0\" /><PackageReference Include=\"AvaloniaEdit.TextMate\" Version=\"12.0.0\" />" : "")}}
-                {{(family is "Subagents" or "Agent" ? "<PackageReference Include=\"Avalonia.Controls.ItemsRepeater\" Version=\"12.0.0\" /><PackageReference Include=\"LiveMarkdown.Avalonia\" Version=\"2.2.0\" />" : "")}}
+                {{(family is "Subagents" or "Agent" ? "<PackageReference Include=\"Avalonia.Controls.ItemsRepeater\" Version=\"12.0.0\" /><PackageReference Include=\"LiveMarkdown.Avalonia\" Version=\"2.5.1\" />" : "")}}
                 {{string.Join("", new[] { name, "Sunder.Sdk", "Sunder.Sdk.Avalonia", "Microsoft.Extensions.Logging.Abstractions" }
                     .Select(reference => $"<Reference Include=\"{reference}\" HintPath=\"{Escape(Path.Combine(output, reference + ".dll"))}\" />"))}}
               </ItemGroup>

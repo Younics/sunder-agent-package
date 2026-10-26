@@ -121,6 +121,11 @@ public sealed partial class BuilderDevelopmentRelayTests
         Assert.Equal("tool-outcome-ambiguous", unknown.ErrorCode);
         using var json = JsonDocument.Parse(unknown.Content!);
         Assert.Equal("unknown", json.RootElement.GetProperty("status").GetString());
+        var check = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "observe-unknown-load" },
+            new("maker_operation", JsonSerializer.Serialize(new { operation = json.RootElement.GetProperty("operation").GetString(), wait = 0 })));
+        Assert.False(check.IsError, check.Content); // The read succeeded; the original mutation remains uncertain.
+        Assert.Null(check.ErrorCode);
+        Assert.Contains("Initial load reply lost", check.Content);
         var blocked = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "new-call-must-not-replay-load" }, request);
         Assert.True(blocked.IsError);
         Assert.Equal("maker.busy", blocked.ErrorCode);

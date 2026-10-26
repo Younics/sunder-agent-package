@@ -737,8 +737,7 @@ internal static partial class BoundedImportIO
         {
             var descriptor = Open(
                 rootPath,
-                UnixReadOnly | UnixDirectoryFlag | UnixNoFollowFlag | UnixCloseOnExecFlag,
-                0);
+                UnixReadOnly | UnixDirectoryFlag | UnixNoFollowFlag | UnixCloseOnExecFlag);
             if (descriptor < 0)
             {
                 ThrowOpenError(rootPath, Marshal.GetLastPInvokeError());

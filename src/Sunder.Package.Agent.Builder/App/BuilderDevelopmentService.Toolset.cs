@@ -42,7 +42,8 @@ public sealed partial class BuilderDevelopmentService
         return BuilderContent.Create(new { name = project.DisplayName, id = project.PackageId,
             loaded = status?.IsLoaded ?? false, runtime = status?.RuntimeReadiness.ToString().ToLowerInvariant() ?? "notloaded",
             app = status?.AppReadiness.ToString().ToLowerInvariant() ?? "unavailable",
-            pendingOperationId = pendingId ?? session?.PendingHotreload?.Id, error = diagnostic });
+            pendingOperationId = pendingId ?? session?.PendingHotreload?.Id, phase = session?.ReloadProgress?.Phase,
+            operationError = session?.ReloadProgress?.Error, error = diagnostic });
     }
 
     private async ValueTask<SunderContent> QueryViewAsync(string json, CancellationToken token)
@@ -140,6 +141,7 @@ public sealed partial class BuilderDevelopmentService
             {
                 var applied = await operations.ApplyBuiltAsync(selected, operation.Id, _lifetime.Token).ConfigureAwait(false);
                 result["state"] = "succeeded"; result["effect"] = applied.Effect;
+                result["phase"] = selected.AppliedOwner?.ReloadProgress?.Phase;
             }
             else if (operation.Kind == "open-view")
             {
@@ -168,8 +170,9 @@ public sealed partial class BuilderDevelopmentService
             result["state"] = _lifetime.IsCancellationRequested ? "cancelled" : "failed";
             result["error"] = BuilderJobText.Safe(error.Message, 512);
             result["outcomeUnknown"] = operation.Kind == "input-view" && error is not InvalidOperationException
-                || operation.Selection is { } selected && (selected.InitialLoadAttempted || error is TimeoutException
+                || operation.Selection is { } selected && selected.AppliedOwner?.ReloadProgress?.State != "failed" && (selected.InitialLoadAttempted || error is TimeoutException
                     || operations.GetSession(operation.Project.EntryPoint)?.PendingHotreload is not null);
+            result["phase"] = operation.Selection?.AppliedOwner?.ReloadProgress?.Phase;
         }
         lock (_sync) operation.Result = result;
     }
@@ -178,11 +181,24 @@ public sealed partial class BuilderDevelopmentService
     {
         if (operation.Request != request) throw Error("maker.development.invalid-request", "Operation belongs to different authorized inputs.");
         JsonObject result; lock (_sync) result = operation.Result.DeepClone().AsObject();
-        if (result["outcomeUnknown"]?.GetValue<bool>() == true && operation.Selection is { } selected
-            && await operations.ObserveApplyAsync(selected, operation.Id, token).ConfigureAwait(false) is not null)
+        if (operation.Selection?.AppliedOwner?.ReloadProgress is { } progress && progress.OperationId == operation.Id)
+            result["phase"] = progress.Phase;
+        if (result["outcomeUnknown"]?.GetValue<bool>() == true && operation.Selection is { } selected)
         {
-            result = new() { ["state"] = "succeeded", ["effect"] = selected.Owner is null ? "loaded" : "reloaded" };
-            lock (_sync) operation.Result = result;
+            try
+            {
+                if (await operations.ObserveApplyAsync(selected, operation.Id, token).ConfigureAwait(false) is not null)
+                {
+                    result = new() { ["state"] = "succeeded", ["effect"] = selected.Owner is null ? "loaded" : "reloaded", ["phase"] = "applied" };
+                    lock (_sync) operation.Result = result;
+                }
+            }
+            catch (Exception error) when (error is not OperationCanceledException && BuilderProjectApplicationService.IsRecoverable(error))
+            {
+                // Keep the original operation failure; an unavailable observation
+                // is separate evidence and cannot overwrite it or replay the action.
+                result["observationError"] = BuilderJobText.Safe(error.Message, 512);
+            }
         }
         return BuilderContent.Create(result);
     }

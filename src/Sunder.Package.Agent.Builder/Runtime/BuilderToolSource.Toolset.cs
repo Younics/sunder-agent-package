@@ -330,7 +330,13 @@ public sealed partial class BuilderToolSource
 
     private AgentToolResult UnknownOperation(string tool, ToolReference operation, string message)
         => CompactResult(tool, new JsonObject { ["operation"] = RetainOperation(operation), ["status"] = "unknown", ["error"] = BuilderJobText.Safe(message, 512) },
-            "Package operation unconfirmed; observe the original operation, never replay it", failed: true, unknown: true);
+            tool == OperationTool ? "Package operation check unavailable; original outcome unconfirmed" : "Package operation unconfirmed; observe the original operation, never replay it",
+            failed: true, unknown: tool != OperationTool) with
+        {
+            // An unavailable read did not ambiguously dispatch another mutation.
+            ErrorCode = tool == OperationTool ? "maker.observation-unavailable" : Sunder.Package.Agent.Contracts.Models.AgentToolResultErrorCodes.ToolOutcomeAmbiguous,
+            PresentationPayloadJson = JsonSerializer.Serialize(new { operationStatus = "unknown", operationRef = RetainOperation(operation), operationObservation = "unavailable" }, CompactJson),
+        };
 
     private async Task<AgentToolResult> ObserveToolsetAsync(string tool, ToolReference operation, int wait, CancellationToken token)
     {
@@ -338,7 +344,7 @@ public sealed partial class BuilderToolSource
         if (rejection is not null)
         {
             var result = new JsonObject { ["operation"] = RetainOperation(operation), ["status"] = "rejected", ["error"] = rejection["code"]!.DeepClone(), ["message"] = rejection["message"]!.DeepClone() };
-            return CompactResult(tool, result, "Package operation rejected", failed: true) with { ErrorCode = rejection["code"]!.GetValue<string>() };
+            return CompactResult(tool, result, "Package operation rejected", failed: tool != OperationTool) with { ErrorCode = tool == OperationTool ? null : rejection["code"]!.GetValue<string>() };
         }
         var deadline = System.Diagnostics.Stopwatch.StartNew();
         JsonObject reply;
@@ -360,7 +366,11 @@ public sealed partial class BuilderToolSource
         if (reply["effect"] is { } effect) output["effect"] = effect.DeepClone();
         if (reply["verification"] is { } verification) output["verification"] = verification.DeepClone();
         if (reply["error"] is { } failure) output["error"] = failure.DeepClone();
-        return CompactResult(tool, output, "Package operation " + status, status is "failed" or "cancelled" or "unknown", unknown);
+        if (reply["phase"] is { } phase) output["phase"] = phase.DeepClone();
+        if (reply["observationError"] is { } observationError) output["observationError"] = observationError.DeepClone();
+        var rendered = CompactResult(tool, output, "Package operation " + status,
+            tool != OperationTool && status is "failed" or "cancelled" or "unknown", tool != OperationTool && unknown);
+        return reply["observationError"] is not null ? rendered with { IsError = true, ErrorCode = "maker.observation-unavailable" } : rendered;
     }
 
     private static AgentToolResult CompactResult(string tool, JsonNode result, string summary, bool failed = false, bool unknown = false) => new()
@@ -368,7 +378,7 @@ public sealed partial class BuilderToolSource
         ToolId = tool, Summary = summary, Content = result.ToJsonString(CompactJson),
         IsError = failed, ErrorCode = unknown ? Sunder.Package.Agent.Contracts.Models.AgentToolResultErrorCodes.ToolOutcomeAmbiguous : failed ? "maker.operation-failed" : null,
         WasTruncated = result["partial"]?.GetValue<bool>() == true || result["truncated"]?.GetValue<bool>() == true,
-        PresentationPayloadJson = JsonSerializer.Serialize(new { operationStatus = result["status"]?.GetValue<string>(), operationRef = result["operation"]?.GetValue<string>() }, CompactJson), RequiresPromptContextRefresh = false,
+        PresentationPayloadJson = JsonSerializer.Serialize(new { operationStatus = result["status"]?.GetValue<string>(), operationRef = result["operation"]?.GetValue<string>(), operationPhase = result["phase"]?.GetValue<string>(), operationObservation = result["observationError"] is null ? null : "unavailable" }, CompactJson), RequiresPromptContextRefresh = false,
     };
 
     private AgentPermissionRequest? ToolsetPermission(AgentToolExecutionContext context, AgentToolRequest request)

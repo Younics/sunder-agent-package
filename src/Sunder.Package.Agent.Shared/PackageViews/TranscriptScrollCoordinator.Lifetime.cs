@@ -51,6 +51,7 @@ internal sealed partial class TranscriptScrollCoordinator
         _scrollViewer.RemoveHandler(InputElement.PointerMovedEvent, OnUserPointerMoved);
         _scrollViewer.RemoveHandler(InputElement.PointerReleasedEvent, OnUserPointerReleased);
         _scrollViewer.RemoveHandler(InputElement.KeyDownEvent, OnUserKeyDown);
+        _scrollViewer.RemoveHandler(InputElement.GettingFocusEvent, OnDescendantGettingFocus);
         _scrollViewer.RemoveHandler(InputElement.GotFocusEvent, OnDescendantGotFocus);
         _scrollViewer.RemoveHandler(InputElement.ScrollGestureEvent, OnUserScrollGesture);
         _scrollViewer.RemoveHandler(InputElement.ScrollGestureEndedEvent, OnUserScrollGestureEnded);
@@ -61,6 +62,7 @@ internal sealed partial class TranscriptScrollCoordinator
         ReleaseManualAnchoringSuspensions();
         _pendingSettledScrollCompleted = null;
         _pendingBottomPlacementReleaseCompleted = null;
+        _pendingFocusScroll = null;
         _setViewportAnchor?.Invoke(null);
         _presentationPagingCancellation.Dispose();
         _lifetimeCancellation.Dispose();

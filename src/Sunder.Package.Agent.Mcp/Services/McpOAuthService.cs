@@ -42,7 +42,7 @@ public sealed class McpOAuthService : IAsyncDisposable
         return await CreateClientOptionsCoreAsync(
             server,
             redirectUri,
-            static (_, _, _) => Task.FromResult<string?>(null),
+            static (_, _) => Task.FromResult<AuthorizationResult?>(null),
             cancellationToken);
     }
 
@@ -99,13 +99,13 @@ public sealed class McpOAuthService : IAsyncDisposable
         var code = GetValue(queryValues, "code");
         if (!string.IsNullOrWhiteSpace(error))
         {
-            flow.AuthorizationCode.TrySetException(new InvalidOperationException(error));
+            flow.AuthorizationResponse.TrySetException(new InvalidOperationException(error));
         }
         else if (string.IsNullOrWhiteSpace(code))
         {
-            flow.AuthorizationCode.TrySetException(new InvalidOperationException("The MCP OAuth callback did not include an authorization code."));
+            flow.AuthorizationResponse.TrySetException(new InvalidOperationException("The MCP OAuth callback did not include an authorization code."));
         }
-        else if (!flow.AuthorizationCode.TrySetResult(code))
+        else if (!flow.AuthorizationResponse.TrySetResult(ReadAuthorizationResult(queryValues)))
         {
             return new McpOAuthCompletion(false, "The MCP OAuth callback was already completed.");
         }
@@ -207,8 +207,8 @@ public sealed class McpOAuthService : IAsyncDisposable
             OAuth = await CreateClientOptionsCoreAsync(
                 server,
                 flow.RedirectUri,
-                (authorizationUri, actualRedirectUri, cancellationToken) =>
-                    HandleAuthorizationRedirectAsync(flow, authorizationUri, actualRedirectUri, cancellationToken),
+                (context, cancellationToken) =>
+                    HandleAuthorizationCallbackAsync(flow, context, cancellationToken),
                 flow.Lifetime.Token),
         };
         using var httpClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
@@ -221,28 +221,37 @@ public sealed class McpOAuthService : IAsyncDisposable
         await client.ListToolsAsync(cancellationToken: flow.Lifetime.Token).ConfigureAwait(false);
     }
 
-    private static async Task<string?> HandleAuthorizationRedirectAsync(
+    private static async Task<AuthorizationResult?> HandleAuthorizationCallbackAsync(
         McpOAuthFlow flow,
-        Uri authorizationUri,
-        Uri actualRedirectUri,
+        AuthorizationCallbackContext context,
         CancellationToken cancellationToken)
     {
-        if (!Uri.Equals(flow.RedirectUri, actualRedirectUri))
+        if (!Uri.Equals(flow.RedirectUri, context.RedirectUri))
         {
             throw new InvalidOperationException("The MCP SDK returned a callback redirect URI that did not match the host-owned URI.");
         }
-        if (!flow.AuthorizationUri.TrySetResult(authorizationUri))
+        if (!flow.AuthorizationUri.TrySetResult(context.AuthorizationUri))
         {
             throw new InvalidOperationException("The MCP OAuth flow requested more than one authorization redirect.");
         }
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, flow.Lifetime.Token);
-        return await flow.AuthorizationCode.Task.WaitAsync(linked.Token).ConfigureAwait(false);
+        return await flow.AuthorizationResponse.Task.WaitAsync(linked.Token).ConfigureAwait(false);
     }
+
+    internal static AuthorizationResult ReadAuthorizationResult(IReadOnlyDictionary<string, string?> queryValues)
+        => new()
+        {
+            Code = GetValue(queryValues, "code"),
+            // Forward the response, not the request's expected values. The SDK must
+            // reject a missing/mismatched state or issuer before exchanging the code.
+            State = GetValue(queryValues, "state"),
+            Iss = GetValue(queryValues, "iss"),
+        };
 
     private async Task<ClientOAuthOptions> CreateClientOptionsCoreAsync(
         ConfiguredMcpServerRecord server,
         Uri redirectUri,
-        AuthorizationRedirectDelegate redirect,
+        Func<AuthorizationCallbackContext, CancellationToken, Task<AuthorizationResult?>> callback,
         CancellationToken cancellationToken)
     {
         var registration = await ReadClientRegistrationAsync(server.ServerId, redirectUri, cancellationToken);
@@ -255,7 +264,7 @@ public sealed class McpOAuthService : IAsyncDisposable
             ClientSecret = string.IsNullOrWhiteSpace(explicitClientSecret) ? registration?.ClientSecret : explicitClientSecret,
             Scopes = server.OAuthScopes.Length == 0 ? null : server.OAuthScopes,
             TokenCache = new SecretTokenCache(_packageContext, server.ServerId),
-            AuthorizationRedirectDelegate = redirect,
+            AuthorizationCallbackHandler = callback,
             DynamicClientRegistration = string.IsNullOrWhiteSpace(server.OAuthClientId)
                 ? new DynamicClientRegistrationOptions
                 {
@@ -345,7 +354,7 @@ public sealed class McpOAuthService : IAsyncDisposable
         public Uri RedirectUri { get; } = redirectUri;
         public CancellationTokenSource Lifetime { get; } = lifetime;
         public TaskCompletionSource<Uri> AuthorizationUri { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource<string?> AuthorizationCode { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<AuthorizationResult?> AuthorizationResponse { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task RunTask { get; set; } = Task.CompletedTask;
     }
 

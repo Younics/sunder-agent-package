@@ -113,6 +113,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
     public bool IsDiscovering => _operations.IsDiscovering;
     public bool IsRuntimeAvailable { get; private set; }
     public string StatusText => _operations.StatusText;
+    public bool HasStatus => !string.IsNullOrWhiteSpace(StatusText);
     public McpStatusKind StatusKind => _operations.StatusKind;
     public bool IsStatusSuccess => StatusKind == McpStatusKind.Success;
     public bool IsStatusWarning => StatusKind == McpStatusKind.Warning;
@@ -524,6 +525,7 @@ public sealed partial class AgentMcpSettingsViewModel : ObservableObject,
         OnPropertyChanged(nameof(CanNavigateServers));
         OnPropertyChanged(nameof(IsDiscovering));
         OnPropertyChanged(nameof(StatusText));
+        OnPropertyChanged(nameof(HasStatus));
         OnPropertyChanged(nameof(StatusKind));
         OnPropertyChanged(nameof(IsStatusSuccess));
         OnPropertyChanged(nameof(IsStatusWarning));

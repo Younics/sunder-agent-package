@@ -289,6 +289,8 @@ public partial class AgentChatView : UserControl,
     {
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.DisplayedSession), StringComparison.Ordinal))
         {
+            CancelPendingToolExpansion();
+            _pendingToolRefreshHeaders.Clear();
             _transcriptBehavior.MarkInitialPlacementPending(_navigationCancellation?.Token ?? default);
         }
 
@@ -663,7 +665,7 @@ public partial class AgentChatView : UserControl,
         using (bitmap)
         using (var stream = new MemoryStream())
         {
-            bitmap.Save(stream);
+            bitmap.Save(stream, PngBitmapEncoderOptions.Default);
             return new AgentAttachmentUploadRequest(CreateClipboardImageFileName(), "image/png", stream.ToArray());
         }
     }
@@ -753,11 +755,8 @@ public partial class AgentChatView : UserControl,
 
     private void OnTranscriptChanging(bool isPageApplication)
     {
-        // Keyed page application retains the active row; expansion currentness handles actual replacement.
-        if (!isPageApplication)
-        {
-            CancelPendingToolExpansion();
-        }
+        // Streaming/Thinking and keyed page updates do not retire this tool.
+        // Exact row/revision currentness, navigation and disposal own cancellation.
         _transcriptBehavior.OnTranscriptChanging(isPageApplication);
     }
 

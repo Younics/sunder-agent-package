@@ -163,6 +163,11 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
             RoutingStrategies.Tunnel,
             handledEventsToo: true);
         _scrollViewer.AddHandler(
+            InputElement.GettingFocusEvent,
+            OnDescendantGettingFocus,
+            RoutingStrategies.Bubble,
+            handledEventsToo: true);
+        _scrollViewer.AddHandler(
             InputElement.GotFocusEvent,
             OnDescendantGotFocus,
             RoutingStrategies.Bubble,
@@ -488,13 +493,6 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
 
         if (_loadOlderPending || _loadNewerPending)
         {
-            if (_loadNewerPending
-                && userDirection == UserScrollDirection.TowardTail
-                && userScroll.CanResumeFollowing
-                && IsAtBottom())
-            {
-                _loadNewerResumeInteractionRevision = _interactionRevision;
-            }
             UpdateJumpToLatestVisibility();
             return;
         }
@@ -509,7 +507,9 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         {
             if (userDirection == UserScrollDirection.TowardTail)
             {
-                QueueLoadNewerRows(userScroll.CanResumeFollowing && IsAtBottom());
+                // The end of a historical window is not the end of history.
+                // Ordinary scrolling fetches a page without navigating to its tail.
+                QueueLoadNewerRows();
                 if (userScroll.CanResumeFollowing)
                 {
                     TryResumeFollowingAtBottom();

@@ -9,13 +9,18 @@ internal sealed class LocalResourceReference : IDisposable
 {
     internal const string ReapprovalRequiredErrorCode = "local-resource-reapproval-required";
     private const string Prefix = "local-resource-authority-v4:";
+    private const string DirectoryPrefix = "local-operation-directories-v1:";
     private readonly HostApprovalLeaseStore<Grant> _grants;
+    private readonly HostApprovalLeaseStore<DirectoryLease> _directoryGrants;
+    private readonly object _directoryGate = new();
+    private readonly Dictionary<string, DirectoryGroup> _directoryGroups = new(StringComparer.Ordinal);
 
     public LocalResourceReference(
         TimeSpan? lifetime = null,
         Func<DateTimeOffset>? utcNow = null)
     {
         _grants = new HostApprovalLeaseStore<Grant>(lifetime, utcNow);
+        _directoryGrants = new HostApprovalLeaseStore<DirectoryLease>(lifetime, utcNow);
     }
 
     public string Create(
@@ -63,9 +68,111 @@ internal sealed class LocalResourceReference : IDisposable
                grant => Matches(grant, expectedClaim, expectedOperation));
 
     public bool Revoke(string reference)
-        => TryGetToken(reference, out var token) && _grants.TryRevoke(token);
+    {
+        if (!reference.StartsWith(DirectoryPrefix, StringComparison.Ordinal))
+            return TryGetToken(reference, out var token) && _grants.TryRevoke(token);
+        var directoryToken = reference[DirectoryPrefix.Length..];
+        LocalCreatedDirectoryAuthority? authority = null;
+        _directoryGrants.Contains(directoryToken, lease => { authority = lease.Authority; return true; });
+        var revoked = _directoryGrants.TryRevoke(directoryToken);
+        if (authority?.IsDisposed == true && authority.CleanupFailures.Count > 0)
+            throw new InvalidOperationException(string.Join(" | ", authority.CleanupFailures.Take(4)));
+        return revoked;
+    }
 
-    public void Dispose() => _grants.Dispose();
+    public void Dispose()
+    {
+        _grants.Dispose();
+        _directoryGrants.Dispose();
+    }
+
+    internal string IssueDirectoryOperation(AgentExecutionTargetContext context)
+    {
+        var operation = context.ResourceOperation ?? throw new InvalidOperationException("A directory operation requires exact invocation ownership.");
+        ValidateIssuance(operation);
+        var key = DirectoryKey(context, operation);
+        DirectoryLease lease;
+        lock (_directoryGate)
+        {
+            if (!_directoryGroups.TryGetValue(key, out var group))
+                _directoryGroups.Add(key, group = new());
+            group.References++;
+            lease = new(this, key, group);
+        }
+        // Never enter the lease store while holding _directoryGate: expiry can
+        // release another directory group, including on its timer thread.
+        return DirectoryPrefix + _directoryGrants.Issue(key, lease);
+    }
+
+    internal DirectoryLease? BorrowDirectoryOperation(AgentExecutionTargetContext context)
+    {
+        if (context.ResourceOperation is not { } operation || operation.ActionId != "files.mutate") return null;
+        var key = DirectoryKey(context, operation);
+        foreach (var reference in context.ApprovedResourceCapabilities)
+        {
+            if (!reference.StartsWith(DirectoryPrefix, StringComparison.Ordinal)) continue;
+            DirectoryLease? borrowed = null;
+            _directoryGrants.Contains(reference[DirectoryPrefix.Length..], lease =>
+            {
+                if (lease.Key != key) return false;
+                lock (_directoryGate)
+                {
+                    lease.Group.References++;
+                    borrowed = new(this, key, lease.Group);
+                }
+                return true;
+            });
+            if (borrowed is not null) return borrowed;
+        }
+        return null;
+    }
+
+    private static string DirectoryKey(AgentExecutionTargetContext context, AgentResourceOperationContext operation)
+    {
+        var key = new StringBuilder();
+        Append(key, context.SessionId?.ToString("N") ?? string.Empty);
+        Append(key, context.Workspace.WorkspaceId);
+        Append(key, context.Binding.BindingId);
+        Append(key, operation.RunId.ToString("N"));
+        Append(key, operation.RunRevision.ToString(CultureInfo.InvariantCulture));
+        Append(key, operation.ToolCallId);
+        Append(key, operation.ActionId);
+        Append(key, operation.WorkspaceGeneration);
+        Append(key, operation.BindingGeneration);
+        Append(key, operation.ToolOwnerPackageId);
+        Append(key, operation.ExecutionTargetOwnerPackageId);
+        Append(key, operation.AuthorityActivationId);
+        // ResourceIndex deliberately differs between approved sibling paths.
+        return key.ToString();
+    }
+
+    internal sealed class DirectoryGroup
+    {
+        internal LocalCreatedDirectoryAuthority Authority { get; } = new();
+        internal int References;
+    }
+
+    internal sealed class DirectoryLease(LocalResourceReference owner, string key, DirectoryGroup group) : IDisposable
+    {
+        private int _released;
+        internal string Key => key;
+        internal DirectoryGroup Group => group;
+        internal LocalCreatedDirectoryAuthority Authority => group.Authority;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) != 0) return;
+            var release = false;
+            lock (owner._directoryGate)
+            {
+                if (--group.References == 0)
+                {
+                    owner._directoryGroups.Remove(key);
+                    release = true;
+                }
+            }
+            if (release) group.Authority.Dispose();
+        }
+    }
 
     private static bool TryGetToken(string reference, out string token)
     {

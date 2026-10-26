@@ -33,10 +33,7 @@
         </StackPanel>
       </Border>
 
-      <Border Padding="14"
-              IsVisible="{Binding IsReady}"
-              IsEnabled="{Binding CanMutate}">
-        <StackPanel Spacing="8">
+        <StackPanel Spacing="8" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
           <TextBlock Text="Detected Shells"
                      FontWeight="SemiBold" />
           <TextBlock Text="Detected shells are read-only and refreshed from this host."
@@ -123,12 +120,8 @@
           <TextBlock Text="{Binding StatusText}"
                      TextWrapping="Wrap" />
         </StackPanel>
-      </Border>
 
-      <Border Padding="14"
-              IsVisible="{Binding IsReady}"
-              IsEnabled="{Binding CanMutate}">
-        <StackPanel Spacing="8">
+        <StackPanel Spacing="8" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
           <TextBlock Text="Execution"
                      FontWeight="SemiBold" />
           <TextBlock Text="Default timeout in seconds for local shell commands when a request does not specify one."
@@ -139,7 +132,6 @@
                   HorizontalAlignment="Left"
                   Command="{Binding SaveExecutionSettingsCommand}" />
         </StackPanel>
-      </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

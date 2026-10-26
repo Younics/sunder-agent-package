@@ -183,7 +183,7 @@ internal static class FilePatchHandler
 
         if (compensation.Result.FullyRestored && compensation.ProbeFailure is null)
         {
-            message.Append(" No applied patch changes remain.");
+            message.Append(" Applied patch file changes were restored. Operation-owned empty parent directories are cleaned up when resource authority is released; directory cleanup is not proved by file restoration.");
         }
         else
         {

@@ -8,13 +8,18 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed record TranscriptActivityGroupAnchor(object SourceAnchor);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
-internal sealed record TranscriptActivityMember(object Anchor, object Scope, string ToolId, string Status, bool IsRunning);
+internal sealed record TranscriptActivityMember(object Anchor, object Scope, string ToolId, string Status, bool IsRunning)
+{
+    public string? OperationReference { get; init; }
+    public string? OperationStatus { get; init; }
+}
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal static class TranscriptActivityGrouping
 {
     internal static TranscriptActivityMember Describe(TranscriptToolProjection tool)
-        => new(tool.AnchorKey, (tool.SessionId, tool.RunId, tool.RunRevision), tool.ToolId, tool.StatusText, tool.IsRunning);
+        => new(tool.AnchorKey, (tool.SessionId, tool.RunId, tool.RunRevision), tool.ToolId, tool.StatusText, tool.IsRunning)
+        { OperationReference = tool.OperationReference, OperationStatus = tool.OperationStatus };
 
     internal static (string Singular, string Plural) Category(string toolId)
         => toolId.ToLowerInvariant() switch
@@ -152,11 +157,6 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
                     rows.Add(_current[index++]);
                     members.Add(member);
                 }
-                if (members.Count < 2)
-                {
-                    projected.AddRange(rows);
-                    continue;
-                }
                 var anchors = members.Select(member => member.Anchor).ToHashSet();
                 var group = members.Select(member => _memberships.GetValueOrDefault(member.Anchor))
                     .FirstOrDefault(candidate => candidate is not null && !retained.Contains(candidate)
@@ -251,10 +251,14 @@ internal sealed class TranscriptActivityGroupState(TranscriptActivityGroupAnchor
         var summary = string.Join(" · ", members.GroupBy(member => TranscriptActivityGrouping.Category(member.ToolId))
             .Select(group => $"{group.Count()} {(group.Count() == 1 ? group.Key.Singular : group.Key.Plural)}"));
         var running = members.Any(member => member.IsRunning);
-        var failed = members.Count(member => member.Status == "Failed");
-        var uncertain = members.Count(member => member.Status is "Ambiguous" or "Unconfirmed");
-        var cancelled = members.Count(member => member.Status is "Cancelled" or "Canceled");
-        var unverified = members.Count(member => member.Status == "Running (last observed)");
+        // Calls are counted above; outcomes are counted once per original operation,
+        // not once for its mutation and again for each read-only status check.
+        var outcomes = members.GroupBy(member => member.OperationReference is { } reference ? (object)reference : member.Anchor)
+            .Select(group => group.Last().OperationStatus ?? group.Last().Status).ToArray();
+        var failed = outcomes.Count(status => status == "Failed");
+        var uncertain = outcomes.Count(status => status is "Ambiguous" or "Unconfirmed");
+        var cancelled = outcomes.Count(status => status is "Cancelled" or "Canceled");
+        var unverified = outcomes.Count(status => status == "Running (last observed)");
         var status = string.Join(" · ", new[]
         {
             failed > 0 ? $"{failed} Failed" : null,

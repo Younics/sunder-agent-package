@@ -12,6 +12,7 @@ extern alias McpWorker;
 extern alias MemoryWorker;
 extern alias SkillsWorker;
 extern alias SkillsApp;
+extern alias SubagentsApp;
 
 using Avalonia;
 using Avalonia.Controls;
@@ -757,15 +758,15 @@ public sealed partial class ViewLifecycleTests
         await WaitForVisibleMarkdownToSettleAsync(view);
 
         window.MouseMove(new Point(450, 250), RawInputModifiers.None);
-        window.MouseWheel(new Point(450, 250), new Vector(0, 200), RawInputModifiers.None);
+        window.MouseWheel(new Point(450, 250), new Vector(0, 2), RawInputModifiers.None);
         await WaitForPendingCoordinatorOperationsAsync(view, TimeSpan.FromSeconds(10));
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Loaded);
         var detachedAnchor = Assert.IsAssignableFrom<Control>(transcript.CurrentAnchor);
         var detachedRow = Assert.Single(
-            viewModel.Messages,
+            viewModel.TranscriptItems,
             row => ReferenceEquals(row, detachedAnchor.DataContext));
         var detachedAnchorKey = detachedRow.AnchorKey;
-        var detachedAnchorIndex = viewModel.Messages
+        var detachedAnchorIndex = viewModel.TranscriptItems
             .Select((row, index) => (row.AnchorKey, Index: index))
             .Single(item => Equals(item.AnchorKey, detachedAnchorKey))
             .Index;
@@ -823,6 +824,7 @@ public sealed partial class ViewLifecycleTests
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
         var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+        await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
         Assert.False(toolRow.IsExpanded);
         Assert.False(toolRow.HasMaterializedDetails);
         Assert.Empty(FindToolDetailCards(view));
@@ -1060,6 +1062,9 @@ public sealed partial class ViewLifecycleTests
                 .Single(item => Equals(item.AnchorKey, currentAnchorKey))
                 .Index;
             Assert.Equal(currentAnchorKey, CaptureCurrentScrollAnchorKey(coordinator));
+            var repeater = view.FindControl<ItemsRepeater>("TranscriptItemsControl")!;
+            var currentVisual = Assert.IsAssignableFrom<Control>(repeater.TryGetElement(currentAnchorIndex));
+            var currentTop = currentVisual.TranslatePoint(default, transcript)!.Value.Y;
             var authorityAfterInteraction = GetCoordinatorAuthorityRevision(coordinator);
             var writesAfterInteraction = GetCoordinatorProgrammaticOffsetWrites(coordinator);
 
@@ -1073,8 +1078,18 @@ public sealed partial class ViewLifecycleTests
                 .Single(item => Equals(item.AnchorKey, currentAnchorKey))
                 .Index;
             Assert.InRange(retainedAnchorIndex, 0, viewModel.Messages.Count - 1);
+            var retainedVisual = Assert.IsAssignableFrom<Control>(repeater.TryGetElement(retainedAnchorIndex));
+            Assert.Same(currentVisual, retainedVisual);
+            Assert.InRange(Math.Abs(retainedVisual.TranslatePoint(default, transcript)!.Value.Y - currentTop), 0, 1);
             Assert.Equal(authorityAfterInteraction, GetCoordinatorAuthorityRevision(coordinator));
-            Assert.Equal(writesAfterInteraction, GetCoordinatorProgrammaticOffsetWrites(coordinator));
+            var diagnostic = Assert.IsType<TranscriptScrollCoordinator>(coordinator).DiagnosticSnapshot;
+            if (diagnostic.ProgrammaticOffsetWrites > writesAfterInteraction)
+            {
+                var correction = diagnostic.LastProgrammaticOffsetWrite!.Value;
+                Assert.Equal(TranscriptProgrammaticOffsetWriteSource.AnchorRestoration, correction.Source);
+                Assert.Equal(diagnostic.InteractionRevision, correction.InteractionRevision);
+                Assert.Equal(authorityAfterInteraction, correction.AuthorityRevision);
+            }
             Assert.False(GetAnchorHostSuspended(view));
         }
         finally
@@ -1149,6 +1164,7 @@ public sealed partial class ViewLifecycleTests
             var transcript = GetTranscriptScrollViewer(view);
             var coordinator = GetTranscriptScrollCoordinator(view);
             var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+            await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
             Button GetToolHeader() => Assert.Single(
                 view.GetVisualDescendants().OfType<Button>(),
                 button => button.Classes.Contains("tool-step-header")
@@ -2185,6 +2201,7 @@ public sealed partial class ViewLifecycleTests
         Assert.Equal(1d, transcript.Opacity);
         transcript.LayoutUpdated -= layoutHandler;
         await Task.Run(async () => await view.OnNavigatedToAsync(context));
+        await WaitForPendingCoordinatorOperationsAsync(view);
         Assert.Equal(1d, transcript.Opacity);
         window.Close();
     }
@@ -2689,6 +2706,7 @@ public sealed partial class ViewLifecycleTests
             var repeater = Assert.IsType<ItemsRepeater>(
                 view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
             var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+            await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
             Assert.True(toolRow.HasDetails);
             Button GetToolHeader() => Assert.Single(
                     view.GetVisualDescendants().OfType<Button>(),
@@ -3449,6 +3467,9 @@ public sealed partial class ViewLifecycleTests
             var repeater = Assert.IsType<ItemsRepeater>(
                 view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
             var toolRow = Assert.Single(viewModel.Messages.OfType<SubsessionToolInvocationRowViewModel>());
+            foreach (var group in viewModel.TranscriptItems.OfType<SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionActivityGroupRowViewModel>().ToArray()) group.IsExpanded = true;
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await GetPendingCoordinatorOperations(view);
             Assert.Same(viewModel.RunActivityRow, viewModel.TranscriptItems[^2]);
             Assert.IsType<SubsessionTranscriptTailSentinelRowViewModel>(viewModel.TranscriptItems[^1]);
             Button GetToolHeader() => Assert.Single(
@@ -4705,7 +4726,7 @@ public sealed partial class ViewLifecycleTests
             => inner.ListTurnsAfter(sessionId, afterCreatedAtUtc, afterTurnId, limit);
         public AgentTurnRecord? GetTurn(Guid turnId) => inner.GetTurn(turnId);
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => inner.GetLatestCheckpoint(sessionId);
-        public Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
+        public virtual Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(
             AgentTranscriptToolDetailRequest request,
             CancellationToken cancellationToken = default)
             => inner is IAgentTranscriptToolDetailGateway detailGateway
@@ -4982,6 +5003,8 @@ public sealed partial class ViewLifecycleTests
         var content = Assert.IsType<Border>(view.FindControl<Border>("TranscriptScrollContent"));
         var activityIndex = viewModel.TranscriptItems.Count - 2;
         var tailIndex = viewModel.TranscriptItems.Count - 1;
+        Assert.True(repeater.TryGetElement(activityIndex) is Control,
+            $"Activity row not realized at the tail: offset={transcript.Offset.Y},extent={transcript.Extent.Height},viewport={transcript.Viewport.Height},items={viewModel.TranscriptItems.Count}; {GetCoordinatorDiagnosticSnapshot(GetTranscriptScrollCoordinator(view))}");
         var activity = Assert.IsAssignableFrom<Control>(repeater.TryGetElement(activityIndex));
         var tail = Assert.IsAssignableFrom<Control>(repeater.TryGetElement(tailIndex));
         Assert.Same(viewModel.RunActivityRow, activity.DataContext);

@@ -60,6 +60,7 @@ public sealed partial class BuilderPackageOperations
                 owner = new(selected.Project, application, development, _lifetime.Token, Notify);
                 selected.AppliedOwner = owner;
                 _sessions[selected.Project.EntryPoint] = owner;
+                SetReloadProgress(owner, id, "running", "loading");
                 try
                 {
                     selected.InitialLoadAttempted = true;
@@ -72,7 +73,11 @@ public sealed partial class BuilderPackageOperations
             {
                 RequireMutable(owner);
                 var status = await owner.Handle.GetStatusAsync(operation.Token).ConfigureAwait(false);
-                if (IsCurrentlyApplied(status, identity)) return (status.AppliedRevision!, "unchanged");
+                if (IsCurrentlyApplied(status, identity))
+                {
+                    SetReloadProgress(owner, id, "succeeded", "unchanged");
+                    return (status.AppliedRevision!, "unchanged");
+                }
                 owner.PendingHotreload = new() { Id = id, Operation = "reload", State = "succeeded", Project = selected.Project,
                     Message = "Validated already-built output.", Output = string.Empty, DevelopmentFolder = selected.Folder, DevelopmentContentIdentity = identity };
                 Notify(owner);
@@ -80,18 +85,32 @@ public sealed partial class BuilderPackageOperations
             }
             using var wait = CancellationTokenSource.CreateLinkedTokenSource(operation.Token);
             wait.CancelAfter(TimeSpan.FromSeconds(10));
+            SetReloadProgress(owner, id, "running", "waiting-for-app");
             try
             {
                 while (true)
                 {
                     var status = await owner.Handle.GetStatusAsync(wait.Token).ConfigureAwait(false);
-                    if (IsCurrentlyApplied(status, identity)) return (status.AppliedRevision!, effect);
+                    if (IsCurrentlyApplied(status, identity))
+                    {
+                        SetReloadProgress(owner, id, "succeeded", "applied");
+                        return (status.AppliedRevision!, effect);
+                    }
                     if (status.RuntimeReadiness == PackageDevelopmentRuntimeReadiness.Failed || status.AppReadiness == PackageDevelopmentAppReadiness.Quarantined)
+                    {
+                        SetReloadProgress(owner, id, "failed", "activation-failed", status.ErrorMessage ?? "The selected package activation failed.");
                         throw new InvalidOperationException(status.ErrorMessage ?? "The selected package activation failed.");
+                    }
                     await Task.Delay(100, wait.Token).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException) when (!operation.IsCancellationRequested) { throw new TimeoutException("Output was loaded but its applied Runtime/App revision is not confirmed. Observe the original operation."); }
+        }
+        catch (Exception error)
+        {
+            if (selected.AppliedOwner is { } owner && ReferenceEquals(owner, GetSession(selected.Project.EntryPoint)) && owner.ReloadProgress?.State != "failed")
+                SetReloadProgress(owner, id, "unknown", owner.ReloadProgress?.Phase ?? "loading", BuilderJobText.Safe(error.Message, 512));
+            throw;
         }
         finally { gate.Release(); }
     }
@@ -104,12 +123,16 @@ public sealed partial class BuilderPackageOperations
         try
         {
             var owner = GetSession(selection.Project.EntryPoint);
-            if (owner is null || owner.ReleaseStarted || !ReferenceEquals(owner, selection.AppliedOwner)
+            if (owner is null || !owner.HasHandle || owner.ReleaseStarted || !ReferenceEquals(owner, selection.AppliedOwner)
                 || !BuilderPathService.PathComparer.Equals(owner.DevelopmentFolder, selection.Folder)) return null;
+            // Identical historical bytes cannot prove that an unacknowledged reload
+            // committed. Only its original acknowledgement supplies this fence.
+            if (selection.Owner is not null && owner.ReloadCommittedRevision is null) return null;
             var status = await owner.Handle.GetStatusAsync(operation.Token).ConfigureAwait(false);
             if (!IsCurrentlyApplied(status, selection.Identity) || status.AppliedRevision is not { } revision) return null;
             if (owner.ReloadCommittedRevision is { } committed && (revision.RuntimeInstanceId != committed.RuntimeInstanceId || revision.SessionGeneration < committed.SessionGeneration)) return null;
-            if (owner.PendingHotreload?.Id == operationId) { owner.PendingHotreload = null; owner.ReloadCommittedRevision = null; Notify(owner); }
+            if (owner.PendingHotreload?.Id == operationId) { owner.PendingHotreload = null; owner.ReloadCommittedRevision = null; }
+            SetReloadProgress(owner, operationId, "succeeded", "applied");
             return revision;
         }
         finally { gate.Release(); }

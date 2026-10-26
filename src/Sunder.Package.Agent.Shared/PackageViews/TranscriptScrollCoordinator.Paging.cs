@@ -157,7 +157,13 @@ internal sealed partial class TranscriptScrollCoordinator
             loaded = await _loadOlderRowsAsync(
                 new TranscriptPageAnchorAuthority(
                     protectedAnchorKey,
-                    ResolveActivePageProtectedAnchorKey),
+                    ResolveActivePageProtectedAnchorKey,
+                    () =>
+                    {
+                        if (RefreshPagePublicationAnchor(ref anchor, pagingContextRevision, older: true))
+                            interactionRevision = anchor.InteractionRevision;
+                    },
+                    () => CompletePagePublication(anchor, pagingContextRevision)),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (loaded
@@ -262,7 +268,16 @@ internal sealed partial class TranscriptScrollCoordinator
             loaded = await _loadNewerRowsAsync(
                 new TranscriptPageAnchorAuthority(
                     protectedAnchorKey,
-                    ResolveActivePageAnchor),
+                    ResolveActivePageAnchor,
+                    () =>
+                    {
+                        if (RefreshPagePublicationAnchor(ref anchor, pagingContextRevision, older: false))
+                        {
+                            interactionRevision = anchor.InteractionRevision;
+                            wasFollowingTail = IsFollowingTail;
+                        }
+                    },
+                    () => CompletePagePublication(anchor, pagingContextRevision)),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
             if (pagingContextRevision == _pagingContextRevision)
@@ -381,6 +396,36 @@ internal sealed partial class TranscriptScrollCoordinator
         anchor.Dispose();
         var version = BeginBottomPlacementLock();
         return CompleteSettledScrollAsync(version, _interactionRevision, anchor.AuthorityRevision, cancellationToken);
+    }
+
+    private bool RefreshPagePublicationAnchor(ref ScrollAnchor anchor, long context, bool older)
+    {
+        if (_disposed || !_presentationActive || context != _pagingContextRevision
+            || anchor.AuthorityRevision != _viewportAuthorityRevision && _manualScrollAuthorityRevision != _viewportAuthorityRevision)
+            return false;
+
+        // Input during transport supersedes the fetch-time position, but does
+        // not prevent this page from preserving the reader's new position.
+        // Expansion/resize/navigation authority is never reclaimed here.
+        var authority = _viewportAuthorityRevision;
+        _scrollViewer.UpdateLayout();
+        if (_disposed || !_presentationActive || context != _pagingContextRevision || authority != _viewportAuthorityRevision)
+            return false;
+        var current = CaptureScrollAnchor(anchor.Mode);
+        if (older) SetOlderPagingAnchor(current);
+        else SetNewerPagingAnchor(current);
+        anchor = current;
+        _activePageInteractionRevision = current.InteractionRevision;
+        Volatile.Write(ref _activePageProtectedAnchorKey, current.Items.FirstOrDefault()?.Item);
+        return true;
+    }
+
+    private void CompletePagePublication(ScrollAnchor anchor, long context)
+    {
+        if (!_disposed && _presentationActive && context == _pagingContextRevision
+            && anchor.InteractionRevision == _interactionRevision && anchor.AuthorityRevision == _viewportAuthorityRevision
+            && anchor.Items.Count > 0)
+            RestoreAvailableAnchor(anchor);
     }
 
     private TranscriptPageAnchorResolution ResolveActivePageAnchor()

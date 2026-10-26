@@ -46,7 +46,9 @@ internal static class LocalUnixNative
     private static readonly AsyncLocal<int?> AnonymousTemporaryFileOpenErrorOverride = new();
 
     public static int Open(string path, int flags, uint mode = 0)
-        => OpenNative(path, flags, mode);
+        => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
+            ? OpenAppleArm64(path, flags, 0, 0, 0, 0, 0, 0, mode)
+            : OpenNative(path, flags, mode);
 
     public static int OpenAt(
         int directoryFileDescriptor,
@@ -71,7 +73,9 @@ internal static class LocalUnixNative
                 invalidArgumentIsOperationError);
         }
 
-        return OpenAtNative(directoryFileDescriptor, name, flags, mode);
+        return RuntimeInformation.ProcessArchitecture == Architecture.Arm64 && OperatingSystem.IsMacOS()
+            ? OpenAtAppleArm64(directoryFileDescriptor, name, flags, 0, 0, 0, 0, 0, mode)
+            : OpenAtNative(directoryFileDescriptor, name, flags, mode);
     }
 
     public static UnixMetadata ReadMetadata(int fileDescriptor)
@@ -574,6 +578,25 @@ internal static class LocalUnixNative
         int directoryFileDescriptor,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
         int flags,
+        uint mode);
+
+    // Apple ARM64 variadic arguments start on the stack. These unused register
+    // arguments place mode in its first stack slot, rather than in x2/x3.
+    // Keep the ordinary signatures above for Linux and macOS x64.
+    // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
+    [DllImport(LibC, EntryPoint = "open", SetLastError = true)]
+    private static extern int OpenAppleArm64(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int flags,
+        nint unused2, nint unused3, nint unused4, nint unused5, nint unused6, nint unused7,
+        uint mode);
+
+    [DllImport(LibC, EntryPoint = "openat", SetLastError = true)]
+    private static extern int OpenAtAppleArm64(
+        int directoryFileDescriptor,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
+        int flags,
+        nint unused3, nint unused4, nint unused5, nint unused6, nint unused7,
         uint mode);
 
     [DllImport(LibC, EntryPoint = "syscall", SetLastError = true)]

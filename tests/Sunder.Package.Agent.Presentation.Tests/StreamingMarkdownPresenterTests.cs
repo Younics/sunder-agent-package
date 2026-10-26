@@ -89,6 +89,7 @@ public sealed class StreamingMarkdownPresenterTests
         await WaitUntilAsync(window, () => renderedCount == 1);
         var currentRenderer = Assert.Single(
             presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+        var initialUpdate = Assert.IsType<MarkdownDocumentUpdate.Full>(currentRenderer.DocumentUpdate);
         currentRenderer.SelectAll();
         Assert.True(currentRenderer.CanCopy);
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -107,6 +108,7 @@ public sealed class StreamingMarkdownPresenterTests
             presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()));
         Assert.Equal("Initial response.", currentRenderer.SourceBuilder?.ToString());
         Assert.Equal(1, presenter.RendererCreationCount);
+        Assert.Same(initialUpdate, currentRenderer.DocumentUpdate);
 
         currentRenderer.ClearSelection();
         var renderedBeforeSelectionRelease = renderedCount;
@@ -118,6 +120,9 @@ public sealed class StreamingMarkdownPresenterTests
             presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()));
         Assert.Equal(1, presenter.RendererCreationCount);
         Assert.True(presenter.Bounds.Height > initialHeight + 20);
+        var update = Assert.IsType<MarkdownDocumentUpdate.Incremental>(currentRenderer.DocumentUpdate);
+        Assert.Equal(initialUpdate.Version, update.BaseVersion);
+        Assert.Equal(currentRenderer.SourceBuilder!.Version, update.Version);
         await presenter.PendingRenderOperations;
         await CloseWindowAsync(window);
     }
@@ -134,6 +139,14 @@ public sealed class StreamingMarkdownPresenterTests
         await WaitUntilAsync(window, () => renderedCount == 1);
         var renderer = Assert.Single(
             presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+        var appliedVersions = new List<long>();
+        renderer.PropertyChanged += (_, change) =>
+        {
+            if (change.Property == MarkdownRenderer.DocumentUpdateProperty)
+            {
+                appliedVersions.Add(renderer.DocumentUpdate!.Version);
+            }
+        };
         var expandedSource = "Initial response.\n\n" + string.Join(
             "\n\n",
             Enumerable.Range(0, 5000).Select(index => $"## Expanded heading {index}"));
@@ -146,6 +159,7 @@ public sealed class StreamingMarkdownPresenterTests
         Assert.Equal("Initial response.", renderer.RenderedSource);
         Assert.True(renderer.CanCopy);
         Assert.True(presenter.IsRenderPending);
+        Assert.Empty(appliedVersions);
 
         renderer.ClearSelection();
         await WaitUntilAsync(window, () =>
@@ -154,6 +168,7 @@ public sealed class StreamingMarkdownPresenterTests
 
         Assert.Equal(1, presenter.RendererCreationCount);
         Assert.False(presenter.IsRenderPending);
+        Assert.Equal(renderer.SourceBuilder!.Version, Assert.Single(appliedVersions));
         await presenter.PendingRenderOperations;
         await CloseWindowAsync(window);
     }
@@ -378,6 +393,7 @@ public sealed class StreamingMarkdownPresenterTests
         releaseParse.TrySetResult();
 
         await WaitUntilAsync(window, () => renderer.RenderedSource == "latest source");
+        Assert.IsType<MarkdownDocumentUpdate.Full>(renderer.DocumentUpdate);
         Assert.DoesNotContain(
             renderer.GetVisualDescendants().OfType<MarkdownTextBlock>(),
             block => block.ActualText.Contains("stale source", StringComparison.Ordinal));

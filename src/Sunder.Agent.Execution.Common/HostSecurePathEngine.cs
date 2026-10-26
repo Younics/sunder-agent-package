@@ -521,6 +521,8 @@ internal sealed class LocalSecureRoot(
     public IReadOnlyList<LocalSecureIdentity> HandleIdentities { get; } = handles
         .Select(static handle => handle.Identity)
         .ToArray();
+    internal IReadOnlyList<(string Path, LocalSecureIdentity Identity)> HandleNodes { get; } =
+        handles.Select(handle => (handle.FullPath, handle.Identity)).ToArray();
 
     internal IReadOnlyList<LocalSecureHandle> TakeHandles()
     {
@@ -557,6 +559,8 @@ internal sealed class LocalSecureApprovalLease(
     private LocalSecureRoot? _authorityRoot = authorityRoot;
     private IReadOnlyList<LocalSecureHandle>? _retainedAncestors = retainedAncestors;
     private LocalSecureHandle? _retainedTarget = retainedTarget;
+    internal LocalCreatedDirectoryAuthority? CreatedDirectories { get; set; }
+    internal IDisposable? CreatedDirectoryLifetime { get; set; }
 
     public LocalResourceBinding Binding { get; } = binding;
 
@@ -573,6 +577,9 @@ internal sealed class LocalSecureApprovalLease(
         .Concat(retainedAncestors.Select(static handle => handle.Identity))
         .Concat(retainedTarget is null ? [] : [retainedTarget.Identity])
         .ToArray();
+    internal IReadOnlyList<(string Path, LocalSecureIdentity Identity)> RetainedPathNodes { get; } = authorityRoot.HandleNodes
+        .Concat(retainedAncestors.Select(handle => (handle.FullPath, handle.Identity)))
+        .Concat(retainedTarget is null ? [] : new[] { (retainedTarget.FullPath, retainedTarget.Identity) }).ToArray();
 
     public LocalSecureRoot BorrowAuthorityRoot()
     {
@@ -607,7 +614,8 @@ internal sealed class LocalSecureApprovalLease(
             createParents,
             allowMissingSuffix,
             hooks,
-            cancellationToken);
+            cancellationToken,
+            CreatedDirectories);
     }
 
     public void Dispose()
@@ -626,6 +634,8 @@ internal sealed class LocalSecureApprovalLease(
             }
             _authorityRoot?.Dispose();
             _authorityRoot = null;
+            CreatedDirectoryLifetime?.Dispose();
+            CreatedDirectoryLifetime = null;
         }
     }
 }

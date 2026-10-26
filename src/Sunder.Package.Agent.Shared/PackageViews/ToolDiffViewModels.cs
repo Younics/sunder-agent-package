@@ -39,10 +39,26 @@ internal sealed class ToolDiffViewModel
     public static ToolDiffViewModel? TryCreate(string toolId, string argumentsJson, string? resultSummary, string? outputText, bool isError, string? presentationPayloadJson = null)
         => toolId.ToLowerInvariant() switch
         {
+            "write" => TryCreateWriteDiff(argumentsJson, resultSummary, outputText, isError, presentationPayloadJson),
             "apply_patch" => TryCreatePatchDiff(argumentsJson, resultSummary, outputText, isError, presentationPayloadJson),
             "edit" => TryCreateEditDiff(argumentsJson, resultSummary, outputText, isError, presentationPayloadJson),
             _ => null,
         };
+
+    private static ToolDiffViewModel? TryCreateWriteDiff(string argumentsJson, string? resultSummary,
+        string? outputText, bool isError, string? presentationPayloadJson)
+    {
+        if (!isError && TryCreateFromPresentationPayload(presentationPayloadJson, "Written changes", showMarkdownDetails: true, out var persisted))
+            return persisted.WithHeader(BuildPatchHeader(persisted.Files, persisted.AddedLineCount, persisted.DeletedLineCount));
+        if (!TryGetObject(argumentsJson, out var root) || !TryGetString(root, "path", out var path)
+            || !TryGetString(root, "content", out var content)) return null;
+        var lines = SplitLines(content);
+        // Arguments describe intent, not proof of a mutation. Without the
+        // persisted before/after payload do not fabricate overwrite history.
+        var file = new ToolDiffFileViewModel(path, "Requested content", 0, 0,
+            TrimLongDiff(lines.Select((line, index) => ToolDiffLineViewModel.Context(index + 1, index + 1, line)).ToArray()));
+        return new ToolDiffViewModel(FormatPathForHeader(path), "Requested content", true, [file]);
+    }
 
     private static ToolDiffViewModel? TryCreateEditDiff(string argumentsJson, string? resultSummary, string? outputText, bool isError, string? presentationPayloadJson)
     {

@@ -9,6 +9,41 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public partial class AgentChatView
 {
+    private readonly HashSet<Control> _pendingToolRefreshHeaders = [];
+    private bool _drainingToolRefreshes;
+
+    private void OnToolDetailRefreshRequested(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (sender is not Control source) return;
+        var scope = source.GetVisualAncestors().OfType<TranscriptRowPresenter>().FirstOrDefault();
+        var header = scope?.GetVisualDescendants().OfType<Button>().FirstOrDefault(button =>
+            button.Classes.Contains("tool-step-header") && ReferenceEquals(button.DataContext, source.DataContext));
+        if (header is null) return;
+        _pendingToolRefreshHeaders.Add(header);
+        QueueToolDetailRefreshes();
+    }
+
+    private void QueueToolDetailRefreshes()
+    {
+        if (_disposed || _drainingToolRefreshes || _toolExpansionCancellation is not null || _pendingToolRefreshHeaders.Count == 0) return;
+        _drainingToolRefreshes = true;
+        _operations.Submit(new PresentationOperation("agent-chat.refresh-tool-details", "The tool details could not be refreshed."), async _ =>
+        {
+            try
+            {
+                while (!_disposed && _toolExpansionCancellation is null && _pendingToolRefreshHeaders.Count > 0)
+                {
+                    var header = _pendingToolRefreshHeaders.First();
+                    _pendingToolRefreshHeaders.Remove(header);
+                    if (header.IsAttachedToVisualTree() && header.DataContext is AgentToolInvocationRowViewModel row
+                        && (row.IsExpanded || row.IsDetailLoadFailed)) await OnToolStepHeaderClickAsync(header, refreshing: true);
+                }
+            }
+            finally { _drainingToolRefreshes = false; }
+        });
+    }
+
     private void OnActivityGroupHeaderClick(object? sender, RoutedEventArgs e)
     {
         if (sender is not Control { DataContext: AgentActivityGroupRowViewModel group } header) return;
@@ -29,7 +64,7 @@ public partial class AgentChatView
             _ => OnToolStepHeaderClickAsync(sender));
     }
 
-    private async Task OnToolStepHeaderClickAsync(object? sender)
+    private async Task OnToolStepHeaderClickAsync(object? sender, bool refreshing = false)
     {
         if (sender is not Control header
             || header.DataContext is not AgentToolInvocationRowViewModel toolRow)
@@ -48,7 +83,7 @@ public partial class AgentChatView
             return;
         }
 
-        if (toolRow.IsExpanded)
+        if (toolRow.IsExpanded && !refreshing)
         {
             CancelPendingToolExpansion();
             header.Focus();
@@ -79,7 +114,7 @@ public partial class AgentChatView
             return;
         }
 
-        if (toolRow.IsPreparing)
+        if (toolRow.IsPreparing && !refreshing)
         {
             CancelPendingToolExpansion();
             toolRow.CollapseDetails();
@@ -103,7 +138,7 @@ public partial class AgentChatView
             isExpanding: true);
         if (viewportMutationGeneration == 0)
         {
-            toolRow.CollapseDetails();
+            AbandonExpansion();
             ReleaseToolExpansionOperation(operationCancellation);
             return;
         }
@@ -116,7 +151,7 @@ public partial class AgentChatView
             {
                 if (toolRow.IsCurrentExpansion(request))
                 {
-                    toolRow.CollapseDetails();
+                    AbandonExpansion();
                 }
                 return;
             }
@@ -125,7 +160,7 @@ public partial class AgentChatView
             {
                 if (detail is not null && detail.Detail.Revision != request.Revision)
                 {
-                    toolRow.CollapseDetails();
+                    AbandonExpansion();
                 }
                 else
                 {
@@ -147,7 +182,7 @@ public partial class AgentChatView
             {
                 if (toolRow.IsCurrentExpansion(request))
                 {
-                    toolRow.CollapseDetails();
+                    AbandonExpansion();
                 }
                 return;
             }
@@ -168,7 +203,7 @@ public partial class AgentChatView
                 });
             if (!viewportMutationCommitted && toolRow.IsCurrentExpansion(request))
             {
-                toolRow.CollapseDetails();
+                AbandonExpansion();
             }
         }
         catch (OperationCanceledException) when (operationToken.IsCancellationRequested
@@ -177,7 +212,7 @@ public partial class AgentChatView
             _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
             if (toolRow.IsCurrentExpansion(request))
             {
-                toolRow.CollapseDetails();
+                AbandonExpansion();
             }
         }
         catch (Exception exception) when (
@@ -190,7 +225,7 @@ public partial class AgentChatView
             }
             else if (toolRow.IsCurrentExpansion(request))
             {
-                toolRow.CollapseDetails();
+                AbandonExpansion();
             }
             throw;
         }
@@ -201,6 +236,12 @@ public partial class AgentChatView
                 _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
             }
             ReleaseToolExpansionOperation(operationCancellation);
+        }
+
+        void AbandonExpansion()
+        {
+            if (refreshing) toolRow.FailExpansion(request, new InvalidOperationException("Refresh was interrupted; retry details."));
+            else toolRow.CollapseDetails();
         }
     }
 
@@ -248,6 +289,7 @@ public partial class AgentChatView
         {
             ToolDetailPreparationPortal.CancelPreparation();
             operation.Dispose();
+            QueueToolDetailRefreshes();
         }
     }
 }

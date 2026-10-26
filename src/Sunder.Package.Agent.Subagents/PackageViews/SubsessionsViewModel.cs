@@ -577,9 +577,15 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         });
 
     private void ApplyRunActivityState()
-        => RunActivityRow.SetPresentation(
-            _runActivity.Text,
-            _runActivity.ShouldShow);
+    {
+        if (RunActivityRow.MatchesPresentation(_runActivity.Text, _runActivity.ShouldShow)) return;
+        var changesLayout = !_timeline.IsInitialLoading && _timeline.SessionId is { } activitySession
+                            && activitySession == SelectedSubsession?.SessionId
+                            && (RunActivityRow.IsVisible || _runActivity.ShouldShow);
+        if (changesLayout) TranscriptChanging?.Invoke(false);
+        try { RunActivityRow.SetPresentation(_runActivity.Text, _runActivity.ShouldShow); }
+        finally { if (changesLayout) TranscriptChanged?.Invoke(); }
+    }
 
     private void OnTimelineRowsChanged()
     {

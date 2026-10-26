@@ -4,22 +4,22 @@
     "net10.0": {
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
-        "requested": "[18.5.1, )",
-        "resolved": "18.5.1",
-        "contentHash": "SfqVaLiIqAbRWuPg5BP4QFwBIirQj/YIL8Dhxl6zntBKbXp0cQykoV480SmwG+yRMiWptxEI6NbHQuGSZ8b97w==",
+        "requested": "[18.11.0, )",
+        "resolved": "18.11.0",
+        "contentHash": "xf/bR0LNkhK0SnadDRlZIQmC4sac5Wk0e1WAdiQjRN3MSo6gQ9M2c4c1XRNnVGjfOvckh704W5CJ19AL0/Xsdg==",
         "dependencies": {
-          "Microsoft.CodeCoverage": "18.5.1",
-          "Microsoft.TestPlatform.TestHost": "18.5.1"
+          "Microsoft.CodeCoverage": "18.11.0",
+          "Microsoft.TestPlatform.TestHost": "18.11.0"
         }
       },
       "Sunder.Sdk": {
         "type": "Direct",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "K+MrJIKZ/tuG3F/AfGVFy3Gxgmt+IFyA3V3Me3jUOREXZWviXlzeZTK+cvft3DJk2IFIvl68OuGi+to5LWgtgA==",
+        "contentHash": "7l6xqfn7ESsDR71I0nRVmz+cGXgMmD7LKpQ+qewC07qrNcbglFb4X5qjwWdOC4CzEXblciKHJr5VKt35nk+7og==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.8"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
         }
       },
       "xunit": {
@@ -35,9 +35,9 @@
       },
       "xunit.runner.visualstudio": {
         "type": "Direct",
-        "requested": "[3.1.5, )",
-        "resolved": "3.1.5",
-        "contentHash": "tKi7dSTwP4m5m9eXPM2Ime4Kn7xNf4x4zT9sdLO/G4hZVnQCRiMTWoSZqI/pYTVeI27oPPqHBKYI/DjJ9GsYgA=="
+        "requested": "[4.0.1, )",
+        "resolved": "4.0.1",
+        "contentHash": "8CoAaZkniVekR1ycJyxn+hOz+6ZQCDPcoIsIs6ujd4WyFcBMlxGNU15Qb8Uxd4iO4UmOuETb0M6vzBbwX/mfLA=="
       },
       "Avalonia.BuildServices": {
         "type": "Transitive",
@@ -46,55 +46,44 @@
       },
       "Avalonia.Remote.Protocol": {
         "type": "Transitive",
-        "resolved": "12.0.3",
-        "contentHash": "NHvbiGC461oB3DXt8qgLNN+QfcYARcSxY7diyic9R7u6jQA4bc+ZbjEQKX8y8WyF1vOssedRmuOeTvRXlXbF9Q=="
-      },
-      "Markdig": {
-        "type": "Transitive",
-        "resolved": "1.1.2",
-        "contentHash": "mXh6Ah5p/jtryn7o96B2knDDJVgZ775HnFLObcVxuyWcfeHlsI95WUjiJH0m7ZOYGdCLvwRTwMhv023jUZoEAA=="
+        "resolved": "12.1.4",
+        "contentHash": "9ajC+Ff+U9S21JJKGbJgnwp9fY+zwJG+bSEC//o/vJU2M6IEMRGp+D1+AUoqTR79FAA/iDYgf4f4EF4PZKhZsg=="
       },
       "MicroCom.Runtime": {
         "type": "Transitive",
-        "resolved": "0.11.4",
-        "contentHash": "yZ8+Lgwo+KtRI29TB2mIOEMzV+csMJ+pKZg4YHReAP3vRewWLKKeYfrBDo5FS69rWnEbCfU3sbM+ZEQr+GDLtg=="
+        "resolved": "0.11.6",
+        "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ=="
       },
       "Microsoft.CodeCoverage": {
         "type": "Transitive",
-        "resolved": "18.5.1",
-        "contentHash": "vMFDR1ZjqzzgKmM0zrPie7Gv9Y+ZppjODB5Quzu9Eq0TlIusUfUCYFPEawO91zQuqwzvdFbJSU7WHNtjStffJQ=="
+        "resolved": "18.11.0",
+        "contentHash": "MhN9wpvL1Es4hfIYslrsVgIsUdDFxuOBTbAl9mGIMvFo8PP5CLf4DrGdNrfwWSyn0lqi6sssm+I/qkkLL3MU+g=="
       },
       "Microsoft.Data.Sqlite.Core": {
         "type": "Transitive",
-        "resolved": "10.0.8",
-        "contentHash": "26t7WDiEjjAls/sFpWvVEFDxt+7Q5VPt6+blU2Lafuj9L8PzAv/GtGV4cqVPtrhWbfD2BX/z2v8hD1qXYtK6Aw==",
+        "resolved": "10.0.13",
+        "contentHash": "Gge8XsSCOwcbkbdmt2UDAe6kIv9Q0vA6yb3wsTStjjexaMFLTWfc/1gH4kbhJ+zWiXRTRA4lG2sOQNVfir204w==",
         "dependencies": {
-          "SQLitePCLRaw.core": "2.1.11"
+          "SQLitePCLRaw.core": "2.1.13"
         }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
-        "resolved": "10.0.8",
-        "contentHash": "21nbDV60SRPWGIivsyl6lqBeEJNG1sginhhfWgRrr3Ais7aQ12To25OAHQxgoiJkjqy1aQ6RxpZBGYuTi7Ge6A=="
+        "resolved": "10.0.13",
+        "contentHash": "G2GrGWNAPZBsii2F6AU8n+JT2tC1/I0Ml/e9ZyNCgPjf3hZqronP7o0X91aAynCmVeae8KkSIUNXXeXCNRmdVQ=="
       },
       "Microsoft.TestPlatform.ObjectModel": {
         "type": "Transitive",
-        "resolved": "18.5.1",
-        "contentHash": "KNZd+M0S0rz5eNAln0pbZX+A/RbokYZCbGKx4fN4CkhtWhkz6nSJDO+9LGYjRE4d0WPVriJ2JnVubkjt3+PpMg=="
+        "resolved": "18.11.0",
+        "contentHash": "BXBHYnwSOljKute8UYCMXOLAdB7awxEMppPSpqOF1ZxLD/W/OH+vTBgFaXA7q0aditJTVXSMVenel+wOkEIyNg=="
       },
       "Microsoft.TestPlatform.TestHost": {
         "type": "Transitive",
-        "resolved": "18.5.1",
-        "contentHash": "RM+3JNHEoHOCFXzVntUcIiYxzPjzBN0N8wto6HYXi76YyBTZ/3CeRL8U+Pk5zx3AUrOmHxDvKJwGUCdElU9bJg==",
+        "resolved": "18.11.0",
+        "contentHash": "AKjwKpyRBwoQFQmpcchtoYlfJEBlaY/40uxBRi+qXP4NR7xT8t+XTJtOyEyumfvfJcH5pASs75LwNdXYRr4XNA==",
         "dependencies": {
-          "Microsoft.TestPlatform.ObjectModel": "18.5.1",
-          "Newtonsoft.Json": "13.0.3"
+          "Microsoft.TestPlatform.ObjectModel": "18.11.0"
         }
-      },
-      "Newtonsoft.Json": {
-        "type": "Transitive",
-        "resolved": "13.0.3",
-        "contentHash": "HrC5BXdl00IP9zeV+0Z848QWPAoCr9P3bDEZguI+gkLcBKAOxix/tLEAAHC+UvDNPv4a2d18lOReHMOagPa+zQ=="
       },
       "Onigwrap": {
         "type": "Transitive",
@@ -181,15 +170,15 @@
       "sunder.package.agent": {
         "type": "Project",
         "dependencies": {
-          "Avalonia": "[12.0.3, )",
+          "Avalonia": "[12.1.4, )",
           "Avalonia.Controls.ItemsRepeater": "[12.0.0, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "LiveMarkdown.Avalonia": "[2.2.0, )",
-          "Microsoft.Data.Sqlite": "[10.0.8, )",
-          "Microsoft.Extensions.AI.Abstractions": "[10.5.2, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
-          "Microsoft.Extensions.Logging.Abstractions": "[10.0.8, )",
-          "Polly.Core": "[8.4.2, )",
+          "LiveMarkdown.Avalonia": "[2.5.1, )",
+          "Microsoft.Data.Sqlite": "[10.0.13, )",
+          "Microsoft.Extensions.AI.Abstractions": "[10.11.0, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.13, )",
+          "Microsoft.Extensions.Logging.Abstractions": "[10.0.13, )",
+          "Polly.Core": "[8.8.0, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Stacks": "[1.1.0, 1.2.0)",
@@ -199,10 +188,10 @@
       "sunder.package.agent.memory.semantic": {
         "type": "Project",
         "dependencies": {
-          "Avalonia": "[12.0.3, )",
+          "Avalonia": "[12.1.4, )",
           "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Microsoft.Data.Sqlite": "[10.0.8, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.8, )",
+          "Microsoft.Data.Sqlite": "[10.0.13, )",
+          "Microsoft.Extensions.DependencyInjection": "[10.0.13, )",
           "Sunder.Sdk": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
           "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
@@ -216,13 +205,13 @@
       },
       "Avalonia": {
         "type": "CentralTransitive",
-        "requested": "[12.0.3, )",
-        "resolved": "12.0.3",
-        "contentHash": "OVAzdZB5T/QIOEpw/WmQ0ZJM13BMmLO7RqR5z+lZtBMuStK63W68SV/Q+PNn/GdFEC3Ab8eQhH2FMb8FhNLK+w==",
+        "requested": "[12.1.4, )",
+        "resolved": "12.1.4",
+        "contentHash": "Vlz+ebY0PBVsTFXAPIpM+7ySgezMtyJ3GMMGmccHwxXXjgLF2x5+NMwO4AqrdM/lrUPZremnYNO6MSg1r1vuxw==",
         "dependencies": {
           "Avalonia.BuildServices": "11.3.2",
-          "Avalonia.Remote.Protocol": "12.0.3",
-          "MicroCom.Runtime": "0.11.4"
+          "Avalonia.Remote.Protocol": "12.1.4",
+          "MicroCom.Runtime": "0.11.6"
         }
       },
       "Avalonia.Controls.ItemsRepeater": {
@@ -242,9 +231,9 @@
       },
       "LiveMarkdown.Avalonia": {
         "type": "CentralTransitive",
-        "requested": "[2.2.0, )",
-        "resolved": "2.2.0",
-        "contentHash": "YS8CuVSe/RlEUZZF4j0vH0EvGDazJ0vW6Qud0rSjsfobYRB7oxlHgBAbZduG58MB27w4JDwxOPp87MXYLgCY+A==",
+        "requested": "[2.5.1, )",
+        "resolved": "2.5.1",
+        "contentHash": "sSuJagEdnLTtCj39wAM4bKSpMAT318TYAPkG+h+FYbc4H6atveLAimI+hiwGISimLXNZjv5QSX0/TJ7QkhERnQ==",
         "dependencies": {
           "Avalonia": "12.0.0",
           "Markdig": "1.1.2",
@@ -252,46 +241,52 @@
           "TextMateSharp.Grammars": "2.0.0"
         }
       },
+      "Markdig": {
+        "type": "CentralTransitive",
+        "requested": "[1.5.0, )",
+        "resolved": "1.5.0",
+        "contentHash": "oEm6N4PYFPUZiJ5e89993AE6hfC8EWRGD5M8nyoSJbwD4GgW818mjlQCk++SdTV4godaN50Ybcmm4j2Dp76oIQ=="
+      },
       "Microsoft.Data.Sqlite": {
         "type": "CentralTransitive",
-        "requested": "[10.0.8, )",
-        "resolved": "10.0.8",
-        "contentHash": "iyDWyD6r/SnqgoYYQIlLhxL1ZIGZr+SByMXrJKSA1w7sOt7bPMJmN3h2laqwKqyQkjh/lUPJ7LTXwpvqzhggOQ==",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "w37nz3WFmDtRfXxWEwIXX2OgqDRiwhD1JGbFwfpFCF8GkCrV/yO6Y2JF5058J2RGoI2sCcdn02wrk0yEcekWcw==",
         "dependencies": {
-          "Microsoft.Data.Sqlite.Core": "10.0.8",
-          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.11",
-          "SQLitePCLRaw.core": "2.1.11"
+          "Microsoft.Data.Sqlite.Core": "10.0.13",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.13",
+          "SQLitePCLRaw.core": "2.1.13"
         }
       },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "CentralTransitive",
-        "requested": "[10.5.2, )",
-        "resolved": "10.5.2",
-        "contentHash": "Ei+YWV9Ybnps7pR1dgjlG29gelXEwZkhLVAcWmKe6HvXS6LNBYgSdWiY3Hk9OZXYtK34rv/NtLWBQYQGOBQYPQ=="
+        "requested": "[10.11.0, )",
+        "resolved": "10.11.0",
+        "contentHash": "h4DX/TdJU4fk1GGaf19n6Kujkj6VXbGeL4UEOsQ8+ZJC5fVApPauokCtvBP684BYbczUYZQNfo1mbmyHG4WVSg=="
       },
       "Microsoft.Extensions.DependencyInjection": {
         "type": "CentralTransitive",
-        "requested": "[10.0.8, )",
-        "resolved": "10.0.8",
-        "contentHash": "daf62xHIrq8pnE709hgaZZN9tSam9TGGepWe1+bE6V3GEuVwJiMs6ib+38lfMCyAJAHiX0vapxBhsuMSV7U+cg==",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "4tnWU9vrU/A8NwYe9Z6wvieZ0EBb/uM82LAT+edNhdepOBWREZ7M7mzb941EIDPJaeOFdbVrDd5+7s9e89U6bQ==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {
         "type": "CentralTransitive",
-        "requested": "[10.0.8, )",
-        "resolved": "10.0.8",
-        "contentHash": "fdVadZmsC8jRP0KvKy8mO8f6GV/HyBvElfcSxEhd+5FM5boAw/01iSaCto5G3G37ApJira4A3pNaVvBv8cUiLQ==",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "aSZEhEig4fvNiw2zs8Z6NyDlniKtq6YjcF3DyHuqTEHcZ2VKA/6itMPZ+dW+yWABWExlDcQwwdbqX1Rcb7W8WQ==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.8"
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
         }
       },
       "Polly.Core": {
         "type": "CentralTransitive",
-        "requested": "[8.4.2, )",
-        "resolved": "8.4.2",
-        "contentHash": "BpE2I6HBYYA5tF0Vn4eoQOGYTYIK1BlF5EXVgkWGn3mqUUjbXAr13J6fZVbp7Q3epRR8yshacBMlsHMhpOiV3g=="
+        "requested": "[8.8.0, )",
+        "resolved": "8.8.0",
+        "contentHash": "TewV9uNFsoRFggoFbTAGFwsMYPuckA+wTIpQPyhLL9BANRPQRENz2S4bwATrB3HBOakN5oKLFIllPiDnVecmJg=="
       },
       "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "CentralTransitive",
@@ -313,9 +308,9 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "33tYe8dxyFpWHQLeXLEZX8FHk2HUBfHkpo+z8x+oaX+PgLAnBDevuKtHvQ1WuzAcoyBsgGkKE/bGBID31WlS5A==",
+        "contentHash": "xumE58uEYezTvc+LqD8RWlyvOULxBYVUXluR+DuXoT3y3gGmtp1RR4pWR4FXpj1dCq3qD0arPKz5ABecMqmNVA==",
         "dependencies": {
-          "Avalonia": "12.0.3",
+          "Avalonia": "12.1.4",
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
       },
@@ -323,7 +318,7 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.2.0)",
         "resolved": "1.1.0",
-        "contentHash": "qBZywVIf3CKe2od+m4hfwVEG1z+9A2ZljDekhLAxUtALkHTLCWxDiriVyHt3VdxplnGlCeWgM+E7IEW7uLuyZQ==",
+        "contentHash": "St/t7Z22mI25e9Zt+0SMdYTqebmNQ9vj10EFBXsQLLLe24YPmPGBI/DGL99cLl4/jPvfHULYzLlb30HECx4qEQ==",
         "dependencies": {
           "Sunder.Sdk": "[1.1.0, 1.2.0)"
         }
@@ -332,9 +327,9 @@
         "type": "CentralTransitive",
         "requested": "[1.1.0, 1.1.0]",
         "resolved": "1.1.0",
-        "contentHash": "TldLGL2h14rb4Aft01PyXcIfgOYb1JpvXb+0Sg/w53evsTeVzVvimspU3lqIidE0sYVpNbH4LcwsHZJnD6uh9A==",
+        "contentHash": "JO1ZFLvgrgkQbQsJZKYHGhBlXhg3XJHzhieZe16JKmBDaWLhzLC8AM1afzOoXov7wXsF3i3B/KjOEuSAdLCzRw==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection": "10.0.8",
+          "Microsoft.Extensions.DependencyInjection": "10.0.13",
           "Sunder.Sdk": "[1.1.0]"
         }
       }
