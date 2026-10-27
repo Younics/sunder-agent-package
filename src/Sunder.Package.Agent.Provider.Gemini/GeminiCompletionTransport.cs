@@ -9,7 +9,8 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 
 internal sealed class GeminiCompletionTransport(
     GeminiResponseTranslator responseTranslator,
-    ProviderStreamTelemetry telemetry)
+    ProviderStreamTelemetry telemetry,
+    ProviderRetryMetadata? retryMetadata = null)
 {
     public async IAsyncEnumerable<ChatResponseUpdate> StreamAsync(
         Client client,
@@ -36,10 +37,10 @@ internal sealed class GeminiCompletionTransport(
             throw GeminiExceptionMapper.UnsupportedResponse(translation.UnsupportedPartKinds);
         }
 
-        if (translation.Contents.Count > 0)
+        if (translation.Contents.Count > 0 || translation.FinishReason == ChatFinishReason.Length)
         {
             await telemetry.RecordFirstEventAsync(translation.FirstEventKind, cancellationToken);
-            yield return ProviderResponseUpdates.Create(modelId, responseId, responseId, translation.Contents);
+            yield return ProviderResponseUpdates.Create(modelId, responseId, responseId, translation.Contents, translation.FinishReason);
         }
 
         if (ProviderResponseUpdates.CreateUsage(modelId, responseId, responseId, translation.Usage) is { } usageUpdate)
@@ -91,7 +92,7 @@ internal sealed class GeminiCompletionTransport(
                     throw GeminiExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
                 default:
                     await telemetry.FailedAsync(ex);
-                    throw GeminiExceptionMapper.Request(ex);
+                    throw GeminiExceptionMapper.Request(ex, retryMetadata?.RetryAfterMilliseconds);
             }
         }
     }

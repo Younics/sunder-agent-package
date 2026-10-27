@@ -145,10 +145,23 @@ public sealed partial class AgentPublicSourceMigrationTests
             await using var fixture = await CreateBehaviorFixture(assembly, descriptors, loop);
             var host = new FullRunControlProbe { Block = !retireControl };
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var ownerRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var ownerRetirement = fixture.ControlReference.RetirementToken.Register(() => ownerRetired.TrySetResult());
             loop.Execute = async (context, runtime, token) =>
             {
                 started.TrySetResult();
-                if (retireControl) await Task.Delay(Timeout.Infinite, token);
+                if (retireControl)
+                {
+                    try { await Task.Delay(Timeout.Infinite, token); }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        // The two receiver sessions observe retirement independently.
+                        // This branch tests caller-owned reference retirement, not
+                        // provider cancellation arriving before that owner signal.
+                        await ownerRetired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        throw;
+                    }
+                }
                 else await runtime.BuildInstructionContextAsync(token);
                 return new(context.RunningCheckpoint, AgentBehaviorLoopCompletionKind.Completed);
             };

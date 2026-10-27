@@ -6,6 +6,9 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 
 public sealed partial class SubsessionsViewModel
 {
+    internal Task PendingTranscriptActivities => Task.WhenAll(_runtimeRefresh.WhenIdle,
+        Volatile.Read(ref _transcriptLoadOperation), _timeline.PendingCompactOperations);
+
     public async Task<bool> LoadOlderTranscriptRowsAsync(
         object? protectedAnchorKey = null,
         CancellationToken cancellationToken = default)
@@ -119,6 +122,21 @@ public sealed partial class SubsessionsViewModel
                 return;
             }
 
+            if (ticket.Compact && transcriptReader is ISubsessionCompactTranscriptReader compact)
+            {
+                var compactPage = await compact.LoadCompactTranscriptAsync(
+                    _timeline.CreateCompactRefreshRequest(ticket.SessionId, InitialTranscriptTurnLimit),
+                    ticket.Generation.CancellationToken).ConfigureAwait(false);
+                await RunOnUiThreadAsync(() =>
+                {
+                    if (!_timeline.TryCompleteCompactInitialLoad(ticket, compactPage)) return;
+                    _knownCheckpoints.TryGetValue(ticket.SessionId, out var checkpoint);
+                    TrackCheckpointActivity(checkpoint);
+                    ApplyRunActivityState();
+                }, ticket.Generation.CancellationToken);
+                return;
+            }
+
             var page = await transcriptReader.ListRecentTurnsAsync(
                 ticket.SessionId,
                 InitialTranscriptTurnLimit,
@@ -156,7 +174,7 @@ public sealed partial class SubsessionsViewModel
         }
 
         _knownCheckpoints.TryGetValue(ticket.SessionId, out var checkpoint);
-        _runActivity.TrackCheckpoint(checkpoint);
+        TrackCheckpointActivity(checkpoint);
         ApplyRunActivityState();
     }
 }

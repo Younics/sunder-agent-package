@@ -807,6 +807,7 @@ public sealed class AgentRuntimeTransportLimitTests
         => new()
         {
             TurnId = turn.TurnId,
+            TurnSequence = turn.TurnSequence,
             SessionId = turn.SessionId,
             Role = (SubagentModels.AgentMessageRole)(int)turn.Role,
             Kind = (SubagentModels.AgentTurnKind)(int)turn.Kind,

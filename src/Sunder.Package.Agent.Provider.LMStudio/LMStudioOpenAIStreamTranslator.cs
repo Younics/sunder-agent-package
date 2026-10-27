@@ -73,8 +73,13 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
         {
             if (update.FinishReason == OpenAI.Chat.ChatFinishReason.Length)
             {
-                throw LMStudioExceptionMapper.IncompleteResponse(
-                    "LM Studio reached its maximum output-token limit.");
+                // Do not parse or emit a function call cut off in mid-arguments.
+                translated.AddRange(_bufferedTextUpdates);
+                _bufferedTextUpdates.Clear();
+                _toolCalls.Clear();
+                translated.Add(ProviderResponseUpdates.Create(modelId, responseId, messageId,
+                    Array.Empty<AIContent>(), Microsoft.Extensions.AI.ChatFinishReason.Length));
+                return new LMStudioStreamTranslation(translated, IsTerminal: true);
             }
 
             if (update.FinishReason == OpenAI.Chat.ChatFinishReason.ContentFilter)
@@ -104,6 +109,9 @@ internal sealed class LMStudioOpenAIStreamTranslator(bool allowMultipleToolCalls
                 translated.AddRange(_bufferedTextUpdates);
                 _bufferedTextUpdates.Clear();
             }
+            else
+                translated.Add(ProviderResponseUpdates.Create(modelId, responseId, messageId,
+                    Array.Empty<AIContent>(), Microsoft.Extensions.AI.ChatFinishReason.Stop));
         }
 
         return new LMStudioStreamTranslation(translated, isTerminal);

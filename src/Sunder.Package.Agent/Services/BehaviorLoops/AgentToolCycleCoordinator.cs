@@ -20,7 +20,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
         AgentAssistantTurnState assistantTurnState,
         Stopwatch loopStopwatch,
         CancellationToken cancellationToken,
-        AgentRunBudgetTracker? budgetTracker = null)
+        AgentRunUsageTracker? usageTracker = null)
     {
         if (providerToolCalls.Count > 1 && !allowMultipleToolCalls)
         {
@@ -33,8 +33,8 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
             return AgentToolCycleResult.Terminal(result);
         }
 
-        if (budgetTracker is not null)
-            await budgetTracker.ChargeToolCallsAsync(providerToolCalls.Count, cancellationToken).ConfigureAwait(false);
+        if (usageTracker is not null)
+            await usageTracker.ChargeToolCallsAsync(providerToolCalls.Count, cancellationToken).ConfigureAwait(false);
         var toolCalls = providerToolCalls.Select(CreateToolCallRequest).ToArray();
         var outcomes = await host.InvokeToolsAsync(toolCalls, assistantTurn: null, cancellationToken);
         var keyedOutcomes = outcomes
@@ -43,6 +43,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
                 toolCalls[index],
                 outcome));
 
+        string? correction = null;
         foreach (var keyedOutcome in keyedOutcomes)
         {
             var outcome = keyedOutcome.Value;
@@ -65,9 +66,14 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
             {
                 continue;
             }
+            if (progressFailure.IsCorrection)
+            {
+                correction = AgentRunProgressGuard.CorrectionInstruction;
+                continue;
+            }
 
             assistantTurnState.Turn = null;
-            var progressResult = await _terminalHandler.FailAsync(
+            var progressResult = await _terminalHandler.InterruptAsync(
                 host,
                 assistantTurnState,
                 progressFailure.VisibleMessage,
@@ -95,7 +101,7 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
         }
 
         return AgentToolCycleResult.Continue(
-            outcomes.Any(outcome => outcome.Result?.RequiresPromptContextRefresh == true));
+            outcomes.Any(outcome => outcome.Result?.RequiresPromptContextRefresh == true), correction);
     }
 
     private static AgentToolCallRequest CreateToolCallRequest(FunctionCallContent functionCall)
@@ -126,10 +132,11 @@ internal sealed class AgentToolCycleCoordinator(AgentLoopTerminalHandler termina
 internal sealed record AgentToolCycleResult(
     bool ShouldContinue,
     AgentBehaviorLoopResult? TerminalResult,
-    bool RequiresPromptContextRefresh = false)
+    bool RequiresPromptContextRefresh = false,
+    string? ContinuationInstruction = null)
 {
-    public static AgentToolCycleResult Continue(bool requiresPromptContextRefresh)
-        => new(true, null, requiresPromptContextRefresh);
+    public static AgentToolCycleResult Continue(bool requiresPromptContextRefresh, string? continuationInstruction = null)
+        => new(true, null, requiresPromptContextRefresh, continuationInstruction);
 
     public static AgentToolCycleResult Terminal(AgentBehaviorLoopResult result) => new(false, result);
 }

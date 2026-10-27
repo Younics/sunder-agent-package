@@ -862,7 +862,7 @@ public sealed class WorkspaceTests
     }
 
     [Fact]
-    public void AgentLocalStore_GetTranscriptToolDetailJoinsExactCallAndResultWithoutHydratingPages()
+    public void AgentLocalStore_GetTranscriptToolDetailUsesPersistedExecutionLinksWithoutHydratingPages()
     {
         using var scope = TestScope.Create();
         var store = new AgentLocalStore(scope.Context);
@@ -894,41 +894,20 @@ public sealed class WorkspaceTests
             presentationPayloadJson: presentationJson);
         var callItem = Assert.Single(callTurn.Items);
         var resultItem = Assert.Single(resultTurn.Items);
-        var runId = Guid.NewGuid();
-        using (var connection = new SqliteConnection(new SqliteConnectionStringBuilder
-        {
-            DataSource = store.DatabasePath,
-            Pooling = false,
-        }.ToString()))
-        using (var command = connection.CreateCommand())
-        {
-            connection.Open();
-            command.CommandText = """
-                UPDATE AgentTurns
-                SET RunId = $runId, RunRevision = 7
-                WHERE TurnId IN ($callTurnId, $resultTurnId);
-                """;
-            command.Parameters.AddWithValue("$runId", runId.ToString());
-            command.Parameters.AddWithValue("$callTurnId", callTurn.TurnId.ToString());
-            command.Parameters.AddWithValue("$resultTurnId", resultTurn.TurnId.ToString());
-            command.ExecuteNonQuery();
-        }
-
         var fromCallItem = store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
             session.SessionId,
             ItemId: callItem.ItemId));
         var fromResultItem = store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
             session.SessionId,
             ItemId: resultItem.ItemId));
-        var fromCallId = store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
+        var fromExecutionId = store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
             session.SessionId,
-            CallId: "detail-call",
-            RunId: runId,
-            RunRevision: 7));
+            ToolExecutionId: callItem.ToolExecutionId,
+            CallId: "detail-call"));
 
         Assert.NotNull(fromCallItem);
         Assert.Equal(fromCallItem, fromResultItem);
-        Assert.Equal(fromCallItem, fromCallId);
+        Assert.Equal(fromCallItem, fromExecutionId);
         Assert.Equal(callItem.ItemId, fromCallItem!.CallItemId);
         Assert.Equal(resultItem.ItemId, fromCallItem.ResultItemId);
         Assert.Equal(argumentsJson, fromCallItem.ArgumentsJson);
@@ -937,14 +916,11 @@ public sealed class WorkspaceTests
         Assert.Equal("{\"changed\":true}", fromCallItem.StructuredPayloadJson);
         Assert.Equal(presentationJson, fromCallItem.PresentationPayloadJson);
         Assert.Equal("local", fromCallItem.BackendId);
-        Assert.Equal(runId, fromCallItem.RunId);
-        Assert.Equal(7, fromCallItem.RunRevision);
-        var latestTimestamp = callTurn.UpdatedAtUtc > resultTurn.UpdatedAtUtc
-            ? callTurn.UpdatedAtUtc
-            : resultTurn.UpdatedAtUtc;
-        Assert.Equal(
-            (latestTimestamp.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10,
-            fromCallItem.Revision);
+        Assert.Null(fromCallItem.RunId);
+        Assert.Null(fromCallItem.RunRevision);
+        Assert.Equal(2, fromCallItem.Revision);
+        Assert.Null(store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
+            session.SessionId, CallId: "detail-call"))); // Provider text alone is not an invocation identity.
         Assert.Null(store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(
             Guid.NewGuid(),
             CallId: "detail-call")));

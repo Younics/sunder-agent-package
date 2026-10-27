@@ -353,27 +353,28 @@ internal sealed class TranscriptObservableCollection<TItem> : ObservableCollecti
         var bestCurrentStart = 0;
         var bestReplacementStart = 0;
         var bestCount = 0;
-        for (var currentStart = 0; currentStart < current.Count; currentStart++)
+        // Transcript rows are unique by reference. Index them once instead of
+        // comparing every pair and then rescanning each shared suffix.
+        var positions = new Dictionary<TItem, int>(ReferenceEqualityComparer.Instance);
+        for (var index = 0; index < current.Count; index++) positions.Add(current[index], index);
+        var previous = -2;
+        var length = 0;
+        for (var index = 0; index < replacement.Count; index++)
         {
-            for (var replacementStart = 0;
-                 replacementStart < replacement.Count;
-                 replacementStart++)
+            if (!positions.TryGetValue(replacement[index], out var position))
             {
-                var count = 0;
-                while (currentStart + count < current.Count
-                       && replacementStart + count < replacement.Count
-                       && ReferenceEquals(
-                           current[currentStart + count],
-                           replacement[replacementStart + count]))
-                {
-                    count++;
-                }
-                if (count > bestCount)
-                {
-                    bestCurrentStart = currentStart;
-                    bestReplacementStart = replacementStart;
-                    bestCount = count;
-                }
+                previous = -2;
+                length = 0;
+                continue;
+            }
+            length = position == previous + 1 ? length + 1 : 1;
+            previous = position;
+            var start = position - length + 1;
+            if (length > bestCount || length == bestCount && start < bestCurrentStart)
+            {
+                bestCurrentStart = start;
+                bestReplacementStart = index - length + 1;
+                bestCount = length;
             }
         }
 
@@ -426,9 +427,18 @@ internal sealed class TranscriptObservableCollection<TItem> : ObservableCollecti
     internal void ReconcilePresentation(IReadOnlyList<TItem> replacement)
     {
         var desired = replacement.ToHashSet(ReferenceEqualityComparer.Instance);
+        var existingItems = this.ToHashSet(ReferenceEqualityComparer.Instance);
         for (var target = 0; target < replacement.Count; target++)
         {
             if (target < Count && ReferenceEquals(this[target], replacement[target])) continue;
+            if (!existingItems.Contains(replacement[target]))
+            {
+                var end = target + 1;
+                while (end < replacement.Count && !existingItems.Contains(replacement[end])) end++;
+                InsertRange(target, replacement.Skip(target).Take(end - target).ToArray());
+                target = end - 1;
+                continue;
+            }
             var existing = IndexOf(replacement[target]);
             if (existing > target && Items.Skip(target).Take(existing - target).All(item => !desired.Contains(item)))
                 ReplaceRange(target, existing - target + 1, [replacement[target]]);
@@ -438,12 +448,43 @@ internal sealed class TranscriptObservableCollection<TItem> : ObservableCollecti
             else if (existing >= 0)
                 ReplaceRange(target, existing - target + 1,
                     new[] { replacement[target] }.Concat(Items.Skip(target).Take(existing - target)).ToArray());
-            else Insert(target, replacement[target]);
         }
         if (Count > replacement.Count && replacement.Count > 0)
             ReplaceRange(replacement.Count - 1, Count - replacement.Count + 1, [replacement[^1]]);
         else if (replacement.Count == 0)
             while (Count > 0) RemoveAt(Count - 1);
+    }
+
+    // Member chunks normally append within one group. Keep the rest of the
+    // transcript and permanent suffixes out of the publication/reconciliation.
+    internal void ReconcileSlice(int start, int oldCount, IReadOnlyList<TItem> replacement)
+    {
+        var prefix = 0;
+        while (prefix < oldCount && prefix < replacement.Count
+               && ReferenceEquals(this[start + prefix], replacement[prefix])) prefix++;
+        var suffix = 0;
+        while (suffix < oldCount - prefix && suffix < replacement.Count - prefix
+               && ReferenceEquals(this[start + oldCount - suffix - 1], replacement[replacement.Count - suffix - 1])) suffix++;
+        var removed = oldCount - prefix - suffix;
+        var added = replacement.Count - prefix - suffix;
+        var index = start + prefix;
+        if (removed == 0)
+        {
+            InsertRange(index, replacement.Skip(prefix).Take(added).ToArray());
+        }
+        else if (added > 0)
+        {
+            ReplaceRange(index, removed, replacement.Skip(prefix).Take(added).ToArray());
+        }
+        else if (index + removed < Count)
+        {
+            ReplaceRange(index, removed + 1, [this[index + removed]]);
+        }
+        else if (index > 0)
+        {
+            ReplaceRange(index - 1, removed + 1, [this[index - 1]]);
+        }
+        else ReplaceAll([]);
     }
 
     private sealed class DeferredReconciliation(TranscriptObservableCollection<TItem> owner) : IDisposable

@@ -14,7 +14,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
 
         if (mutation.Turn is { } turn)
         {
-            return ApplyLiveTurn(turn);
+            return ApplyLiveTurn(turn, mutation.ActivityGroup);
         }
 
         AgentTurnRecord? currentTurn = null;
@@ -29,6 +29,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
                 out var updatedTurn)
             && !_projector.TryApplyMutation(mutation, out updatedTurn))
         {
+            if (IsCompact) { RequestCompactRefresh(); return TranscriptLiveTurnResult.Buffered; }
             return TranscriptLiveTurnResult.ReloadRequired;
         }
 

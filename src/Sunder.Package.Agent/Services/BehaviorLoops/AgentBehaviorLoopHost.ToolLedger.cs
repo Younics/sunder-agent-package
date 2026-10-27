@@ -175,6 +175,21 @@ internal sealed partial class AgentBehaviorLoopHost
             ? execution
             : throw new InvalidOperationException($"Tool call '{callId}' has no prepared execution ledger row.");
 
+    internal void ReleaseToolBatchState(IReadOnlyList<AgentToolCallRequest> calls)
+    {
+        // Durable ledger/permission rows own continuation. The host only needs
+        // this transient state while the current batch is executing.
+        foreach (var call in calls)
+        {
+            _toolExecutionsByCallId.Remove(call.CallId);
+            _allowOutsideConfiguredScopeByCallId.Remove(call.CallId);
+            _approvedResourceReferencesByCallId.Remove(call.CallId);
+            _approvedResourceClaimsByCallId.Remove(call.CallId);
+            _approvedResourceCapabilitiesByCallId.Remove(call.CallId);
+            _executionTargetConfigurationGenerationByCallId.Remove(call.CallId);
+        }
+    }
+
     internal async ValueTask<IReadOnlyDictionary<string, AgentToolDescriptor>> GetAvailableToolsByIdAsync(
         CancellationToken cancellationToken)
     {

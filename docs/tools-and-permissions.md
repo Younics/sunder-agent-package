@@ -184,14 +184,48 @@ another writer's content happens to match the planned result.
 - Dynamic sources that alter selectable groups should also implement `IAgentProfileSelectableCapabilityProvider` and `IAgentProfileSelectableCapabilityChangeNotifier`.
 - `IAgentToolPresentationResolver` must be pure and tolerate malformed historical arguments/results. Presentation failure must not be needed to understand execution security.
 
-Agent and Subsession transcripts default to compact activity. Adjacent safe-status
-`read`, `grep` and `glob` calls within one execution scope form an expandable group
-between commentary boundaries. Expanding a group reveals original individual call
-rows; expanding a call separately loads its existing lazy details. Failures,
-ambiguous outcomes, permission controls, child-session links and shell/background
-activity remain separate. **Detailed activity** shows the individual rows directly.
-This switch changes only presentation, never stored history, correlation or model
-context. Group state is bounded by the retained transcript window.
+Agent and Subsession transcripts default to **Compact activity**. A visible message
+or a complete adjacent tool group counts as one paging entry, even for thousands of
+calls. Groups include all tools and their failure summaries; visible
+messages and execution-scope boundaries separate them. Call/result pairs count once,
+and a delayed result updates its original invocation instead of moving the group.
+Collapsed groups load metadata only. Expansion reads invocation headers in bounded
+chunks through a finite snapshot; expanding one call separately loads its payload.
+Collapsing cancels member reads and releases header/detail view models. Permission
+controls and child-session links keep their existing behaviour. **Detailed activity**
+pages individual logical messages/invocations without reading tool payloads.
+Mode changes preserve the reading anchor;
+neither mode changes stored history, execution identities, permissions or model context.
+
+Tool and group headers have three visual states: **Running** (yellow),
+**Completed** (green), and **Failed** (red). Prepared/started ledger entries are
+running; failed and ambiguous outcomes are failed. Detailed execution/recovery
+evidence and ambiguity warnings remain available in lazy details. Group state is
+running while any member runs, otherwise failed if any member failed, otherwise
+completed. A receipt's presentation metadata cannot override another execution.
+Compact group headers show only a checkmark for completion, a 12-pixel animation
+while running, and a failure count such as `1!` or `2!`. They omit visible state
+labels and loading-call text; accessible descriptions still name the state and
+loading progress, and actual member-loading errors remain visible.
+
+Allow Once, Allow In Session and Deny dismiss the matching permission card on the
+first click, before awaiting Runtime. All three share one request-level reservation;
+delayed snapshots cannot reintroduce that card while its decision is pending.
+Failed submissions reconcile authoritative permission state before a still-pending
+request is offered again. Late completion cannot change a newly selected session.
+
+Raw conversation receipts remain authoritative for provider context and recovery.
+Runtime maintains lightweight timeline entries, invocation links, group boundaries
+and counts in the same write transaction. Session-local `TurnSequence` determines
+chronology, not timestamps or GUID ordering. Header/detail revisions are explicit;
+presentation-membership epochs are separate from provider-context invalidation.
+Normal live events update only the affected invocation/group; authoritative
+snapshots may revalidate expanded headers. Details read direct persisted call/result
+links in one bounded snapshot, including results outside the visible page.
+
+Compact pages retain the views' initial budgets (45 Agent / 60 Subsessions), then
+30 entries per page and a 60-entry outer window. Expanded members never spend that
+outer budget, and trimming removes a whole group rather than part of its calls.
 
 Older/newer transcript paging preserves the current visible row and its viewport
 position, including input received while a page is in flight. Loading indicators
@@ -199,6 +233,15 @@ overlay the retained content rather than replacing it. Reaching the edge of a
 historical window loads another page without navigating through it automatically;
 **Jump to latest** remains an explicit action. Window trimming does not advance a
 page cursor past fetched rows that were not retained.
+
+Send reserves one correlated submission before awaiting uploads or Runtime admission;
+it does not read old history to identify acceptance. Its authoritative receipt
+reconciles that exact submission without clearing a subsequently edited draft.
+Send follows latest immediately; later manual scrolling or session navigation takes
+precedence, and a delayed receipt does not force the viewport back to the bottom.
+
+The current local store is fresh baseline 3 (`agent-transcript-3-baseline`). Older
+stores are rejected without mutation; there is no migration or compatibility reader.
 
 ## Security Checklist
 

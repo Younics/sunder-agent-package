@@ -35,6 +35,20 @@ internal sealed class AgentToolBatchCoordinator(AgentBehaviorLoopHost host)
         }
 
         var availableToolsById = await _host.GetAvailableToolsByIdAsync(cancellationToken);
+        try
+        {
+            return await InvokePreparedBatchAsync(toolCalls, assistantTurn, availableToolsById, cancellationToken);
+        }
+        finally
+        {
+            _host.ReleaseToolBatchState(toolCalls);
+        }
+    }
+
+    private async ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokePreparedBatchAsync(
+        IReadOnlyList<AgentToolCallRequest> toolCalls, AgentTurnRecord? assistantTurn,
+        IReadOnlyDictionary<string, AgentToolDescriptor> availableToolsById, CancellationToken cancellationToken)
+    {
         await _host.PrepareToolExecutionsAsync(toolCalls, availableToolsById, cancellationToken);
         var outcomes = new AgentToolCallOutcome?[toolCalls.Count];
         var nextToolCallIndex = 0;

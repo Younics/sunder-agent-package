@@ -29,7 +29,7 @@ internal sealed partial class AgentPromptPreparationPipeline
     {
         if (reportedContextTokenCount is null
             || reportedContextTokenCount.Value
-            < AgentProviderRequestLimits.Resolve(context.RunCapabilities).HardInputLimitTokens)
+            < AgentProviderRequestLimits.Resolve(context.RunCapabilities).ProactiveInputLimitTokens)
         {
             return false;
         }
@@ -60,7 +60,9 @@ internal sealed partial class AgentPromptPreparationPipeline
             context,
             pressureOverhead,
             cancellationToken,
-            requireHistoricalAttachmentEviction && previousProjection.ContextCheckpoint is null ? 1 : 0,
+            additionalPressureTokens > 0
+                ? previousProjection.OmittedHistoricalTurnCount + 1
+                : requireHistoricalAttachmentEviction && previousProjection.ContextCheckpoint is null ? 1 : 0,
             compactContext: true)
             .ConfigureAwait(false);
         preparation.Projection = projection;

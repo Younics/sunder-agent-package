@@ -11,8 +11,11 @@ internal sealed class AgentTranscriptRowFactory(
     IActivityTicker activityTicker,
     Func<AgentTurnRecord, string> senderNameResolver,
     Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<AgentChildSessionLinkViewModel>> childSessionLinksResolver)
-    : ITranscriptRowFactory<AgentTranscriptRowViewModel>
+    : ITranscriptRowFactory<AgentTranscriptRowViewModel>, ITranscriptActivityGroupRowFactory<AgentTranscriptRowViewModel>
 {
+    public AgentTranscriptRowViewModel CreateGroup(AgentTranscriptActivityGroup group, TranscriptActivityGroupState state)
+        => new AgentActivityGroupRowViewModel(group, state);
+
     public AgentTranscriptRowViewModel? CreateMessage(
         AgentTurnRecord turn,
         TranscriptMessageProjection projection)

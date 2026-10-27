@@ -559,7 +559,8 @@ public sealed class AgentSessionContextProjectionService
 
     private static IReadOnlyList<AgentTurnRecord> OrderTurns(IEnumerable<AgentTurnRecord> turns)
         => turns
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => turn.TurnSequence)
+            .ThenBy(turn => turn.CreatedAtUtc)
             .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
             .ToArray();
 

@@ -75,6 +75,7 @@ internal static class TranscriptToolTestHarness
     private static SubagentModels.AgentTurnRecord SubagentTurn(AgentTurnRecord turn) => new()
     {
         TurnId = turn.TurnId,
+        TurnSequence = turn.TurnSequence,
         SessionId = turn.SessionId,
         Role = Enum.Parse<SubagentModels.AgentMessageRole>(turn.Role.ToString()),
         Kind = Enum.Parse<SubagentModels.AgentTurnKind>(turn.Kind.ToString()),

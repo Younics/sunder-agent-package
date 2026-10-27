@@ -6,6 +6,27 @@ namespace Sunder.Package.Agent.Provider.OpenAI;
 
 internal static class OpenAiExceptionMapper
 {
+    public static AgentChatProviderException MapRequest(Exception exception)
+    {
+        if (TryMapContextWindowExceeded(exception, out var overflow)) return overflow;
+        if (exception is AgentChatProviderException existing) return AgentProviderFailureClassifier.Normalize(existing);
+        var status = exception is ClientResultException { Status: > 0 } result ? (int?)result.Status
+            : exception is HttpRequestException http && http.StatusCode is { } code ? (int)code : null;
+        string? milliseconds = null, retryAfter = null;
+        if (exception is ClientResultException sdk && sdk.GetRawResponse() is { } response)
+        {
+            response.Headers.TryGetValue("retry-after-ms", out milliseconds);
+            response.Headers.TryGetValue("retry-after", out retryAfter);
+        }
+        return new(exception.Message, $"### OpenAI request failed\n\n{exception.Message}", "openai-request-error", exception)
+        {
+            StatusCode = status,
+            FailureKind = exception is OperationCanceledException ? AgentChatProviderFailureKind.Timeout
+                : AgentProviderFailureClassifier.Classify(ProviderErrorDiagnosticExtractor.Extract(exception.Message), status),
+            RetryAfterMilliseconds = AgentProviderFailureClassifier.RetryAfter(milliseconds, retryAfter, DateTimeOffset.UtcNow),
+        };
+    }
+
     public static bool TryMapContextWindowExceeded(
         Exception exception,
         out AgentChatProviderException providerException)

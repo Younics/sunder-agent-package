@@ -525,6 +525,17 @@ public sealed partial class AgentLocalStore
 
     private static void DeleteSession(SqliteConnection connection, SqliteTransaction transaction, string sessionId)
     {
+        using (var index = connection.CreateCommand())
+        {
+            index.Transaction = transaction;
+            index.CommandText = """
+                DELETE FROM AgentTranscriptEntries WHERE SessionId = $session;
+                DELETE FROM AgentTranscriptGroupTools WHERE GroupId IN (SELECT GroupId FROM AgentTranscriptGroups WHERE SessionId = $session);
+                DELETE FROM AgentTranscriptGroups WHERE SessionId = $session;
+                """;
+            index.Parameters.AddWithValue("$session", sessionId);
+            index.ExecuteNonQuery();
+        }
         using var deleteToolExecutions = connection.CreateCommand();
         deleteToolExecutions.Transaction = transaction;
         deleteToolExecutions.CommandText = "DELETE FROM AgentToolExecutions WHERE SessionId = $sessionId;";

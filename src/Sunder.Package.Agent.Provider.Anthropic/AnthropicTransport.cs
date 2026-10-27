@@ -13,8 +13,10 @@ internal interface IAnthropicTransport
 
 internal sealed class AnthropicStandardTransport(
     IAnthropicClient client,
-    AnthropicResponseTranslator responseTranslator) : IAnthropicTransport
+    AnthropicResponseTranslator responseTranslator) : IAnthropicTransport, IDisposable
 {
+    public void Dispose() => (client as IDisposable)?.Dispose();
+
     public IAsyncEnumerable<ChatResponseUpdate> SendAsync(
         AnthropicRequest request,
         string modelId,
@@ -40,8 +42,10 @@ internal sealed class AnthropicStandardTransport(
 
 internal sealed class AnthropicFastTransport(
     IAnthropicClient client,
-    AnthropicResponseTranslator responseTranslator) : IAnthropicTransport
+    AnthropicResponseTranslator responseTranslator) : IAnthropicTransport, IDisposable
 {
+    public void Dispose() => (client as IDisposable)?.Dispose();
+
     public IAsyncEnumerable<ChatResponseUpdate> SendAsync(
         AnthropicRequest request,
         string modelId,

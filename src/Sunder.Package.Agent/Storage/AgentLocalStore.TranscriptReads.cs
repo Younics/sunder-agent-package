@@ -17,33 +17,21 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         var turns = ListRecentTurnHeadersForSession(connection, sessionId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
+            .OrderBy(turn => turn.TurnSequence)
             .ToArray();
         var items = ListTurnItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray());
         return AttachItems(turns, items);
     }
 
     internal IReadOnlyList<AgentTurnRecord> ListRecentTranscriptHeaders(Guid sessionId, int limit)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-        var turns = ListRecentTurnHeadersForSession(connection, sessionId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
-            .ToArray();
-        return AttachItems(
-            turns,
-            ListTranscriptHeaderItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray()));
-    }
+        => ReadDetailedTranscript(sessionId, limit);
 
     public IReadOnlyList<AgentTurnRecord> ListTurnsBefore(Guid sessionId, DateTimeOffset beforeCreatedAtUtc, Guid beforeTurnId, int limit)
     {
         using var connection = CreateConnection();
         connection.Open();
         var turns = ListTurnHeadersBefore(connection, sessionId, beforeCreatedAtUtc, beforeTurnId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
+            .OrderBy(turn => turn.TurnSequence)
             .ToArray();
         var items = ListTurnItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray());
         return AttachItems(turns, items);
@@ -54,25 +42,14 @@ public sealed partial class AgentLocalStore
         DateTimeOffset beforeCreatedAtUtc,
         Guid beforeTurnId,
         int limit)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-        var turns = ListTurnHeadersBefore(connection, sessionId, beforeCreatedAtUtc, beforeTurnId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
-            .ToArray();
-        return AttachItems(
-            turns,
-            ListTranscriptHeaderItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray()));
-    }
+        => ReadDetailedTranscript(sessionId, limit, beforeTurnId);
 
     public IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit)
     {
         using var connection = CreateConnection();
         connection.Open();
         var turns = ListTurnHeadersAfter(connection, sessionId, afterCreatedAtUtc, afterTurnId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
+            .OrderBy(turn => turn.TurnSequence)
             .ToArray();
         var items = ListTurnItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray());
         return AttachItems(turns, items);
@@ -83,17 +60,7 @@ public sealed partial class AgentLocalStore
         DateTimeOffset afterCreatedAtUtc,
         Guid afterTurnId,
         int limit)
-    {
-        using var connection = CreateConnection();
-        connection.Open();
-        var turns = ListTurnHeadersAfter(connection, sessionId, afterCreatedAtUtc, afterTurnId, limit)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
-            .ToArray();
-        return AttachItems(
-            turns,
-            ListTranscriptHeaderItemsForTurns(connection, turns.Select(turn => turn.TurnId).ToArray()));
-    }
+        => ReadDetailedTranscript(sessionId, limit, afterTurnId, before: false);
 
     public AgentTurnRecord? GetTurn(Guid turnId)
     {
@@ -126,7 +93,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE TurnId = $id;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns WHERE TurnId = $id;";
         command.Parameters.AddWithValue("$id", turnId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -147,7 +114,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE TurnId = $id;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns WHERE TurnId = $id;";
         command.Parameters.AddWithValue("$id", turnId.ToString());
         using var reader = command.ExecuteReader();
         if (!reader.Read())
@@ -169,7 +136,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc COLLATE BINARY {(descending ? "DESC" : "ASC")}, TurnId COLLATE BINARY {(descending ? "DESC" : "ASC")};";
+        command.CommandText = $"SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns WHERE SessionId = $sessionId ORDER BY TurnSequence {(descending ? "DESC" : "ASC")};";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
         using var reader = command.ExecuteReader();
@@ -190,7 +157,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE SessionId = $sessionId ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC LIMIT $limit;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns WHERE SessionId = $sessionId ORDER BY TurnSequence DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$limit", Math.Max(0, limit));
 
@@ -213,11 +180,11 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision
+            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence
             FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND (CreatedAtUtc COLLATE BINARY < $beforeCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $beforeCreatedAtUtc AND TurnId COLLATE BINARY < $beforeTurnId COLLATE BINARY))
-            ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC
+              AND TurnSequence < (SELECT TurnSequence FROM AgentTurns WHERE TurnId = $beforeTurnId AND SessionId = $sessionId)
+            ORDER BY TurnSequence DESC
             LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
@@ -244,11 +211,11 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision
+            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence
             FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND (CreatedAtUtc COLLATE BINARY > $afterCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $afterCreatedAtUtc AND TurnId COLLATE BINARY > $afterTurnId COLLATE BINARY))
-            ORDER BY CreatedAtUtc COLLATE BINARY ASC, TurnId COLLATE BINARY ASC
+              AND TurnSequence > (SELECT TurnSequence FROM AgentTurns WHERE TurnId = $afterTurnId AND SessionId = $sessionId)
+            ORDER BY TurnSequence
             LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
@@ -269,7 +236,7 @@ public sealed partial class AgentLocalStore
     private static IReadOnlyList<AgentTurnRecord> ListRecentTurnHeaders(SqliteConnection connection, int limit)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC LIMIT $limit;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC LIMIT $limit;";
         command.Parameters.AddWithValue("$limit", limit);
 
         using var reader = command.ExecuteReader();
@@ -290,12 +257,12 @@ public sealed partial class AgentLocalStore
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId, i.PresentationPayloadJson, i.ToolExecutionId, e.Status, e.OwnerPackageId, e.ToolSchemaId, e.ToolSchemaVersion
+            SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId, i.PresentationPayloadJson, i.ToolExecutionId, e.Status, e.OwnerPackageId, e.ToolSchemaId, e.ToolSchemaVersion, e.DetailRevision, e.HasDetails, e.HeaderHint
             FROM AgentTurnItems i
             INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
             LEFT JOIN AgentToolExecutions e ON e.ExecutionId = i.ToolExecutionId
             WHERE t.SessionId = $sessionId
-            ORDER BY t.CreatedAtUtc COLLATE BINARY, t.TurnId COLLATE BINARY, i.SequenceNumber;
+            ORDER BY t.TurnSequence, i.SequenceNumber;
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
 
@@ -307,53 +274,6 @@ public sealed partial class AgentLocalStore
         }
 
         return items;
-    }
-
-    private static IReadOnlyList<AgentTurnItemRecord> ProjectOperationHeaders(SqliteConnection connection, SqliteTransaction? transaction, List<AgentTurnItemRecord> items)
-    {
-        var references = items.Select(item => Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Reference(item.PresentationPayloadJson))
-            .OfType<string>().Distinct(StringComparer.Ordinal).ToArray();
-        if (references.Length == 0) return items;
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        var referenceNames = references.Select((reference, index) =>
-        {
-            var name = "$operationRef" + index; command.Parameters.AddWithValue(name, reference); return name;
-        }).ToArray();
-        var turnNames = AddTurnIdParameters(command, items.Select(item => item.TurnId).Distinct().ToArray(), "operationTurn");
-        const string operationReference = "CASE WHEN json_valid(i.PresentationPayloadJson) THEN json_extract(i.PresentationPayloadJson, '$.operationRef') END";
-        command.CommandText = $"""
-            SELECT selectedTurn.TurnId, observed.OperationRef, observed.Payload, observed.Summary, observed.UpdatedAtUtc FROM (
-                SELECT t.SessionId, {operationReference} AS OperationRef,
-                       substr(i.PresentationPayloadJson, 1, 256) AS Payload,
-                       substr(i.ResultSummary, 1, 240) AS Summary, t.UpdatedAtUtc,
-                       ROW_NUMBER() OVER (PARTITION BY t.SessionId, {operationReference}
-                            ORDER BY CASE WHEN json_valid(i.PresentationPayloadJson) THEN
-                                CASE WHEN json_extract(i.PresentationPayloadJson, '$.operationStatus') IN ('applied','opened','dispatched','failed','rejected','cancelled') THEN 1 ELSE 0 END
-                                ELSE 0 END DESC,
-                                t.CreatedAtUtc COLLATE BINARY DESC, t.TurnId COLLATE BINARY DESC, i.SequenceNumber DESC) AS Position
-                FROM AgentTurnItems i INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
-                WHERE i.Kind = 'ToolResult' AND length(i.PresentationPayloadJson) <= 256
-                  AND {operationReference} IN ({string.Join(",", referenceNames)})
-                  AND t.SessionId IN (SELECT SessionId FROM AgentTurns WHERE TurnId IN ({string.Join(",", turnNames)}))
-            ) observed INNER JOIN AgentTurns selectedTurn ON selectedTurn.SessionId = observed.SessionId
-            WHERE observed.Position = 1 AND selectedTurn.TurnId IN ({string.Join(",", turnNames)});
-            """;
-        Dictionary<(Guid Turn, string Reference), (string Payload, string? Summary, string Updated)> observations = [];
-        using (var reader = command.ExecuteReader())
-            while (reader.Read()) observations[(Guid.Parse(reader.GetString(0)), reader.GetString(1))] = (reader.GetString(2), reader.IsDBNull(3) ? null : reader.GetString(3), reader.GetString(4));
-        return items.Select(item =>
-        {
-            var reference = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Reference(item.PresentationPayloadJson);
-            if (reference is null || !observations.TryGetValue((item.TurnId, reference), out var observation)) return item;
-            var status = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Read(observation.Payload);
-            if (status is null) return item;
-            var unavailableCheck = item.ToolId == "maker_operation" && Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.ObservationUnavailable(item.PresentationPayloadJson);
-            return item with { PresentationPayloadJson = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Correlate(item.PresentationPayloadJson, observation.Payload),
-                ToolHeaderHint = unavailableCheck ? item.ToolHeaderHint : status is "Failed" or "Cancelled" or "Unconfirmed" ? null : observation.Summary,
-                ToolErrorSummary = unavailableCheck ? item.ToolErrorSummary : status is "Failed" or "Cancelled" or "Unconfirmed" ? observation.Summary : null,
-                ToolDetailRevision = Math.Max(item.ToolDetailRevision, CreateDetailRevision(observation.Updated)) };
-        }).ToArray();
     }
 
     private static IReadOnlyList<AgentTurnItemRecord> ListTurnItemsForTurns(
@@ -376,7 +296,7 @@ public sealed partial class AgentLocalStore
             command.Parameters.AddWithValue(parameterName, turnIds[index].ToString());
         }
 
-        command.CommandText = $"SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId, i.PresentationPayloadJson, i.ToolExecutionId, e.Status, e.OwnerPackageId, e.ToolSchemaId, e.ToolSchemaVersion FROM AgentTurnItems i LEFT JOIN AgentToolExecutions e ON e.ExecutionId = i.ToolExecutionId WHERE i.TurnId IN ({string.Join(", ", parameterNames)}) ORDER BY i.TurnId, i.SequenceNumber;";
+        command.CommandText = $"SELECT i.ItemId, i.TurnId, i.SequenceNumber, i.Kind, i.TextContent, i.CallId, i.ToolId, i.ArgumentsJson, i.ResultSummary, i.StructuredPayloadJson, i.SourcesJson, i.WasTruncated, i.IsError, i.ErrorCode, i.BackendId, i.PresentationPayloadJson, i.ToolExecutionId, e.Status, e.OwnerPackageId, e.ToolSchemaId, e.ToolSchemaVersion, e.DetailRevision, e.HasDetails, e.HeaderHint FROM AgentTurnItems i LEFT JOIN AgentToolExecutions e ON e.ExecutionId = i.ToolExecutionId WHERE i.TurnId IN ({string.Join(", ", parameterNames)}) ORDER BY i.TurnId, i.SequenceNumber;";
 
         using var reader = command.ExecuteReader();
         var items = new List<AgentTurnItemRecord>();
@@ -391,7 +311,8 @@ public sealed partial class AgentLocalStore
     private static IReadOnlyList<AgentTurnItemRecord> ListTranscriptHeaderItemsForTurns(
         SqliteConnection connection,
         IReadOnlyList<Guid> turnIds,
-        SqliteTransaction? transaction = null)
+        SqliteTransaction? transaction = null,
+        IReadOnlyList<Guid>? toolItemIds = null)
     {
         if (turnIds.Count == 0)
         {
@@ -434,24 +355,12 @@ public sealed partial class AgentLocalStore
             }
         }
 
+        if (toolItemIds is not { Count: 0 })
         using (var toolCommand = connection.CreateCommand())
         {
             toolCommand.Transaction = transaction;
             var turnParameters = AddTurnIdParameters(toolCommand, turnIds, "toolTurnId");
-            const string executionId = "COALESCE(i.ToolExecutionId, e.ExecutionId)";
-            var peerPredicate = $"""
-                (({executionId} IS NOT NULL AND peer.ToolExecutionId = {executionId})
-                 OR ({executionId} IS NULL
-                     AND owner.RunId IS NOT NULL
-                     AND owner.RunRevision IS NOT NULL
-                     AND peerTurn.SessionId = owner.SessionId
-                     AND peerTurn.RunId = owner.RunId
-                     AND peerTurn.RunRevision = owner.RunRevision
-                     AND peer.CallId = i.CallId)
-                 OR ({executionId} IS NULL
-                     AND owner.RunId IS NULL
-                     AND peer.ItemId = i.ItemId))
-                """;
+            var selectedItems = toolItemIds is null ? "" : $"AND i.ItemId IN ({string.Join(',', AddTurnIdParameters(toolCommand, toolItemIds, "toolItemId"))})";
             toolCommand.CommandText = $"""
                 SELECT i.ItemId,
                        i.TurnId,
@@ -460,96 +369,17 @@ public sealed partial class AgentLocalStore
                        substr(i.CallId, 1, 1024),
                        substr(i.ToolId, 1, 1024),
                        i.WasTruncated,
-                       {executionId},
-                       COALESCE(
-                           e.Status,
-                           (
-                               SELECT CASE WHEN peer.IsError = 1 THEN 'Failed' ELSE 'Completed' END
-                               FROM AgentTurnItems peer
-                               INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                               WHERE peer.Kind = 'ToolResult'
-                                 AND {peerPredicate}
-                               ORDER BY peerTurn.CreatedAtUtc COLLATE BINARY DESC,
-                                        peerTurn.TurnId COLLATE BINARY DESC,
-                                        peer.SequenceNumber DESC
-                               LIMIT 1
-                           ),
-                           CASE WHEN i.Kind = 'ToolResult'
-                                THEN CASE WHEN i.IsError = 1 THEN 'Failed' ELSE 'Completed' END
-                                ELSE 'Started' END),
-                       substr(COALESCE(
-                           e.OutcomeSummary,
-                           (
-                               SELECT COALESCE(
-                                   peer.ResultSummary,
-                                   CASE WHEN peer.IsError = 1 THEN peer.TextContent ELSE NULL END,
-                                   peer.ErrorCode)
-                               FROM AgentTurnItems peer
-                               INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                               WHERE peer.Kind = 'ToolResult'
-                                 AND {peerPredicate}
-                               ORDER BY peerTurn.CreatedAtUtc COLLATE BINARY DESC,
-                                        peerTurn.TurnId COLLATE BINARY DESC,
-                                        peer.SequenceNumber DESC
-                               LIMIT 1
-                           )), 1, 240),
-                       e.UpdatedAtUtc,
-                       (
-                           SELECT MAX(peerTurn.UpdatedAtUtc)
-                           FROM AgentTurnItems peer
-                           INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                           WHERE peer.Kind IN ('ToolCall', 'ToolResult')
-                              AND {peerPredicate}
-                       ),
-                       owner.UpdatedAtUtc,
-                       EXISTS (
-                           SELECT 1
-                           FROM AgentTurnItems peer
-                           INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                           WHERE peer.Kind IN ('ToolCall', 'ToolResult')
-                             AND {peerPredicate}
-                             AND (
-                                 peer.IsError = 1
-                                 OR (length(trim(peer.ArgumentsJson)) > 0
-                                     AND trim(peer.ArgumentsJson) <> (char(123) || char(125)))
-                                 OR length(trim(peer.TextContent)) > 0
-                                 OR length(trim(peer.ResultSummary)) > 0
-                                 OR length(trim(peer.StructuredPayloadJson)) > 0
-                                 OR length(trim(peer.SourcesJson)) > 0
-                                 OR length(trim(peer.PresentationPayloadJson)) > 0
-                                 OR length(trim(peer.ErrorCode)) > 0
-                                 OR length(trim(peer.BackendId)) > 0
-                         )),
-                         (SELECT substr(peer.PresentationPayloadJson, 1, 256)
-                         FROM AgentTurnItems peer
-                         INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                         WHERE peer.Kind = 'ToolResult' AND {peerPredicate}
-                         ORDER BY peerTurn.CreatedAtUtc COLLATE BINARY DESC, peerTurn.TurnId COLLATE BINARY DESC, peer.SequenceNumber DESC
-                           LIMIT 1),
-                        CASE WHEN lower(i.ToolId) = 'write' THEN (
-                            SELECT CASE WHEN json_valid(peer.ArgumentsJson)
-                                THEN CASE WHEN json_type(peer.ArgumentsJson, '$.path') = 'text'
-                                    THEN substr(json_extract(peer.ArgumentsJson, '$.path'), 1, 241) END END
-                            FROM AgentTurnItems peer
-                            INNER JOIN AgentTurns peerTurn ON peerTurn.TurnId = peer.TurnId
-                            WHERE peer.Kind IN ('ToolCall', 'ToolResult') AND {peerPredicate}
-                              AND peer.ArgumentsJson IS NOT NULL
-                            ORDER BY CASE WHEN peer.Kind = 'ToolCall' THEN 0 ELSE 1 END,
-                                     peer.SequenceNumber
-                            LIMIT 1) END
+                       e.ExecutionId,
+                       e.Status,
+                       substr(e.OutcomeSummary, 1, 240),
+                       e.DetailRevision,
+                       e.HasDetails,
+                       e.HeaderHint
                 FROM AgentTurnItems i
-                INNER JOIN AgentTurns owner ON owner.TurnId = i.TurnId
-                LEFT JOIN AgentToolExecutions e
-                  ON e.ExecutionId = i.ToolExecutionId
-                  OR (i.ToolExecutionId IS NULL
-                      AND owner.RunId IS NOT NULL
-                      AND owner.RunRevision IS NOT NULL
-                      AND e.SessionId = owner.SessionId
-                      AND e.RunId = owner.RunId
-                      AND e.RunRevision = owner.RunRevision
-                      AND e.CallId = i.CallId)
+                INNER JOIN AgentToolExecutions e ON e.ExecutionId = i.ToolExecutionId
                 WHERE i.TurnId IN ({string.Join(", ", turnParameters)})
                   AND i.Kind IN ('ToolCall', 'ToolResult')
+                  {selectedItems}
                 ORDER BY i.TurnId, i.SequenceNumber;
                 """;
             using var reader = toolCommand.ExecuteReader();
@@ -577,22 +407,18 @@ public sealed partial class AgentLocalStore
                 {
                     ToolExecutionId = reader.IsDBNull(7) ? null : Guid.Parse(reader.GetString(7)),
                     ToolExecutionStatus = status,
-                    ToolHeaderHint = Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.BoundPath(reader.IsDBNull(15) ? null : reader.GetString(15))
+                    ToolHeaderHint = Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.BoundPath(reader.IsDBNull(12) ? null : reader.GetString(12))
                                      ?? (isFailure ? null : summary),
                     ToolErrorSummary = isFailure ? summary : null,
-                    ToolDetailRevision = CreateDetailRevision(
-                        reader.IsDBNull(10) ? null : reader.GetString(10),
-                        reader.IsDBNull(11) ? null : reader.GetString(11),
-                        reader.GetString(12)),
+                    ToolDetailRevision = reader.GetInt64(10),
                     ToolHasDetails = status == AgentToolExecutionStatus.Ambiguous
-                                     || reader.GetInt64(13) != 0,
+                                     || reader.GetInt64(11) != 0,
                     IsToolHeaderProjection = true,
-                    PresentationPayloadJson = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Compact(reader.IsDBNull(14) ? null : reader.GetString(14)),
                 });
             }
         }
 
-        return ProjectOperationHeaders(connection, transaction, items);
+        return items;
     }
 
     private static IReadOnlyList<string> AddTurnIdParameters(
@@ -609,19 +435,6 @@ public sealed partial class AgentLocalStore
         }
         return parameterNames;
     }
-
-    private static long CreateDetailRevision(params string?[] timestamps)
-        => Math.Max(
-            1,
-            timestamps
-                .Where(static timestamp => !string.IsNullOrWhiteSpace(timestamp))
-                .Select(static timestamp => CreateProtocolTimestampRevision(DateTimeOffset.Parse(timestamp!)))
-                .DefaultIfEmpty(1)
-                .Max());
-
-    private static long CreateProtocolTimestampRevision(DateTimeOffset timestamp)
-        // Unix microseconds retain timestamp ordering while staying within the RPC safe-integer bound.
-        => Math.Max(1, (timestamp.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10);
 
     private static IReadOnlyList<AgentTurnRecord> AttachItems(
         IReadOnlyList<AgentTurnRecord> turns,
@@ -655,6 +468,7 @@ public sealed partial class AgentLocalStore
             IsStreaming = reader.GetInt64(7) != 0,
             RunId = reader.IsDBNull(8) ? null : Guid.Parse(reader.GetString(8)),
             RunRevision = reader.IsDBNull(9) ? null : reader.GetInt64(9),
+            TurnSequence = reader.GetInt64(10),
         };
 
     private static AgentTurnItemRecord ReadTurnItem(SqliteDataReader reader)
@@ -683,6 +497,9 @@ public sealed partial class AgentLocalStore
             ToolOwnerPackageId = reader.IsDBNull(18) ? null : reader.GetString(18),
             ToolSchemaId = reader.IsDBNull(19) ? null : reader.GetString(19),
             ToolSchemaVersion = reader.IsDBNull(20) ? null : reader.GetString(20),
+            ToolDetailRevision = reader.IsDBNull(21) ? 0 : reader.GetInt64(21),
+            ToolHasDetails = reader.IsDBNull(22) ? null : reader.GetInt64(22) != 0,
+            ToolHeaderHint = reader.IsDBNull(23) ? null : reader.GetString(23),
         };
 
 }

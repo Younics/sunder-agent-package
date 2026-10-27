@@ -118,7 +118,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(19, execution.GetMethods().Length);
             foreach (var (contract, implementation, count) in new[]
                      {
-                         ("RuntimeCatalog", "AgentRuntimeCatalog", 22), ("RunControl", "AgentRunControlService", 20),
+                         ("RuntimeCatalog", "AgentRuntimeCatalog", 25), ("RunControl", "AgentRunControlService", 20),
                          ("WorkspaceExecutionResolver", "AgentWorkspaceExecutionResolver", 2), ("ChildRunExecutor", "AgentChildRunExecutor", 1),
                      })
             {

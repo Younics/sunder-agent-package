@@ -9,6 +9,8 @@ internal readonly record struct TranscriptPageCursor(
     DateTimeOffset CreatedAtUtc,
     Guid TurnId)
 {
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
+    public long TurnSequence { get; init; }
     internal static TranscriptPageCursor FromTurn(AgentTurnRecord turn)
-        => new(turn.CreatedAtUtc, turn.TurnId);
+        => new(turn.CreatedAtUtc, turn.TurnId) { TurnSequence = turn.TurnSequence };
 }

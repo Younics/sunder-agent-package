@@ -235,6 +235,7 @@ public sealed partial class AgentChatViewModel
         if (_chatPermissionCommandGateway is not null && sessionId is { } selectedSessionId)
         {
             var generation = Interlocked.Increment(ref _permissionRequestGeneration);
+            var runtimeInstanceId = _appliedRuntimeInstanceId;
             _backgroundTasks.Run(async cancellationToken =>
             {
                 var projection = await _chatPermissionCommandGateway
@@ -244,6 +245,7 @@ public sealed partial class AgentChatViewModel
                 {
                     if (_disposed
                         || generation != Volatile.Read(ref _permissionRequestGeneration)
+                        || !string.Equals(runtimeInstanceId, _appliedRuntimeInstanceId, StringComparison.Ordinal)
                         || SelectedSession?.SessionId != selectedSessionId
                         || projection.Revision < _appliedPermissionRevision)
                     {
@@ -652,6 +654,9 @@ public sealed partial class AgentChatViewModel
             }
         }
 
+        if (e.PropertyName == nameof(AgentSessionListItemViewModel.StatusBadgeText))
+            NotifyContinuationStateChanged();
+
         if (e.PropertyName == nameof(AgentSessionListItemViewModel.IsRunActive))
         {
             NotifySelectedSessionRunStateChanged();
@@ -660,6 +665,7 @@ public sealed partial class AgentChatViewModel
 
     private void NotifySelectedSessionRunStateChanged()
     {
+        NotifyContinuationStateChanged();
         OnPropertyChanged(nameof(IsSelectedSessionRunActive));
         OnPropertyChanged(nameof(IsSelectedSessionRunInactive));
         OnPropertyChanged(nameof(ShowSendAction));
@@ -670,6 +676,7 @@ public sealed partial class AgentChatViewModel
 
     private void NotifyDisplayedSessionStateChanged()
     {
+        NotifyContinuationStateChanged();
         OnPropertyChanged(nameof(IsDisplayedSessionRunActive));
         OnPropertyChanged(nameof(ShowTranscriptSurface));
         OnPropertyChanged(nameof(ShowCollapsedComposer));

@@ -150,7 +150,7 @@ public sealed partial class AgentLocalStore
                         };
                     if (ledgerCompletion is null)
                     {
-                        InsertTurn(
+                        toolResultTurn = InsertTurn(
                             connection,
                             transaction,
                             toolResultTurn,

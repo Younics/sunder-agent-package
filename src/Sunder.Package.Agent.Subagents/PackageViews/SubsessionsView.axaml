@@ -219,10 +219,11 @@
                      Text="{Binding RoleGlyph}" />
         </Border>
 
-        <TextBlock Grid.Column="1"
-                   Classes="thinking-text"
-                   Text="{Binding ThinkingText}"
-                   VerticalAlignment="Center" />
+        <StackPanel Grid.Column="1" Spacing="6" MinWidth="0" VerticalAlignment="Center">
+          <TextBlock Classes="thinking-text" Text="{Binding ThinkingText}" />
+          <TextBlock Classes="thinking-text" Text="{Binding ReasoningText}" IsVisible="{Binding HasReasoningText}"
+                     Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+        </StackPanel>
       </Grid>
     </DataTemplate>
 
@@ -293,8 +294,13 @@
           <TextBlock Text="{Binding ExpandGlyph}" />
           <TextBlock Grid.Column="1" Text="{Binding Summary}" TextTrimming="CharacterEllipsis" />
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Text="{Binding LoadingText}" Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                       IsVisible="{Binding LoadingText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <ProgressBar Classes="activity-group-processing" IsIndeterminate="{Binding IsRunning}" IsVisible="{Binding IsRunning}" />
-            <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+            <TextBlock Text="{Binding StatusIconText}" Foreground="{Binding StateBrush}"
+                       IsVisible="{Binding StatusIconText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <TextBlock Text="{Binding StatusText}" Foreground="{Binding StateBrush}"
+                       IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
           </StackPanel>
         </Grid>
       </Button>

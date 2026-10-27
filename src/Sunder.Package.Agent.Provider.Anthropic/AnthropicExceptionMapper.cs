@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using Anthropic.Exceptions;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Provider.Shared;
 
@@ -49,8 +50,8 @@ internal static class AnthropicExceptionMapper
             "anthropic-timeout",
             exception);
 
-    internal static AgentChatProviderException Map(Exception exception)
-        => new(
+    internal static AgentChatProviderException Map(Exception exception, long? retryAfterMilliseconds = null)
+        => exception is AgentChatProviderException existing ? AgentProviderFailureClassifier.Normalize(existing, retryAfterMilliseconds) : new(
             exception.Message,
             $"### Anthropic request failed\n\n{exception.Message}",
             "anthropic-http-error",
@@ -58,7 +59,10 @@ internal static class AnthropicExceptionMapper
         {
             FailureKind = IsContextWindowExceeded(exception)
                 ? AgentChatProviderFailureKind.ContextWindowExceeded
-                : AgentChatProviderFailureKind.Unknown,
+                : AgentProviderFailureClassifier.Classify(ProviderErrorDiagnosticExtractor.Extract(exception.Message),
+                    exception is AnthropicApiException api ? (int)api.StatusCode : null),
+            StatusCode = exception is AnthropicApiException http ? (int)http.StatusCode : null,
+            RetryAfterMilliseconds = retryAfterMilliseconds,
         };
 
     private static bool IsContextWindowExceeded(Exception exception)

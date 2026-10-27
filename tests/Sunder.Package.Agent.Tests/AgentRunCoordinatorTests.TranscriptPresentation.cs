@@ -138,6 +138,7 @@ public sealed partial class AgentRunCoordinatorTests
         var sessionBItem = viewModel.Sessions.Single(session => session.SessionId == sessionB);
 
         viewModel.SelectedSession = sessionAItem;
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
         viewModel.DraftMessage = "keep selected draft";
 
         var selectedRevision = runtime.SessionService.GetNextRunRevision(sessionA);
@@ -171,6 +172,7 @@ public sealed partial class AgentRunCoordinatorTests
         );
 
         viewModel.SelectedSession = sessionBItem;
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.False(sessionBItem.HasUnreadActivity);
         Assert.Equal(string.Empty, viewModel.DraftMessage);
@@ -298,6 +300,7 @@ public sealed partial class AgentRunCoordinatorTests
         await viewModel.InitializeAsync();
         var sessionAItem = viewModel.Sessions.Single(session => session.SessionId == sessionA);
         viewModel.SelectedSession = sessionAItem;
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
         viewModel.DraftMessage = "keep selected draft";
         var observedMove = false;
         viewModel.Sessions.CollectionChanged += (_, args) =>
@@ -636,6 +639,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        viewModel.IsDetailedTranscript = true; // Detailed retains its existing row-overflow policy.
         await viewModel.InitializeAsync();
 
         for (var index = 0; index < 240; index++)
@@ -693,6 +697,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        viewModel.IsDetailedTranscript = true;
         await viewModel.InitializeAsync();
 
         for (var index = 0; index < 140; index++)
@@ -716,7 +721,14 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.InRange(viewModel.Messages.Count, 60, 90);
         Assert.True(viewModel.HasOlderTranscriptRows);
-        Assert.All(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>(), row => Assert.NotNull(row.ResultTurnId));
+        var tools = viewModel.Messages.OfType<AgentToolInvocationRowViewModel>().ToArray();
+        Assert.Equal(tools.Length, tools.Select(row => row.AnchorKey).Distinct().Count());
+        Assert.All(tools, row =>
+        {
+            Assert.True(row.IsCompleted); // Re-paged invocation headers need no eager result receipt/payload.
+            Assert.Equal(2, row.DetailRevision);
+            Assert.False(row.HasMaterializedDetails);
+        });
     }
 
     [Fact]
@@ -852,7 +864,7 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task AgentChatViewModel_RejectedSendKeepsDetachedTranscriptState()
+    public async Task AgentChatViewModel_RejectedSendPreservesDraftAfterExplicitFollowIntent()
     {
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("unused")));
@@ -872,7 +884,7 @@ public sealed partial class AgentRunCoordinatorTests
             () => viewModel.SendMessageCommand.ExecuteAsync(null));
         await WaitUntilAsync(() => viewModel.SendMessageCommand.CanExecute(null));
 
-        Assert.False(viewModel.IsTranscriptFollowingLatest);
+        Assert.True(viewModel.IsTranscriptFollowingLatest);
         Assert.Equal("rejected message", viewModel.DraftMessage);
         Assert.True(viewModel.SendMessageCommand.CanExecute(null));
     }
@@ -900,7 +912,7 @@ public sealed partial class AgentRunCoordinatorTests
             () => viewModel.SendMessageCommand.ExecuteAsync(null));
         await WaitUntilAsync(() => viewModel.SendMessageCommand.CanExecute(null));
 
-        Assert.True(transcriptGateway.InvocationCount >= 3);
+        Assert.True(transcriptGateway.InvocationCount >= 2);
         Assert.Equal("uncertain message", viewModel.DraftMessage);
     }
 
@@ -1103,15 +1115,19 @@ public sealed partial class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
+        var lease = new AgentDurableRunLease(runtime.Store.ReserveRun(sessionId, runtime.CurrentProfileId, "partial"));
+        Assert.NotNull(runtime.SessionService.TryTransitionRun(lease, AgentRunStatus.Running, "Responding."));
+        var resets = 0;
+        runtime.SessionService.TranscriptReset += _ => resets++;
         var turn = runtime.SessionService.AppendTextTurn(
-            sessionId,
+            lease,
             AgentMessageRole.Assistant,
             "partial"
         );
         var row = Assert.IsType<AgentTextTranscriptRowViewModel>(Assert.Single(viewModel.Messages));
         var markdownBuilder = row.MarkdownBuilder;
 
-        runtime.SessionService.UpdateTextTurn(turn.TurnId, "partial plus more");
+        runtime.SessionService.UpdateTextTurn(lease, turn.TurnId, "partial plus more");
 
         var updatedRow = Assert.IsType<AgentTextTranscriptRowViewModel>(
             Assert.Single(viewModel.Messages)
@@ -1119,6 +1135,7 @@ public sealed partial class AgentRunCoordinatorTests
         Assert.Same(row, updatedRow);
         Assert.Same(markdownBuilder, updatedRow.MarkdownBuilder);
         Assert.Equal("partial plus more", updatedRow.Content);
+        Assert.Equal(0, resets);
     }
 
     [Fact]
@@ -1296,6 +1313,7 @@ public sealed partial class AgentRunCoordinatorTests
             "Renamed Workspace",
             "Updated description"
         );
+        await WaitUntilAsync(() => viewModel.SelectedWorkspace?.DisplayName == "Renamed Workspace");
 
         Assert.Same(selectedSession, viewModel.SelectedSession);
         Assert.Same(selectedSession, Assert.Single(viewModel.Sessions));
@@ -1339,6 +1357,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
         await viewModel.InitializeAsync();
+        await RevealCompactGroupsAsync(viewModel);
         var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         var expandedDetails = await TranscriptToolTestHarness.ExpandAsync(toolRow);
 
@@ -1388,6 +1407,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
         await viewModel.InitializeAsync();
+        await RevealCompactGroupsAsync(viewModel);
         var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         var expandedDetails = await TranscriptToolTestHarness.ExpandAsync(toolRow);
 
@@ -1466,7 +1486,7 @@ public sealed partial class AgentRunCoordinatorTests
             firstSessionId,
             AgentMessageRole.Assistant,
             "partial response");
-        Assert.False(viewModel.RunActivityRow.IsVisible);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
 
         typeof(AgentChatViewModel)
             .GetMethod(
@@ -1474,7 +1494,7 @@ public sealed partial class AgentRunCoordinatorTests
                 BindingFlags.Instance | BindingFlags.NonPublic)!
             .Invoke(viewModel, [true]);
         await WaitUntilAsync(() => !viewModel.IsTranscriptLoading);
-        Assert.False(viewModel.RunActivityRow.IsVisible);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
 
         var secondSession = runtime.SessionService.CreateSession(
             "Second session",
@@ -1529,11 +1549,12 @@ public sealed partial class AgentRunCoordinatorTests
         var activityRow = viewModel.RunActivityRow;
         Assert.True(activityRow.IsVisible);
         Assert.Empty(viewModel.Messages);
-        Assert.Equal("Checking the latest transcript before choosing a tool. ...", activityRow.ThinkingText);
+        Assert.StartsWith("Thinking", activityRow.ThinkingText);
+        Assert.Equal("Checking the latest transcript before choosing a tool.", activityRow.ReasoningText);
     }
 
     [Fact]
-    public async Task AgentChatViewModel_HidesActivityRowWhenAssistantTextStarts()
+    public async Task AgentChatViewModel_KeepsActivityRowAfterStreamingAssistantText()
     {
         const string toolId = "fetch_page";
 
@@ -1551,9 +1572,10 @@ public sealed partial class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
+        var runRevision = runtime.SessionService.GetNextRunRevision(sessionId);
         runtime.SessionService.SaveCheckpoint(
             sessionId,
-            runtime.SessionService.GetNextRunRevision(sessionId),
+            runRevision,
             AgentRunStatus.Running,
             "Thinking."
         );
@@ -1567,16 +1589,19 @@ public sealed partial class AgentRunCoordinatorTests
             AgentMessageRole.Assistant,
             "partial response"
         );
+        runtime.SessionService.ReportRunActivity(sessionId, runRevision, AgentRunActivityKind.Responding, "Responding");
 
         var textRow = Assert.IsType<AgentTextTranscriptRowViewModel>(
             Assert.Single(viewModel.Messages)
         );
         Assert.Equal("partial response", textRow.Content);
-        Assert.False(activityRow.IsVisible);
+        Assert.True(activityRow.IsVisible);
+        Assert.Same(activityRow, viewModel.TranscriptItems[^2]);
+        Assert.StartsWith("Responding", activityRow.ThinkingText);
     }
 
     [Fact]
-    public async Task AgentChatViewModel_HidesActivityRowWhenToolActivityStarts()
+    public async Task AgentChatViewModel_KeepsActivityRowAfterToolActivityStarts()
     {
         const string toolId = "fetch_page";
 
@@ -1613,12 +1638,14 @@ public sealed partial class AgentRunCoordinatorTests
             "{\"url\":\"https://example.com\"}"
         );
 
-        Assert.IsType<AgentToolInvocationRowViewModel>(Assert.Single(viewModel.Messages));
-        Assert.False(activityRow.IsVisible);
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(Assert.IsType<AgentActivityGroupRowViewModel>(Assert.Single(viewModel.Messages)).IsRunning);
+        Assert.True(activityRow.IsVisible);
+        Assert.Same(activityRow, viewModel.TranscriptItems[^2]);
     }
 
     [Fact]
-    public async Task AgentChatViewModel_HidesActivityWhileToolRunsAndResumesAfterResult()
+    public async Task AgentChatViewModel_KeepsActivityWhileToolRunsAndReviewsResult()
     {
         var toolId = McpToolIdentity.CreateStable("stitch-server", "edit_screens");
 
@@ -1662,8 +1689,9 @@ public sealed partial class AgentRunCoordinatorTests
             "{\"url\":\"https://example.com\"}"
         );
 
-        Assert.IsType<AgentToolInvocationRowViewModel>(Assert.Single(viewModel.Messages));
-        Assert.False(activityRow.IsVisible);
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.True(Assert.IsType<AgentActivityGroupRowViewModel>(Assert.Single(viewModel.Messages)).IsRunning);
+        Assert.True(activityRow.IsVisible);
         Assert.Contains("Edit Screens", activityRow.ThinkingText, StringComparison.Ordinal);
         Assert.DoesNotContain("m1_", activityRow.ThinkingText, StringComparison.OrdinalIgnoreCase);
 
@@ -1685,6 +1713,7 @@ public sealed partial class AgentRunCoordinatorTests
             runRevision,
             AgentRunStatus.Running,
             $"Tool '{toolId}' completed. Continuing provider execution.");
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.True(activityRow.IsVisible);
         Assert.StartsWith("Reviewing result", activityRow.ThinkingText, StringComparison.Ordinal);
@@ -1774,8 +1803,9 @@ public sealed partial class AgentRunCoordinatorTests
             toolId,
             "{\"url\":\"https://example.com\"}"
         );
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
-        Assert.False(viewModel.RunActivityRow.IsVisible);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
 
         runtime.SessionService.SaveCheckpoint(
             sessionId,
@@ -1785,7 +1815,7 @@ public sealed partial class AgentRunCoordinatorTests
         );
 
         Assert.False(viewModel.RunActivityRow.IsVisible);
-        Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+        Assert.Single(viewModel.Messages.OfType<AgentActivityGroupRowViewModel>());
     }
 
     [Fact]
@@ -1880,6 +1910,7 @@ public sealed partial class AgentRunCoordinatorTests
         await viewModel.InitializeAsync();
         viewModel.SelectedSession = viewModel.Sessions.Single(
             session => session.SessionId == backgroundSessionId);
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
         viewModel.DraftMessage = "background request";
 
         Volatile.Write(ref blockNextReadiness, 1);
@@ -1888,6 +1919,7 @@ public sealed partial class AgentRunCoordinatorTests
 
         viewModel.SelectedSession = viewModel.Sessions.Single(
             session => session.SessionId == displayedSessionId);
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
         var displayedRunRevision = runtime.SessionService.GetNextRunRevision(displayedSessionId);
         runtime.SessionService.SaveCheckpoint(
             displayedSessionId,
@@ -1898,10 +1930,11 @@ public sealed partial class AgentRunCoordinatorTests
             displayedSessionId,
             AgentMessageRole.Assistant,
             "visible response");
-        Assert.False(viewModel.RunActivityRow.IsVisible);
+        Assert.True(viewModel.RunActivityRow.IsVisible);
 
         releaseReadiness.TrySetResult();
         await sendTask.WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => runtime.SessionService.GetLatestCheckpoint(backgroundSessionId)?.Status == AgentRunStatus.Completed);
 
         Assert.Equal(displayedSessionId, viewModel.DisplayedTranscriptSessionId);
         Assert.Empty(viewModel.Sessions.Single(
@@ -1910,12 +1943,15 @@ public sealed partial class AgentRunCoordinatorTests
             typeof(AgentChatViewModel)
                 .GetField("_sessionDrafts", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
                 .GetValue(viewModel));
-        Assert.DoesNotContain(backgroundSessionId, draftCache.Keys);
-        Assert.False(viewModel.RunActivityRow.IsVisible);
+        Assert.True(!draftCache.TryGetValue(backgroundSessionId, out var cachedDraft) || string.IsNullOrEmpty(cachedDraft),
+            $"A completed background submission must not retain sent text: '{cachedDraft}'.");
+        Assert.True(viewModel.RunActivityRow.IsVisible);
     }
 
-    [Fact]
-    public async Task TranscriptRowsAndToolPresentation_AreEquivalentAcrossMainAndSubsessionFacades()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task TranscriptRowsAndToolPresentation_AreEquivalentAcrossMainAndSubsessionFacades(bool detailed)
     {
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done"))
@@ -1967,6 +2003,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.PermissionService,
             runtime.RunCoordinator
         );
+        main.IsDetailedTranscript = detailed;
         await main.InitializeAsync();
         using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
             new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
@@ -1975,6 +2012,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtimeAdapter,
             runtimeAdapter,
             runtimeAdapter);
+        subsessions.IsDetailedTranscript = detailed;
         await subsessions.OnNavigatedToAsync(
             new PackageViewNavigationContext(
                 SubagentConstants.SubsessionsViewId,
@@ -1985,9 +2023,10 @@ public sealed partial class AgentRunCoordinatorTests
             )
         );
 
+        await RevealCompactGroupsAsync(main);
+        await RevealCompactGroupsAsync(subsessions);
         await WaitUntilAsync(() => subsessions.Messages.OfType<SubsessionTextTranscriptRowViewModel>()
-            .Any(row => row.Content == "Shared response.")
-            && subsessions.Messages.OfType<SubsessionToolInvocationRowViewModel>().Any());
+            .Any(row => row.Content == "Shared response."));
         var mainText = main.Messages.OfType<AgentTextTranscriptRowViewModel>()
             .Single(row => row.Content == "Shared response.");
         var childText = subsessions.Messages.OfType<SubsessionTextTranscriptRowViewModel>()

@@ -46,9 +46,17 @@ internal sealed partial class SubagentManagementService(SubagentService service,
         {
             var sessions = await runtime.ListSessionsAsync(cancellation).ConfigureAwait(false);
             var checkpoints = new List<AgentRunCheckpointRecord>();
+            var activities = new List<SubsessionRunActivity>();
             foreach (var session in sessions)
-                if (await runtime.GetLatestCheckpointAsync(session.SessionId, cancellation).ConfigureAwait(false) is { } checkpoint) checkpoints.Add(checkpoint);
-            return new SubagentProjection(Sessions: sessions, Profiles: await runtime.ListProfilesAsync(cancellation).ConfigureAwait(false), Checkpoints: checkpoints);
+            {
+                if (await runtime.GetLatestCheckpointAsync(session.SessionId, cancellation).ConfigureAwait(false) is not { } checkpoint) continue;
+                checkpoints.Add(checkpoint);
+                if (checkpoint.Status == AgentRunStatus.Running
+                    && await runtime.GetRunActivityAsync(session.SessionId, cancellation).ConfigureAwait(false) is { } activity
+                    && activity.RunRevision == checkpoint.RunRevision)
+                    activities.Add(new(session.SessionId, activity));
+            }
+            return new SubagentProjection(Sessions: sessions, Profiles: await runtime.ListProfilesAsync(cancellation).ConfigureAwait(false), Checkpoints: checkpoints, Activities: activities);
         }, token));
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["subagents.owner.operation-failed"])]

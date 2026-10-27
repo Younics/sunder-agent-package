@@ -912,9 +912,12 @@
               Margin="0,11,0,0"
               VerticalAlignment="Top">
           <Border Classes="activity-pulse-dot" />
-          <TextBlock Grid.Column="1"
-                     Classes="activity-text"
-                     Text="{Binding ThinkingText}" />
+          <StackPanel Grid.Column="1" Spacing="6" MinWidth="0">
+            <TextBlock Classes="activity-text" Text="{Binding ThinkingText}" />
+            <TextBlock Classes="activity-text" Text="{Binding ReasoningText}"
+                       IsVisible="{Binding HasReasoningText}"
+                       Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+          </StackPanel>
         </Grid>
       </Grid>
     </DataTemplate>
@@ -1113,8 +1116,13 @@
           <TextBlock Text="{Binding ExpandGlyph}" />
           <TextBlock Grid.Column="1" Text="{Binding Summary}" TextTrimming="CharacterEllipsis" />
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Text="{Binding LoadingText}" Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
+                       IsVisible="{Binding LoadingText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
             <ProgressBar Classes="activity-group-processing" IsIndeterminate="{Binding IsRunning}" IsVisible="{Binding IsRunning}" />
-            <TextBlock Text="{Binding StatusText}" Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}" />
+            <TextBlock Text="{Binding StatusIconText}" Foreground="{Binding StateBrush}"
+                       IsVisible="{Binding StatusIconText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <TextBlock Text="{Binding StatusText}" Foreground="{Binding StateBrush}"
+                       IsVisible="{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
           </StackPanel>
         </Grid>
       </Button>
@@ -1496,6 +1504,10 @@
                     Margin="37,0,0,18"
                     ToolTip.Tip="Jump to latest"
                     IsVisible="False" />
+            <Button Content="Continue" Command="{Binding ContinueRunCommand}"
+                    Classes="secondary-action compact-action" IsVisible="{Binding CanContinueRun}"
+                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,24,18"
+                    ToolTip.Tip="Continue from saved progress using a new request. Completed tool calls are not replayed." />
           </Grid>
         </Border>
 

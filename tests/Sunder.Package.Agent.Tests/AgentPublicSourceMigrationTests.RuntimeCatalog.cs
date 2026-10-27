@@ -74,6 +74,12 @@ public sealed partial class AgentPublicSourceMigrationTests
         await Compare("get-working-summary", "GetWorkingSummaryAsync", new { sessionId = session.SessionId });
         await Compare("get-session-context-checkpoint", "GetSessionContextCheckpointAsync", new { sessionId = session.SessionId });
         await Compare("get-latest-checkpoint", "GetLatestCheckpointAsync", new { sessionId = session.SessionId });
+        sessions.ReportRunActivity(session.SessionId, started.Transition.Run.Key.RunRevision, AgentRunActivityKind.Reasoning, "Retained provider reasoning.");
+        sessions.ReportRunActivity(session.SessionId, started.Transition.Run.Key.RunRevision, AgentRunActivityKind.Retrying, "Servers overloaded",
+            new AgentRunRetryState(2, DateTimeOffset.UtcNow.AddMinutes(1), "Servers overloaded", true));
+        var activity = await Compare("get-run-activity", "GetRunActivityAsync", new { sessionId = session.SessionId });
+        Assert.Equal("Retained provider reasoning.", activity.GetProperty("reasoningText").GetString());
+        Assert.Equal(2, activity.GetProperty("retry").GetProperty("attempt").GetInt32());
         var recent = await Compare("list-recent-turns", "ListRecentTurnsAsync", new { sessionId = session.SessionId, limit = 1000 });
         Assert.Equal(5, recent.GetArrayLength());
         var headers = await Compare("list-recent-transcript-headers", "ListRecentTranscriptHeadersAsync", new { sessionId = session.SessionId, limit = 1000 });
@@ -104,7 +110,18 @@ public sealed partial class AgentPublicSourceMigrationTests
         var binding = await Compare("get-session-model-binding", "GetSessionModelBindingAsync", new { sessionId = session.SessionId, capabilityKind = AgentModelCapabilityKinds.Chat });
         Assert.Equal("{opaque-settings", binding.GetProperty("settingsJson").GetString());
         await Compare("get-model-binding", "GetModelBindingAsync", new { profileId = profile.ProfileId, capabilityKind = AgentModelCapabilityKinds.Chat });
-        Assert.Equal(21, covered.Count);
+        var compactPage = await Compare("read-compact-transcript", "ReadCompactTranscriptAsync",
+            new AgentCompactTranscriptRequest(session.SessionId, AgentCompactTranscriptDirection.Recent, 10));
+        var group = Assert.Single(compactPage.GetProperty("entries").EnumerateArray(), entry => entry.TryGetProperty("group", out _))
+            .GetProperty("group").Deserialize<AgentTranscriptActivityGroup>(ExecutionJson)!;
+        Assert.Equal(1, Assert.Single(group.Tools).Count);
+        var members = await Compare("read-activity-members", "ReadActivityMembersAsync",
+            new AgentTranscriptActivityMembersRequest(session.SessionId, group.First.ItemId, group.TranscriptEpoch, group.Last));
+        var member = Assert.Single(Assert.Single(members.GetProperty("headers").EnumerateArray()).GetProperty("items").EnumerateArray());
+        Assert.True(member.GetProperty("isToolHeaderProjection").GetBoolean());
+        Assert.False(member.TryGetProperty("argumentsJson", out _));
+        Assert.False(member.TryGetProperty("textContent", out _));
+        Assert.Equal(24, covered.Count);
         Assert.Equal(covered.Order(StringComparer.Ordinal), descriptor.Services.Single().Methods.Where(method => method.MethodId != "watch").Select(method => method.MethodId).Order(StringComparer.Ordinal));
 
         foreach (var (route, method) in new[]
@@ -112,6 +129,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             ("get-session", "GetSessionAsync"), ("get-session-profile", "GetSessionProfileAsync"),
             ("get-working-summary", "GetWorkingSummaryAsync"), ("get-session-context-checkpoint", "GetSessionContextCheckpointAsync"),
             ("get-latest-checkpoint", "GetLatestCheckpointAsync"), ("get-transcript-tool-detail", "GetTranscriptToolDetailAsync"),
+            ("get-run-activity", "GetRunActivityAsync"),
         }) Assert.Equal(JsonValueKind.Null, (await Compare(route, method, new { sessionId = Guid.NewGuid() })).ValueKind);
         foreach (var (route, method) in new[] { ("get-workspace", "GetWorkspaceAsync"), ("get-profile", "GetProfileAsync") })
             Assert.Equal(JsonValueKind.Null, (await Compare(route, method, new { value = "missing" })).ValueKind);
@@ -139,7 +157,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         async Task<JsonElement> Compare(string route, string method, object request)
         {
             covered.Add(route);
-            var json = JsonSerializer.SerializeToElement(request);
+            var json = JsonSerializer.SerializeToElement(request, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             var expected = await CatalogDomainResult(domain, route, json);
             var actual = await InvokeCatalogAsync(fixture.Client, method, json);
             Assert.True(JsonElement.DeepEquals(expected, actual), $"{route}: {expected} != {actual}");
@@ -301,6 +319,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             "GetWorkingSummaryAsync" => await client.GetWorkingSummaryAsync(sessionId, cancellationToken),
             "GetSessionContextCheckpointAsync" => await client.GetSessionContextCheckpointAsync(sessionId, cancellationToken),
             "GetLatestCheckpointAsync" => await client.GetLatestCheckpointAsync(sessionId, cancellationToken),
+            "GetRunActivityAsync" => await client.GetRunActivityAsync(sessionId, cancellationToken),
             "ListRecentTurnsAsync" => await client.ListRecentTurnsAsync(sessionId, limit, cancellationToken),
             "ListTurnsBeforeAsync" => await client.ListTurnsBeforeAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
             "ListTurnsAfterAsync" => await client.ListTurnsAfterAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
@@ -309,6 +328,10 @@ public sealed partial class AgentPublicSourceMigrationTests
             "ListTranscriptHeadersAfterAsync" => await client.ListTranscriptHeadersAfterAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken),
             "GetTranscriptToolDetailAsync" => await client.GetTranscriptToolDetailAsync(
                 JsonSerializer.Deserialize<AgentTranscriptToolDetailRequest>(request.GetRawText(), ExecutionJson)!, cancellationToken),
+            "ReadCompactTranscriptAsync" => await client.ReadCompactTranscriptAsync(
+                request.Deserialize<AgentCompactTranscriptRequest>(CurrentPrivateRpcDescriptors.OwnerJson)!, cancellationToken),
+            "ReadActivityMembersAsync" => await client.ReadActivityMembersAsync(
+                request.Deserialize<AgentTranscriptActivityMembersRequest>(CurrentPrivateRpcDescriptors.OwnerJson)!, cancellationToken),
             "ListProfilesAsync" => await client.ListProfilesAsync(cancellationToken),
             "GetProfileAsync" => await client.GetProfileAsync(value, cancellationToken),
             "GetSessionModelBindingAsync" => await client.GetSessionModelBindingAsync(sessionId, capabilityKind, cancellationToken),
@@ -376,7 +399,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             {
                 AgentRuntimeCatalogResetEvent reset => new { kind = "reset", reset.Sequence },
                 AgentSessionCatalogEvent session => new { kind = "session", session.Sequence, session.SessionId },
-                AgentTurnCatalogEvent turn => new { kind = "turn", turn.Sequence, turn.SessionId, turn.Turn },
+                AgentTurnCatalogEvent turn => new { kind = "turn", turn.Sequence, turn.SessionId, turn.Turn, turn.ActivityGroup },
                 AgentProfileCatalogEvent profile => new { kind = "profile", profile.Sequence, profile.ProfileId },
                 _ => throw new InvalidOperationException("Unknown catalog event."),
             };

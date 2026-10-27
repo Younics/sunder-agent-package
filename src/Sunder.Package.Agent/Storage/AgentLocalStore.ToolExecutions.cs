@@ -98,7 +98,7 @@ public sealed partial class AgentLocalStore
                 RunId = key.RunId,
                 RunRevision = key.RunRevision,
             };
-            InsertTurn(connection, transaction, turn, runKey: key);
+            turn = InsertTurn(connection, transaction, turn, runKey: key);
             results.Add(new AgentToolExecutionPreparationResult(item.Execution, turn));
         }
 
@@ -146,7 +146,9 @@ public sealed partial class AgentLocalStore
                 UPDATE AgentToolExecutions
                 SET Status = 'Started',
                     StartedAtUtc = $startedAtUtc,
-                    UpdatedAtUtc = $startedAtUtc
+                    UpdatedAtUtc = $startedAtUtc,
+                    HeaderRevision = HeaderRevision + 1,
+                    DetailRevision = DetailRevision + 1
                 WHERE ExecutionId = $executionId
                   AND Status = 'Prepared'
                   AND InvocationFingerprint = $invocationFingerprint;
@@ -161,7 +163,7 @@ public sealed partial class AgentLocalStore
             }
         }
 
-        UpdateToolCallTurnDetailRevision(connection, transaction, executionId, now);
+        UpdateInvocationIndexState(connection, transaction, executionId, 0);
 
         var updated = execution with
         {
@@ -379,7 +381,7 @@ public sealed partial class AgentLocalStore
             RunId = key.RunId,
             RunRevision = key.RunRevision,
         };
-        InsertTurn(connection, transaction, resultTurn, runKey: key);
+        resultTurn = InsertTurn(connection, transaction, resultTurn, runKey: key);
         if (permissionRequest is not null
             && !TryCompleteLinkedPermissionRequest(
                 connection,

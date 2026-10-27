@@ -96,7 +96,7 @@ public sealed partial class AgentLocalStore
                 request.Attachments,
                 now,
                 now);
-        InsertTurn(connection, transaction, userTurn, runKey: run.Key);
+        userTurn = InsertTurn(connection, transaction, userTurn, runKey: run.Key);
 
         var checkpoint = new AgentRunCheckpointRecord(
             Guid.NewGuid(),

@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Net;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -27,6 +29,40 @@ public sealed partial class OpenAiAgentProviderTests
         Assert.Equal("content", exception.Content);
         Assert.Equal("code", exception.ErrorCode);
         Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+    }
+
+    [Fact]
+    public async Task ApiKeyOverload_UsesOneSdkAttemptAndPreservesRetryHeaders()
+    {
+        var handler = new CapturingHttpMessageHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            { Content = new StringContent("""{"error":{"type":"server_error","message":"Our servers are currently overloaded."}}""") };
+            response.Headers.TryAddWithoutValidation("retry-after-ms", "12000");
+            response.Headers.TryAddWithoutValidation("retry-after", "30");
+            return response;
+        });
+        using var http = new HttpClient(handler);
+        var options = OpenAiAgentProvider.CreateChatClientOptions();
+        options.Transport = new HttpClientPipelineTransport(http);
+        var sdk = new global::OpenAI.OpenAIClient(new ApiKeyCredential("fixed-test-key"), options);
+        using var client = new OpenAiModelOptionsChatClient(sdk.GetResponsesClient().AsIChatClient("gpt-6.1"));
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(client.GetStreamingResponseAsync(
+            [new ChatMessage(ChatRole.User, "Test overload")])));
+        Assert.Single(handler.Requests);
+        Assert.Equal(AgentChatProviderFailureKind.Overloaded, error.FailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
+    }
+
+    [Fact]
+    public async Task CodexOverload_PreservesStatusAndMinimumRetryTiming()
+    {
+        var error = await SendCodexFailureAsync("""{"error":{"type":"server_error","message":"Servers overloaded"}}""",
+            HttpStatusCode.ServiceUnavailable, "12");
+        Assert.Equal(AgentChatProviderFailureKind.Overloaded, error.FailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
     }
 
     [Theory]
@@ -134,7 +170,7 @@ public sealed partial class OpenAiAgentProviderTests
             : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
                 [new ChatMessage(ChatRole.User, "Continue.")]));
 
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal(AgentChatProviderFailureKind.QuotaExceeded, exception.FailureKind);
         Assert.Equal("openai-response-failed", exception.ErrorCode);
         ProviderConformanceHarness.VerifyPrematureEof("OpenAI", exception.ErrorCode);
     }
@@ -142,7 +178,7 @@ public sealed partial class OpenAiAgentProviderTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task OpenAiModelOptionsChatClient_SurfacesIncompleteResponses(bool streaming)
+    public async Task OpenAiModelOptionsChatClient_NormalizesOutputLimitForContinuation(bool streaming)
     {
         const string reason = "max_output_tokens";
         var response = new ChatResponse
@@ -155,14 +191,13 @@ public sealed partial class OpenAiAgentProviderTests
         };
         var client = new OpenAiModelOptionsChatClient(new ReturningChatClient(response, update));
 
-        var exception = streaming
-            ? await Assert.ThrowsAsync<AgentChatProviderException>(() => DrainAsync(
-                client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])))
-            : await Assert.ThrowsAsync<AgentChatProviderException>(() => client.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, "Continue.")]));
-
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
-        Assert.Equal("openai-response-failed", exception.ErrorCode);
+        if (streaming)
+        {
+            await foreach (var item in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")]))
+                Assert.Equal(ChatFinishReason.Length, item.FinishReason);
+        }
+        else
+            Assert.Equal(ChatFinishReason.Length, (await client.GetResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])).FinishReason);
     }
 
     [Theory]
@@ -441,14 +476,14 @@ public sealed partial class OpenAiAgentProviderTests
     [InlineData(
         "{\"detail\":\"Your input exceeds the context window of this model. Please adjust your input and try again.\"}",
         AgentChatProviderFailureKind.ContextWindowExceeded)]
-    [InlineData("{\"error\":{\"message\":\"bad request\"}}", AgentChatProviderFailureKind.Unknown)]
-    [InlineData("{\"error\":{\"message\":\"max_output_tokens is too large\"}}", AgentChatProviderFailureKind.Unknown)]
-    [InlineData("{\"error\":{\"code\":\"insufficient_quota\",\"message\":\"quota exceeded\"}}", AgentChatProviderFailureKind.Unknown)]
-    [InlineData("{\"error\":{\"message\":\"request too large\"}}", AgentChatProviderFailureKind.Unknown)]
+    [InlineData("{\"error\":{\"message\":\"bad request\"}}", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("{\"error\":{\"message\":\"max_output_tokens is too large\"}}", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("{\"error\":{\"code\":\"insufficient_quota\",\"message\":\"quota exceeded\"}}", AgentChatProviderFailureKind.QuotaExceeded)]
+    [InlineData("{\"error\":{\"message\":\"request too large\"}}", AgentChatProviderFailureKind.InvalidRequest)]
     [InlineData(
         "{\"error\":{\"message\":\"backend failed\"},\"output\":\"context_length_exceeded was mentioned by the user\"}",
-        AgentChatProviderFailureKind.Unknown)]
-    public async Task CodexConnectedTransport_ClassifiesOnlyExplicitContextWindowFailures(
+        AgentChatProviderFailureKind.InvalidRequest)]
+    public async Task CodexConnectedTransport_ClassifiesFailuresWithoutFalseContextOverflow(
         string responseContent,
         AgentChatProviderFailureKind expectedKind)
     {
@@ -602,15 +637,18 @@ public sealed partial class OpenAiAgentProviderTests
             packageContext);
     }
 
-    private static async Task<AgentChatProviderException> SendCodexFailureAsync(string responseContent)
+    private static async Task<AgentChatProviderException> SendCodexFailureAsync(string responseContent,
+        HttpStatusCode status = HttpStatusCode.BadRequest, string? retryAfter = null)
     {
         var packageContext = new TestPackageContext(
             new Dictionary<string, string> { ["auth.mode"] = OpenAiAuthMode.CodexConnected },
             new Dictionary<string, string>());
         using var auth = new CodexConnectedAuthStrategy(packageContext);
-        var handler = new CapturingHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        var handler = new CapturingHttpMessageHandler(_ =>
         {
-            Content = new StringContent(responseContent),
+            var response = new HttpResponseMessage(status) { Content = new StringContent(responseContent) };
+            if (retryAfter is not null) response.Headers.TryAddWithoutValidation("retry-after", retryAfter);
+            return response;
         });
         using var client = new HttpClient(handler) { BaseAddress = new Uri("https://chatgpt.com/backend-api/") };
         var transport = new CodexConnectedTransport(auth, client);

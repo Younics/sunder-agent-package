@@ -7,9 +7,15 @@ using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentRunActivityUpdate = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunActivityUpdate;
 using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRecord;
 using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
 using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
+using AgentCompactTranscriptRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptRequest;
+using AgentCompactTranscriptPage = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptPage;
+using AgentTranscriptActivityMembersRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersRequest;
+using AgentTranscriptActivityMembersPage = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersPage;
+using AgentTranscriptActivityGroup = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
@@ -17,6 +23,7 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
     ISubsessionSessionReader,
     ISubsessionCheckpointReader,
     ISubsessionTranscriptPageReader,
+    ISubsessionCompactTranscriptReader,
     ISubsessionChangeNotifications,
     IDisposable
 {
@@ -56,7 +63,7 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
         remove => _changes.SessionChanged -= value;
     }
 
-    public event Action<Guid, AgentTurnRecord>? TurnChanged
+    public event Action<Guid, AgentTurnRecord, AgentTranscriptActivityGroup?>? TurnChanged
     {
         add => _changes.TurnChanged += value;
         remove => _changes.TurnChanged -= value;
@@ -66,6 +73,12 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
     {
         add => _changes.ResnapshotRequired += value;
         remove => _changes.ResnapshotRequired -= value;
+    }
+
+    public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged
+    {
+        add => _changes.RunActivityChanged += value;
+        remove => _changes.RunActivityChanged -= value;
     }
 
     public async Task<SubsessionSessionCatalog> ListSessionsAsync(CancellationToken cancellationToken = default)
@@ -136,6 +149,18 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
     public SubsessionsViewModel CreateViewModel()
         => new(this, this, this, this);
 
+    public async Task<AgentCompactTranscriptPage> LoadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        return await ((ISubsessionCompactTranscriptReader)_transcript).LoadCompactTranscriptAsync(request, cancellationToken);
+    }
+
+    public async Task<AgentTranscriptActivityMembersPage> LoadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureInitializedAsync(cancellationToken);
+        return await ((ISubsessionCompactTranscriptReader)_transcript).LoadActivityMembersAsync(request, cancellationToken);
+    }
+
     public void Dispose() => _ownedGateway?.Dispose();
 
     private Task EnsureInitializedAsync(CancellationToken cancellationToken)
@@ -145,11 +170,12 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
         ISubsessionSessionReader,
         ISubsessionCheckpointReader,
         ISubsessionTranscriptPageReader,
+        ISubsessionCompactTranscriptReader,
         ISubsessionChangeNotifications,
         IDisposable
     {
         public event Action<Guid>? SessionChanged { add { } remove { } }
-        public event Action<Guid, AgentTurnRecord>? TurnChanged { add { } remove { } }
+        public event Action<Guid, AgentTurnRecord, AgentTranscriptActivityGroup?>? TurnChanged { add { } remove { } }
         public event Action? ResnapshotRequired { add { } remove { } }
 
         public Task<SubsessionSessionCatalog> ListSessionsAsync(CancellationToken cancellationToken = default)
@@ -173,6 +199,11 @@ internal sealed class CatalogBackedSubsessionRuntimeAdapter :
 
         public Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default)
             => FailAsync<AgentTranscriptToolDetailRecord?>(cancellationToken);
+
+        public Task<AgentCompactTranscriptPage> LoadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+            => FailAsync<AgentCompactTranscriptPage>(cancellationToken);
+        public Task<AgentTranscriptActivityMembersPage> LoadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
+            => FailAsync<AgentTranscriptActivityMembersPage>(cancellationToken);
 
         public void Dispose() { }
 

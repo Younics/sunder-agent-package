@@ -167,6 +167,8 @@ internal static class CodexResponsesStreamParser
                         {
                             yield return usageUpdate;
                         }
+                        yield return ProviderResponseUpdates.Create(modelId, currentResponseId, messageId,
+                            Array.Empty<AIContent>(), emittedToolCalls > 0 ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop);
                         yield break;
 
                     case "response.failed":
@@ -178,6 +180,17 @@ internal static class CodexResponsesStreamParser
                             failureKind: ClassifyFailure(root));
 
                     case "response.incomplete":
+                        if (root.TryGetProperty("response", out var incompleteResponse)
+                            && string.Equals(TryGetString(incompleteResponse, "status"), "incomplete", StringComparison.Ordinal)
+                            && TryGetNestedString(incompleteResponse, "incomplete_details", "reason") == "max_output_tokens")
+                        {
+                            if (TryGetUsage(root, out var partialUsage)
+                                && ProviderResponseUpdates.CreateUsage(modelId, currentResponseId, messageId, partialUsage) is { } partialUsageUpdate)
+                                yield return partialUsageUpdate;
+                            yield return ProviderResponseUpdates.Create(modelId, currentResponseId, messageId,
+                                Array.Empty<AIContent>(), ChatFinishReason.Length);
+                            yield break;
+                        }
                         throw CreateTerminalException(
                             "openai-stream-incomplete",
                             BuildTerminalMessage("OpenAI response was incomplete.", root),
@@ -276,7 +289,7 @@ internal static class CodexResponsesStreamParser
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
         return ProviderContextWindowFailureClassifier.IsOpenAi(diagnostic)
             ? AgentChatProviderFailureKind.ContextWindowExceeded
-            : AgentChatProviderFailureKind.Unknown;
+            : AgentProviderFailureClassifier.Classify(diagnostic);
     }
 
     private static bool IsReasoningSummaryDeltaEvent(string? eventType)

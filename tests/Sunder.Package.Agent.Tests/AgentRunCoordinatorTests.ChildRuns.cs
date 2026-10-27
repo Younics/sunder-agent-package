@@ -131,7 +131,8 @@ public sealed partial class AgentRunCoordinatorTests
             parentRunRevision,
             AgentRunStatus.Running,
             "Parent running.");
-        runtime.SessionService.AppendToolCallTurn(parentSessionId, AgentMessageRole.Assistant, "task-call", "task", "{}");
+        Assert.NotNull(runtime.Store.TryAppendToolCallTurn(parentRun.Key, runtime.Store.GetRun(parentRun.Key.RunId)!.Epoch,
+            AgentMessageRole.Assistant, "task-call", "task", "{}"));
         var childSession = runtime.SessionService.CreateSession(
             "Child task",
             parentSessionId: parentSessionId,

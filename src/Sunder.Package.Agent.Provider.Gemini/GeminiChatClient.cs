@@ -11,12 +11,17 @@ internal sealed class GeminiChatClient : IChatClient
 {
     private readonly AgentChatClientContext _context;
     private readonly ProviderCredentialAccessor _credentials;
-    private readonly Func<string, Client> _clientFactory;
+    private readonly Func<string, ProviderRetryMetadata, Client> _clientFactory;
     private readonly GeminiContentTranslator _contentTranslator = new();
     private readonly GeminiOptionsTranslator _optionsTranslator = new();
 
     public GeminiChatClient(AgentChatClientContext context, ProviderCredentialAccessor credentials)
-        : this(context, credentials, static apiKey => new Client(apiKey: apiKey))
+        : this(context, credentials, static (apiKey, metadata) => new Client(apiKey: apiKey,
+            clientOptions: new Google.GenAI.Types.ClientOptions
+            {
+                HttpClientFactory = () => new HttpClient(new ProviderRetryMetadataHandler(metadata) { InnerHandler = new HttpClientHandler() })
+                { Timeout = Timeout.InfiniteTimeSpan },
+            }))
     {
     }
 
@@ -24,6 +29,14 @@ internal sealed class GeminiChatClient : IChatClient
         AgentChatClientContext context,
         ProviderCredentialAccessor credentials,
         Func<string, Client> clientFactory)
+        : this(context, credentials, (key, _) => clientFactory(key))
+    {
+    }
+
+    internal GeminiChatClient(
+        AgentChatClientContext context,
+        ProviderCredentialAccessor credentials,
+        Func<string, ProviderRetryMetadata, Client> clientFactory)
     {
         _context = context;
         _credentials = credentials;
@@ -70,9 +83,10 @@ internal sealed class GeminiChatClient : IChatClient
             cancellationToken);
 
         Client client;
+        var retryMetadata = new ProviderRetryMetadata();
         try
         {
-            client = _clientFactory(apiKey);
+            client = _clientFactory(apiKey, retryMetadata);
         }
         catch (Exception ex)
         {
@@ -83,14 +97,14 @@ internal sealed class GeminiChatClient : IChatClient
         {
             var responseTranslator = new GeminiResponseTranslator();
             var transport = includeTools
-                ? new GeminiCompletionTransport(responseTranslator, telemetry).StreamAsync(
+                ? new GeminiCompletionTransport(responseTranslator, telemetry, retryMetadata).StreamAsync(
                     client,
                     translation.Contents,
                     config,
                     modelId,
                     options?.AllowMultipleToolCalls == true,
                     cancellationToken)
-                : new GeminiStreamingTransport(responseTranslator, telemetry).StreamAsync(
+                : new GeminiStreamingTransport(responseTranslator, telemetry, retryMetadata).StreamAsync(
                     client,
                     translation.Contents,
                     config,

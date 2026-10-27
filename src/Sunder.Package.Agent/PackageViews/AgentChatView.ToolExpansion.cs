@@ -158,14 +158,7 @@ public partial class AgentChatView
             if (!toolRow.TryMaterializeDetails(request, detail, out var details)
                 || details is null)
             {
-                if (detail is not null && detail.Detail.Revision != request.Revision)
-                {
-                    AbandonExpansion();
-                }
-                else
-                {
-                    toolRow.FailExpansion(request, new InvalidOperationException("Tool details are no longer available."));
-                }
+                toolRow.FailExpansion(request, new InvalidOperationException("Tool details are no longer available."));
                 return;
             }
 
@@ -187,6 +180,14 @@ public partial class AgentChatView
                 return;
             }
 
+            if (refreshing)
+            {
+                // Loading retained details can span live rows or manual scrolling.
+                // Publish against the current viewport, never the pre-read anchor.
+                _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
+                viewportMutationGeneration = _transcriptBehavior.BeginViewportMutationPreparation(
+                    TranscriptViewportMutationKind.ToolExpansion, toolRow.AnchorKey, scope, isExpanding: true);
+            }
             viewportMutationCommitted = _transcriptBehavior.CommitViewportMutationPreparation(
                 viewportMutationGeneration,
                 () =>

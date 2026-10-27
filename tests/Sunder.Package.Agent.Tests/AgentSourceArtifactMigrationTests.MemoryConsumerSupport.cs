@@ -140,6 +140,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         ValueTask<AgentRunCheckpointRecord?> AgentServices.IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetLatestCheckpoint(request));
+        ValueTask<Sunder.Package.Agent.Models.AgentRunActivityUpdate?> AgentServices.IRuntimeCatalogService.GetRunActivityAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult<Sunder.Package.Agent.Models.AgentRunActivityUpdate?>(null);
         ValueTask<AgentProfileModelBindingRecord?> AgentServices.IRuntimeCatalogService.GetModelBindingAsync(
             string profileId, string capabilityKind, CancellationToken token)
             => ValueTask.FromResult(GetModelBinding(profileId, capabilityKind));
@@ -171,6 +173,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         ValueTask<AgentTranscriptToolDetailRecord?> AgentServices.IRuntimeCatalogService.GetTranscriptToolDetailAsync(
             AgentTranscriptToolDetailRequest request, CancellationToken token)
             => ValueTask.FromResult<AgentTranscriptToolDetailRecord?>(null);
+        public virtual ValueTask<AgentCompactTranscriptPage> ReadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken token = default)
+            => ValueTask.FromResult(new AgentCompactTranscriptPage([], false, false));
+        public virtual ValueTask<AgentTranscriptActivityMembersPage> ReadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken token = default)
+            => ValueTask.FromResult(new AgentTranscriptActivityMembersPage([], false, null));
         ValueTask<IReadOnlyList<AgentTurnRecord>> AgentServices.IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(
             Guid sessionId, int limit, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);

@@ -664,14 +664,14 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_DoesNotRetryTransientStreamFailureAfterPartialOutput()
+    public async Task QueueUserMessageAsync_ContinuesTransientStreamFailureAfterPreservingPartialOutput()
     {
         var provider = new ScriptedProvider(
             (_, requestIndex) =>
                 requestIndex switch
                 {
                     1 => [Delta("partial answer"), TransientStreamError()],
-                    2 => [Complete("This retry must not run.")],
+                    2 => [Complete("continued answer")],
                     _ => throw new Xunit.Sdk.XunitException(
                         $"Unexpected provider request {requestIndex}."
                     ),
@@ -687,13 +687,14 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId
         );
 
-        Assert.Equal(AgentRunStatus.Interrupted, checkpoint.Status);
-        Assert.Single(provider.Requests);
-        var assistantTurn = Assert.Single(
-            runtime.SessionService.ListTurns(sessionId),
-            turn => turn.Role == AgentMessageRole.Assistant
-        );
-        Assert.Contains("Provider connection interrupted", RenderTurnText(assistantTurn), StringComparison.Ordinal);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        var assistantTurns = runtime.SessionService.ListTurns(sessionId)
+            .Where(turn => turn.Role == AgentMessageRole.Assistant).ToArray();
+        Assert.Contains(assistantTurns, turn => RenderTurnText(turn) == "partial answer");
+        Assert.Contains(assistantTurns, turn => RenderTurnText(turn) == "continued answer");
+        Assert.Contains(provider.Requests[1].Turns, turn => RenderTurnText(turn) == "partial answer");
+        Assert.All(assistantTurns, turn => Assert.False(turn.IsStreaming));
     }
 
     [Fact]
@@ -739,7 +740,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.SessionService.AppendTextTurn(
                 sessionId,
                 index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
-                $"overflow-history-{index:00}");
+                $"overflow-history-{index:00}-" + new string('x', 1_000));
         }
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -764,7 +765,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.SessionService.AppendTextTurn(
                 sessionId,
                 index % 2 == 0 ? AgentMessageRole.User : AgentMessageRole.Assistant,
-                $"overflow-history-{index:00}");
+                $"overflow-history-{index:00}-" + new string('x', 1_000));
         }
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -795,35 +796,33 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_ProviderRetryBudgetExhaustionPersistsFailure()
+    public async Task QueueUserMessageAsync_ProviderRetriesCountAsUsageWithoutExhaustingTheRun()
     {
         var provider = new ScriptedProvider(
             (_, requestIndex) => requestIndex == 1
                 ? [TransientStreamError()]
-                : [Complete("This retry must not run.")]);
-        using var runtime = AgentTestRuntime.CreateWithBudget(
-            provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
+                : [Complete("The retry completed.")]);
+        using var runtime = AgentTestRuntime.Create(provider);
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
             sessionId,
             runtime.CurrentProfileId,
-            "Retry until the provider budget is exhausted.",
+            "Recover the provider request.",
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Contains("1-cycle provider budget", checkpoint.Summary, StringComparison.Ordinal);
-        Assert.Single(provider.Requests);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal(2, runtime.SessionService.GetLatestRun(sessionId)?.ProviderCycleCount);
         Assert.Contains(
             runtime.SessionService.ListTurns(sessionId),
             turn => turn.Role == AgentMessageRole.Assistant
                     && !turn.IsStreaming
-                    && RenderTurnText(turn).Contains("Agent run budget exhausted", StringComparison.Ordinal));
+                    && RenderTurnText(turn) == "The retry completed.");
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_ToolBudgetExhaustionStopsBeforeNextExecution()
+    public async Task QueueUserMessageAsync_ToolUsageIsRecordedWithoutRejectingFurtherWork()
     {
         const string toolId = "read_file";
         var provider = new ScriptedProvider(
@@ -831,13 +830,10 @@ public sealed partial class AgentRunCoordinatorTests
             {
                 1 => ToolRequest("call-1", toolId, "{\"path\":\"first.cs\"}"),
                 2 => ToolRequest("call-2", toolId, "{\"path\":\"second.cs\"}"),
-                _ => Complete("This completion must not run."),
+                _ => Complete("Both calls completed."),
             });
         var tool = new TestTool(toolId);
-        using var runtime = AgentTestRuntime.CreateWithBudget(
-            provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 1),
-            tool);
+        using var runtime = AgentTestRuntime.Create(provider, tool);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -846,19 +842,17 @@ public sealed partial class AgentRunCoordinatorTests
             "Read two files.",
             runtime.CurrentWorkspaceId);
 
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Contains("1-call tool budget", checkpoint.Summary, StringComparison.Ordinal);
-        Assert.Equal(1, tool.ExecutionCount);
-        Assert.Equal(2, provider.Requests.Count);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(2, tool.ExecutionCount);
+        Assert.Equal(3, provider.Requests.Count);
+        Assert.Equal(2, runtime.SessionService.GetLatestRun(sessionId)?.ToolCallCount);
     }
 
     [Fact]
     public async Task QueueUserMessageAsync_LargeEstimatedContextDoesNotExhaustCumulativeRunBudget()
     {
         var provider = new ScriptedProvider((_, _) => Complete("The request completed."));
-        using var runtime = AgentTestRuntime.CreateWithBudget(
-            provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, 10));
+        using var runtime = AgentTestRuntime.Create(provider);
         var sessionId = await runtime.CreateSessionAsync("noop");
 
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
@@ -869,26 +863,6 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Single(provider.Requests);
-    }
-
-    [Fact]
-    public async Task QueueUserMessageAsync_WallClockBudgetExhaustionPersistsFailureBeforeProviderExecution()
-    {
-        var provider = new ScriptedProvider((_, _) => Complete("This request must not run."));
-        using var runtime = AgentTestRuntime.CreateWithBudget(
-            provider,
-            new AgentRunBudgetLimits(TimeSpan.FromTicks(1), 10, 10));
-        var sessionId = await runtime.CreateSessionAsync("noop");
-
-        var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(
-            sessionId,
-            runtime.CurrentProfileId,
-            "Exhaust the wall-clock budget.",
-            runtime.CurrentWorkspaceId);
-
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Contains("wall-clock budget", checkpoint.Summary, StringComparison.Ordinal);
-        Assert.Empty(provider.Requests);
     }
 
     [Fact]
@@ -2339,9 +2313,10 @@ public sealed partial class AgentRunCoordinatorTests
 
     [Theory]
     [InlineData(null, false)]
-    [InlineData(123_903L, false)]
+    [InlineData(119_807L, false)]
+    [InlineData(119_808L, true)]
     [InlineData(123_904L, true)]
-    public async Task QueueUserMessageAsync_ReportedUsageCompactsAtUsableInputLimit(
+    public async Task QueueUserMessageAsync_ReportedUsageCompactsWithHeadroomBeforeTheInputLimit(
         long? reportedTotalTokens,
         bool shouldCompact)
     {
@@ -2932,6 +2907,8 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(1, tool.ExecutionCount);
+        Assert.All(runtime.Store.ListToolExecutions(sessionId), execution =>
+            Assert.Null(runtime.ToolService.GetPreparedInvocation(execution.ExecutionId)));
     }
 
     [Fact]
@@ -2970,34 +2947,33 @@ public sealed partial class AgentRunCoordinatorTests
     public async Task QueueUserMessageAsync_AllowsManyLegitimateToolCallsInOneRun()
     {
         const string toolId = "read_file";
-        const int toolCallCount = 50;
+        const int toolCycleCount = 201;
+        const int toolCallCount = toolCycleCount * 3;
         const string userMessage = "Inspect many files before answering.";
 
         var provider = new ScriptedProvider(
             (request, requestIndex) =>
             {
-                if (requestIndex <= toolCallCount)
+                Assert.True(RequestContainsUserText(request, userMessage));
+                AssertNoUnpairedToolItems(request);
+                if (requestIndex <= toolCycleCount)
                 {
-                    AssertActiveRunContext(
-                        request,
-                        requestIndex,
-                        userMessage);
-                    return ToolRequest(
-                        $"call-{requestIndex}",
-                        toolId,
-                        $"{{\"path\":\"src/File{requestIndex:000}.cs\"}}");
+                    return ToolRequests(Enumerable.Range(0, 3).Select(index =>
+                        new AgentToolCallRequest($"call-{requestIndex}-{index}", toolId,
+                            $"{{\"path\":\"src/File{requestIndex:000}-{index}.cs\"}}")).ToArray());
                 }
 
-                if (requestIndex == toolCallCount + 1)
+                if (requestIndex == toolCycleCount + 1)
                 {
-                    AssertAndComplete(request, toolId, $"call-{toolCallCount}");
+                    AssertAndComplete(request, toolId, $"call-{toolCycleCount}-2");
                     return Complete("Finished after inspecting many files.");
                 }
 
                 throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.");
-            }
+            }, supportsMultipleToolCalls: true
         );
-        var tool = new TestTool(toolId);
+        provider.UsageHandler = (_, index) => Usage(index % 50 == 0 ? 200_000 : 1_000);
+        var tool = new TestTool(toolId, concurrencyMode: AgentToolConcurrencyMode.ParallelSafe);
         using var runtime = AgentTestRuntime.Create(provider, tool);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
@@ -3010,20 +2986,28 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
         Assert.Equal(toolCallCount, tool.ExecutionCount);
-        Assert.Equal(toolCallCount + 1, provider.Requests.Count);
+        Assert.Equal(toolCycleCount + 1, provider.Requests.Count);
+        Assert.Equal(toolCallCount, runtime.Store.ListToolExecutions(sessionId).Count);
+        Assert.Equal(toolCallCount, runtime.SessionService.GetLatestRun(sessionId)?.ToolCallCount);
+        Assert.Equal(toolCycleCount + 1, runtime.SessionService.GetLatestRun(sessionId)?.ProviderCycleCount);
+        Assert.True(runtime.Store.GetActiveAnchoredSessionContextCheckpoint(sessionId)!.Generation >= 4);
     }
 
     [Fact]
-    public async Task QueueUserMessageAsync_StopsPathologicalRepeatedToolResultLoop()
+    public async Task QueueUserMessageAsync_CorrectsThenInterruptsRepeatedIdenticalFailures()
     {
         const string toolId = "read_file";
 
         var provider = new ScriptedProvider(
-            (request, requestIndex) => requestIndex <= 32
-                ? ToolRequest($"call-{requestIndex}", toolId, "{\"path\":\"src/Same.cs\"}")
-                : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.")
+            (request, requestIndex) =>
+            {
+                if (requestIndex == 9) Assert.True(RequestContainsUserText(request, "repeatedly returned the same error"));
+                return requestIndex <= 16
+                    ? ToolRequest($"call-{requestIndex}", toolId, "{\"path\":\"src/Same.cs\"}")
+                    : throw new Xunit.Sdk.XunitException($"Unexpected provider request {requestIndex}.");
+            }
         );
-        var tool = new TestTool(toolId);
+        var tool = new UntrustedFailureMetadataTool(toolId, "File is unavailable.", "test-file-unavailable");
         using var runtime = AgentTestRuntime.Create(provider, tool);
         var sessionId = await runtime.CreateSessionAsync(toolId);
 
@@ -3034,13 +3018,12 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId
         );
 
-        Assert.Equal(AgentRunStatus.Failed, checkpoint.Status);
-        Assert.Equal("Agent repeated the same tool call result without progress.", checkpoint.Summary);
-        Assert.Equal(1, tool.ExecutionCount);
-        Assert.True(provider.Requests.Count < 32);
+        Assert.Equal(AgentRunStatus.Interrupted, checkpoint.Status);
+        Assert.Equal("Agent repeated the same failed tool invocation after corrective feedback.", checkpoint.Summary);
+        Assert.Equal(16, provider.Requests.Count);
         Assert.Contains(
             runtime.SessionService.ListTurns(sessionId),
-            turn => RenderTurnText(turn).Contains("The agent repeated the same tool call", StringComparison.Ordinal));
+            turn => RenderTurnText(turn).Contains("same failed tool invocation", StringComparison.Ordinal));
     }
 
     [Fact]

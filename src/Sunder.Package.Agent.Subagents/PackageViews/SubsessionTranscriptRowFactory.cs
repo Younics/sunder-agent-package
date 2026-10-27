@@ -8,14 +8,17 @@ internal sealed class SubsessionTranscriptRowFactory(
     Func<AgentTranscriptToolDetailRequest, CancellationToken, Task<AgentTranscriptToolDetailRecord?>> loadToolDetail,
     IActivityTicker activityTicker,
     Func<AgentTurnRecord, AgentTurnItemRecord, IReadOnlyList<SubsessionChildSessionLinkViewModel>> childSessionLinksResolver)
-    : ITranscriptRowFactory<SubsessionTranscriptRowViewModel>
+    : ITranscriptRowFactory<SubsessionTranscriptRowViewModel>, ITranscriptActivityGroupRowFactory<SubsessionTranscriptRowViewModel>
 {
+    public SubsessionTranscriptRowViewModel CreateGroup(AgentTranscriptActivityGroup group, TranscriptActivityGroupState state)
+        => new SubsessionActivityGroupRowViewModel(group, state);
+
     public SubsessionTranscriptRowViewModel? CreateMessage(
         AgentTurnRecord turn,
         TranscriptMessageProjection projection)
-        => string.IsNullOrWhiteSpace(projection.Content)
+        => string.IsNullOrWhiteSpace(MessageText(turn, projection))
             ? null
-            : new SubsessionTextTranscriptRowViewModel(turn, projection.Content);
+            : new SubsessionTextTranscriptRowViewModel(turn, MessageText(turn, projection));
 
     public void UpdateMessage(
         SubsessionTranscriptRowViewModel row,
@@ -24,7 +27,7 @@ internal sealed class SubsessionTranscriptRowFactory(
     {
         if (row is SubsessionTextTranscriptRowViewModel textRow)
         {
-            textRow.UpdateContent(projection.Content);
+            textRow.UpdateContent(MessageText(turn, projection));
         }
     }
 
@@ -100,4 +103,13 @@ internal sealed class SubsessionTranscriptRowFactory(
 
     public void DisposeRow(SubsessionTranscriptRowViewModel row)
         => (row as IDisposable)?.Dispose();
+
+    private static string MessageText(AgentTurnRecord turn, TranscriptMessageProjection projection)
+        => !string.IsNullOrWhiteSpace(projection.Content) ? projection.Content
+            : turn.Items.Count(item => item.Kind == AgentTurnItemKind.Attachment) switch
+            {
+                0 => string.Empty,
+                1 => "Attachment",
+                var count => $"{count} attachments",
+            };
 }

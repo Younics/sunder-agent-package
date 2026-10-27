@@ -2143,6 +2143,7 @@ public sealed partial class AgentRunCoordinatorTests
     private static MemoryModels.AgentTurnRecord ToMemoryTurn(AgentTurnRecord turn)
         => new()
         {
+            TurnSequence = turn.TurnSequence,
             ContentRevision = turn.ContentRevision,
             CreatedAtUtc = new SunderRpcOffsetDateTime(turn.CreatedAtUtc.ToString("O")),
             IsStreaming = turn.IsStreaming,

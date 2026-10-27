@@ -200,6 +200,23 @@ public sealed class GeminiChatClientWireTests
     }
 
     [Fact]
+    public async Task StreamingOverload_IsSingleAttemptWithOwnerControlledContinuation()
+    {
+        var options = new GeminiOptionsTranslator().Translate(null, false, null, "gemini/gemini-test");
+        Assert.False(options.AutomaticContinuation);
+        Assert.Equal(1, options.HttpOptions!.RetryOptions!.Attempts);
+        await using var server = new GeminiWireServer(
+            """{"error":{"code":503,"message":"Servers overloaded","status":"UNAVAILABLE"}}""", statusCode: 503,
+            responseHeaders: new Dictionary<string, string> { ["retry-after"] = "12" });
+        using var client = CreateClient(server);
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(client,
+            [new AIChatMessage(AIChatRole.User, "Test overload")]).WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(AgentChatProviderFailureKind.Overloaded, error.FailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
+    }
+
+    [Fact]
     public async Task StreamingRequest_MapsHttpErrorsAndRecordsTelemetry()
     {
         await using var server = new GeminiWireServer(
@@ -212,7 +229,8 @@ public sealed class GeminiChatClientWireTests
             () => ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, "fail")]));
 
         Assert.Equal("gemini-http-error", exception.ErrorCode);
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal(AgentChatProviderFailureKind.InvalidRequest, exception.FailureKind);
+        Assert.Equal(400, exception.StatusCode);
         Assert.Contains(logger.Events, entry => entry.EventName == "provider.stream.failed");
     }
 
@@ -240,16 +258,17 @@ public sealed class GeminiChatClientWireTests
                     : ProviderFailureClassification.Unknown));
 
     [Theory]
-    [InlineData("Gemini returned HTTP 400: bad request")]
-    [InlineData("max_output_tokens exceeds the supported value")]
-    [InlineData("The output length limit was reached")]
-    [InlineData("Quota exceeded for GenerateContent requests")]
-    [InlineData("Request payload is too large")]
-    public void ExceptionMapper_DoesNotClassifyAmbiguousFailures(string message)
+    [InlineData("Gemini returned HTTP 400: bad request", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("max_output_tokens exceeds the supported value", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("The output length limit was reached", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("Quota exceeded for GenerateContent requests", AgentChatProviderFailureKind.QuotaExceeded)]
+    [InlineData("Request payload is too large", AgentChatProviderFailureKind.InvalidRequest)]
+    public void ExceptionMapper_ClassifiesTerminalFailuresWithoutFalseContextOverflow(string message, AgentChatProviderFailureKind expected)
     {
         var exception = GeminiExceptionMapper.Request(new ClientError(message, 400, "INVALID_ARGUMENT"));
 
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal(expected, exception.FailureKind);
+        Assert.NotEqual(AgentChatProviderFailureKind.ContextWindowExceeded, exception.FailureKind);
     }
 
     [Fact]
@@ -261,9 +280,7 @@ public sealed class GeminiChatClientWireTests
         using var client = CreateClient(server);
 
         var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
-            client,
-            [new AIChatMessage(AIChatRole.User, "continue")]));
-
+            client, [new AIChatMessage(AIChatRole.User, "continue")]));
         Assert.Equal("gemini-incomplete-response", exception.ErrorCode);
         ProviderConformanceHarness.VerifyPrematureEof("Gemini", exception.ErrorCode);
     }
@@ -272,17 +289,28 @@ public sealed class GeminiChatClientWireTests
     [InlineData("MAX_TOKENS")]
     [InlineData("SAFETY")]
     [InlineData("MALFORMED_FUNCTION_CALL")]
-    public async Task StreamingRequest_NonSuccessFinishReasonsAreFailures(string finishReason)
+    public async Task StreamingRequest_OutputLimitIsContinuableButOtherNonSuccessReasonsFail(string finishReason)
     {
-        var response = $"data: {{\"candidates\":[{{\"finishReason\":\"{finishReason}\"}}]}}\n\n";
+        var content = finishReason == "MAX_TOKENS"
+            ? "\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Partial\"},{\"functionCall\":{\"name\":\"write\",\"willContinue\":true}}]},"
+            : "";
+        var response = $"data: {{\"candidates\":[{{{content}\"finishReason\":\"{finishReason}\"}}]}}\n\n";
         await using var server = new GeminiWireServer(response, "text/event-stream");
         using var client = CreateClient(server);
 
-        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
-            client,
-            [new AIChatMessage(AIChatRole.User, "continue")]));
-
-        Assert.Equal("gemini-incomplete-response", exception.ErrorCode);
+        if (finishReason == "MAX_TOKENS")
+        {
+            var updates = await ReadUpdatesAsync(client, [new AIChatMessage(AIChatRole.User, "continue")]);
+            Assert.Equal(ChatFinishReason.Length, updates[^1].FinishReason);
+            Assert.Equal("Partial", string.Concat(updates.Select(update => update.Text)));
+            Assert.Empty(updates.SelectMany(update => update.Contents).OfType<FunctionCallContent>());
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(
+                client, [new AIChatMessage(AIChatRole.User, "continue")]));
+            Assert.Equal("gemini-incomplete-response", exception.ErrorCode);
+        }
     }
 
     [Fact]
@@ -341,9 +369,14 @@ public sealed class GeminiChatClientWireTests
                     [GeminiProviderConfiguration.ApiKeySecretKey] = "fixed-key",
                 }),
                 GeminiProviderConfiguration.ApiKeySecretKey),
-            apiKey => new Client(
+            (apiKey, metadata) => new Client(
                 apiKey: apiKey,
-                httpOptions: new HttpOptions { BaseUrl = server.BaseUrl }));
+                httpOptions: new HttpOptions { BaseUrl = server.BaseUrl },
+                clientOptions: new ClientOptions
+                {
+                    HttpClientFactory = () => new HttpClient(new Sunder.Package.Agent.Provider.Shared.ProviderRetryMetadataHandler(metadata)
+                    { InnerHandler = new HttpClientHandler() }),
+                }));
 
     private static async Task<IReadOnlyList<ChatResponseUpdate>> ReadUpdatesAsync(
         IChatClient client,

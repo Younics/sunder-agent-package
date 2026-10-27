@@ -45,7 +45,7 @@ run-control API, preserving its authenticated caller/run grants.
 - Return the checkpoint that represents the final state for this revision.
 - Match `AgentBehaviorLoopCompletionKind` to the checkpoint/run state.
 - Publish applicable lifecycle events exactly where the loop establishes the corresponding durable state.
-- Bound provider cycles, tool calls, repeated no-progress requests, wall-clock time, output, and prompt growth.
+- Keep individual operations cancellable, bound request/output size and concurrent work, and recover from repeated failures without replaying uncertain mutations. Total task length is not a failure condition.
 - Treat provider/tool output as untrusted data.
 
 Unhandled loop exceptions are converted by the outer run coordinator into a failed checkpoint and assistant-visible failure. This prevents process failure, but it cannot repair side effects or malformed transcript writes.
@@ -61,17 +61,33 @@ The base loop performs:
 5. Provider streaming with durable assistant-turn projection.
 6. Permission-aware tool execution, with parallel calls only when provider support and `ParallelSafe` descriptors allow it.
 7. Prompt refresh after tools.
-8. Completion, approval suspension, stop, interruption, failure, no-progress, and budget transitions.
+8. Completion, approval suspension, stop, interruption, failure, and corrective recovery.
 
-The default loop owns core run budgets and transcript/tool pairing. A custom loop that replaces it must supply equivalent safety rather than assuming the provider SDK does so.
+The default loop has no cumulative provider-cycle, tool-call, or wall-clock cutoff. It runs until completion, user stop, approval suspension, or a genuine failure. This also applies to child agents that delegate to the default loop. The existing budget-named public contracts and stored counters remain compatible usage accounting; they do not grant or limit execution. Approval waiting does not exhaust a task allowance.
+
+Individual provider retries, operation deadlines, payload bounds, concurrency limits, permission checks, and durable execution identities remain enforced. A custom loop must preserve those boundaries and transcript/tool pairing rather than assuming the provider SDK does so.
+
+### Continuation And Recovery
+
+Provider output-token exhaustion is distinct from a final answer. Partial text is saved, and the model is asked to continue in smaller pieces without repeating completed work. No tool calls from a cut-off response are dispatched. Two consecutive continuation attempts are allowed for the same truncated response; if it still cannot finish, the run becomes Interrupted with the partial work retained. Normal provider/tool progression resets this recovery state; it is not a total-run allowance.
+
+Transient provider failures use one recovery allowance per logical model step: at most ten retries (eleven attempts including the original), with at most three transport-timeout retries. Base delays are 2, 4, 8, then 10 seconds, each randomized by ±20%. A provider-requested minimum delay takes precedence, capped at fifteen minutes. Successful progression starts a fresh step; receiving partial tokens does not reset the allowance.
+
+Before output, recovery retries the affected provider request. After partial text/reasoning, it retains the visible text and requests continuation from the saved transcript instead of replaying the old request. No local tool calls from an incomplete response are dispatched. Completed calls retain their ledger identities; ambiguous/possibly-dispatched operations remain outside automatic retry. Caller cancellation, unsafe RPC dispatch, stream-queue overflow, authentication, exhausted quota and invalid requests are not treated as transient overloads. Context overflow and output limits retain their separate recovery rules.
+
+Agent and Subsessions keep one status row at the latest transcript end while work is active. Messages and tool rows precede it; Thinking, Running tools, Reviewing results, Responding and scheduled recovery update that same row. Reasoning previews are separate from status and survive phase changes. Retry countdowns derive from a run-bound deadline, not accumulated UI ticks; navigating/reconnecting restores current activity. Stop cancels the wait/request. Exhaustion retains progress and offers an explicit Continue instruction through ordinary correlated submission, never replay of an old command. Primary SDK retry layers are disabled so the owner controls request attempts and visible scheduling.
+
+Identical successful observations do not stop a run. Eight identical failed invocations produce corrective model feedback; sixteen without a changed outcome interrupt the run for guidance. Arguments are canonicalized, and the full meaningful text/structured outcome is fingerprinted rather than a short prefix. Changed results or success reset this streak. Corrective feedback grants no additional authority.
 
 ### Session Context Compaction
 
-The default loop does not compact after a fixed number of turns. It normally reuses the active durable continuity checkpoint and lets the raw transcript tail grow. After a successful provider cycle, it advances the checkpoint only when provider-reported context usage reaches the usable input limit: the model context window minus its output reserve.
+The default loop does not compact after a fixed number of turns. It reuses the active durable continuity checkpoint and advances it when estimated request size or provider-reported context usage reaches the model-specific compaction threshold, below the usable input limit. The input limit reserves output capacity; the compaction threshold reserves additional recovery headroom.
 
 Compaction preserves the exact active user turn, keeps complete tool call/result exchanges together, and selects a suffix from at most the two most recent user-delimited exchanges within a tail budget of one quarter of the usable context, clamped to 2,000-8,000 estimated tokens. When the older exchange exceeds the remaining budget, only its fitting suffix is retained. The omitted prefix becomes a deterministic durable summary; configured utility-model refinement is optional. The original transcript remains authoritative and unchanged.
 
-Provider usage is preferred because local estimates cannot accurately price provider tokenization, cached content, or media. Independently, the Runtime still rejects oversized serialized payloads, compacts requests whose local estimate exceeds the hard usable limit, and permits one forced compaction/retry when a provider reports a typed context-window overflow before producing content. Missing usage does not trigger speculative compaction.
+Provider usage complements local estimates, which cannot accurately price provider tokenization or media. A typed context-window overflow before output permits one forced compaction/retry of that request, only when the request's estimated input or binary payload actually shrinks. A later successful step gets its own recovery opportunity. Oversized fixed instructions/current attachments that cannot fit still produce a specific error.
+
+For already summarized history, prompt preparation loads header anchors plus raw payloads for the recent suffix and active user turn. The complete transcript remains stored. Per-batch execution/approval maps are released after settlement; duplicate read-only results use a bounded cache rather than retaining every result for the lifetime of a long task.
 
 ## Child Run Service Port
 

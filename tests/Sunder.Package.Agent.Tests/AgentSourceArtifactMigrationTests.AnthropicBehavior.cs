@@ -36,12 +36,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var package = RegressionTestPackageScope.Create();
             var context = new TestPackageContext("younics.ai.agent.provider.anthropic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
             using var handler = new AnthropicArtifactHttp();
-            using var http = new HttpClient(handler);
             var factoryKeys = new List<string>();
             Func<string, IAnthropicClient> factory = key =>
             {
                 factoryKeys.Add(key);
-                return new AnthropicClient { ApiKey = key, HttpClient = http, MaxRetries = 0 };
+                return new AnthropicClient { ApiKey = key, HttpClient = new HttpClient(handler, disposeHandler: false), MaxRetries = 0 };
             };
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, context.PackageId);

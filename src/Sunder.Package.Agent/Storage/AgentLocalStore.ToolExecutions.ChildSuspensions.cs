@@ -105,7 +105,9 @@ public sealed partial class AgentLocalStore
                 SET Status = $status,
                     FinishedAtUtc = $finishedAtUtc,
                     UpdatedAtUtc = $updatedAtUtc,
-                    OutcomeSummary = $outcomeSummary
+                    OutcomeSummary = $outcomeSummary,
+                    HeaderRevision = HeaderRevision + 1,
+                    DetailRevision = DetailRevision + 1
                 WHERE ExecutionId = $executionId
                   AND Status = 'Completed'
                   AND OutcomeCode = 'child-suspension-durable';
@@ -138,6 +140,7 @@ public sealed partial class AgentLocalStore
         }
 
         InvalidateSessionContext(connection, transaction, key.SessionId);
+        UpdateInvocationIndexState(connection, transaction, execution.ExecutionId, InvocationState(finalStatus));
         TouchSession(connection, key.SessionId, null, null, transaction);
         var turn = GetTurn(connection, turnId, transaction)
             ?? throw new InvalidOperationException("The replaced child tool-result turn could not be reloaded.");

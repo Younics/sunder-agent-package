@@ -24,8 +24,19 @@ internal static class LMStudioExceptionMapper
         {
             FailureKind = IsContextWindowExceeded(exception)
                 ? AgentChatProviderFailureKind.ContextWindowExceeded
-                : AgentChatProviderFailureKind.Unknown,
+                : AgentProviderFailureClassifier.Classify(ProviderErrorDiagnosticExtractor.Extract(detail),
+                    exception is ClientResultException { Status: > 0 } status ? status.Status : null),
+            StatusCode = exception is ClientResultException { Status: > 0 } http ? http.Status : null,
+            RetryAfterMilliseconds = ReadRetryAfter(exception),
         };
+    }
+
+    private static long? ReadRetryAfter(Exception exception)
+    {
+        if (exception is not ClientResultException sdk || sdk.GetRawResponse() is not { } response) return null;
+        response.Headers.TryGetValue("retry-after-ms", out var ms);
+        response.Headers.TryGetValue("retry-after", out var after);
+        return AgentProviderFailureClassifier.RetryAfter(ms, after, DateTimeOffset.UtcNow);
     }
 
     public static AgentChatProviderException InvalidConfiguration(string detail)

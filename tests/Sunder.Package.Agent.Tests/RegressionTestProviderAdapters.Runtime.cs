@@ -44,6 +44,8 @@ internal sealed class RegressionTestRuntimeCatalogProvider : AgentServices.IRunt
         => _service?.GetSessionContextCheckpointAsync(sessionId, cancellationToken) ?? FromCatalog(catalog => catalog.GetLatestSessionContextCheckpoint(sessionId), cancellationToken);
     public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default)
         => _service?.GetLatestCheckpointAsync(sessionId, cancellationToken) ?? FromCatalog(catalog => catalog.GetLatestCheckpoint(sessionId), cancellationToken);
+    public ValueTask<Sunder.Package.Agent.Models.AgentRunActivityUpdate?> GetRunActivityAsync(Guid sessionId, CancellationToken cancellationToken = default)
+        => _service?.GetRunActivityAsync(sessionId, cancellationToken) ?? ValueTask.FromResult<Sunder.Package.Agent.Models.AgentRunActivityUpdate?>(null);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid sessionId, int limit, CancellationToken cancellationToken = default)
         => _service?.ListRecentTurnsAsync(sessionId, limit, cancellationToken) ?? FromCatalog(catalog => catalog.ListRecentTurns(sessionId, limit), cancellationToken);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default)
@@ -58,6 +60,12 @@ internal sealed class RegressionTestRuntimeCatalogProvider : AgentServices.IRunt
         => _service?.ListTranscriptHeadersAfterAsync(sessionId, createdAtUtc, turnId, limit, cancellationToken) ?? FromTranscript<IReadOnlyList<AgentTurnRecord>>("ListTranscriptHeadersAfter", [sessionId, createdAtUtc, turnId, limit], [], cancellationToken);
     public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default)
         => _service?.GetTranscriptToolDetailAsync(request, cancellationToken) ?? FromTranscript<AgentTranscriptToolDetailRecord?>("GetTranscriptToolDetail", [request], null, cancellationToken);
+    public ValueTask<AgentCompactTranscriptPage> ReadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+        => _service?.ReadCompactTranscriptAsync(request, cancellationToken)
+           ?? ValueTask.FromException<AgentCompactTranscriptPage>(new NotSupportedException("This catalog fixture has no Compact reader."));
+    public ValueTask<AgentTranscriptActivityMembersPage> ReadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
+        => _service?.ReadActivityMembersAsync(request, cancellationToken)
+           ?? ValueTask.FromException<AgentTranscriptActivityMembersPage>(new NotSupportedException("This catalog fixture has no Compact reader."));
     public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken cancellationToken = default)
         => _service?.ListProfilesAsync(cancellationToken) ?? FromCatalog(static catalog => catalog.ListProfiles(), cancellationToken);
     public ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken cancellationToken = default)

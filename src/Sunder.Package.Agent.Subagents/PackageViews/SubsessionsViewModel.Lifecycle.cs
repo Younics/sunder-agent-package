@@ -130,6 +130,8 @@ public sealed partial class SubsessionsViewModel
 
     public void Dispose()
     {
+        _transcriptModeCancellation?.Cancel();
+        _transcriptModeCancellation?.Dispose();
         if (_disposed)
         {
             return;
@@ -145,6 +147,7 @@ public sealed partial class SubsessionsViewModel
         {
             _changeNotifications.SessionChanged -= OnSessionChanged;
             _changeNotifications.TurnChanged -= OnTurnChanged;
+            _changeNotifications.RunActivityChanged -= OnRunActivityChanged;
             _changeNotifications.ResnapshotRequired -= OnRuntimeResnapshotRequired;
             if (_ownsChangeNotifications) (_changeNotifications as IDisposable)?.Dispose();
         }
@@ -196,11 +199,19 @@ public sealed partial class SubsessionsViewModel
         _sessionReader = sessionReader;
         _checkpointReader = checkpointReader;
         _transcriptReader = transcriptReader;
+        if (transcriptReader is ISubsessionCompactTranscriptReader compact)
+        {
+            _timeline.ConfigureCompact(compact.LoadCompactTranscriptAsync, compact.LoadActivityMembersAsync);
+            _timeline.SetCompactMode(!_isDetailedTranscript);
+            _timeline.CompactLoadFailed += ReportTranscriptPagingFailure;
+            _transcriptItemsProjection.SetPassThrough();
+        }
         _changeNotifications = changeNotifications;
         SetOwnerAvailability(changeNotifications);
         _ownsChangeNotifications = ownsChangeNotifications;
         changeNotifications.SessionChanged += OnSessionChanged;
         changeNotifications.TurnChanged += OnTurnChanged;
+        changeNotifications.RunActivityChanged += OnRunActivityChanged;
         changeNotifications.ResnapshotRequired += OnRuntimeResnapshotRequired;
     }
 }

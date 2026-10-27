@@ -99,79 +99,68 @@ public sealed partial class AgentChatViewModel
 
     [RelayCommand]
     private Task ApprovePermissionAsync(AgentPendingPermissionRequestRecord? request)
-        => RunOperationAsync(
-            ResolvePermissionOperation,
-            cancellationToken => ApprovePermissionCoreAsync(request, approveForSession: false, cancellationToken),
-            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
-
-    private async Task ApprovePermissionCoreAsync(
-        AgentPendingPermissionRequestRecord? request,
-        bool approveForSession,
-        CancellationToken cancellationToken)
-    {
-        var selectedSession = SelectedSession;
-        if (selectedSession is null
-            || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId))
-        {
-            return;
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        var summary = await _permissionPanel.ApproveAsync(request, approveForSession)
-            .ConfigureAwait(false);
-        await ReconcileSessionPermissionsAsync(selectedSession.SessionId, cancellationToken)
-            .ConfigureAwait(false);
-        await InvokeOnUiThreadAsync(() =>
-        {
-            NotifyPermissionPanelChanged();
-            ApplySessionStatus(selectedSession, summary);
-            SyncSelectedSessionState(selectedSession.SessionId);
-        }).ConfigureAwait(false);
-    }
+        => ResolvePermissionAsync(request, approve: true, approveForSession: false);
 
     [RelayCommand]
     private Task ApprovePermissionForSessionAsync(AgentPendingPermissionRequestRecord? request)
-        => RunOperationAsync(
-            ResolvePermissionOperation,
-            cancellationToken => ApprovePermissionCoreAsync(request, approveForSession: true, cancellationToken),
-            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
+        => ResolvePermissionAsync(request, approve: true, approveForSession: true);
 
     [RelayCommand]
     private Task DenyPermissionAsync(AgentPendingPermissionRequestRecord? request)
-        => RunOperationAsync(
-            ResolvePermissionOperation,
-            cancellationToken => DenyPermissionCoreAsync(request, cancellationToken),
-            cancellationToken => ReconcileSelectedSessionPermissionsAsync(request, cancellationToken));
+        => ResolvePermissionAsync(request, approve: false, approveForSession: false);
 
-    private async Task DenyPermissionCoreAsync(
+    private Task ResolvePermissionAsync(
         AgentPendingPermissionRequestRecord? request,
-        CancellationToken cancellationToken)
+        bool approve,
+        bool approveForSession)
     {
-        var selectedSession = SelectedSession;
-        if (selectedSession is null
+        if (_disposed || SelectedSession is null
             || request is null
-            || string.IsNullOrWhiteSpace(request.RequestId))
+            || _permissionPanel.TryBeginDecision(request) is not { } decision)
         {
-            return;
+            return Task.CompletedTask;
         }
 
+        // Reserve and dismiss on the click's UI turn, before dispatch or reconciliation can wait.
+        NotifyPermissionPanelChanged();
+        var runtimeInstanceId = _appliedRuntimeInstanceId;
+        return RunOperationAsync(
+            ResolvePermissionOperation,
+            cancellationToken => ResolvePermissionCoreAsync(decision, approve, approveForSession, runtimeInstanceId, cancellationToken),
+            cancellationToken => ReconcileSessionPermissionsAsync(decision.DisplaySessionId, cancellationToken,
+                decision: decision, retryDecision: true));
+    }
+
+    private async Task ResolvePermissionCoreAsync(
+        AgentPermissionPanelState.Decision decision,
+        bool approve,
+        bool approveForSession,
+        string? runtimeInstanceId,
+        CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
-        var summary = await _permissionPanel.DenyAsync(request).ConfigureAwait(false);
-        await ReconcileSessionPermissionsAsync(selectedSession.SessionId, cancellationToken)
+        var summary = approve
+            ? await _permissionPanel.ApproveAsync(decision.Request, approveForSession, cancellationToken).ConfigureAwait(false)
+            : await _permissionPanel.DenyAsync(decision.Request, cancellationToken).ConfigureAwait(false);
+        await InvokeOnUiThreadAsync(() => _permissionPanel.AcceptDecision(decision)).ConfigureAwait(false);
+        await ReconcileSessionPermissionsAsync(decision.DisplaySessionId, cancellationToken, decision: decision)
             .ConfigureAwait(false);
         await InvokeOnUiThreadAsync(() =>
         {
+            if (_disposed || SelectedSession is not { } selectedSession
+                || selectedSession.SessionId != decision.DisplaySessionId
+                || !string.Equals(runtimeInstanceId, _appliedRuntimeInstanceId, StringComparison.Ordinal)) return;
             ApplySessionStatus(selectedSession, summary);
             NotifyPermissionPanelChanged();
             SyncSelectedSessionState(selectedSession.SessionId);
         }).ConfigureAwait(false);
     }
 
-    private Task ReconcileSelectedSessionPermissionsAsync(
-        AgentPendingPermissionRequestRecord? request,
-        CancellationToken cancellationToken)
-        => request is null
-            ? Task.CompletedTask
-            : ReconcileSessionPermissionsAsync(request.SessionId, cancellationToken);
+    private void ResetPermissionRuntime(string? runtimeInstanceId)
+    {
+        _appliedRuntimeInstanceId = runtimeInstanceId;
+        _appliedPermissionRevision = 0;
+        Interlocked.Increment(ref _permissionRequestGeneration);
+        _permissionPanel.ResetDecisions();
+    }
 }

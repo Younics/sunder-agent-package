@@ -40,6 +40,7 @@ internal sealed class TranscriptToolDetailViewModel : IDisposable
         HasAmbiguousWarning = detail.Status == AgentToolExecutionStatus.Ambiguous;
         WasTransportTruncated = detail.WasTransportTruncated;
         ToolDiff = toolDiff;
+        Revision = detail.Revision;
         DetailMarkdownBuilder = new ObservableStringBuilder();
         DetailMarkdownBuilder.Append(presentation.DetailMarkdown?.Trim() ?? string.Empty);
         _diffLineCount = toolDiff?.Files.Sum(file => file.Lines.Count) ?? 0;
@@ -61,6 +62,7 @@ internal sealed class TranscriptToolDetailViewModel : IDisposable
     public bool HasMarkdownDetails => DetailMarkdownBuilder.Length > 0;
     public bool ShowMarkdownDetails => HasMarkdownDetails && (ToolDiff?.ShowMarkdownDetails ?? true);
     internal ToolDiffViewModel? ToolDiff { get; }
+    internal long Revision { get; }
     public bool HasToolDiff => ToolDiff?.HasFiles == true;
     internal IReadOnlyList<ToolDiffFileViewModel> ToolDiffFiles => ToolDiff?.Files ?? [];
     public string ToolDiffSectionTitle => ToolDiff?.SectionTitle ?? string.Empty;
@@ -86,6 +88,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
     private TranscriptToolDetailViewModel? _pendingDetails;
     private CancellationTokenSource? _requestCancellation;
     private long _generation;
+    private long _materializedRevision;
     private bool _disposed;
 
     internal TranscriptToolDetailState(
@@ -110,18 +113,15 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
     internal void UpdateProjection(TranscriptToolProjection projection)
     {
-        var identityChanged = projection.SessionId != _projection.SessionId
-                                 || !Equals(projection.AnchorKey, _projection.AnchorKey)
-                                 || projection.ToolExecutionId != _projection.ToolExecutionId
-                                 || projection.RunId != _projection.RunId || projection.RunRevision != _projection.RunRevision
-                                 || projection.CallId != _projection.CallId || projection.ToolId != _projection.ToolId;
+        var identityChanged = !projection.SameInvocation(_projection);
+        if (!identityChanged && projection.DetailRevision < _projection.DetailRevision) return;
         var revisionChanged = projection.DetailRevision != _projection.DetailRevision;
         _projection = projection;
         if (identityChanged || !projection.HasDetails)
         {
             Collapse();
         }
-        else if (revisionChanged)
+        else if (revisionChanged && projection.DetailRevision > _materializedRevision)
         {
             if (_details is not null && IsExpanded)
             {
@@ -189,7 +189,17 @@ internal sealed class TranscriptToolDetailState : IDisposable
         {
             var detail = await _loadDetail(request.DetailRequest, linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
-            if (detail is null || !MatchesDetail(request, detail)) return null;
+            if (detail is null || !MatchesDetailIdentity(request, detail)) return null;
+            if (detail.Revision < request.Revision)
+            {
+                // A delayed reader can return an older snapshot. Reread once,
+                // never render an older revision or call the invocation missing.
+                detail = await _loadDetail(request.DetailRequest, linked.Token).ConfigureAwait(false);
+                linked.Token.ThrowIfCancellationRequested();
+                if (detail is null || !MatchesDetailIdentity(request, detail)) return null;
+                if (detail.Revision < request.Revision)
+                    throw new InvalidOperationException("Tool details changed while loading. Retry details after the transcript refreshes.");
+            }
             TranscriptToolDiagnostics.ResolverCalled();
             var presentation = await _resolvePresentation(CreateItem(request, detail), linked.Token).ConfigureAwait(false);
             linked.Token.ThrowIfCancellationRequested();
@@ -243,8 +253,10 @@ internal sealed class TranscriptToolDetailState : IDisposable
     }
 
     private static bool MatchesDetail(TranscriptToolExpansionRequest request, AgentTranscriptToolDetailRecord detail)
+        => detail.Revision >= request.Revision && MatchesDetailIdentity(request, detail);
+
+    private static bool MatchesDetailIdentity(TranscriptToolExpansionRequest request, AgentTranscriptToolDetailRecord detail)
         => detail.SessionId == request.SessionId
-           && detail.Revision == request.Revision
            && (request.DetailRequest.ToolExecutionId is not { } executionId || detail.ToolExecutionId == executionId)
            && (request.DetailRequest.ToolExecutionId is not null || request.DetailRequest.ItemId is not { } itemId
                || detail.CallItemId == itemId || detail.ResultItemId == itemId)
@@ -302,6 +314,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
 
         var previous = _details;
         _details = _pendingDetails;
+        _materializedRevision = _details.Revision;
         _pendingDetails = null;
         State = TranscriptToolExpansionState.Expanded;
         CancelRequest(disposeOnly: true);
@@ -357,6 +370,7 @@ internal sealed class TranscriptToolDetailState : IDisposable
     private void DestroyDetails()
     {
         Interlocked.Exchange(ref _details, null)?.Dispose();
+        _materializedRevision = 0;
     }
 
     private void DestroyPendingDetails() => Interlocked.Exchange(ref _pendingDetails, null)?.Dispose();

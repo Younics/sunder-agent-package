@@ -1,5 +1,6 @@
 using IRuntimeCatalogService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
 using Sunder.Sdk.Rpc;
+using Sunder.Package.Agent.Shared.PackageViews;
 
 namespace Sunder.Package.Agent.Subagents.Runtime;
 
@@ -31,7 +32,28 @@ internal static class SubsessionTranscriptReader
             CreatedAtUtc = predecessor?.CreatedAtUtc ?? Timestamp(createdAtUtc == DateTimeOffset.MinValue ? createdAtUtc : createdAtUtc.AddTicks(-1)),
             TurnId = predecessor?.TurnId ?? Guid.Empty, Limit = 1,
         }, token).ConfigureAwait(false)).SingleOrDefault();
-        if (anchor?.TurnId != turnId) throw new InvalidOperationException("The transcript anchor is no longer available.");
+        if (anchor is null) throw new InvalidOperationException("The transcript anchor is no longer available.");
+        if (anchor.TurnId != turnId)
+        {
+            // Header pages use canonical invocation positions. Prove that the
+            // exact requested receipt/item still resolves in this session, then
+            // present that logical slot under the requested navigation identity.
+            // The proof and projection are header-only; no detail payload is read.
+            _ = await runtime.ReadCompactTranscriptAsync(new()
+            {
+                SessionId = sessionId, Direction = TranscriptCompactDirections.Around, Limit = 1,
+                AnchorTurnId = turnId, AnchorItemId = itemId,
+            }, token).ConfigureAwait(false);
+            if (anchor.Items.Count != 1 || anchor.Items[0].ToolExecutionId is null
+                || anchor.Kind is not (AgentTurnKind.ToolCall or AgentTurnKind.ToolResult))
+                throw new InvalidOperationException("The transcript anchor is no longer available.");
+            anchor = anchor with
+            {
+                TurnId = turnId, Kind = AgentTurnKind.ToolResult, Role = AgentMessageRole.Tool,
+                CreatedAtUtc = Timestamp(createdAtUtc),
+                Items = [anchor.Items[0] with { TurnId = turnId, ItemId = itemId, Kind = AgentTurnItemKind.ToolResult }],
+            };
+        }
         if (anchor.SessionId != sessionId) throw new InvalidOperationException("The transcript anchor does not belong to the selected sub-session.");
         var beforeCount = Math.Clamp(beforeLimit, 0, 30);
         var afterCount = Math.Clamp(afterLimit, 0, 30);

@@ -21,7 +21,6 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
     private readonly AgentProviderCycleRunner _providerCycleRunner;
     private readonly AgentToolCycleCoordinator _toolCycleCoordinator;
     private readonly AgentLoopTerminalHandler _terminalHandler;
-    private readonly AgentRunBudgetLimits _budgetLimits;
 
     public DefaultAgentBehaviorLoop(
         AgentSystemPromptComposer promptComposer,
@@ -36,25 +35,19 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
             sessionContextProjectionService);
         _providerCycleRunner = new AgentProviderCycleRunner(streamingTurnWriter);
         _toolCycleCoordinator = new AgentToolCycleCoordinator(_terminalHandler);
-        _budgetLimits = AgentRunBudgetLimits.Default;
     }
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-    internal DefaultAgentBehaviorLoop(AgentPromptPreparationPipeline prompt, AgentProviderCycleRunner provider, AgentToolCycleCoordinator tools, AgentLoopTerminalHandler terminal)
-        : this(prompt, provider, tools, terminal, budgetLimits: null) { }
-
     internal DefaultAgentBehaviorLoop(
         AgentPromptPreparationPipeline promptPreparationPipeline,
         AgentProviderCycleRunner providerCycleRunner,
         AgentToolCycleCoordinator toolCycleCoordinator,
-        AgentLoopTerminalHandler terminalHandler,
-        AgentRunBudgetLimits? budgetLimits = null)
+        AgentLoopTerminalHandler terminalHandler)
     {
         _promptPreparationPipeline = promptPreparationPipeline;
         _providerCycleRunner = providerCycleRunner;
         _toolCycleCoordinator = toolCycleCoordinator;
         _terminalHandler = terminalHandler;
-        _budgetLimits = budgetLimits ?? AgentRunBudgetLimits.Default;
     }
 
     public AgentBehaviorLoopDescriptor Descriptor { get; } = new(
@@ -99,23 +92,10 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 token.ThrowIfCancellationRequested();
                 return ValueTask.FromResult(budgetRuntime.ChargeRunBudget(charge));
             };
-        var budgetTracker = new AgentRunBudgetTracker(
-            _budgetLimits,
+        var usageTracker = new AgentRunUsageTracker(
             budgetRuntime?.GetRunBudgetState() ?? default,
             durableCharge);
-        var remainingWallClock = budgetTracker.GetRemainingWallClock(context.RunStartedAtUtc);
-        if (remainingWallClock <= TimeSpan.Zero)
-        {
-            return await FailBudgetAsync(
-                host,
-                assistantTurnState,
-                budgetTracker.CreateWallClockViolation(),
-                loopStopwatch);
-        }
-
-        using var runBudgetCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        runBudgetCancellation.CancelAfter(remainingWallClock);
-        var runCancellationToken = runBudgetCancellation.Token;
+        var runCancellationToken = cancellationToken;
 
         try
         {
@@ -130,6 +110,9 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 runCancellationToken);
             var progressGuard = new AgentRunProgressGuard();
             var contextWindowRecoveryAttempted = false;
+            var consecutiveOutputLimits = 0;
+            string? continuationInstruction = null;
+            var retryState = new AgentProviderRetryState();
 
             while (true)
             {
@@ -138,6 +121,7 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                     context,
                     preparation,
                     providerSession,
+                    continuationInstruction,
                     runCancellationToken);
                 await AcknowledgeProviderContextAsync(
                     host,
@@ -154,8 +138,17 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                         assistantTurnState,
                         loopStopwatch,
                         runCancellationToken,
-                        budgetTracker,
-                        materializedRequest.Assessment.Estimate.EstimatedInputTokens);
+                        usageTracker,
+                        materializedRequest.Assessment.Estimate.EstimatedInputTokens,
+                        retryState);
+                }
+                catch (AgentProviderContinuationException)
+                {
+                    continuationInstruction = InterruptedStreamContinuationInstruction;
+                    await _promptPreparationPipeline.RefreshAfterToolCycleAsync(host, context, preparation,
+                        requiresPromptContextRefresh: false, runCancellationToken);
+                    providerSession.Options.Instructions = preparation.SystemInstructions;
+                    continue;
                 }
                 catch (AgentProviderContextWindowException ex)
                 {
@@ -185,12 +178,21 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                         providerSession.Options.Instructions = preparation.SystemInstructions;
                         if (changed)
                         {
-                            host.LogEvent(
-                                PackageLogLevel.Information,
-                                "provider.context_window.recovery.succeeded",
-                                "Session context was compacted; retrying the provider once.",
-                                loopStopwatch.ElapsedMilliseconds);
-                            continue;
+                            var reduced = await _promptPreparationPipeline.BuildProviderMessagesAsync(
+                                host, preparation, context, runCancellationToken);
+                            reduced = WithContinuation(reduced, continuationInstruction);
+                            var reducedEstimate = AgentProviderRequestBudget.Assess(reduced.Messages,
+                                preparation.SystemInstructions, preparation.AvailableTools, context.RunCapabilities).Estimate;
+                            if (reducedEstimate.EstimatedInputTokens < materializedRequest.Assessment.Estimate.EstimatedInputTokens
+                                || reducedEstimate.BinaryBytes < materializedRequest.Assessment.Estimate.BinaryBytes)
+                            {
+                                host.LogEvent(
+                                    PackageLogLevel.Information,
+                                    "provider.context_window.recovery.succeeded",
+                                    "Session context was reduced; retrying the affected provider request once.",
+                                    loopStopwatch.ElapsedMilliseconds);
+                                continue;
+                            }
                         }
                     }
 
@@ -217,6 +219,36 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 if (providerCycle.TerminalResult is not null)
                 {
                     return providerCycle.TerminalResult;
+                }
+                // A successful request starts a new logical step. An overflow on
+                // a later step gets its own recovery, not a lifetime allowance.
+                contextWindowRecoveryAttempted = false;
+
+                if (providerCycle.FinishReason == ChatFinishReason.Length)
+                {
+                    AgentLoopTerminalHandler.PreservePartialTurn(host, assistantTurnState);
+                    if (++consecutiveOutputLimits > 2)
+                    {
+                        return await _terminalHandler.InterruptAsync(host, assistantTurnState,
+                            "### Response could not finish\n\nThe provider repeatedly reached its output-token limit. Partial output is saved. Continue with a smaller step or adjust the model's output settings.",
+                            "Provider output remained truncated after two continuation attempts.", runCancellationToken);
+                    }
+                    // No calls from an incomplete response have been dispatched.
+                    // Even syntactically valid arguments may be part of a cut-off batch.
+                    continuationInstruction = OutputLimitContinuationInstruction;
+                    await _promptPreparationPipeline.RefreshAfterToolCycleAsync(host, context, preparation,
+                        requiresPromptContextRefresh: false, runCancellationToken);
+                    providerSession.Options.Instructions = preparation.SystemInstructions;
+                    continue;
+                }
+                consecutiveOutputLimits = 0;
+                retryState = new AgentProviderRetryState();
+                if (providerCycle.FinishReason is { } finish
+                    && finish != ChatFinishReason.Stop && finish != ChatFinishReason.ToolCalls)
+                {
+                    return await _terminalHandler.InterruptAsync(host, assistantTurnState,
+                        "### Provider response interrupted\n\nThe provider did not report a normal completion. Partial output is saved; no pending tools from this response were executed.",
+                        "Provider reported an unsupported or filtered completion.", runCancellationToken);
                 }
 
                 var compactedAfterProviderCycle = await _promptPreparationPipeline.CompactAfterProviderCycleAsync(
@@ -253,11 +285,13 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                     assistantTurnState,
                     loopStopwatch,
                     runCancellationToken,
-                    budgetTracker);
+                    usageTracker);
                 if (!toolCycle.ShouldContinue)
                 {
                     return toolCycle.TerminalResult!;
                 }
+                (host as IAgentRunActivitySink)?.ReportRunActivity(AgentRunActivityKind.Processing, "Reviewing results");
+                continuationInstruction = toolCycle.ContinuationInstruction;
 
                 assistantTurnState.Turn = null;
                 await _promptPreparationPipeline.RefreshAfterToolCycleAsync(
@@ -279,24 +313,6 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
             return new AgentBehaviorLoopResult(
                 context.RunningCheckpoint,
                 AgentBehaviorLoopCompletionKind.Interrupted);
-        }
-        catch (AgentRunBudgetExceededException ex)
-        {
-            return await FailBudgetAsync(
-                host,
-                assistantTurnState,
-                ex.Violation,
-                loopStopwatch);
-        }
-        catch (OperationCanceledException) when (
-            !cancellationToken.IsCancellationRequested
-            && runBudgetCancellation.IsCancellationRequested)
-        {
-            return await FailBudgetAsync(
-                host,
-                assistantTurnState,
-                budgetTracker.CreateWallClockViolation(),
-                loopStopwatch);
         }
         catch (OperationCanceledException ex)
         {
@@ -387,8 +403,10 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
         AgentBehaviorLoopContext context,
         AgentPromptPreparation preparation,
         AgentProviderSession providerSession,
+        string? continuationInstruction,
         CancellationToken cancellationToken)
     {
+        var canReduceFurther = true;
         for (var pass = 0; ; pass++)
         {
             var providerMessages = await _promptPreparationPipeline.BuildProviderMessagesAsync(
@@ -396,6 +414,7 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 preparation,
                 context,
                 cancellationToken);
+            providerMessages = WithContinuation(providerMessages, continuationInstruction);
             var assessment = AgentProviderRequestBudget.Assess(
                 providerMessages.Messages,
                 preparation.SystemInstructions,
@@ -419,7 +438,7 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 throw CreatePromptTooLargeException(assessment);
             }
 
-            if (pass >= MaxRequestCompactionPasses - 1)
+            if (!canReduceFurther || pass >= MaxRequestCompactionPasses - 1)
             {
                 if (assessment.FitsHardLimit)
                 {
@@ -432,7 +451,7 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 throw CreatePromptTooLargeException(assessment);
             }
 
-            await _promptPreparationPipeline.CompactForRequestPressureAsync(
+            canReduceFurther = await _promptPreparationPipeline.CompactForRequestPressureAsync(
                 host,
                 context,
                 preparation,
@@ -522,31 +541,6 @@ public sealed partial class DefaultAgentBehaviorLoop : IAgentBehaviorLoop, Rpc.P
                 + $"The estimated input is {assessment.Estimate.EstimatedInputTokens:N0} tokens and the available input budget is "
                 + $"{assessment.Limits.HardInputLimitTokens:N0} tokens. Use smaller or fewer current attachments, reduce required instructions, or select a model with a larger context window.");
 
-    private async Task<AgentBehaviorLoopResult> FailBudgetAsync(
-        IAgentBehaviorLoopRuntime host,
-        AgentAssistantTurnState assistantTurnState,
-        AgentRunBudgetViolation violation,
-        Stopwatch loopStopwatch)
-    {
-        var result = await _terminalHandler.FailAsync(
-            host,
-            assistantTurnState,
-            $"### Agent run budget exhausted\n\n{violation.VisibleMessage}",
-            violation.Summary,
-            CancellationToken.None);
-        host.LogEvent(
-            PackageLogLevel.Warning,
-            "behavior.loop.budget_exhausted",
-            violation.Summary,
-            loopStopwatch.ElapsedMilliseconds,
-            new Dictionary<string, object?>(StringComparer.Ordinal)
-            {
-                ["budget.kind"] = violation.Kind.ToString(),
-                ["budget.consumed"] = violation.Consumed,
-                ["budget.limit"] = violation.Limit,
-            });
-        return result;
-    }
 }
 
 internal sealed record AdmittedProviderRequest(

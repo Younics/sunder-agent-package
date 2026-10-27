@@ -46,6 +46,7 @@ internal sealed class AgentStreamingTurnWriter(
             state.PersistedContentGeneration = state.ContentGeneration;
             state.ToolCalls.Clear();
             state.ProviderUsage = null;
+            state.FinishReason = null;
             state.SuppressPendingFlush = false;
         }
     }
@@ -63,6 +64,7 @@ internal sealed class AgentStreamingTurnWriter(
             static pump => ((AssistantStreamFlushPump)pump!).Abort(),
             flushPump);
         var protocolLeakDetected = false;
+        var reportedResponding = false;
         var flushFinalSnapshot = false;
         try
         {
@@ -73,6 +75,7 @@ internal sealed class AgentStreamingTurnWriter(
                                .WithCancellation(streamCancellation.Token))
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                state.FinishReason = streamUpdate.FinishReason ?? state.FinishReason;
 
                 if (!string.IsNullOrEmpty(streamUpdate.Text)
                     || streamUpdate.Contents.Any(IsContentBearingOutput))
@@ -98,6 +101,12 @@ internal sealed class AgentStreamingTurnWriter(
                 if (string.IsNullOrEmpty(streamUpdate.Text))
                 {
                     continue;
+                }
+                if (!reportedResponding)
+                {
+                    state.ReasoningActivity.Flush();
+                    (state.Host as IAgentRunActivitySink)?.ReportRunActivity(AgentRunActivityKind.Responding, "Responding");
+                    reportedResponding = true;
                 }
 
                 var containsProtocolLeak = false;
@@ -131,7 +140,11 @@ internal sealed class AgentStreamingTurnWriter(
         {
             try
             {
-                await flushPump.StopAsync(flushFinalSnapshot);
+                // A failed stream may already contain useful visible output.
+                // Preserve it before recording a separate interruption; never
+                // flush stale work after cancellation or a policy rejection.
+                await flushPump.StopAsync(flushFinalSnapshot
+                    || !cancellationToken.IsCancellationRequested && !protocolLeakDetected && state.HasContentBearingOutput);
             }
             finally
             {
@@ -168,14 +181,16 @@ internal sealed class AgentStreamingTurnWriter(
                 state.Content.ToString(),
                 state.ToolCalls,
                 state.TerminalResult,
-                state.ProviderUsage?.ContextTokenCount);
+                state.ProviderUsage?.ContextTokenCount,
+                state.FinishReason);
         }
 
         return new AgentProviderCycleResult(
             state.Content.ToString(),
             state.ToolCalls,
             TerminalResult: null,
-            state.ProviderUsage?.ContextTokenCount);
+            state.ProviderUsage?.ContextTokenCount,
+            state.FinishReason);
     }
 
     private async Task BlockProtocolLeakAsync(
@@ -457,6 +472,8 @@ internal sealed class AgentStreamingTurnState(
 
     public AgentProviderUsage? ProviderUsage { get; set; }
 
+    public ChatFinishReason? FinishReason { get; set; }
+
     public ReasoningActivityReporter ReasoningActivity { get; } = new(host as IAgentRunActivitySink);
 
     public long ContentGeneration { get; set; }
@@ -474,7 +491,8 @@ internal sealed record AgentProviderCycleResult(
     string Text,
     IReadOnlyList<FunctionCallContent> ToolCalls,
     AgentBehaviorLoopResult? TerminalResult,
-    long? ReportedContextTokenCount);
+    long? ReportedContextTokenCount,
+    ChatFinishReason? FinishReason = null);
 
 internal sealed record AgentProviderUsage(
     long? InputTokenCount,
@@ -550,7 +568,9 @@ internal sealed class ReasoningActivityReporter(IAgentRunActivitySink? activityS
         if (!string.IsNullOrWhiteSpace(displayText)
             && !string.Equals(displayText, _lastReportedText, StringComparison.Ordinal))
         {
-            Report(displayText, TimeSpan.MaxValue);
+            // A phase/retry boundary may flush mid-stream. Do not move the
+            // cadence clock into the future and suppress later reasoning deltas.
+            Report(displayText, _lastReportElapsed);
         }
     }
 

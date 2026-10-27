@@ -510,14 +510,7 @@ public partial class SubsessionsView : UserControl,
             if (!toolRow.TryMaterializeDetails(request, detail, out var details)
                 || details is null)
             {
-                if (detail is not null && detail.Detail.Revision != request.Revision)
-                {
-                    AbandonExpansion();
-                }
-                else
-                {
-                    toolRow.FailExpansion(request, new InvalidOperationException("Tool details are no longer available."));
-                }
+                toolRow.FailExpansion(request, new InvalidOperationException("Tool details are no longer available."));
                 return;
             }
 
@@ -538,6 +531,14 @@ public partial class SubsessionsView : UserControl,
                 return;
             }
 
+            if (refreshing)
+            {
+                // Rebase retained-detail publication after live layout/input,
+                // without restoring the viewport captured before the read.
+                _transcriptBehavior.CancelViewportMutationPreparation(viewportMutationGeneration);
+                viewportMutationGeneration = _transcriptBehavior.BeginViewportMutationPreparation(
+                    TranscriptViewportMutationKind.ToolExpansion, toolRow.AnchorKey, scope, isExpanding: true);
+            }
             viewportMutationCommitted = _transcriptBehavior.CommitViewportMutationPreparation(
                 viewportMutationGeneration,
                 () =>

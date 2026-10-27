@@ -110,6 +110,7 @@ internal sealed class AgentLoopTerminalHandler
                 AgentBehaviorLoopCompletionKind.Interrupted);
         }
 
+        PreservePartialTurn(host, assistantTurnState);
         var interruptedTurn = host.UpsertAssistantTurn(
             assistantTurnState.Turn,
             $"### Provider connection interrupted\n\nThe provider connection was interrupted after retrying. You can retry or continue this session.\n\n{message}");
@@ -153,6 +154,7 @@ internal sealed class AgentLoopTerminalHandler
                 AgentBehaviorLoopCompletionKind.Interrupted);
         }
 
+        PreservePartialTurn(host, assistantTurnState);
         var result = await FailAsync(
             host,
             assistantTurnState,
@@ -188,6 +190,7 @@ internal sealed class AgentLoopTerminalHandler
         }
 
         var presentation = AgentFailurePresentationPolicy.Create(exception);
+        PreservePartialTurn(host, assistantTurnState);
         assistantTurnState.Turn = host.UpsertAssistantTurn(
             assistantTurnState.Turn,
             presentation.Markdown);
@@ -209,6 +212,26 @@ internal sealed class AgentLoopTerminalHandler
             elapsedMilliseconds,
             exception: exception);
         return new AgentBehaviorLoopResult(checkpoint, ToCompletionKind(checkpoint.Status));
+    }
+
+    internal static void PreservePartialTurn(IAgentBehaviorLoopRuntime host, AgentAssistantTurnState state)
+    {
+        if (state.Turn is { } partial)
+        {
+            host.CompleteAssistantTurn(partial);
+            state.Turn = null;
+        }
+    }
+
+    public async Task<AgentBehaviorLoopResult> InterruptAsync(IAgentBehaviorLoopRuntime host,
+        AgentAssistantTurnState state, string visibleContent, string summary, CancellationToken cancellationToken)
+    {
+        PreservePartialTurn(host, state);
+        state.Turn = host.CompleteAssistantTurn(host.UpsertAssistantTurn(null, visibleContent));
+        var checkpoint = host.SaveCheckpoint(AgentRunStatus.Interrupted, summary);
+        await host.PublishLifecycleEventAsync(AgentLifecycleEventKind.RunInterrupted, AgentRunStatus.Interrupted,
+            triggerTurn: state.Turn, checkpoint: checkpoint, isInterrupted: true, cancellationToken: cancellationToken);
+        return new AgentBehaviorLoopResult(checkpoint, AgentBehaviorLoopCompletionKind.Interrupted);
     }
 
     private static AgentBehaviorLoopCompletionKind ToCompletionKind(AgentRunStatus status)

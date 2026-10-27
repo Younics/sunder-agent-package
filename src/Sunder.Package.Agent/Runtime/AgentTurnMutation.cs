@@ -47,4 +47,8 @@ public sealed record AgentTurnMutation(
     string? Text,
     DateTimeOffset UpdatedAtUtc,
     AgentTurnRecord? Turn = null,
-    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RuntimeRevision = 0);
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RuntimeRevision = 0)
+{
+    /// <summary>Gets the committed summary for the invocation's original activity group, when this is a tool change.</summary>
+    public AgentTranscriptActivityGroup? ActivityGroup { get; init; }
+}

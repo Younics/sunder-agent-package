@@ -223,6 +223,32 @@ public sealed partial class SubsessionsViewModel
                 // A fresh anchored read satisfies earlier resets. A reset during this
                 // read requires a new page, never publication of the superseded page.
                 Interlocked.Exchange(ref _forceRuntimeTranscriptRefresh, 0);
+                if (_timeline.IsCompact)
+                {
+                    var exact = await reader.LoadAroundTurnAsync(target.SessionId, target.TurnId, target.CreatedAtUtc,
+                        target.ItemId, 0, 0, cancellationToken).ConfigureAwait(false);
+                    if (exact.AnchorTurnId != target.TurnId || !TryResolveAnchorKey(target, exact.Turns, out var compactAnchor))
+                        throw new SubsessionHistoryTargetUnavailableException(target.AnchorKind);
+                    if (!await _timeline.LoadCompactAroundAsync(target.SessionId, target.TurnId,
+                            target.AnchorKind == TranscriptNavigationAnchorKind.Text ? null : target.ItemId, cancellationToken).ConfigureAwait(false))
+                        throw new SubsessionHistoryTargetUnavailableException(target.AnchorKind);
+                    var repeat = false;
+                    await RunOnUiThreadAsync(() =>
+                    {
+                        EnsureCurrentAnchorSelection(target.SessionId, navigation, selectionAuthorityRevision, cancellationToken);
+                        if (Volatile.Read(ref _forceRuntimeTranscriptRefresh) != 0) { repeat = true; return; }
+                        if (!_timeline.TrySelectLoadedAnchor(target.SessionId, compactAnchor))
+                            throw new SubsessionHistoryTargetUnavailableException(target.AnchorKind);
+                        _anchoredNavigationTarget = target;
+                        NavigationAnchorKey = compactAnchor;
+                        NavigationSelectionAuthorityRevision = selectionAuthorityRevision;
+                        _knownCheckpoints.TryGetValue(target.SessionId, out var checkpoint);
+                        TrackCheckpointActivity(checkpoint);
+                        ApplyRunActivityState();
+                    }, cancellationToken).ConfigureAwait(false);
+                    if (repeat) continue;
+                    return;
+                }
                 var page = await reader.LoadAroundTurnAsync(
                     target.SessionId, target.TurnId, target.CreatedAtUtc, target.ItemId,
                     beforeLimit: 20, afterLimit: 20, cancellationToken).ConfigureAwait(false);
@@ -249,7 +275,7 @@ public sealed partial class SubsessionsViewModel
                     NavigationAnchorKey = anchorKey;
                     NavigationSelectionAuthorityRevision = selectionAuthorityRevision;
                     _knownCheckpoints.TryGetValue(target.SessionId, out var checkpoint);
-                    _runActivity.TrackCheckpoint(checkpoint);
+                    TrackCheckpointActivity(checkpoint);
                     ApplyRunActivityState();
                     applied = true;
                 }, cancellationToken).ConfigureAwait(false);

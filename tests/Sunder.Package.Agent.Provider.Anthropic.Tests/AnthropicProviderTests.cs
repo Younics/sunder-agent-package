@@ -650,6 +650,25 @@ public sealed partial class AnthropicProviderTests
     }
 
     [Fact]
+    public async Task Overload_IsOneSdkAttemptAndPreservesMinimumRetryTiming()
+    {
+        var handler = new CapturingHandler(_ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            { Content = new StringContent("""{"type":"error","error":{"type":"overloaded_error","message":"Servers overloaded"}}""") };
+            response.Headers.TryAddWithoutValidation("retry-after", "12");
+            return response;
+        });
+        using var client = CreateChatClient(handler);
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(() => ReadUpdatesAsync(client,
+            [new ChatMessage(ChatRole.User, "Test overload")]));
+        Assert.Single(handler.Requests);
+        Assert.Equal(AgentChatProviderFailureKind.Overloaded, error.FailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
+    }
+
+    [Fact]
     public async Task HttpFailure_IsMappedAndLogged()
     {
         var handler = new CapturingHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)
@@ -667,7 +686,8 @@ public sealed partial class AnthropicProviderTests
             [new ChatMessage(ChatRole.User, "Fail.")]));
 
         Assert.Equal("anthropic-http-error", exception.ErrorCode);
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        Assert.Equal(AgentChatProviderFailureKind.Transient, exception.FailureKind);
+        Assert.Equal(500, exception.StatusCode);
         Assert.Contains("provider.stream.failed", logger.EventNames);
     }
 
@@ -899,18 +919,13 @@ public sealed partial class AnthropicProviderTests
                     [AnthropicProviderConfiguration.ApiKeySecretKey] = ProviderFailureInputs.SecretCanary,
                 }),
                 AnthropicProviderConfiguration.ApiKeySecretKey),
-            (_, useFastMode, transportContext) =>
+            _ =>
             {
-                IAnthropicClient sdkClient = new AnthropicClient
+                return new AnthropicClient
                 {
                     ApiKey = ProviderFailureInputs.SecretCanary,
                     HttpClient = new HttpClient(handler, disposeHandler: false),
-                    MaxRetries = 0,
                 };
-                var responseTranslator = new AnthropicResponseTranslator(transportContext);
-                return useFastMode
-                    ? new AnthropicFastTransport(sdkClient, responseTranslator)
-                    : new AnthropicStandardTransport(sdkClient, responseTranslator);
             });
     }
 

@@ -4,8 +4,8 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    internal const int BaselineVersion = 1;
-    internal const string BaselineName = "agent-2.0-baseline";
+    internal const int BaselineVersion = 3;
+    internal const string BaselineName = "agent-transcript-3-baseline";
 
     private const string BaselineSql = """
         CREATE TABLE SchemaMigrations (
@@ -87,6 +87,8 @@ public sealed partial class AgentLocalStore
             AgentKind TEXT NULL,
             CreatedAtUtc TEXT NOT NULL,
             UpdatedAtUtc TEXT NOT NULL,
+            NextTurnSequence INTEGER NOT NULL DEFAULT 1 CHECK (NextTurnSequence >= 1),
+            PresentationEpoch INTEGER NOT NULL DEFAULT 1 CHECK (PresentationEpoch >= 1),
             TranscriptEpoch INTEGER NOT NULL DEFAULT 1 CHECK (TranscriptEpoch >= 1),
             ActiveContextCheckpointId TEXT NULL,
             ActiveContextGeneration INTEGER NOT NULL DEFAULT 0 CHECK (ActiveContextGeneration >= 0)
@@ -120,7 +122,9 @@ public sealed partial class AgentLocalStore
             ContentRevision INTEGER NOT NULL DEFAULT 1,
             IsStreaming INTEGER NOT NULL DEFAULT 0,
             RunId TEXT NULL,
-            RunRevision INTEGER NULL
+            RunRevision INTEGER NULL,
+            TurnSequence INTEGER NOT NULL CHECK (TurnSequence >= 1),
+            UNIQUE (SessionId, TurnSequence)
         );
 
         CREATE TABLE AgentTurnItems (
@@ -140,7 +144,8 @@ public sealed partial class AgentLocalStore
             ErrorCode TEXT NULL,
             BackendId TEXT NULL,
             PresentationPayloadJson TEXT NULL,
-            ToolExecutionId TEXT NULL
+            ToolExecutionId TEXT NULL,
+            CHECK (Kind NOT IN ('ToolCall', 'ToolResult') OR ToolExecutionId IS NOT NULL)
         );
 
         CREATE TABLE AgentRunCheckpoints (
@@ -238,7 +243,8 @@ public sealed partial class AgentLocalStore
             ExecutionSnapshotJson TEXT NOT NULL DEFAULT '',
             ToolExecutionId TEXT NULL,
             ResourceClaimSetVersion INTEGER NOT NULL DEFAULT 0,
-            ResourceClaimsJson TEXT NOT NULL DEFAULT '[]'
+            ResourceClaimsJson TEXT NOT NULL DEFAULT '[]',
+            ApproveForSession INTEGER NOT NULL DEFAULT 0 CHECK (ApproveForSession IN (0, 1))
         );
 
         CREATE TABLE AgentRuns (
@@ -314,6 +320,12 @@ public sealed partial class AgentLocalStore
                 CHECK (ToolSchemaVersion IS NULL OR (trim(ToolSchemaVersion) <> '' AND length(ToolSchemaVersion) <= 128)),
             ExecutionTargetOwnerPackageId TEXT NULL
                 CHECK (ExecutionTargetOwnerPackageId IS NULL OR (trim(ExecutionTargetOwnerPackageId) <> '' AND length(ExecutionTargetOwnerPackageId) <= 256)),
+            CallItemId TEXT NULL,
+            ResultItemId TEXT NULL,
+            HeaderRevision INTEGER NOT NULL DEFAULT 1 CHECK (HeaderRevision >= 1),
+            DetailRevision INTEGER NOT NULL DEFAULT 1 CHECK (DetailRevision >= 1),
+            HasDetails INTEGER NOT NULL DEFAULT 0 CHECK (HasDetails IN (0, 1)),
+            HeaderHint TEXT NULL,
             UNIQUE (RunId, RunRevision, CallId)
         );
 
@@ -597,13 +609,7 @@ public sealed partial class AgentLocalStore
         END;
         """;
 
-    internal const string BaselineChecksum = "4dc0cc925c4f25e7ba9cff537d434a733c017953042d97c8ab55ee9624ab5028";
-
-    internal const int ApprovalIntentVersion = 2;
-    internal const string ApprovalIntentName = "durable-permission-approval-intent";
-    private const string ApprovalIntentSql = "ALTER TABLE AgentPendingPermissionRequests ADD COLUMN ApproveForSession INTEGER NOT NULL DEFAULT 0 CHECK (ApproveForSession IN (0, 1));";
-    internal static readonly string ApprovalIntentChecksum = Convert.ToHexStringLower(
-        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(ApprovalIntentSql)));
+    internal const string BaselineChecksum = "fbe804503f69edfed05b96b98a2e284a26fccdfd2145b9067a19f72618a513ca";
 
     private void ApplySchemaMigrations()
     {
@@ -618,7 +624,6 @@ public sealed partial class AgentLocalStore
             ValidateCurrentLedger(connection);
         }
 
-        ApplyApprovalIntentMigration(connection);
         EnableWriteAheadLogging(connection);
         EnableSecureDelete(connection);
     }
@@ -636,7 +641,7 @@ public sealed partial class AgentLocalStore
         using (var schema = connection.CreateCommand())
         {
             schema.Transaction = transaction;
-            schema.CommandText = BaselineSql;
+            schema.CommandText = BaselineSql + TranscriptIndexSql;
             schema.ExecuteNonQuery();
         }
 
@@ -695,13 +700,9 @@ public sealed partial class AgentLocalStore
             {
                 throw InvalidLedger("the baseline identity or checksum does not match this build");
             }
-            if (reader.Read()
-                && (reader.GetInt32(0) != ApprovalIntentVersion
-                    || reader.GetString(1) != ApprovalIntentName
-                    || reader.GetString(2) != ApprovalIntentChecksum
-                    || reader.Read()))
+            if (reader.Read())
             {
-                throw InvalidLedger("the approval-intent migration identity or checksum does not match this build");
+                throw InvalidLedger("the current baseline must be the sole schema entry");
             }
         }
         catch (InvalidOperationException exception) when (!exception.Message.StartsWith(
@@ -719,28 +720,7 @@ public sealed partial class AgentLocalStore
     private static InvalidOperationException InvalidLedger(string reason, Exception? innerException = null)
         => new(
             $"Agent schema migration ledger validation failed: {reason}. "
-            + "Only an absent or empty database, or the reviewed baseline with known additive migrations, is supported; "
-            + "do not edit or delete migration ledger rows.",
+            + "This build requires a fresh Agent database or its exact current baseline. "
+            + "An incompatible database is never reset or migrated automatically.",
             innerException);
-
-    private static void ApplyApprovalIntentMigration(SqliteConnection connection)
-    {
-        using var transaction = connection.BeginTransaction(deferred: false);
-        ValidateCurrentLedger(connection, transaction);
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = "SELECT 1 FROM SchemaMigrations WHERE Version = $version;";
-        command.Parameters.AddWithValue("$version", ApprovalIntentVersion);
-        if (command.ExecuteScalar() is null)
-        {
-            command.CommandText = ApprovalIntentSql;
-            command.ExecuteNonQuery();
-            command.CommandText = "INSERT INTO SchemaMigrations (Version, Name, Checksum, AppliedAtUtc) VALUES ($version, $name, $checksum, $now);";
-            command.Parameters.AddWithValue("$name", ApprovalIntentName);
-            command.Parameters.AddWithValue("$checksum", ApprovalIntentChecksum);
-            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
-            command.ExecuteNonQuery();
-        }
-        transaction.Commit();
-    }
 }

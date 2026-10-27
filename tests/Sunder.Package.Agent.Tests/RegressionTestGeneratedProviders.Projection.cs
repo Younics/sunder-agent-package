@@ -21,8 +21,10 @@ internal sealed class RegressionTestGeneratedProviderProjection
     ];
 
     private readonly HashSet<string> _models;
+    private readonly IReadOnlyDictionary<string, HashSet<long>> _numericEnums;
 
-    private RegressionTestGeneratedProviderProjection(HashSet<string> models) => _models = models;
+    private RegressionTestGeneratedProviderProjection(HashSet<string> models, IReadOnlyDictionary<string, HashSet<long>> numericEnums)
+        => (_models, _numericEnums) = (models, numericEnums);
 
     internal static RegressionTestGeneratedProviderProjection FromCandidate(string candidate, string contractId)
     {
@@ -34,7 +36,23 @@ internal sealed class RegressionTestGeneratedProviderProjection
             value.GetProperty("contractId").GetString() == contractId);
         var models = contract.GetProperty("modelProjection").GetProperty("models").EnumerateObject()
             .Select(value => value.Name).ToHashSet(StringComparer.Ordinal);
-        return new(models);
+        return new(models, ReadNumericEnums(archive, contractId));
+    }
+
+    private static IReadOnlyDictionary<string, HashSet<long>> ReadNumericEnums(ZipArchive archive, string contractId)
+    {
+        foreach (var entry in archive.Entries.Where(entry => entry.FullName.StartsWith("payload/shared/contracts/", StringComparison.Ordinal)
+                     && entry.FullName.EndsWith(".rpc.json", StringComparison.Ordinal)))
+        {
+            using var descriptor = JsonDocument.Parse(entry.Open());
+            if (descriptor.RootElement.GetProperty("contractId").GetString() != contractId) continue;
+            return descriptor.RootElement.GetProperty("$defs").EnumerateObject()
+                .Where(definition => definition.Value.TryGetProperty("type", out var type) && type.GetString() == "integer"
+                    && definition.Value.TryGetProperty("enum", out _))
+                .ToDictionary(definition => definition.Name,
+                    definition => definition.Value.GetProperty("enum").EnumerateArray().Select(value => value.GetInt64()).ToHashSet(), StringComparer.Ordinal);
+        }
+        throw new InvalidDataException("The qualified candidate has no matching RPC descriptor.");
     }
 
     internal async ValueTask<object?> ProjectAsync(object? value, Type target, GeneratedServiceTestScope receiver,
@@ -64,6 +82,17 @@ internal sealed class RegressionTestGeneratedProviderProjection
         {
             if (!IsAdmitted(value.GetType()) || !IsAdmitted(target) || value.GetType().Name != target.Name)
                 throw new InvalidOperationException($"Enum projection is not admitted for '{value.GetType().FullName}' to '{target.FullName}'.");
+            // Numeric wire enums have generated ValueN names, not authored source
+            // symbols. Admit only exact values from this authenticated descriptor.
+            if (_numericEnums.TryGetValue(target.Name, out var admitted))
+            {
+                var number = System.Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                var projected = Enum.ToObject(target, number);
+                if (!value.GetType().IsEnum || !Enum.IsDefined(value.GetType(), value)
+                    || !admitted.Contains(number) || !Enum.IsDefined(target, projected))
+                    throw new InvalidOperationException($"'{value}' is not an admitted {target.FullName} numeric value.");
+                return projected;
+            }
             var name = value.GetType().IsEnum ? Enum.GetName(value.GetType(), value) : value.ToString();
             if (name is null || !Enum.GetNames(target).Contains(name, StringComparer.Ordinal))
                 throw new InvalidOperationException($"'{value}' is not an admitted {target.FullName} symbol.");
@@ -152,6 +181,7 @@ internal sealed class RegressionTestGeneratedProviderProjection
             // rather than in Models. Its name must still be in this contract's
             // authenticated candidate model inventory.
             || type.FullName == "Sunder.Package.Agent.Contracts.Contracts.AgentResourceAuthorityValidation"
+            || type.FullName == "Sunder.Package.Agent.Models.AgentRunActivityUpdate"
             || SourceNamespaces.Contains(type.Namespace, StringComparer.Ordinal));
 
     private static bool TryDiscriminator(Type concrete, string propertyName, out object? discriminator)

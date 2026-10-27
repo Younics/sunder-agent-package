@@ -88,4 +88,6 @@ public sealed record AgentChatErrorEvent(
     string ErrorCode,
     string ErrorMessage,
     string ErrorContent,
-    AgentChatProviderFailureKind ErrorFailureKind) : AgentChatStreamEvent;
+    AgentChatProviderFailureKind ErrorFailureKind,
+    int? StatusCode = null,
+    [property: SunderValueConstraints(Minimum = "0", Maximum = "900000")] long? RetryAfterMilliseconds = null) : AgentChatStreamEvent;

@@ -29,6 +29,10 @@ internal abstract class OwnerServiceStub : AgentServices.IAgentRuntimeService, I
         => RespondAsync<AgentDashboardRequest, AgentDashboardProjection>(request, token);
     public ValueTask<AgentTranscriptPage> GetTranscriptPageAsync(AgentTranscriptPageRequest request, CancellationToken token)
         => RespondAsync<AgentTranscriptPageRequest, AgentTranscriptPage>(request, token);
+    public ValueTask<AgentCompactTranscriptPage> GetCompactTranscriptPageAsync(AgentCompactTranscriptRequest request, CancellationToken token)
+        => RespondAsync<AgentCompactTranscriptRequest, AgentCompactTranscriptPage>(request, token);
+    public ValueTask<AgentTranscriptActivityMembersPage> GetActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken token)
+        => RespondAsync<AgentTranscriptActivityMembersRequest, AgentTranscriptActivityMembersPage>(request, token);
     public ValueTask<AgentCatalogProjection> GetCatalogAsync(AgentCatalogRequest request, CancellationToken token)
         => RespondAsync<AgentCatalogRequest, AgentCatalogProjection>(request, token);
     public ValueTask<AgentProfileCommandResult> ExecuteProfileCommandAsync(AgentProfileCommand request, CancellationToken token)

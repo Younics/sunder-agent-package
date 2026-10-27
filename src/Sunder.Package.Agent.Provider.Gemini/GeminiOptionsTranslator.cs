@@ -23,6 +23,10 @@ internal sealed class GeminiOptionsTranslator
             maxOutput = Math.Min(maxOutput ?? 32768, includeTools ? 32768 : 65536);
         var config = new GenerateContentConfig
         {
+            // The Agent owns retries and partial-output continuation so every
+            // request is visible, cancellable and accounted for exactly once.
+            AutomaticContinuation = false,
+            HttpOptions = new HttpOptions { RetryOptions = new HttpRetryOptions { Attempts = 1 } },
             SystemInstruction = MergeSystemInstructions(options?.Instructions, systemInstruction),
             MaxOutputTokens = maxOutput,
             ThinkingConfig = TranslateThinking(reasoningId, options?.Reasoning?.Output, modelId),

@@ -116,7 +116,7 @@ public sealed class SubsessionsRuntimeResetTests
         internal TaskCompletionSource ReleaseInitialization { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public event Action? ResnapshotRequired;
         public event Action<Guid>? SessionChanged { add { } remove { } }
-        public event Action<Guid, SubagentModels.AgentTurnRecord>? TurnChanged { add { } remove { } }
+        public event Action<Guid, SubagentModels.AgentTurnRecord, SubagentModels.AgentTranscriptActivityGroup?>? TurnChanged { add { } remove { } }
 
         internal void Reset() => ResnapshotRequired?.Invoke();
         internal ReadGate HoldNextAroundRead() => _nextAround = new();
@@ -172,7 +172,7 @@ public sealed class SubsessionsRuntimeResetTests
         };
         private SubagentModels.AgentTurnRecord Turn(Guid sessionId, Guid turnId, string text) => new()
         {
-            TurnId = turnId, SessionId = sessionId, Role = SubagentModels.AgentMessageRole.Assistant,
+            TurnId = turnId, TurnSequence = 1, SessionId = sessionId, Role = SubagentModels.AgentMessageRole.Assistant,
             Kind = SubagentModels.AgentTurnKind.Message, ContentRevision = 1, IsStreaming = false,
             CreatedAtUtc = new SunderRpcOffsetDateTime(_created.ToString("O")),
             UpdatedAtUtc = new SunderRpcOffsetDateTime(_created.ToString("O")),

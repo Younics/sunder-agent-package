@@ -49,6 +49,7 @@ internal sealed partial class AgentBehaviorLoopHost
     internal void RecordToolCallStart(AgentToolCallRequest toolCall)
     {
         SaveCheckpoint(AgentRunStatus.Running, $"Executing tool '{toolCall.ToolId}'.");
+        ReportRunActivity(AgentRunActivityKind.Tool, "Running tools");
 
         LogEvent(PackageLogLevel.Information, "tool.execution.start", "Executing tool.", attributes: new Dictionary<string, object?>(StringComparer.Ordinal)
         {
@@ -185,6 +186,9 @@ internal sealed partial class AgentBehaviorLoopHost
 
         var call = executed.ToolCall;
         var result = executed.Result;
+        // Cache hits and same-batch deduplication bypass ExecuteToolAsync's
+        // finally block, but still own a prepared reference of their own.
+        await _toolService.ReleasePreparedInvocationAsync(GetToolExecution(call.CallId).ExecutionId).ConfigureAwait(false);
         if (AgentToolSuspensionCompatibility.TryCreateChildJoin(call, result, _userTurnId, out var childJoin))
         {
             var suspended = _sessionService.SuspendRunAndCompleteToolExecution(
@@ -345,6 +349,8 @@ internal sealed partial class AgentBehaviorLoopHost
         {
             lock (_readOnlyToolResultCacheSync)
             {
+                if (_readOnlyToolResultCache.Count >= 64)
+                    _readOnlyToolResultCache.Clear();
                 _readOnlyToolResultCache[key] = executed;
             }
         }

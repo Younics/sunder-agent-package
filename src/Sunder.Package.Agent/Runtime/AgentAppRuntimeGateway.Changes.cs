@@ -268,7 +268,18 @@ internal sealed partial class AgentAppRuntimeGateway
                 break;
             case AgentRuntimeChangeKind.RunActivity:
                 if (change.SessionId is { } activitySessionId && change.RunActivity is { } activity)
+                {
+                    lock (_cacheLock)
+                    {
+                        if (!_knownSessions.TryGetValue(activitySessionId, out var current)
+                            || current.Checkpoint?.RunRevision != activity.RunRevision
+                            || current.Checkpoint.Status != AgentRunStatus.Running
+                            || current.Activity is { } previous && previous.Sequence >= activity.Sequence)
+                            break;
+                        _knownSessions[activitySessionId] = current with { Activity = activity };
+                    }
                     Raise(RunActivityChanged, activitySessionId, activity);
+                }
                 break;
             case AgentRuntimeChangeKind.Permission:
                 if (InvalidateGlobalPermissions(change.Revision))

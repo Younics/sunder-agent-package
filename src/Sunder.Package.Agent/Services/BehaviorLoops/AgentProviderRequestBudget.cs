@@ -56,7 +56,7 @@ internal readonly record struct AgentProviderRequestAssessment(
     public bool FitsHardLimit => Estimate.EstimatedInputTokens <= Limits.HardInputLimitTokens
                                  && FitsPayloadLimit;
 
-    public bool NeedsCompaction => Estimate.EstimatedInputTokens > Limits.HardInputLimitTokens
+    public bool NeedsCompaction => Estimate.EstimatedInputTokens > Limits.ProactiveInputLimitTokens
                                    || !FitsPayloadLimit;
 
     public int TargetReductionTokens => !NeedsCompaction

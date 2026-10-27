@@ -11,7 +11,7 @@ using BetaRawMessageStreamEvent = Anthropic.Models.Beta.Messages.BetaRawMessageS
 
 namespace Sunder.Package.Agent.Provider.Anthropic;
 
-internal sealed class AnthropicResponseTranslator(AgentChatClientContext context)
+internal sealed class AnthropicResponseTranslator(AgentChatClientContext context, ProviderRetryMetadata? retryMetadata = null)
 {
     private readonly ProviderStreamTelemetry _telemetry = new(context);
 
@@ -44,7 +44,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
                     throw AnthropicExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
                 default:
                     await _telemetry.FailedAsync(ex);
-                    throw AnthropicExceptionMapper.Map(ex);
+                    throw AnthropicExceptionMapper.Map(ex, retryMetadata?.RetryAfterMilliseconds);
             }
         }
 
@@ -56,7 +56,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             throw AnthropicExceptionMapper.MultipleToolCalls();
         }
 
-        ValidateTerminalReason(getStopReason(response), toolCalls.Length > 0);
+        var finishReason = ResolveTerminalReason(getStopReason(response), toolCalls.Length > 0);
         var reportedSpeed = response switch
         {
             Message message => GetSpeed(message.Usage.RawData),
@@ -75,7 +75,8 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
             if (getToolCall(block) is { } toolCall)
             {
-                translatedContent.Add(TranslateToolCall(toolCall));
+                if (finishReason != ChatFinishReason.Length)
+                    translatedContent.Add(TranslateToolCall(toolCall));
                 continue;
             }
 
@@ -85,14 +86,14 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             }
         }
 
-        if (translatedContent.Count > 0)
+        if (translatedContent.Count > 0 || finishReason == ChatFinishReason.Length)
         {
             var update = ProviderResponseUpdates.Create(
                 modelId,
                 responseId,
                 responseId,
                 translatedContent,
-                toolCalls.Length > 0 ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop);
+                finishReason);
             await _telemetry.RecordFirstEventAsync(ProviderResponseUpdates.Describe(update), cancellationToken);
             yield return update;
         }
@@ -118,7 +119,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            throw AnthropicExceptionMapper.Map(ex);
+            throw AnthropicExceptionMapper.Map(ex, retryMetadata?.RetryAfterMilliseconds);
         }
 
         var responseId = Guid.NewGuid().ToString("N");
@@ -149,7 +150,7 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
                         throw AnthropicExceptionMapper.ProviderTimeout((OperationCanceledException)ex);
                     default:
                         await _telemetry.FailedAsync(ex);
-                        throw AnthropicExceptionMapper.Map(ex);
+                        throw AnthropicExceptionMapper.Map(ex, retryMetadata?.RetryAfterMilliseconds);
                 }
             }
 
@@ -163,7 +164,9 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
 
             if (content.IsTerminal)
             {
-                ValidateTerminalReason(stopReason, hasToolCalls: false);
+                var finishReason = ResolveTerminalReason(stopReason, hasToolCalls: false);
+                yield return ProviderResponseUpdates.Create(modelId, responseId, responseId,
+                    Array.Empty<AIContent>(), finishReason);
                 if (usage.CreateContent() is { } usageContent)
                 {
                     yield return ProviderResponseUpdates.Create(modelId, responseId, responseId, usageContent);
@@ -349,20 +352,22 @@ internal sealed class AnthropicResponseTranslator(AgentChatClientContext context
             ? (inputTokens ?? 0) + (cacheCreationInputTokens ?? 0) + (cacheReadInputTokens ?? 0)
             : null;
 
-    private static void ValidateTerminalReason(string? stopReason, bool hasToolCalls)
+    private static ChatFinishReason ResolveTerminalReason(string? stopReason, bool hasToolCalls)
     {
         var normalizedReason = stopReason?
             .Replace("_", string.Empty, StringComparison.Ordinal)
             .Replace("-", string.Empty, StringComparison.Ordinal);
+        if (string.Equals(normalizedReason, "maxtokens", StringComparison.OrdinalIgnoreCase))
+            return ChatFinishReason.Length;
         if (string.Equals(normalizedReason, "tooluse", StringComparison.OrdinalIgnoreCase) && hasToolCalls)
         {
-            return;
+            return ChatFinishReason.ToolCalls;
         }
 
         if (!hasToolCalls && (string.Equals(normalizedReason, "endturn", StringComparison.OrdinalIgnoreCase)
                               || string.Equals(normalizedReason, "stopsequence", StringComparison.OrdinalIgnoreCase)))
         {
-            return;
+            return ChatFinishReason.Stop;
         }
 
         throw AnthropicExceptionMapper.IncompleteResponse(string.IsNullOrWhiteSpace(stopReason)

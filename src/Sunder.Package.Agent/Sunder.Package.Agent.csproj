@@ -26,7 +26,6 @@
     <PackageReference Include="Microsoft.Extensions.AI.Abstractions" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
-    <PackageReference Include="Polly.Core" />
     <PackageReference Include="Avalonia" />
     <PackageReference Include="Avalonia.Controls.ItemsRepeater" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
@@ -37,7 +36,9 @@
     <Compile Include="..\Sunder.Package.Agent.Shared\Execution\AgentExecutionFacetIds.cs"
              Link="Models\AgentExecutionFacetIds.cs" />
     <Compile Include="..\Sunder.Package.Agent.Shared\Storage\SqliteWalCheckpointMaintenance.cs"
-             Link="Storage\SqliteWalCheckpointMaintenance.cs" />
+              Link="Storage\SqliteWalCheckpointMaintenance.cs" />
+    <Compile Include="..\Sunder.Package.Agent.Provider.Shared\ProviderErrorDiagnosticExtractor.cs"
+             Link="Services\ProviderErrorDiagnosticExtractor.cs" />
   </ItemGroup>
 
   <ItemGroup>

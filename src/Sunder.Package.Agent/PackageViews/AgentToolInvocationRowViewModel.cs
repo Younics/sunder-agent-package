@@ -96,11 +96,8 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
     public IBrush? StateSoftBrush { get; private set; }
     public Guid? ResultTurnId => _resultTurnId;
     public bool IsFailed => string.Equals(StatusText, "Failed", StringComparison.OrdinalIgnoreCase);
-    public bool IsPrepared => string.Equals(StatusText, "Prepared", StringComparison.OrdinalIgnoreCase);
-    public bool IsStarted => string.Equals(StatusText, "Started", StringComparison.OrdinalIgnoreCase);
     public bool IsRunning => _projection.IsRunning;
-    public bool IsCompleted => StatusText is "Completed" or "Applied";
-    public bool IsAmbiguous => StatusText is "Ambiguous" or "Unconfirmed";
+    public bool IsCompleted => _projection.State == TranscriptToolState.Completed;
     public ObservableCollection<AgentChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
     public AgentChildSessionLinkViewModel? ChildSessionLink => ChildSessionLinks.FirstOrDefault();
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
@@ -174,6 +171,7 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     private void UpdateProjection(TranscriptToolProjection projection)
     {
+        if (projection.SameInvocation(_projection) && projection.DetailRevision < _projection.DetailRevision) return;
         _projection = projection;
         _detailState.UpdateProjection(projection);
         ApplyHeaderProjection();
@@ -181,8 +179,8 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     private void ApplyHeaderProjection()
     {
-        StateBrush = ResolveStateBrush(StatusText);
-        StateSoftBrush = ResolveStateSoftBrush(StatusText);
+        StateBrush = AgentThemeBrushes.Resolve(TranscriptToolStates.Brush(_projection.State));
+        StateSoftBrush = AgentThemeBrushes.Resolve(TranscriptToolStates.SoftBrush(_projection.State));
         OnPropertyChanged(nameof(ToolLabel));
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusIconText));
@@ -194,12 +192,9 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
         OnPropertyChanged(nameof(SessionId));
         OnPropertyChanged(nameof(StateBrush));
         OnPropertyChanged(nameof(StateSoftBrush));
-        OnPropertyChanged(nameof(IsPrepared));
-        OnPropertyChanged(nameof(IsStarted));
         OnPropertyChanged(nameof(IsFailed));
         OnPropertyChanged(nameof(IsRunning));
         OnPropertyChanged(nameof(IsCompleted));
-        OnPropertyChanged(nameof(IsAmbiguous));
         OnPropertyChanged(nameof(HeaderAccessibilityText));
     }
 
@@ -273,28 +268,6 @@ public sealed partial class AgentToolInvocationRowViewModel : AgentTranscriptRow
 
     private static string? FirstNonBlank(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-
-    private static IBrush? ResolveStateBrush(string statusText)
-        => AgentThemeBrushes.Resolve(statusText switch
-        {
-            "Completed" or "Applied" => SunderThemeKeys.SuccessBrush,
-            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.AccentBrush,
-            "Running (last observed)" => SunderThemeKeys.ForegroundMutedBrush,
-            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningBrush,
-            "Prepared" => SunderThemeKeys.ForegroundMutedBrush,
-            _ => SunderThemeKeys.DangerBrush,
-        });
-
-    private static IBrush? ResolveStateSoftBrush(string statusText)
-        => AgentThemeBrushes.Resolve(statusText switch
-        {
-            "Completed" or "Applied" => SunderThemeKeys.SuccessSoftBrush,
-            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.InfoSoftBrush,
-            "Running (last observed)" => SunderThemeKeys.SurfacePopoverBrush,
-            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningSoftBrush,
-            "Prepared" => SunderThemeKeys.SurfacePopoverBrush,
-            _ => SunderThemeKeys.DangerSoftBrush,
-        });
 
     public void Dispose()
     {

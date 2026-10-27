@@ -142,7 +142,8 @@ internal sealed partial class AgentAppRuntimeGateway
                     _knownSessions[item.Session.SessionId] = item;
                 }
             }
-            foreach (var turn in snapshot.InitialTranscript.Turns)
+            foreach (var turn in snapshot.InitialTranscript.Turns.Concat(
+                         snapshot.InitialTranscript.Compact?.Entries.Select(entry => entry.Message).OfType<AgentTurnRecord>() ?? []))
             {
                 CacheTurnCore(turn);
             }

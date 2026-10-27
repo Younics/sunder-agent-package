@@ -208,7 +208,8 @@ public sealed class AgentToolExecutionLedgerTests
             projectedTurn.RunId,
             projectedTurn.RunRevision)));
 
-        Assert.Equal(started.Execution.UpdatedAtUtc, started.ToolCallTurn.UpdatedAtUtc);
+        Assert.Equal(prepared.ToolCallTurn.UpdatedAtUtc, started.ToolCallTurn.UpdatedAtUtc);
+        Assert.Equal(Assert.Single(prepared.ToolCallTurn.Items).ToolDetailRevision + 1, detail.Revision);
         Assert.Equal(AppModels.AgentToolExecutionStatus.Started, projectedItem.ToolExecutionStatus);
         Assert.Equal(detail.Revision, projectedItem.ToolDetailRevision);
         Assert.True(projectedItem.ToolHasDetails);
@@ -280,6 +281,7 @@ public sealed class AgentToolExecutionLedgerTests
             IsError: isError,
             ErrorCode: isError ? AgentToolResultErrorCodes.SubagentRunFailed : null);
         var transcriptEpoch = store.GetTranscriptEpoch(session.SessionId);
+        var activityBefore = store.ReadActivityGroupForTurn(session.SessionId, prepared.ToolCallTurn.TurnId)!;
 
         var replaced = store.TryReplaceChildSuspensionToolResult(
             run.Key,
@@ -289,6 +291,9 @@ public sealed class AgentToolExecutionLedgerTests
 
         Assert.NotNull(replaced);
         Assert.Equal(transcriptEpoch + 1, store.GetTranscriptEpoch(session.SessionId));
+        var activityAfter = store.ReadActivityGroupForTurn(session.SessionId, prepared.ToolCallTurn.TurnId)!;
+        Assert.Equal(activityBefore.TranscriptEpoch, activityAfter.TranscriptEpoch);
+        Assert.True(activityAfter.Revision > activityBefore.Revision);
         Assert.Null(store.GetLatestSessionContextCheckpoint(session.SessionId));
         var restarted = new AgentLocalStore(scope.Context);
         var execution = Assert.IsType<AgentToolExecutionRecord>(
@@ -298,7 +303,7 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.True(execution.UpdatedAtUtc > suspension.Completion.Execution.UpdatedAtUtc);
         var headerTurn = Assert.Single(
             restarted.ListRecentTranscriptHeaders(session.SessionId, 10),
-            turn => turn.Kind == AgentTurnKind.ToolResult);
+            turn => turn.TurnId == prepared.ToolCallTurn.TurnId);
         var header = Assert.Single(headerTurn.Items);
         Assert.Equal(expectedStatus, header.ToolExecutionStatus);
         Assert.Equal(isError ? finalSummary : null, header.ToolErrorSummary);
@@ -310,9 +315,8 @@ public sealed class AgentToolExecutionLedgerTests
         Assert.Equal(expectedStatus, detail.Status);
         Assert.Equal(isError, detail.IsError);
         Assert.Equal(finalSummary, detail.ResultSummary);
-        Assert.Equal(
-            (execution.UpdatedAtUtc.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10,
-            detail.Revision);
+        Assert.Equal(Assert.Single(suspension.Completion.ToolResultTurn.Items).ToolDetailRevision + 1, detail.Revision);
+        Assert.Equal(header.ToolDetailRevision, detail.Revision);
     }
 
     [Fact]
@@ -889,7 +893,7 @@ public sealed class AgentToolExecutionLedgerTests
             turn,
             item,
             new AgentToolPresentationService());
-        Assert.Equal("Ambiguous", row.StatusText);
+        Assert.Equal("Failed", row.StatusText);
         Assert.False(row.IsExpanded);
         Assert.False(row.HasMaterializedDetails);
 
@@ -901,7 +905,7 @@ public sealed class AgentToolExecutionLedgerTests
     }
 
     [Fact]
-    public void TranscriptPresentation_ProjectsFiveLedgerStatesAndPreservesLegacyRunning()
+    public void TranscriptPresentation_MapsLedgerEvidenceToThreeVisualStates()
     {
         var turnId = Guid.NewGuid();
         var turn = new AgentTurnRecord(
@@ -936,7 +940,7 @@ public sealed class AgentToolExecutionLedgerTests
             new AgentToolPresentationService());
 
         Assert.Equal("Running", legacyProjection.StatusText);
-        Assert.Equal("i", legacyProjection.StatusIconText);
+        Assert.Equal("…", legacyProjection.StatusIconText);
         Assert.Equal("Running", legacyRow.StatusText);
         Assert.True(legacyRow.IsRunning);
 
@@ -949,7 +953,12 @@ public sealed class AgentToolExecutionLedgerTests
             };
             var projection = CorePresentation.TranscriptRowProjector<AgentTranscriptRowViewModel>
                 .DescribeTool(AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn), AgentRoleBoundary.As<AppModels.AgentTurnItemRecord>(item));
-            Assert.Equal(status.ToString(), projection.StatusText);
+            Assert.Equal(status switch
+            {
+                AgentToolExecutionStatus.Prepared or AgentToolExecutionStatus.Started => "Running",
+                AgentToolExecutionStatus.Completed => "Completed",
+                _ => "Failed",
+            }, projection.StatusText);
             Assert.Equal(
                 status is AgentToolExecutionStatus.Failed or AgentToolExecutionStatus.Ambiguous
                     ? CorePresentation.TranscriptProjectedRowKind.Error
@@ -959,8 +968,7 @@ public sealed class AgentToolExecutionLedgerTests
                 status switch
                 {
                     AgentToolExecutionStatus.Completed => "✓",
-                    AgentToolExecutionStatus.Started => "i",
-                    AgentToolExecutionStatus.Prepared => "·",
+                    AgentToolExecutionStatus.Started or AgentToolExecutionStatus.Prepared => "…",
                     _ => "!",
                 },
                 projection.StatusIconText);

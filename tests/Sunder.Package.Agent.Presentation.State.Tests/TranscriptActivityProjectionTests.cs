@@ -1,5 +1,6 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 using Sunder.Package.Agent.Shared.Presentation;
 using Xunit;
@@ -27,10 +28,10 @@ public sealed class TranscriptActivityProjectionTests
         var groups = projection.Items.OfType<GroupRow>().ToArray();
         Assert.Equal(3, groups.Length);
         Assert.Equal("1 Read · 1 Search", groups[0].State.Summary);
-        Assert.Equal(string.Empty, groups[0].State.StatusText);
+        Assert.Empty(groups[0].State.StatusText);
         Assert.Equal("1 Glob", groups[1].State.Summary);
         Assert.Equal("1 Read · 1 Shell", groups[2].State.Summary);
-        Assert.Equal("1 Failed", groups[2].State.StatusText);
+        Assert.Equal("1!", groups[2].State.StatusText);
         Assert.True(groups[2].State.IsRunning);
         Assert.DoesNotContain(nextRun, projection.Items);
         Assert.DoesNotContain(error, projection.Items);
@@ -82,17 +83,17 @@ public sealed class TranscriptActivityProjectionTests
     [Fact]
     public void FailureAndAmbiguityRemainGroupedWithVisibleOutcomesAndRemovedGroupsArePruned()
     {
-        var read = new Row("read", "Prepared");
-        var shell = new Row("shell", "Started");
+        var read = new Row("read", "Running");
+        var shell = new Row("shell", "Running");
         var source = new TranscriptObservableCollection<Row>([read, shell]);
         using var projection = Create(source, new Row(), new Row());
         var group = Assert.IsType<GroupRow>(projection.Items[0]);
         Assert.True(group.State.IsRunning);
-        read.SetStatus("Ambiguous");
+        read.SetStatus("Failed");
         Assert.Same(group, projection.Items[0]);
-        Assert.Equal("1 Uncertain", group.State.StatusText);
+        Assert.Equal("1!", group.State.StatusText);
         shell.SetStatus("Failed");
-        Assert.Equal("1 Failed · 1 Uncertain", group.State.StatusText);
+        Assert.Equal("2!", group.State.StatusText);
         Assert.False(group.State.IsRunning);
         Assert.False(group.Disposed);
         source.Clear();
@@ -160,14 +161,13 @@ public sealed class TranscriptActivityProjectionTests
     }
 
     [Fact]
-    public void RepeatedChecksCountOneUncertainOperationWithoutHidingIndividualCalls()
+    public void FailedInvocationsAreCountedIndependentlyWithoutPresentationReferenceDeduplication()
     {
         var group = new TranscriptActivityGroupState(new(new object()));
-        group.Update(Enumerable.Range(0, 3).Select(index => new TranscriptActivityMember(new object(), "run",
-            index == 0 ? "maker_apply" : "maker_operation", "Unconfirmed", false)
-            { OperationReference = "o-original", OperationStatus = "Unconfirmed" }).ToArray());
-        Assert.Equal("1 Uncertain", group.StatusText);
-        Assert.Contains("2 Maker Operation Calls", group.Summary);
+        group.Update(Enumerable.Range(0, 3).Select(_ => new TranscriptActivityMember(new object(), "run",
+            "maker_apply", "Failed", false)).ToArray());
+        Assert.Equal("3!", group.StatusText);
+        Assert.Contains("3 Maker Apply Calls", group.Summary);
         Assert.False(group.IsRunning);
     }
 
@@ -232,6 +232,73 @@ public sealed class TranscriptActivityProjectionTests
         group.State.IsExpanded = false;
         projection.SetDetailed(true);
         Assert.Equal(first.Anchor, projection.ResolveVisibleAnchor(group.State.Anchor));
+    }
+
+    [Fact]
+    public void AlreadyProjectedTimelinePassesThroughWithoutDescribingSubscribingOrGroupingMembers()
+    {
+        var source = new TranscriptObservableCollection<Row>();
+        var activity = new Row();
+        var tail = new Row();
+        using var projection = new TranscriptActivityProjection<Row>(source,
+            _ => throw new InvalidOperationException("Already projected."),
+            (_, _) => throw new InvalidOperationException("No legacy groups."), activity, tail);
+        projection.SetPassThrough();
+        var changes = new List<NotifyCollectionChangedAction>();
+        ((INotifyCollectionChanged)projection.Items).CollectionChanged += (_, change) => changes.Add(change.Action);
+        var rows = Enumerable.Range(0, 10_000).Select(_ => new Row("read")).ToArray();
+        using (source.DeferReconciliation()) foreach (var row in rows) source.Add(row);
+        Assert.Equal(rows, projection.Items.Take(rows.Length));
+        Assert.Equal([NotifyCollectionChangedAction.Reset], changes);
+        changes.Clear();
+        foreach (var row in rows) row.SetStatus("Failed");
+        Assert.Empty(changes);
+        var anchor = new TranscriptActivityGroupAnchor(rows[0].Anchor);
+        Assert.Same(anchor, projection.RevealAnchor(anchor));
+        Assert.Same(anchor, projection.ResolveVisibleAnchor(anchor));
+        var appended = new Row("shell");
+        source.Add(appended);
+        Assert.Equal([NotifyCollectionChangedAction.Add], changes);
+        Assert.Same(appended, projection.Items[rows.Length]);
+        changes.Clear();
+        var replacement = new Row("read");
+        using (source.DeferReconciliation()) source.ReplaceAll([replacement]);
+        Assert.Equal([NotifyCollectionChangedAction.Reset], changes);
+        Assert.Equal([replacement, activity, tail], projection.Items);
+        changes.Clear();
+        source.Clear();
+        Assert.Equal([NotifyCollectionChangedAction.Reset], changes);
+        Assert.Equal([activity, tail], projection.Items);
+    }
+
+    [Theory]
+    [InlineData(0, 0, "", "Completed")]
+    [InlineData(1, 0, "", "Running")]
+    [InlineData(0, 1, "1!", "Failed")]
+    [InlineData(1, 2, "2!", "Running")]
+    public void IndexedAndMemberSummariesShareMinimalVisualStatusAndReadableAccessibility(
+        int running, int failed, string text, string expectedState)
+    {
+        var state = new TranscriptActivityGroupState(new(new object()));
+        var members = Enumerable.Range(0, running).Select(_ => new TranscriptActivityMember(new object(), "run", "read", "Running", true))
+            .Concat(Enumerable.Range(0, failed).Select(_ => new TranscriptActivityMember(new object(), "run", "read", "Failed", false)))
+            .Append(new(new object(), "run", "read", "Completed", false)).ToArray();
+        state.Update(members);
+        Assert.Equal(text, state.StatusText);
+        Assert.Equal(expectedState, state.State.ToString());
+        Assert.Contains(expectedState, state.AccessibilityText);
+        if (failed > 0) Assert.Contains($"{failed} failed", state.AccessibilityText);
+        var cursor = new AgentTranscriptInvocationCursor(DateTimeOffset.UtcNow, Guid.NewGuid(), 0, Guid.NewGuid());
+        state.UpdateSummary(new(Guid.NewGuid(), cursor, cursor, null, null, 1, 1,
+            [new("read", members.Length)], running, 1, failed));
+        Assert.Equal(text, state.StatusText);
+        Assert.Equal(expectedState, state.State.ToString());
+        state.SetLoading(true);
+        Assert.Empty(state.LoadingText);
+        Assert.Contains("Loading calls", state.AccessibilityText);
+        state.SetLoading(false);
+        state.SetFailure("Call details could not be loaded. Retry expansion.");
+        Assert.Equal("Call details could not be loaded. Retry expansion.", state.LoadingText);
     }
 
     private static TranscriptActivityProjection<Row> Create(TranscriptObservableCollection<Row> source, Row activity, Row tail,

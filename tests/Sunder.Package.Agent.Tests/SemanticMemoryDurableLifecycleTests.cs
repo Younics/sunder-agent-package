@@ -641,6 +641,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
         var now = DateTimeOffset.UtcNow;
         return new AgentTurnRecord
         {
+            TurnSequence = 1,
             ContentRevision = 1,
             CreatedAtUtc = RpcTimestamp(now),
             IsStreaming = false,

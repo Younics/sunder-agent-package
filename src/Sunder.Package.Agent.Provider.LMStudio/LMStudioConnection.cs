@@ -108,7 +108,7 @@ internal sealed class LMStudioConnection : IDisposable
         => new(
             ProviderModelId.RemovePrefix(modelId, "lmstudio"),
             new ApiKeyCredential(options.ApiKey ?? MissingCredentialSentinel),
-            CreateClientOptions(options));
+            CreateClientOptions(options, runOwnedRetry: true));
 
     public EmbeddingClient CreateEmbeddingClient(string modelId, LMStudioConnectionOptions options)
         => new(
@@ -122,13 +122,17 @@ internal sealed class LMStudioConnection : IDisposable
         _httpClient.Dispose();
     }
 
-    private OpenAIClientOptions CreateClientOptions(LMStudioConnectionOptions options)
-        => new()
+    private OpenAIClientOptions CreateClientOptions(LMStudioConnectionOptions options, bool runOwnedRetry = false)
+    {
+        var client = new OpenAIClientOptions
         {
             Endpoint = new Uri(options.NormalizedBaseUrl, UriKind.Absolute),
             NetworkTimeout = options.Timeout,
             Transport = _transport,
         };
+        if (runOwnedRetry) client.RetryPolicy = new ClientRetryPolicy(0);
+        return client;
+    }
 
     private sealed class OptionalCredentialHandler(HttpMessageHandler innerHandler) : DelegatingHandler(innerHandler)
     {

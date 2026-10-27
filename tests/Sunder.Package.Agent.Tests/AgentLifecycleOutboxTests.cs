@@ -1658,20 +1658,11 @@ public sealed class AgentLifecycleOutboxTests
     {
         using var connection = Open(databasePath);
         using var transaction = connection.BeginTransaction();
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            INSERT INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc)
-            VALUES ($turnId, $sessionId, 'Assistant', 'Message', $createdAtUtc, $createdAtUtc);
-            """;
-        var turnId = command.Parameters.Add("$turnId", SqliteType.Text);
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        var createdAtUtc = command.Parameters.Add("$createdAtUtc", SqliteType.Text);
         for (var index = 0; index < count; index++)
         {
-            turnId.Value = Guid.NewGuid().ToString();
-            createdAtUtc.Value = anchorCreatedAtUtc.AddTicks(index + 1).ToString("O");
-            command.ExecuteNonQuery();
+            var createdAtUtc = anchorCreatedAtUtc.AddTicks(index + 1);
+            AgentLocalStore.InsertTurn(connection, transaction, new AgentTurnRecord(Guid.NewGuid(), sessionId,
+                AgentMessageRole.Assistant, AgentTurnKind.Message, [], createdAtUtc, createdAtUtc));
         }
         transaction.Commit();
     }

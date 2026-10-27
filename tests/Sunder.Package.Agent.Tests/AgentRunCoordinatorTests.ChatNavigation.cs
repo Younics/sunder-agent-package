@@ -370,10 +370,12 @@ public sealed partial class AgentRunCoordinatorTests
         await viewModel.InitializeAsync();
         var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
         var secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspace.WorkspaceId);
+        await WaitUntilAsync(() => viewModel.Workspaces.Any(workspace => workspace.WorkspaceId == secondWorkspace.WorkspaceId));
 
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
             workspace.WorkspaceId == secondWorkspace.WorkspaceId
         );
+        await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == secondSession.SessionId);
 
         Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
         Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
@@ -384,6 +386,7 @@ public sealed partial class AgentRunCoordinatorTests
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
             workspace.WorkspaceId == runtime.CurrentWorkspaceId
         );
+        await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == sessionId);
 
         Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
         Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
@@ -614,7 +617,8 @@ public sealed partial class AgentRunCoordinatorTests
         viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == workspace.WorkspaceId);
         viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
 
-        viewModel.CreateSessionCommand.Execute(null);
+        await viewModel.CreateSessionCommand.ExecuteAsync(null);
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal("Session 3", viewModel.SelectedSession?.Title);
         Assert.Equal("Session 3", runtime.SessionService.GetSession(viewModel.SelectedSession!.SessionId)?.Title);
@@ -646,7 +650,8 @@ public sealed partial class AgentRunCoordinatorTests
             viewModel.SelectedWorkspace = viewModel.Workspaces.Single(item => item.WorkspaceId == selectedWorkspace.WorkspaceId);
             viewModel.SelectedProfile = viewModel.Profiles.Single(item => item.ProfileId == profile.ProfileId);
 
-            viewModel.CreateSessionCommand.Execute(null);
+            await viewModel.CreateSessionCommand.ExecuteAsync(null);
+            await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
             sessionId = viewModel.SelectedSession!.SessionId;
             Assert.Equal(selectedWorkspace.WorkspaceId, viewModel.SelectedSession.Session.WorkspaceId);
@@ -1041,6 +1046,7 @@ public sealed partial class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
+        await RevealCompactGroupsAsync(viewModel);
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         Assert.True(row.HasChildSessionLink);
         Assert.NotNull(row.ChildSessionLink);
@@ -1092,6 +1098,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.RunCoordinator
         );
         await viewModel.InitializeAsync();
+        await RevealCompactGroupsAsync(viewModel);
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         var link = Assert.Single(row.ChildSessionLinks);
 
@@ -1180,6 +1187,7 @@ public sealed partial class AgentRunCoordinatorTests
         );
         await viewModel.InitializeAsync();
 
+        await RevealCompactGroupsAsync(viewModel);
         var row = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         Assert.True(row.HasChildSessionLinks);
         Assert.Equal(2, row.ChildSessionLinks.Count);
@@ -1584,7 +1592,7 @@ public sealed partial class AgentRunCoordinatorTests
             runtimeAdapter, InlineAgentPresentationDispatcher.Instance);
         var observedEvents = new System.Collections.Concurrent.ConcurrentQueue<string>();
         runtimeAdapter.ResnapshotRequired += () => observedEvents.Enqueue("resnapshot");
-        runtimeAdapter.TurnChanged += (sessionId, turn) => observedEvents.Enqueue($"turn:{sessionId:N}:{turn.TurnId:N}");
+        runtimeAdapter.TurnChanged += (sessionId, turn, _) => observedEvents.Enqueue($"turn:{sessionId:N}:{turn.TurnId:N}");
         try
         {
             await viewModel.OnNavigatedToAsync(new PackageViewNavigationContext(SubagentConstants.SubsessionsViewId,
@@ -1600,7 +1608,8 @@ public sealed partial class AgentRunCoordinatorTests
         var markerSeen = 0;
         var deliveredTurn = new TaskCompletionSource<Guid>(TaskCreationOptions.RunContinuationsAsynchronously);
         var deliveredSession = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Action<Guid, SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord> onTurn = (id, turn) =>
+        Action<Guid, SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord,
+            SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?> onTurn = (id, turn, _) =>
         {
             if (id == parentSessionId && turn.Items.Any(item => item.TextContent == marker))
             {
@@ -1731,6 +1740,7 @@ public sealed partial class AgentRunCoordinatorTests
                 }
             )
         );
+        await RevealCompactGroupsAsync(viewModel);
         var toolRow = Assert.Single(
             viewModel.Messages.OfType<SubsessionToolInvocationRowViewModel>()
         );
@@ -1754,6 +1764,7 @@ public sealed partial class AgentRunCoordinatorTests
             "Child running."
         );
         await moveObserved.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(5));
 
         Assert.Equal(firstChildSession.SessionId, viewModel.SelectedSubsession?.SessionId);
         var preservedToolRow = Assert.Single(

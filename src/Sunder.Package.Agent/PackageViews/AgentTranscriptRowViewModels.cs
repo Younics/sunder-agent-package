@@ -218,6 +218,30 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
     private bool _animateActivityText = true;
     private bool _isTickerSubscribed;
     private int _tick = 3;
+    private AgentRunRetryState? _retry;
+    private string _reasoningPreviewSource = string.Empty;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReasoningText))]
+    private string _reasoningText = string.Empty;
+
+    public bool HasReasoningText => ReasoningText.Length > 0;
+
+    internal void SetRunPresentation(string text, bool reasoning, bool visible, string preview, AgentRunRetryState? retry)
+    {
+        _retry = retry;
+        if (_reasoningPreviewSource != preview)
+        {
+            _reasoningPreviewSource = preview;
+            ReasoningText = string.IsNullOrWhiteSpace(preview) ? string.Empty : CreateCompactReasoningText(preview);
+        }
+        SetPresentation(text, isReasoningActivity: false, visible);
+        if (retry is not null) ThinkingText = RunActivityText.FormatRetry(retry, DateTimeOffset.UtcNow);
+    }
+
+    internal bool MatchesRunPresentation(string text, bool visible, string preview, AgentRunRetryState? retry)
+        => MatchesPresentation(text, false, visible) && Equals(_retry, retry)
+           && _reasoningPreviewSource == preview;
 
     public AgentActivityTranscriptRowViewModel(
         string activityTextBase = "Thinking",
@@ -302,6 +326,11 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     private void OnTick()
     {
+        if (_retry is not null)
+        {
+            ThinkingText = RunActivityText.FormatRetry(_retry, DateTimeOffset.UtcNow);
+            return;
+        }
         if (!_animateActivityText)
         {
             return;
@@ -366,6 +395,7 @@ public sealed partial class AgentActivityTranscriptRowViewModel : AgentTranscrip
 
     private static bool ShouldAnimateActivityText(string activityTextBase)
         => activityTextBase.Equals("Thinking", StringComparison.OrdinalIgnoreCase)
+           || activityTextBase.Equals("Responding", StringComparison.OrdinalIgnoreCase)
            || activityTextBase.StartsWith("Running ", StringComparison.OrdinalIgnoreCase)
            || activityTextBase.StartsWith("Processing", StringComparison.OrdinalIgnoreCase)
            || activityTextBase.StartsWith("Reviewing", StringComparison.OrdinalIgnoreCase);

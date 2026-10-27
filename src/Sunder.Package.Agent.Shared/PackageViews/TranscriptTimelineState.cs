@@ -105,6 +105,10 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         var sameSession = _sessionId == sessionId;
         if (!sameSession)
         {
+            _modeAnchorMapping = null;
+            _compactRefresh?.DiscardPending();
+            _compact?.Reset();
+            _compactRevision++;
             _authoritativeTurnVersions.Clear();
             _olderPageCursor = null;
             _newerPageCursor = null;
@@ -148,7 +152,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             preserveWindow,
             reconcileAuthoritative,
             pendingTurnSequence,
-            pendingOverflowRevision);
+            pendingOverflowRevision,
+            IsCompact);
     }
 
     public TranscriptLoadTicket BeginAnchoredInitialLoad(Guid sessionId)
@@ -164,14 +169,16 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         IReadOnlyList<AgentTurnRecord> turns,
         bool hasOlderRows,
         bool hasNewerRows,
-        object targetAnchorKey)
+        object targetAnchorKey,
+        TranscriptViewportAnchorData? preservedViewport = null)
         => TryCompleteInitialLoad(
             ticket,
             turns,
             hasOlderRows,
             null,
             targetAnchorKey,
-            hasNewerRows);
+            hasNewerRows,
+            preservedViewport);
 
     public bool TryCompleteInitialLoad(
         TranscriptLoadTicket ticket,
@@ -186,7 +193,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         bool? hasOlderRows,
         TranscriptPageCursor? olderContinuation,
         object? protectedAnchorKey,
-        bool? anchoredHasNewerRows)
+        bool? anchoredHasNewerRows,
+        TranscriptViewportAnchorData? preservedViewport = null)
     {
         if (!IsCurrent(ticket))
         {
@@ -197,7 +205,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         {
             _isFollowingLatest = false;
             _selectedAnchorKey = protectedAnchorKey;
-            SetViewportAnchor(new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0, 28));
+            SetViewportAnchor(preservedViewport ?? new TranscriptViewportAnchorData(protectedAnchorKey, 0, 0, 28));
             OnPropertyChanged(nameof(IsFollowingLatest));
             OnPropertyChanged(nameof(SelectedAnchorKey));
         }
@@ -271,8 +279,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
         if (ticket.PreserveWindow)
         {
-            var newestLoadedAt = _projector.TurnWindow.NewestCreatedAtUtc;
-            var newestLoadedTurnId = _projector.TurnWindow.NewestTurnId;
+            var newestLoaded = _projector.TurnWindow.OrderedTurns().LastOrDefault();
             var hasNewerSnapshotRows = false;
             foreach (var turn in orderedTurns)
             {
@@ -283,11 +290,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
                         TranscriptInsertMode.Append,
                         replaceOnEqualTimestamp: false);
                 }
-                else if (newestLoadedAt is null
-                         || AgentTranscriptTime.Read(turn.CreatedAtUtc) > newestLoadedAt
-                         || AgentTranscriptTime.Read(turn.CreatedAtUtc) == newestLoadedAt
-                         && newestLoadedTurnId is { } newestId
-                         && turn.TurnId.CompareTo(newestId) > 0)
+                else if (newestLoaded is null || CompareTurnPosition(turn, newestLoaded) > 0)
                 {
                     QueuePendingTurn(turn, replaceOnEqualTimestamp: false);
                     hasNewerSnapshotRows = true;
@@ -377,6 +380,8 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
             return false;
         }
 
+        if (IsCompact) return FailCompactInitialLoad(ticket);
+
         _isInitialLoading = false;
         _isReplacingRows = false;
         ApplyPendingHistoricalUpdates(ticket.SessionId);
@@ -411,6 +416,10 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     public void ClearSession()
     {
+        _modeAnchorMapping = null;
+        _compactRefresh?.DiscardPending();
+        _compact?.Reset();
+        _compactRevision++;
         _initialOperation.CancelCurrent();
         _pageOperation.CancelCurrent();
         _sessionId = null;
@@ -447,12 +456,26 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         return ApplyLiveTurn(turn, notifyVisualChange: true);
     }
 
+    public TranscriptLiveTurnResult ApplyLiveTurn(AgentTurnRecord turn, AgentTranscriptActivityGroup? group)
+    {
+        if (SessionId != turn.SessionId) return TranscriptLiveTurnResult.Ignored;
+        if (IsCompact) turn = TranscriptTurnTransportProjection.ProjectToolHeaders(turn);
+        if (IsCompact && !IsInitialLoading && group is not null)
+        {
+            if (!_compact!.ApplyLiveGroup(group, turn, IsFollowingLatest, _visibleRowLimit, _viewportAnchor?.AnchorKey)) RequestCompactRefresh();
+        }
+        else if (IsCompact && group is not null) _compactRefreshPending = true;
+        return ApplyLiveTurn(turn, notifyVisualChange: true, hasGroupSummary: group is not null);
+    }
+
     public TranscriptLiveTurnResult ApplyAuthoritativeTurn(AgentTurnRecord turn)
     {
         if (SessionId != turn.SessionId)
         {
             return TranscriptLiveTurnResult.Ignored;
         }
+
+        if (IsCompact) return ApplyLiveTurn(turn, notifyVisualChange: true);
 
         var oldestTurn = _projector.TurnWindow.OrderedTurns().FirstOrDefault();
         if (!IsInitialLoading
@@ -474,18 +497,26 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     private TranscriptLiveTurnResult ApplyLiveTurn(
         AgentTurnRecord turn,
-        bool notifyVisualChange)
+        bool notifyVisualChange,
+        bool hasGroupSummary = false)
     {
         if (SessionId != turn.SessionId)
         {
             return TranscriptLiveTurnResult.Ignored;
         }
 
+        if (IsCompact) turn = TranscriptTurnTransportProjection.ProjectToolHeaders(turn);
         if (IsInitialLoading)
         {
             QueuePendingTurn(turn);
             return TranscriptLiveTurnResult.Buffered;
         }
+
+        if (IsCompact) return ApplyCompactLiveTurn(turn, notifyVisualChange, hasGroupSummary);
+
+        if (turn.Kind == AgentTurnKind.ToolResult && turn.Items.Any(item => item.ToolExecutionId is not null)
+            && !_projector.CanApplyHistoricalTurnUpdate(turn))
+            return TranscriptLiveTurnResult.ReloadRequired;
 
         if (_projector.CanApplyHistoricalTurnUpdate(turn))
         {
@@ -515,7 +546,6 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
         if (!IsFollowingLatest)
         {
-            if (_projector.ApplyOperationObservation(turn)) RowsChanged?.Invoke();
             if (_projector.TurnWindow.NewestTurnId is null)
             {
                 _projector.ApplyTurn(turn, TranscriptInsertMode.Append);
@@ -640,24 +670,9 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
 
     public void NotifyRowsChanged() => RowsChanged?.Invoke();
 
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        _projector.RowsChanging -= OnRowsChanging;
-        _projector.RowCreated -= OnRowCreated;
-        _initialOperation.Dispose();
-        _pageOperation.Dispose();
-        _authoritativeTurnVersions.Clear();
-        _projector.Reset();
-    }
-
     private bool IsCurrent(TranscriptLoadTicket ticket)
         => SessionId == ticket.SessionId
+           && ticket.Compact == IsCompact
            && _initialOperation.TryReport(ticket.Generation);
 
     private TranscriptTrimResult ApplyTrim(
@@ -665,6 +680,7 @@ internal sealed partial class TranscriptTimelineState<TRow> : INotifyPropertyCha
         object? protectedAnchorKey = null,
         bool allowLiveOverflow = false)
     {
+        if (IsCompact) return TranscriptTrimResult.None;
         if (allowLiveOverflow
             && IsFollowingLatest
             && direction == AgentTranscriptTrimDirection.Oldest

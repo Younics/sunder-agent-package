@@ -29,8 +29,7 @@ public sealed class AgentLocalStoreDurableRunTests
 
         Assert.Equal(
             [
-                (1L, "agent-2.0-baseline"),
-                (2L, "durable-permission-approval-intent"),
+                ((long)AgentLocalStore.BaselineVersion, AgentLocalStore.BaselineName),
             ],
             migrations.Select(static migration => (migration.Version, migration.Name)));
         Assert.All(migrations, migration => Assert.Matches("^[0-9a-f]{64}$", migration.Checksum));
@@ -143,6 +142,10 @@ public sealed class AgentLocalStoreDurableRunTests
 
         Assert.Equal(new AgentRunBudgetState(3, 5, 450), cumulative);
         Assert.Equal(cumulative, restarted.GetRun(run.Key.RunId)?.BudgetState);
+        var saturated = Assert.IsType<AgentRunBudgetState>(restarted.ChargeRunBudget(run.Key, resumed.Epoch,
+            new AgentRunBudgetCharge(long.MaxValue, long.MaxValue, long.MaxValue)));
+        Assert.Equal(new AgentRunBudgetState(long.MaxValue, long.MaxValue, long.MaxValue), saturated);
+        Assert.Equal(saturated, restarted.GetRun(run.Key.RunId)?.BudgetState);
     }
 
     [Fact]

@@ -59,12 +59,18 @@ public sealed partial class AgentOwnerSourceMigrationTests
         await app.Invoke("workspace-command", new AgentWorkspaceCommand(AgentWorkspaceCommandKind.Save, WorkspaceId: workspace.WorkspaceId,
             DisplayName: "Updated workspace", Paths: [], Documents: []));
         await app.Invoke("session-command", new AgentSessionCommand(AgentSessionCommandKind.Update, Session: session with { Title = "Updated session" }));
+        var compactRequest = new AgentCompactTranscriptRequest(session.SessionId, AgentCompactTranscriptDirection.Recent, 10);
+        var compactPage = await implementation.GetCompactTranscriptPageAsync(compactRequest, default);
+        var group = Assert.Single(compactPage.Entries, entry => entry.Group is not null).Group!;
 
         var readCases = new (string Route, object Request)[]
         {
             ("chat-snapshot", new AgentChatSnapshotRequest(10, profile.ProfileId, workspace.WorkspaceId, session.SessionId, false)),
+            ("chat-snapshot", new AgentChatSnapshotRequest(10, profile.ProfileId, workspace.WorkspaceId, session.SessionId, CompactTranscript: true)),
             ("dashboard", new AgentDashboardRequest()),
             ("transcript-page", new AgentTranscriptPageRequest(session.SessionId, AgentTranscriptPageDirection.Recent, 10)),
+            ("compact-transcript-page", compactRequest),
+            ("activity-members", new AgentTranscriptActivityMembersRequest(session.SessionId, group.First.ItemId, group.TranscriptEpoch, group.Last)),
             ("catalog", new AgentCatalogRequest()),
             ("run-status", new AgentRunCommandStatusRequest(session.SessionId, Guid.NewGuid())),
             ("permission-command", new AgentPermissionCommand(AgentPermissionCommandKind.Read, session.SessionId)),
@@ -225,6 +231,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
             "chat-snapshot" => await provider.GetChatSnapshotAsync((AgentChatSnapshotRequest)request, default),
             "dashboard" => await provider.GetDashboardAsync((AgentDashboardRequest)request, default),
             "transcript-page" => await provider.GetTranscriptPageAsync((AgentTranscriptPageRequest)request, default),
+            "compact-transcript-page" => await provider.GetCompactTranscriptPageAsync((AgentCompactTranscriptRequest)request, default),
+            "activity-members" => await provider.GetActivityMembersAsync((AgentTranscriptActivityMembersRequest)request, default),
             "catalog" => await provider.GetCatalogAsync((AgentCatalogRequest)request, default),
             "run-status" => await provider.GetRunStatusAsync((AgentRunCommandStatusRequest)request, default),
             "permission-command" => await provider.ExecutePermissionCommandAsync((AgentPermissionCommand)request, default),

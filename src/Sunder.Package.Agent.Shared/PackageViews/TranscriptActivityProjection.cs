@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.Presentation;
 
 namespace Sunder.Package.Agent.Shared.PackageViews;
@@ -8,18 +9,13 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal sealed record TranscriptActivityGroupAnchor(object SourceAnchor);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
-internal sealed record TranscriptActivityMember(object Anchor, object Scope, string ToolId, string Status, bool IsRunning)
-{
-    public string? OperationReference { get; init; }
-    public string? OperationStatus { get; init; }
-}
+internal sealed record TranscriptActivityMember(object Anchor, object Scope, string ToolId, string Status, bool IsRunning);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.App)]
 internal static class TranscriptActivityGrouping
 {
     internal static TranscriptActivityMember Describe(TranscriptToolProjection tool)
-        => new(tool.AnchorKey, (tool.SessionId, tool.RunId, tool.RunRevision), tool.ToolId, tool.StatusText, tool.IsRunning)
-        { OperationReference = tool.OperationReference, OperationStatus = tool.OperationStatus };
+        => new(tool.AnchorKey, (tool.SessionId, tool.RunId, tool.RunRevision), tool.ToolId, tool.StatusText, tool.IsRunning);
 
     internal static (string Singular, string Plural) Category(string toolId)
         => toolId.ToLowerInvariant() switch
@@ -57,6 +53,7 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
     private readonly HashSet<Group> _groups = [];
     private IReadOnlyList<TRow> _current = [];
     private bool _detailed;
+    private bool _passThrough;
     private bool _rebuilding;
     private bool _disposed;
 
@@ -86,8 +83,27 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
         Rebuild();
     }
 
+    // Storage-backed Compact/Detailed timelines already own grouping. Do not
+    // build invisible legacy groups or subscribe to every member's properties.
+    internal void SetPassThrough()
+    {
+        if (_passThrough) return;
+        _passThrough = true;
+        foreach (var row in _subscriptions) row.PropertyChanged -= OnRowChanged;
+        _subscriptions.Clear();
+        foreach (var group in _groups)
+        {
+            group.State.PropertyChanged -= OnGroupChanged;
+            (group.Row as IDisposable)?.Dispose();
+        }
+        _groups.Clear();
+        _memberships.Clear();
+        Rebuild();
+    }
+
     public object RevealAnchor(object anchor)
     {
+        if (_passThrough) return anchor;
         if (anchor is TranscriptActivityGroupAnchor groupAnchor)
             return !_detailed && _memberships.TryGetValue(groupAnchor.SourceAnchor, out var currentGroup)
                 ? currentGroup.State.Anchor : groupAnchor.SourceAnchor;
@@ -97,6 +113,7 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
 
     public object ResolveVisibleAnchor(object anchor)
     {
+        if (_passThrough) return anchor;
         var source = anchor is TranscriptActivityGroupAnchor groupAnchor ? groupAnchor.SourceAnchor : anchor;
         return !_detailed && _memberships.TryGetValue(source, out var group)
                          && (anchor is TranscriptActivityGroupAnchor || !group.State.IsExpanded)
@@ -112,6 +129,12 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
     {
         var incoming = rows.ToHashSet(ReferenceEqualityComparer.Instance);
         var replaceWindow = _current.Count == 0 || !_current.Any(incoming.Contains);
+        if (_passThrough)
+        {
+            _current = rows;
+            Rebuild(replaceWindow);
+            return;
+        }
         var current = rows.OfType<INotifyPropertyChanged>().ToHashSet();
         foreach (var old in _subscriptions.Except(current).ToArray())
         {
@@ -138,6 +161,12 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
         _rebuilding = true;
         try
         {
+            if (_passThrough)
+            {
+                if (replaceWindow) _items.ReplaceAll(_current.Concat(_suffix));
+                else _items.ReconcilePresentation(_current.Concat(_suffix).ToArray());
+                return;
+            }
             var projected = new List<TRow>();
             var navigationAnchor = replaceWindow ? InitialNavigationAnchor?.Invoke() : null;
             var retained = new HashSet<Group>();
@@ -217,6 +246,8 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
         _subscriptions.Clear();
         _groups.Clear();
         _memberships.Clear();
+        _current = [];
+        _items.Clear();
     }
 
     private sealed record Group(TRow Row, TranscriptActivityGroupState State);
@@ -226,13 +257,18 @@ internal sealed class TranscriptActivityProjection<TRow> : IDisposable where TRo
 internal sealed class TranscriptActivityGroupState(TranscriptActivityGroupAnchor anchor) : INotifyPropertyChanged
 {
     private bool _expanded;
+    private long _failedCount;
     public event PropertyChangedEventHandler? PropertyChanged;
     public TranscriptActivityGroupAnchor Anchor { get; } = anchor;
     public string Summary { get; private set; } = "Activity";
     public string StatusText { get; private set; } = string.Empty;
+    public TranscriptToolState State { get; private set; } = TranscriptToolState.Completed;
     public bool IsRunning { get; private set; }
-    public string ExpandGlyph => IsExpanded ? "▾" : "▸";
-    public string AccessibilityText => $"{Summary}. {(IsRunning ? "Processing. " : string.Empty)}{(StatusText.Length > 0 ? StatusText + ". " : string.Empty)}Activity {(IsExpanded ? "expanded" : "collapsed")}. Expand individual calls separately for details.";
+    public bool IsLoading { get; private set; }
+    public string FailureText { get; private set; } = string.Empty;
+    public string LoadingText => IsLoading ? string.Empty : FailureText;
+    public string ExpandGlyph => IsLoading ? "…" : IsExpanded ? "▾" : "▸";
+    public string AccessibilityText => $"{Summary}. {State}. {(_failedCount > 0 ? $"{_failedCount} failed. " : string.Empty)}Activity {(IsExpanded ? "expanded" : "collapsed")}. {(IsLoading ? "Loading calls. " : LoadingText)} Expand individual calls separately for details.";
     public bool IsExpanded
     {
         get => _expanded;
@@ -251,25 +287,42 @@ internal sealed class TranscriptActivityGroupState(TranscriptActivityGroupAnchor
         var summary = string.Join(" · ", members.GroupBy(member => TranscriptActivityGrouping.Category(member.ToolId))
             .Select(group => $"{group.Count()} {(group.Count() == 1 ? group.Key.Singular : group.Key.Plural)}"));
         var running = members.Any(member => member.IsRunning);
-        // Calls are counted above; outcomes are counted once per original operation,
-        // not once for its mutation and again for each read-only status check.
-        var outcomes = members.GroupBy(member => member.OperationReference is { } reference ? (object)reference : member.Anchor)
-            .Select(group => group.Last().OperationStatus ?? group.Last().Status).ToArray();
-        var failed = outcomes.Count(status => status == "Failed");
-        var uncertain = outcomes.Count(status => status is "Ambiguous" or "Unconfirmed");
-        var cancelled = outcomes.Count(status => status is "Cancelled" or "Canceled");
-        var unverified = outcomes.Count(status => status == "Running (last observed)");
-        var status = string.Join(" · ", new[]
-        {
-            failed > 0 ? $"{failed} Failed" : null,
-            uncertain > 0 ? $"{uncertain} Uncertain" : null,
-            cancelled > 0 ? $"{cancelled} Cancelled" : null,
-            unverified > 0 ? $"{unverified} Unverified" : null,
-        }.OfType<string>());
+        var failed = members.Count(member => !member.IsRunning && member.Status != "Completed");
+        _failedCount = failed;
+        State = running ? TranscriptToolState.Running
+            : failed > 0 ? TranscriptToolState.Failed : TranscriptToolState.Completed;
+        var status = failed > 0 ? $"{failed}!" : string.Empty;
         if (Summary != summary) { Summary = summary; Notify(nameof(Summary)); }
         if (StatusText != status) { StatusText = status; Notify(nameof(StatusText)); }
         if (IsRunning != running) { IsRunning = running; Notify(nameof(IsRunning)); }
+        Notify(nameof(State));
         Notify(nameof(AccessibilityText));
+    }
+
+    internal void UpdateSummary(AgentTranscriptActivityGroup group)
+    {
+        Summary = string.Join(" · ", group.Tools.GroupBy(tool => TranscriptActivityGrouping.Category(tool.ToolId))
+            .Select(category => { var count = category.Sum(tool => tool.Count); return $"{count} {(count == 1 ? category.Key.Singular : category.Key.Plural)}"; }));
+        IsRunning = group.RunningCount > 0;
+        var failed = group.FailedCount;
+        _failedCount = failed;
+        State = IsRunning ? TranscriptToolState.Running
+            : failed > 0 ? TranscriptToolState.Failed : TranscriptToolState.Completed;
+        StatusText = failed > 0 ? $"{failed}!" : string.Empty;
+        Notify(nameof(Summary)); Notify(nameof(IsRunning)); Notify(nameof(State)); Notify(nameof(StatusText)); Notify(nameof(AccessibilityText));
+    }
+
+    internal void SetLoading(bool loading)
+    {
+        IsLoading = loading;
+        if (loading) FailureText = string.Empty;
+        Notify(nameof(IsLoading)); Notify(nameof(LoadingText)); Notify(nameof(ExpandGlyph)); Notify(nameof(AccessibilityText));
+    }
+
+    internal void SetFailure(string message)
+    {
+        FailureText = message.Length <= 240 ? message : message[..240];
+        Notify(nameof(FailureText)); Notify(nameof(LoadingText)); Notify(nameof(AccessibilityText));
     }
 
     private void Notify(string name) => PropertyChanged?.Invoke(this, new(name));

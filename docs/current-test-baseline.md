@@ -8,11 +8,36 @@ It is independent of generated receipts, owned/lock JSON and archived identity m
 Source review uses each entry's explicit service declaration path, source provider
 attributes, canonical project metadata and reviewed consumer intent.
 
+Compact pagination added `read-compact-transcript` and `read-activity-members` to
+runtime-catalog `2.0.0`; its frozen evidence remains retained. The Agent
+owner and Subagents owner each gain the corresponding two App reads. These are
+read-only, session-scoped projections: no new provider, grant, execution authority
+or package identity is introduced. All fourteen consumers explicitly select the
+reviewed local Agent candidate through Core's package-API tooling.
+
+Provider recovery advances `chat-provider` to `3.0.0` (typed failure categories,
+HTTP status and minimum retry timing), `run-control` to `2.0.0` (the same stream
+error projection and activity phases), and `runtime-catalog` to `3.0.0` (current
+run activity read/event, reasoning preview and absolute retry deadline). Previous
+frozen versions remain immutable history. These are status/recovery data, not new
+tool grants or permission to replay possibly-dispatched mutations. The Agent and
+Subagents private projections carry the same active-run state for restoration.
+
+Indexed transcript presentation advances `runtime-catalog` to `4.0.0`,
+`run-control` to `3.0.0`, and `durable-lifecycle-observer`,
+`prompt-context-contributor`, and `system-prompt-contributor` to `2.0.0`.
+They carry durable session-local turn ordering; the catalog additionally carries
+three-state group counts, presentation-membership epochs and targeted group
+updates. Agent's private owner includes correlated admission receipts and matching
+cursor/group projections; Subagents' private cursor includes durable sequence.
+Previous public snapshots and the original `qualificationInputs` remain unchanged.
+No new invocation authority or permission to replay mutations is introduced.
+
 | Boundary | Expected |
 | --- | --- |
 | Canonical project/package pairs | 15, including C# `Sunder.Package.Agent.Builder` → runtime `younics.sunder.package.maker` |
 | Roles | 15 exact-RID framework-dependent Worker V1; 12 App (the three Tools packages have no App) |
-| Public APIs | 18: `chat-provider` / `execution-target` / `tool-source` at `2.0.0`, fifteen at `1.0.0`; four concrete owner services, fourteen declaration-only contracts |
+| Public APIs | 18: `runtime-catalog` at `4.0.0`; `chat-provider` / `run-control` at `3.0.0`; `execution-target` / `tool-source` / `durable-lifecycle-observer` / `prompt-context-contributor` / `system-prompt-contributor` at `2.0.0`; ten at `1.0.0`; four concrete owner services, fourteen declaration-only contracts |
 | Private APIs | 13 at package `2.0.0`: Agent owner + profile; Maker; Docker/Local presentation; MCP; Memory; four provider management/credential APIs; Skills; Subagents |
 | Providers | 64 Runtime providers; public APIs/Stack use public audience, package-private APIs use owner audience |
 | Agent consumer policy | 15 Runtime uses (behavior loop, run control and runtime catalog required); five App uses (owner/profile required) |

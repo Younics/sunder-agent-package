@@ -225,6 +225,8 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             }
 
             _composer.Text = value;
+            if (SelectedSession is { } session && !string.Equals(session.DraftMessage, value, StringComparison.Ordinal))
+                _draftRevisions[session.SessionId] = _draftRevisions.GetValueOrDefault(session.SessionId) + 1;
             OnPropertyChanged();
             OnDraftMessageChanged(value);
         }
@@ -272,6 +274,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     private void OnDraftMessageChanged(string value)
     {
+        NotifyContinuationStateChanged();
         if (
             SelectedSession is not null
             && !string.Equals(SelectedSession.DraftMessage, value, StringComparison.Ordinal)
@@ -291,6 +294,7 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     private void OnPendingRollbackTurnIdChanged(Guid? value)
     {
+        NotifyContinuationStateChanged();
         OnPropertyChanged(nameof(IsRollbackPending));
         OnPropertyChanged(nameof(ClearComposerButtonText));
         OnPropertyChanged(nameof(ClearComposerToolTipText));
@@ -385,116 +389,55 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var existingTranscript = await LoadTranscriptPageAsync(
-            new AgentTranscriptPageRequest(
-                sessionId,
-                AgentTranscriptPageDirection.Recent,
-                500),
-            cancellationToken).ConfigureAwait(false);
-        AgentComposerSubmission? submission = null;
-        await InvokeOnUiThreadAsync(() =>
-        {
-            submission = _composer.TryBeginSubmission(
-                sessionId,
-                draftSnapshot,
-                pendingAttachments,
-                rollbackTurnId,
-                existingTranscript.Turns.Select(turn => turn.TurnId).ToHashSet(),
-                useUserTurnCorrelation: _correlatedRunCoordinator is not null);
-            if (submission is null)
-            {
-                ApplySessionStatus(
-                    selectedSession,
-                    "A message is already being sent for this session.");
-                return;
-            }
-
-            NotifySendPendingStateChanged(sessionId);
-        }).ConfigureAwait(false);
+        // Reserve on the command's synchronous entry, before any RPC or history
+        // read. Each submission has an exact identity; comparing old turns cannot
+        // make admission safer and allowed queued commands to reuse a stale draft.
+        var submission = _composer.TryBeginSubmission(
+            sessionId,
+            draftSnapshot,
+            pendingAttachments,
+            rollbackTurnId);
         if (submission is null)
         {
             return;
         }
+        submission.DraftRevision = _draftRevisions.GetValueOrDefault(sessionId);
+        NotifySendPendingStateChanged(sessionId);
+        RequestTranscriptTailFollow(sessionId);
 
         var shouldEndSubmission = true;
 
         try
         {
-            var readiness = await _profileService.GetChatProviderReadinessAsync(
-                chatBinding.ProviderId,
-                cancellationToken
-            ).ConfigureAwait(false);
-            if (readiness is null)
-            {
-                await InvokeOnUiThreadAsync(() =>
-                    ApplySessionStatus(
-                        selectedSession,
-                        "The selected provider is unavailable. Review package status and profile configuration before chatting."))
-                    .ConfigureAwait(false);
-                return;
-            }
-
-            if (readiness.Status != AgentProviderReadinessStatus.Ready)
-            {
-                await InvokeOnUiThreadAsync(() => ApplySessionStatus(selectedSession, readiness.Message))
-                    .ConfigureAwait(false);
-                return;
-            }
-
+            var coordinator = _correlatedRunCoordinator
+                ?? throw new InvalidOperationException("Chat admission requires correlated user-turn identities.");
+            // Runtime performs authoritative provider validation after durable
+            // admission. UI catalog discovery must not delay accepting a message.
             shouldEndSubmission = false;
             if (submission.RollbackTurnId is { } anchorTurnId)
             {
-                if (_correlatedRunCoordinator is not null)
-                {
-                    await _correlatedRunCoordinator.RollbackAndQueueUserMessageAsync(
-                        sessionId,
-                        anchorTurnId,
-                        profileId,
-                        message,
-                        workspaceId,
-                        attachments,
-                        submission.UserTurnId,
-                        cancellationToken
-                    ).ConfigureAwait(false);
-                }
-                else
-                {
-                    await _runCoordinator.RollbackAndQueueUserMessageAsync(
-                        sessionId,
-                        anchorTurnId,
-                        profileId,
-                        message,
-                        workspaceId,
-                        attachments,
-                        cancellationToken
-                    ).ConfigureAwait(false);
-                }
+                await coordinator.RollbackAndQueueUserMessageAsync(
+                    sessionId,
+                    anchorTurnId,
+                    profileId,
+                    message,
+                    workspaceId,
+                    attachments,
+                    submission.UserTurnId,
+                    cancellationToken
+                ).ConfigureAwait(false);
             }
             else
             {
-                if (_correlatedRunCoordinator is not null)
-                {
-                    await _correlatedRunCoordinator.QueueUserMessageAsync(
-                        sessionId,
-                        profileId,
-                        message,
-                        workspaceId,
-                        attachments,
-                        submission.UserTurnId,
-                        cancellationToken
-                    ).ConfigureAwait(false);
-                }
-                else
-                {
-                    await _runCoordinator.QueueUserMessageAsync(
-                        sessionId,
-                        profileId,
-                        message,
-                        workspaceId,
-                        attachments,
-                        cancellationToken
-                    ).ConfigureAwait(false);
-                }
+                await coordinator.QueueUserMessageAsync(
+                    sessionId,
+                    profileId,
+                    message,
+                    workspaceId,
+                    attachments,
+                    submission.UserTurnId,
+                    cancellationToken
+                ).ConfigureAwait(false);
             }
 
             shouldEndSubmission = await CompleteOrRestoreComposerSubmissionAsync(
@@ -584,6 +527,9 @@ public sealed partial class AgentChatViewModel : ObservableObject, IDisposable
 
     public void Dispose()
     {
+        _transcriptModeCancellation?.Cancel();
+        _transcriptModeCancellation?.Dispose();
+        _transcriptModeCancellation = null;
         if (_disposed)
         {
             return;

@@ -208,6 +208,7 @@ public sealed partial class AgentChatViewModel
 
     private void OnPendingAttachmentsChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        NotifyContinuationStateChanged();
         OnPropertyChanged(nameof(HasPendingAttachments));
         OnPropertyChanged(nameof(PendingAttachmentSummaryText));
         SendMessageCommand.NotifyCanExecuteChanged();

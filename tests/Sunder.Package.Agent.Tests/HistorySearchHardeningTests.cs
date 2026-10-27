@@ -1964,11 +1964,11 @@ public sealed class HistorySearchHardeningTests
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
         using var connection = Open(store.DatabasePath);
-        Assert.Equal(2L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
-        Assert.Equal(2L, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
+        Assert.Equal(1L, ExecuteInt64(connection, "SELECT COUNT(*) FROM SchemaMigrations;"));
+        Assert.Equal((long)AgentLocalStore.BaselineVersion, ExecuteInt64(connection, "SELECT MAX(Version) FROM SchemaMigrations;"));
         Assert.Equal(
             $"{AgentLocalStore.BaselineName}|{AgentLocalStore.BaselineChecksum}",
-            ExecuteString(connection, "SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = 1;"));
+            ExecuteString(connection, $"SELECT Name || '|' || Checksum FROM SchemaMigrations WHERE Version = {AgentLocalStore.BaselineVersion};"));
     }
 
     private static RegressionTestRuntime CreateRuntime(

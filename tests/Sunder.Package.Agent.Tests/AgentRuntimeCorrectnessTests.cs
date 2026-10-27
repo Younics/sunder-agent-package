@@ -568,6 +568,7 @@ public sealed class AgentRuntimeCorrectnessTests
             gateway,
             gateway);
 
+        viewModel.IsDetailedTranscript = true; // This fixture supplies Detailed's flat initial page.
         await viewModel.InitializeAsync();
         var restarted = snapshot with
         {
@@ -1429,6 +1430,7 @@ public sealed class AgentRuntimeCorrectnessTests
             gateway,
             gateway);
 
+        viewModel.IsDetailedTranscript = true;
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
 
         var message = Assert.Single(viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>());
@@ -2587,6 +2589,7 @@ public sealed class AgentRuntimeCorrectnessTests
             gateway,
             gateway,
             selections);
+        viewModel.IsDetailedTranscript = true;
         await viewModel.InitializeAsync();
         viewModel.DraftMessage = "unsent draft";
         Assert.NotEmpty(viewModel.Messages);

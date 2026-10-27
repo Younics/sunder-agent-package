@@ -64,7 +64,7 @@ content scopes, explicit deadlines, callback identity and disposal ownership.
 | Docker / scoped discovery | Explicit endpoint and mount-generation pinning, create/start/reuse mount challenges, nested-root protection, host identity policy, exact casing/longest root, linked-path and namespace rejection, bounded probes and outside-root omission |
 | Prompt / context | Ordering, deduplication, truncation, optional failure, host-normalized authority, scoped-instruction acknowledgment, receipt routing, plan suppression and cancellation; user/reference content never widens permissions |
 | Lifecycle / durable cleanup | Event-id idempotence, historical-before-future ordering, replay/recovery/poison retry, versioned erasure receipts, retirement/compaction barriers, durable cleaner retry and sanitized logs |
-| Runs / children | Revision ownership, admission/checkpoint consistency, approval/budget limits, parent correlation, immutable workspace/profile snapshots, permission inheritance, wait/resume/restart and superseding-run isolation |
+| Runs / children | Revision ownership, admission/checkpoint consistency, approval/usage persistence, long-run continuation and compaction, parent correlation, immutable workspace/profile snapshots, permission inheritance, wait/resume/restart and superseding-run isolation |
 | MCP / presentation | Transport/OAuth/secret separation, bounded documents and streams, availability/reconnect/revision handling, dispatcher affinity, stale completion rejection and drained shutdown |
 
 These are behavior owners, not a requirement to repeat every case at every layer.

@@ -319,7 +319,12 @@ public sealed class CodexConnectedTransport(CodexConnectedAuthStrategy codexConn
             FailureKind = ProviderContextWindowFailureClassifier.IsOpenAi(
                     ProviderErrorDiagnosticExtractor.Extract(responseContent))
                 ? AgentChatProviderFailureKind.ContextWindowExceeded
-                : AgentChatProviderFailureKind.Unknown,
+                : AgentProviderFailureClassifier.Classify(ProviderErrorDiagnosticExtractor.Extract(responseContent), (int)response.StatusCode),
+            StatusCode = (int)response.StatusCode,
+            RetryAfterMilliseconds = AgentProviderFailureClassifier.RetryAfter(
+                response.Headers.TryGetValues("retry-after-ms", out var ms) ? ms.FirstOrDefault() : null,
+                response.Headers.TryGetValues("retry-after", out var after) ? after.FirstOrDefault() : null,
+                DateTimeOffset.UtcNow),
         };
     }
 

@@ -578,7 +578,7 @@ public sealed class SubagentPresentationDispatcherTests
             remove { }
         }
 
-        public event Action<Guid, AgentTurnRecord>? TurnChanged;
+        public event Action<Guid, AgentTurnRecord, SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?>? TurnChanged;
 
         public event Action? ResnapshotRequired
         {
@@ -683,6 +683,7 @@ public sealed class SubagentPresentationDispatcherTests
             var turn = new AgentTurnRecord
             {
                 TurnId = turnId,
+                TurnSequence = 3,
                 SessionId = _childSessionId,
                 Role = AgentMessageRole.Assistant,
                 Kind = AgentTurnKind.Message,
@@ -706,7 +707,7 @@ public sealed class SubagentPresentationDispatcherTests
                 CreatedAtUtc = RpcTimestamp(now),
                 UpdatedAtUtc = RpcTimestamp(now),
             };
-            TurnChanged?.Invoke(_childSessionId, turn);
+            TurnChanged?.Invoke(_childSessionId, turn, null);
         }
 
         public void CompleteOlderPage()
@@ -725,6 +726,7 @@ public sealed class SubagentPresentationDispatcherTests
             => new()
             {
                 TurnId = turnId,
+                TurnSequence = text == "Older" ? 1 : 2,
                 SessionId = sessionId,
                 Role = AgentMessageRole.Assistant,
                 Kind = AgentTurnKind.Message,

@@ -11,7 +11,7 @@ using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Prese
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class AgentPresentationThreadAffinityTests
+public sealed partial class AgentPresentationThreadAffinityTests
 {
     [Theory]
     [InlineData("create", false)]
@@ -583,6 +583,7 @@ public sealed class AgentPresentationThreadAffinityTests
         }
 
         public AgentTurnRecord Turn { get; }
+        public AgentSessionRecord? OtherSession { get; set; }
         public TaskCompletionSource LoadStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseLoad { get; } =
@@ -593,13 +594,13 @@ public sealed class AgentPresentationThreadAffinityTests
         public event Action<Guid>? TranscriptReset { add { } remove { } }
         public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged { add { } remove { } }
 
-        public IReadOnlyList<AgentSessionRecord> ListSessions() => [_session];
-        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => [_session];
+        public IReadOnlyList<AgentSessionRecord> ListSessions() => OtherSession is { } other ? [_session, other] : [_session];
+        public IReadOnlyList<AgentSessionRecord> ListSessionsForWorkspace(string workspaceId) => ListSessions();
         public AgentSessionRecord CreateSession(string title, Guid? parentSessionId = null, Guid? rootSessionId = null,
             Guid? parentRunId = null, long? parentRunRevision = null, string? parentToolCallId = null,
             string? taskId = null, string? profileId = null, string? behaviorLoopId = null,
             string? agentKind = null, string? workspaceId = null) => throw new NotSupportedException();
-        public AgentSessionRecord? GetSession(Guid sessionId) => sessionId == _session.SessionId ? _session : null;
+        public AgentSessionRecord? GetSession(Guid sessionId) => ListSessions().FirstOrDefault(session => session.SessionId == sessionId);
         public void UpdateSession(AgentSessionRecord session) => throw new NotSupportedException();
         public Task DeleteSessionAsync(Guid sessionId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public IReadOnlyList<AgentTurnRecord> ListTurns(Guid sessionId) => [Turn];
@@ -626,7 +627,7 @@ public sealed class AgentPresentationThreadAffinityTests
         }
     }
 
-    private sealed class FallbackPermissionGateway(params AgentPendingPermissionRequestRecord[] requests) :
+    private class FallbackPermissionGateway(params AgentPendingPermissionRequestRecord[] requests) :
         IAgentPermissionGateway
     {
         private readonly object _syncRoot = new();
@@ -661,6 +662,10 @@ public sealed class AgentPresentationThreadAffinityTests
         IAgentRunGateway,
         IAgentChatRunGateway
     {
+        private int _mutationCount;
+        public int MutationCount => Volatile.Read(ref _mutationCount);
+        public bool FailNextMutation { get; set; }
+        public bool ApplyBeforeFailure { get; set; }
         public TaskCompletionSource MutationStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource ReleaseMutation { get; } =
@@ -689,8 +694,15 @@ public sealed class AgentPresentationThreadAffinityTests
             string requestId,
             CancellationToken cancellationToken)
         {
+            Interlocked.Increment(ref _mutationCount);
             MutationStarted.TrySetResult();
             await ReleaseMutation.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            if (FailNextMutation)
+            {
+                FailNextMutation = false;
+                if (ApplyBeforeFailure) permissions.Remove(requestId);
+                throw new IOException("Injected permission decision failure.");
+            }
             permissions.Remove(requestId);
             return null;
         }

@@ -415,6 +415,7 @@ public sealed class MemoryEvaluationTests
             var now = DateTimeOffset.UtcNow;
             var turn = new AgentTurnRecord
             {
+                TurnSequence = _turns.Count + 1,
                 ContentRevision = 1, CreatedAtUtc = RpcTimestamp(now), IsStreaming = false,
                 Items = [new MemoryModels.AgentTurnItemRecord
                 {
@@ -486,6 +487,7 @@ public sealed class MemoryEvaluationTests
             var now = DateTimeOffset.UtcNow;
             return new AgentTurnRecord
             {
+                TurnSequence = _turns.Count + 1,
                 ContentRevision = 1, CreatedAtUtc = RpcTimestamp(now), IsStreaming = false,
                 Items = [new MemoryModels.AgentTurnItemRecord
                 {
@@ -613,6 +615,8 @@ public sealed class MemoryEvaluationTests
 
         ValueTask<AgentRunCheckpointRecord?> IRuntimeCatalogService.GetLatestCheckpointAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult<AgentRunCheckpointRecord?>(null);
+        ValueTask<MemoryModels.AgentRunActivityUpdate?> IRuntimeCatalogService.GetRunActivityAsync(Guid request, CancellationToken token)
+            => ValueTask.FromResult<MemoryModels.AgentRunActivityUpdate?>(null);
         ValueTask<AgentProfileModelBindingRecord?> IRuntimeCatalogService.GetModelBindingAsync(
             MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogGetModelBindingRequest request, CancellationToken token)
             => ValueTask.FromResult(GetModelBinding(request.ProfileId, request.CapabilityKind));
@@ -646,6 +650,12 @@ public sealed class MemoryEvaluationTests
         }
         ValueTask<MemoryModels.AgentTranscriptToolDetailRecord?> IRuntimeCatalogService.GetTranscriptToolDetailAsync(
             MemoryModels.AgentTranscriptToolDetailRequest request, CancellationToken token) => ValueTask.FromResult<MemoryModels.AgentTranscriptToolDetailRecord?>(null);
+        ValueTask<MemoryModels.AgentCompactTranscriptPage> IRuntimeCatalogService.ReadCompactTranscriptAsync(
+            MemoryModels.AgentCompactTranscriptRequest request, CancellationToken token)
+            => ValueTask.FromException<MemoryModels.AgentCompactTranscriptPage>(new NotSupportedException("Memory evaluation does not read Compact transcripts."));
+        ValueTask<MemoryModels.AgentTranscriptActivityMembersPage> IRuntimeCatalogService.ReadActivityMembersAsync(
+            MemoryModels.AgentTranscriptActivityMembersRequest request, CancellationToken token)
+            => ValueTask.FromException<MemoryModels.AgentTranscriptActivityMembersPage>(new NotSupportedException("Memory evaluation does not expand transcript groups."));
         ValueTask<IReadOnlyList<AgentTurnRecord>> IRuntimeCatalogService.ListRecentTranscriptHeadersAsync(
             MemoryModels.CYounics_Ai_Agent_Runtime_Catalog_RuntimeCatalogListRecentTranscriptHeadersRequest request, CancellationToken token)
             => ValueTask.FromResult<IReadOnlyList<AgentTurnRecord>>([]);

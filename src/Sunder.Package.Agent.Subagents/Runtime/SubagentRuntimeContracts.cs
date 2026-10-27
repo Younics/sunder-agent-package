@@ -58,8 +58,9 @@ internal interface ISubsessionTranscriptPageReader
 internal interface ISubsessionChangeNotifications
 {
     event Action<Guid>? SessionChanged;
-    event Action<Guid, AgentTurnRecord>? TurnChanged;
+    event Action<Guid, AgentTurnRecord, AgentTranscriptActivityGroup?>? TurnChanged;
     event Action? ResnapshotRequired;
+    event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged { add { } remove { } }
 }
 
 internal interface ISubagentPresentationInitialization
@@ -70,7 +71,11 @@ internal interface ISubagentPresentationInitialization
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record SubsessionSessionCatalog(
     IReadOnlyList<AgentSessionRecord> Sessions,
-    IReadOnlyList<AgentProfileRecord> Profiles);
+    IReadOnlyList<AgentProfileRecord> Profiles,
+    IReadOnlyList<SubsessionRunActivity>? Activities = null);
+
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
+internal sealed record SubsessionRunActivity(Guid SessionId, AgentRunActivityUpdate Activity);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record SubsessionAroundTurnPage(
@@ -124,7 +129,10 @@ internal sealed record SubagentProjection(
     IReadOnlyList<AgentRunCheckpointRecord>? Checkpoints = null,
     SubsessionTranscriptPage? TranscriptPage = null,
     SubsessionAroundTurnPage? AroundTurn = null,
-    AgentTranscriptToolDetailRecord? ToolDetail = null);
+    AgentTranscriptToolDetailRecord? ToolDetail = null,
+    AgentCompactTranscriptPage? CompactTranscript = null,
+    AgentTranscriptActivityMembersPage? ActivityMembers = null,
+    IReadOnlyList<SubsessionRunActivity>? Activities = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum SubagentChangeKind
@@ -136,6 +144,7 @@ internal enum SubagentChangeKind
     Session,
     Turn,
     Profile,
+    Activity,
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
@@ -145,4 +154,6 @@ internal sealed record SubagentChanged(
     Guid? SessionId = null,
     AgentTurnRecord? Turn = null,
     string? ProfileId = null,
-    string? RuntimeInstanceId = null);
+    string? RuntimeInstanceId = null,
+    AgentRunActivityUpdate? Activity = null,
+    AgentTranscriptActivityGroup? ActivityGroup = null);

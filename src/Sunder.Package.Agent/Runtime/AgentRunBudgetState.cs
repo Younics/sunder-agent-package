@@ -1,6 +1,6 @@
 namespace Sunder.Package.Agent.Contracts.Models;
 
-/// <summary>Contains durable counters consumed by one Agent run generation.</summary>
+/// <summary>Contains durable usage counters for one Agent run generation. These counters are not execution limits.</summary>
 public readonly record struct AgentRunBudgetState(
     [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
     long ProviderCycles,

@@ -77,6 +77,7 @@ public interface IAgentSessionGateway
     IReadOnlyList<AgentTurnRecord> ListTurnsAfter(Guid sessionId, DateTimeOffset afterCreatedAtUtc, Guid afterTurnId, int limit);
     AgentTurnRecord? GetTurn(Guid turnId);
     AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId);
+    AgentRunActivityUpdate? GetRunActivity(Guid sessionId) => null;
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]

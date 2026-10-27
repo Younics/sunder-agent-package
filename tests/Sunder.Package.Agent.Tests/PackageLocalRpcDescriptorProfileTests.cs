@@ -87,9 +87,13 @@ public sealed class PackageLocalRpcDescriptorProfileTests
             {
                 "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/activationEpoch=9007199254740991",
                 "younics.ai.agent.behavior.loop:#/$defs/CYounics_Ai_Agent_Run_Control_RunControl_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.chat.provider:#/$defs/AgentChatErrorEvent/properties/retryAfterMilliseconds/oneOf/1=900000",
                 "younics.ai.agent.execution.target:#/$defs/AgentFileReadRequest/properties/limit/oneOf/1=2000",
                 "younics.ai.agent.execution.target:#/$defs/AgentFileSearchRequest/properties/limit/oneOf/1=1000",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentChatSnapshotRequest/properties/initialTranscriptLimit=500",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentCompactTranscriptRequest/properties/limit=500",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentRunRetryState/properties/attempt=11",
+                "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptActivityMembersRequest/properties/limit=200",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/afterLimit=30",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptAroundTurnRequest/properties/beforeLimit=30",
                 "younics.ai.agent.owner.runtime:#/$defs/AgentTranscriptPageRequest/properties/limit=500",
@@ -97,7 +101,11 @@ public sealed class PackageLocalRpcDescriptorProfileTests
                 "younics.ai.agent.owner.runtime:#/$defs/HistorySearchStateRequest/properties/limit=200",
                 "younics.ai.agent.prompt.context.contributor:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
                 "younics.ai.agent.prompt.context.contributor:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.run.control:#/$defs/AgentChatErrorEvent/properties/retryAfterMilliseconds/oneOf/1=900000",
                 "younics.ai.agent.run.control:#/$defs/RunControlListRecentTurnsRequest/properties/limit=100",
+                "younics.ai.agent.runtime.catalog:#/$defs/AgentCompactTranscriptRequest/properties/limit=500",
+                "younics.ai.agent.runtime.catalog:#/$defs/AgentRunRetryState/properties/attempt=11",
+                "younics.ai.agent.runtime.catalog:#/$defs/AgentTranscriptActivityMembersRequest/properties/limit=200",
                 "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTranscriptHeadersRequest/properties/limit=1000",
                 "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListRecentTurnsRequest/properties/limit=1000",
                 "younics.ai.agent.runtime.catalog:#/$defs/RuntimeCatalogListTranscriptHeadersAfterRequest/properties/limit=1000",
@@ -110,6 +118,8 @@ public sealed class PackageLocalRpcDescriptorProfileTests
                 "younics.ai.agent.tool.source:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
                 "younics.ai.agent.workspace.execution.resolver:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/activationEpoch=9007199254740991",
                 "younics.ai.agent.workspace.execution.resolver:#/$defs/CYounics_Ai_Agent_Execution_Target_ExecutionTarget_ServiceReference/properties/sessionGeneration=9007199254740991",
+                "younics.ai.agent.subagents.owner:#/$defs/Imported_9f4995b4605e57b98b9f7161dee20b198d95eb47c2127fec7024762fcb173cd0/properties/limit=200",
+                "younics.ai.agent.subagents.owner:#/$defs/Imported_d38fa909840b57f7d589b4ccf9958cce60e6ea719f595b3ea5917b7588d86eba/properties/limit=500",
                 "younics.ai.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/afterLimit=30",
                 "younics.ai.agent.subagents.owner:#/$defs/ManagementAroundTurnRequest/properties/beforeLimit=30",
                 "younics.ai.agent.subagents.owner:#/$defs/ManagementRecentTurnsRequest/properties/limit=500",
@@ -239,7 +249,9 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         string schemaPath)
     {
         if (contractId == "younics.ai.agent.execution.docker.presentation"
-            && schemaPath == "#/$defs/DockerImageStatus")
+            && schemaPath == "#/$defs/DockerImageStatus"
+            || contractId == "younics.ai.agent.subagents.owner"
+            && schemaPath == "#/$defs/Imported_a64c14b66d1fcf1c01a5f2626a91c30c5bcc47b2d5bfd7cb24efb806eb73775a")
         {
             Assert.Equal("integer", value.GetProperty("type").GetString());
             Assert.Equal([0, 1, 2, 3, 4], enumValues.EnumerateArray().Select(static item => item.GetInt32()));

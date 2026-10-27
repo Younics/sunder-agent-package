@@ -42,55 +42,52 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
         AgentAssistantTurnState assistantTurnState,
         Stopwatch loopStopwatch,
         CancellationToken cancellationToken,
-        AgentRunBudgetTracker? budgetTracker = null,
-        long estimatedInputTokens = 1)
+        AgentRunUsageTracker? usageTracker = null,
+        long estimatedInputTokens = 1,
+        AgentProviderRetryState? retryState = null)
     {
         var streamState = _streamingTurnWriter.BeginCycle(
             host,
             context,
             assistantTurnState,
             loopStopwatch);
-        var streamAttempt = 0;
+        retryState ??= new AgentProviderRetryState();
         var chatClient = await providerSession.GetChatClientAsync(host, cancellationToken);
         if (host is IAgentRunActivitySink activitySink)
         {
             activitySink.ReportRunActivity(AgentRunActivityKind.Thinking, "Thinking");
         }
-        var retryPipeline = AgentProviderResilience.CreatePipeline(notification => LogRetry(
-            host,
-            loopStopwatch,
-            notification),
-            () => !streamState.HasContentBearingOutput);
-
         try
         {
-            await retryPipeline.ExecuteAsync(async attemptCancellationToken =>
+            while (true)
             {
-                if (budgetTracker is not null)
-                    await budgetTracker.ChargeProviderAttemptAsync(Math.Max(1, estimatedInputTokens), attemptCancellationToken).ConfigureAwait(false);
-                if (streamAttempt > 0)
+                cancellationToken.ThrowIfCancellationRequested();
+                try
                 {
-                    _streamingTurnWriter.ResetForRetry(streamState);
-                    host.LogEvent(
-                        PackageLogLevel.Debug,
-                        "behavior.loop.retry.start",
-                        "Retrying provider execution from persisted transcript.",
-                        loopStopwatch.ElapsedMilliseconds,
-                        new Dictionary<string, object?>(StringComparer.Ordinal)
-                        {
-                            ["retry.attempt"] = streamAttempt,
-                            ["prompt.turn_count"] = promptMessages.Count,
-                        });
+                    if (usageTracker is not null)
+                        await usageTracker.ChargeProviderAttemptAsync(Math.Max(1, estimatedInputTokens), cancellationToken).ConfigureAwait(false);
+                    await _streamingTurnWriter.WriteAttemptAsync(streamState, chatClient, promptMessages, providerSession.Options, cancellationToken);
+                    break;
                 }
-
-                streamAttempt++;
-                await _streamingTurnWriter.WriteAttemptAsync(
-                    streamState,
-                    chatClient,
-                    promptMessages,
-                    providerSession.Options,
-                    attemptCancellationToken);
-            }, cancellationToken);
+                catch (Exception error) when (AgentProviderResilience.IsTransient(error, cancellationToken))
+                {
+                    var retry = retryState.TrySchedule(error, streamState.HasContentBearingOutput, cancellationToken);
+                    if (retry is null)
+                        throw new AgentProviderRecoveryExhaustedException(error, retryState.RetryCount + 1);
+                    streamState.ReasoningActivity.Flush();
+                    await WaitForRetryAsync(host, loopStopwatch, retryState, retry, error, cancellationToken);
+                    if (streamState.HasContentBearingOutput)
+                    {
+                        // Only successful complete responses can dispatch local tools.
+                        // Retain visible text, discard this incomplete batch and rebuild
+                        // from durable transcript instead of replaying the old prompt.
+                        AgentLoopTerminalHandler.PreservePartialTurn(host, assistantTurnState);
+                        throw new AgentProviderContinuationException(error);
+                    }
+                    _streamingTurnWriter.ResetForRetry(streamState);
+                    (host as IAgentRunActivitySink)?.ReportRunActivity(AgentRunActivityKind.Thinking, "Thinking");
+                }
+            }
         }
         catch (AgentChatProviderException ex)
             when (ex.FailureKind == AgentChatProviderFailureKind.ContextWindowExceeded)
@@ -111,23 +108,37 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
     public bool IsTransientFailure(Exception exception, CancellationToken cancellationToken)
         => AgentProviderResilience.IsTransient(exception, cancellationToken);
 
-    private static void LogRetry(
+    private static async Task WaitForRetryAsync(
         IAgentBehaviorLoopRuntime host,
         Stopwatch loopStopwatch,
-        AgentProviderRetryNotification notification)
-        => host.LogEvent(
+        AgentProviderRetryState state,
+        AgentRunRetryState retry,
+        Exception error,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (!host.IsCurrentRun()) throw new AgentRunTranscriptWriteRejectedException();
+        if (host is IAgentProviderRetrySink retrySink) retrySink.ReportProviderRetry(retry);
+        else (host as IAgentRunActivitySink)?.ReportRunActivity(AgentRunActivityKind.Retrying, retry.Reason);
+        var remaining = retry.RetryAtUtc - state.Clock.GetUtcNow();
+        host.LogEvent(
             PackageLogLevel.Warning,
             "provider.stream.retrying",
-            $"Transient provider stream interruption. Retrying in {notification.Delay.TotalSeconds:0.#}s (attempt {notification.AttemptNumber}/{notification.MaxRetryAttempts}).",
+            $"{retry.Reason}. {(retry.IsContinuation ? "Continuing" : "Retrying")} in {Math.Max(0, remaining.TotalSeconds):0.#}s (attempt {retry.Attempt}/11).",
             loopStopwatch.ElapsedMilliseconds,
             new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["retry.attempt"] = notification.AttemptNumber,
-                ["retry.max_attempts"] = notification.MaxRetryAttempts,
-                ["retry.delay_ms"] = notification.Delay.TotalMilliseconds,
-                ["retry.exception_type"] = notification.Exception.GetType().FullName,
+                ["retry.attempt"] = retry.Attempt,
+                ["retry.max_attempts"] = 11,
+                ["retry.at_utc"] = retry.RetryAtUtc,
+                ["retry.continuation"] = retry.IsContinuation,
+                ["retry.exception_type"] = error.GetType().FullName,
             },
-            notification.Exception);
+            error);
+        if (remaining > TimeSpan.Zero) await Task.Delay(remaining, state.Clock, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        if (!host.IsCurrentRun()) throw new AgentRunTranscriptWriteRejectedException();
+    }
 
     private static ReasoningOptions? BuildReasoningOptions(AgentModelVariantDescriptor? variant)
         => variant?.ReasoningEffort is null
@@ -174,6 +185,11 @@ internal sealed class AgentProviderCycleRunner(AgentStreamingTurnWriter streamin
             _ => throw new InvalidOperationException($"Unsupported reasoning hint '{effort}'."),
         };
 }
+
+internal sealed class AgentProviderContinuationException(Exception error) : Exception("Continue from retained partial output.", error);
+
+internal sealed class AgentProviderRecoveryExhaustedException(Exception error, int attempts)
+    : Exception($"The provider could not recover after {attempts} attempts. Saved progress is retained. Choose Continue when the provider is available.", error);
 
 internal sealed class AgentProviderContextWindowException(
     AgentChatProviderException providerException,

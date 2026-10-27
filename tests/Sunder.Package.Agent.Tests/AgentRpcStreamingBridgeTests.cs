@@ -117,11 +117,13 @@ public sealed class AgentRpcStreamingBridgeTests
         Assert.False(AgentProviderResilience.IsTransient(reconstructed));
     }
 
-    [Fact]
-    public async Task ProviderStream_ProjectsNestedUnsafeRpcMetadataIntoTheNaturalErrorEvent()
+    [Theory]
+    [InlineData(SunderRpcRetrySafety.Unsafe)]
+    [InlineData(SunderRpcRetrySafety.Safe)]
+    public async Task ProviderStream_ProjectsPossiblyDispatchedRpcMetadataIntoTheNaturalErrorEvent(SunderRpcRetrySafety safety)
     {
         var unsafeFailure = new SunderRpcException(new(SunderRpcErrorKind.Unavailable, "rpc.worker.other-unsafe-failure",
-            "connection failed", SunderRpcDispatchState.PossiblyDispatched, SunderRpcRetrySafety.Unsafe));
+            "connection failed", SunderRpcDispatchState.PossiblyDispatched, safety));
         var failure = new AgentChatProviderException("outer provider diagnostic", "outer provider content", "outer-provider-code", unsafeFailure);
 
         var item = Assert.IsType<ProviderModels.AgentChatErrorEvent>(Assert.Single(await ReadProviderEventsAsync(new SequenceChatClient([], failure))));
@@ -132,6 +134,56 @@ public sealed class AgentRpcStreamingBridgeTests
         var projected = Assert.IsType<SunderRpcException>(reconstructed.InnerException);
         Assert.Equal(SunderRpcRetrySafety.Unsafe, projected.Error.RetrySafety);
         Assert.False(AgentProviderResilience.IsTransient(reconstructed));
+    }
+
+    [Theory]
+    [InlineData(12_000, 12_000)]
+    [InlineData(long.MaxValue, 900_000)]
+    [InlineData(-1, 0)]
+    public async Task ProviderStream_PreservesOverloadStatusAndBoundsMinimumRetryTiming(long delay, long expected)
+    {
+        var failure = new AgentChatProviderException("Servers overloaded", "Retry later", "server_error")
+        { FailureKind = AgentChatProviderFailureKind.Overloaded, StatusCode = 503, RetryAfterMilliseconds = delay };
+        var item = Assert.IsType<ProviderModels.AgentChatErrorEvent>(Assert.Single(await ReadProviderEventsAsync(new SequenceChatClient([], failure))));
+        var reconstructed = AgentChatFailureProjection.CreateProviderException(new AgentChatErrorEvent(
+            item.ErrorCode, item.ErrorMessage, item.ErrorContent, AgentChatProviderFailureKind.Overloaded,
+            item.StatusCode is { } status ? checked((int)status) : null, item.RetryAfterMilliseconds));
+        Assert.Equal(ProviderModels.AgentChatProviderFailureKind.Overloaded, item.ErrorFailureKind);
+        Assert.Equal(503, reconstructed.StatusCode);
+        Assert.Equal(expected, reconstructed.RetryAfterMilliseconds);
+        Assert.True(AgentProviderResilience.IsTransient(reconstructed));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Streams_PreserveNestedTerminalFailureBeforeTransientWrapper(bool providerStream)
+    {
+        var terminal = new AgentChatProviderException("Quota exhausted", "Check billing.", "insufficient_quota")
+        { FailureKind = AgentChatProviderFailureKind.QuotaExceeded, StatusCode = 429 };
+        var failure = new AgentChatProviderException("Servers overloaded", "Retry later.", "server_error", terminal)
+        { FailureKind = AgentChatProviderFailureKind.Overloaded, StatusCode = 503 };
+        var chat = new SequenceChatClient([], failure);
+        AgentChatErrorEvent error;
+        if (providerStream)
+        {
+            var item = Assert.IsType<ProviderModels.AgentChatErrorEvent>(Assert.Single(await ReadProviderEventsAsync(chat)));
+            error = new(item.ErrorCode, item.ErrorMessage, item.ErrorContent,
+                Enum.Parse<AgentChatProviderFailureKind>(item.ErrorFailureKind.ToString()),
+                item.StatusCode is { } status ? checked((int)status) : null, item.RetryAfterMilliseconds);
+        }
+        else
+        {
+            await using var catalog = new RegressionTestExtensionCatalog();
+            using var grant = OpenRunControl(catalog, chat, out var invocationId);
+            var control = Assert.Single((await catalog.RunControls.ListAsync()).Providers).Service;
+            var events = new List<AgentChatStreamEvent>();
+            await foreach (var item in control.StreamChatAsync(invocationId, ChatRequest(), null)) events.Add(item);
+            error = Assert.IsType<AgentChatErrorEvent>(Assert.Single(events));
+        }
+        Assert.Equal(AgentChatProviderFailureKind.QuotaExceeded, error.ErrorFailureKind);
+        Assert.Equal(429, error.StatusCode);
+        Assert.Null(new AgentProviderRetryState().TrySchedule(AgentChatFailureProjection.CreateProviderException(error), false, default));
     }
 
     [Fact]
@@ -166,11 +218,13 @@ public sealed class AgentRpcStreamingBridgeTests
         Assert.True(chat.IsDisposed);
     }
 
-    [Fact]
-    public async Task RunControlStream_PreservesUpdatesThenMapsOneProviderError()
+    [Theory]
+    [InlineData(AgentChatProviderFailureKind.ContextWindowExceeded)]
+    [InlineData(AgentChatProviderFailureKind.Overloaded)]
+    public async Task RunControlStream_PreservesUpdatesThenMapsOneProviderError(AgentChatProviderFailureKind kind)
     {
         var failure = new AgentChatProviderException("provider failed", "safe failure", "expected-provider-error")
-        { FailureKind = AgentChatProviderFailureKind.ContextWindowExceeded };
+        { FailureKind = kind, StatusCode = 503, RetryAfterMilliseconds = 12_000 };
         var chat = new SequenceChatClient([Update(new TextContent("before failure"))], failure,
             new InvalidOperationException("cleanup must not replace provider failure"));
         await using var catalog = new RegressionTestExtensionCatalog();
@@ -184,7 +238,9 @@ public sealed class AgentRpcStreamingBridgeTests
         Assert.IsType<AgentChatUpdateEvent>(events[0]);
         var error = Assert.IsType<AgentChatErrorEvent>(events[1]);
         Assert.Equal("expected-provider-error", error.ErrorCode);
-        Assert.Equal(AgentChatProviderFailureKind.ContextWindowExceeded, error.ErrorFailureKind);
+        Assert.Equal(kind, error.ErrorFailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
     }
 
     [Fact]

@@ -28,7 +28,8 @@ public sealed class CodexResponsesStreamParserTests
 
         var updates = await ReadUpdatesAsync(response);
 
-        Assert.Equal(2, updates.Count);
+        Assert.Equal(3, updates.Count);
+        Assert.Equal(ChatFinishReason.Stop, updates[^1].FinishReason);
         Assert.Equal("Hi", updates[0].Text);
         Assert.Equal("resp-1", updates[0].ResponseId);
         var usage = Assert.IsType<UsageContent>(Assert.Single(updates[1].Contents)).Details;
@@ -64,7 +65,7 @@ public sealed class CodexResponsesStreamParserTests
         var updates = await ReadUpdatesAsync(response);
         string[] expectedChunks = ["##", " ", "Heading", "\n", "\n", "-", " ", "item"];
 
-        Assert.Equal(expectedChunks, updates.Select(update => update.Text));
+        Assert.Equal(expectedChunks, updates.Where(update => update.Contents.Count > 0).Select(update => update.Text));
         Assert.Equal("## Heading\n\n- item", string.Concat(updates.Select(update => update.Text)));
     }
 
@@ -87,7 +88,8 @@ public sealed class CodexResponsesStreamParserTests
             """);
 
         var updates = await ReadUpdatesAsync(response, toolAware: true);
-        var functionCall = Assert.IsType<FunctionCallContent>(Assert.Single(updates).Contents.Single());
+        var functionCall = Assert.Single(updates.SelectMany(update => update.Contents).OfType<FunctionCallContent>());
+        Assert.Equal(ChatFinishReason.ToolCalls, updates[^1].FinishReason);
 
         Assert.Equal("call-1", functionCall.CallId);
         Assert.Equal("read", functionCall.Name);
@@ -119,7 +121,7 @@ public sealed class CodexResponsesStreamParserTests
 
         ProviderConformanceHarness.VerifyToolResultOrder(
             "OpenAI",
-            updates.Select(static update => update.Contents.Any(static content => content is FunctionCallContent)
+            updates.Where(update => update.Contents.Count > 0).Select(static update => update.Contents.Any(static content => content is FunctionCallContent)
                 ? "tool"
                 : "text"));
     }
@@ -230,23 +232,24 @@ public sealed class CodexResponsesStreamParserTests
     }
 
     [Fact]
-    public async Task ParseAsync_IncompleteResponse_ThrowsWithReason()
+    public async Task ParseAsync_OutputLimitPreservesTextButNeverEmitsAnUnfinishedTool()
     {
         using var response = CreateSseResponse("""
+            data: {"type":"response.output_text.delta","delta":"Partial"}
+
+            data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"unfinished","name":"write"}}
+
+            data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\"path\":"}
+
             event: response.incomplete
             data: {"type":"response.incomplete","response":{"id":"resp-1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}
 
             """);
 
-        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
-        {
-            await foreach (var _ in ParseAsync(response))
-            {
-            }
-        });
-
-        Assert.Contains("max_output_tokens", exception.Content, StringComparison.Ordinal);
-        Assert.Equal(AgentChatProviderFailureKind.Unknown, exception.FailureKind);
+        var updates = await ReadUpdatesAsync(response, toolAware: true);
+        Assert.Equal("Partial", updates[0].Text);
+        Assert.Equal(ChatFinishReason.Length, updates[^1].FinishReason);
+        Assert.Empty(updates.SelectMany(update => update.Contents).OfType<FunctionCallContent>());
     }
 
     [Theory]
@@ -254,10 +257,11 @@ public sealed class CodexResponsesStreamParserTests
         "context_length_exceeded",
         "Your input exceeds the context window of this model.",
         AgentChatProviderFailureKind.ContextWindowExceeded)]
-    [InlineData("insufficient_quota", "You exceeded your current quota.", AgentChatProviderFailureKind.Unknown)]
-    [InlineData("invalid_request_error", "Generic bad request.", AgentChatProviderFailureKind.Unknown)]
-    [InlineData("invalid_request_error", "max_output_tokens is too large.", AgentChatProviderFailureKind.Unknown)]
-    public async Task ParseAsync_FailedResponseClassifiesOnlyContextWindowOverflow(
+    [InlineData("insufficient_quota", "You exceeded your current quota.", AgentChatProviderFailureKind.QuotaExceeded)]
+    [InlineData("invalid_request_error", "Generic bad request.", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("invalid_request_error", "max_output_tokens is too large.", AgentChatProviderFailureKind.InvalidRequest)]
+    [InlineData("server_error", "Our servers are currently overloaded. Please try again later.", AgentChatProviderFailureKind.Overloaded)]
+    public async Task ParseAsync_FailedResponseClassifiesProviderFailures(
         string code,
         string message,
         AgentChatProviderFailureKind expectedKind)
@@ -385,7 +389,7 @@ public sealed class CodexResponsesStreamParserTests
             updates.Add(update);
         }
 
-        Assert.Equal("still handled", Assert.Single(updates).Text);
+        Assert.Equal("still handled", Assert.Single(updates, update => update.Contents.Count > 0).Text);
         Assert.Contains("provider.response.unsupported_content", logger.EventNames);
     }
 

@@ -61,6 +61,16 @@ internal sealed partial class AgentOwnerRuntimeProvider(
         CancellationToken cancellationToken)
         => FitAsync(() => transcript.HandleAsync(request, cancellationToken));
 
+    [SunderMethod(MethodId = "compact-transcript-page", Idempotency = SunderServiceIdempotency.Idempotent, Errors = [OperationFailed])]
+    public ValueTask<AgentCompactTranscriptPage> GetCompactTranscriptPageAsync(
+        AgentCompactTranscriptRequest request, CancellationToken cancellationToken)
+        => FitAsync(() => transcript.HandleAsync(request, cancellationToken));
+
+    [SunderMethod(MethodId = "activity-members", Idempotency = SunderServiceIdempotency.Idempotent, Errors = [OperationFailed])]
+    public ValueTask<AgentTranscriptActivityMembersPage> GetActivityMembersAsync(
+        AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken)
+        => FitAsync(() => transcript.HandleAsync(request, cancellationToken));
+
     [SunderMethod(MethodId = "catalog", Idempotency = SunderServiceIdempotency.Idempotent, Errors = [OperationFailed])]
     public ValueTask<AgentCatalogProjection> GetCatalogAsync(
         AgentCatalogRequest request,

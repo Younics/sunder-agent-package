@@ -75,7 +75,7 @@ public sealed partial class AgentLocalStore
             return null;
         }
 
-        InsertTurn(connection, transaction, turn, runKey: runKey);
+        turn = InsertTurn(connection, transaction, turn, runKey: runKey);
         TouchSession(connection, turn.SessionId, null, null, transaction);
         transaction.Commit();
         return turn;
@@ -88,7 +88,7 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction();
-        InsertTurn(connection, transaction, turn);
+        turn = InsertTurn(connection, transaction, turn);
         TouchSession(connection, sessionId, null, null, transaction);
         transaction.Commit();
         return turn;
@@ -161,6 +161,7 @@ public sealed partial class AgentLocalStore
         DeleteAffectedRunCheckpoints(connection, transaction, sessionId, anchorTurn);
         DeleteSessionContinuityState(connection, transaction, sessionId);
         DeleteRollbackTurns(connection, transaction, sessionId, anchorTurn);
+        RebuildTranscriptGroups(connection, transaction, sessionId, invalidateContext: false);
 
         var latestCheckpoint = GetLatestCheckpoint(connection, sessionId, transaction);
         TouchSession(
@@ -256,11 +257,11 @@ public sealed partial class AgentLocalStore
         using var connection = CreateConnection();
         connection.Open();
         using var transaction = connection.BeginTransaction(deferred: false);
-        var toolExecutionId = ResolveUnownedToolExecutionId(
+        var toolExecutionId = ResolveRecordingExecution(
             connection,
             transaction,
             sessionId,
-            callId) ?? Guid.NewGuid();
+            callId)?.ExecutionId ?? Guid.NewGuid();
         var turn = CreateToolResultTurn(
             Guid.NewGuid(),
             sessionId,
@@ -279,42 +280,10 @@ public sealed partial class AgentLocalStore
             now,
             now,
             toolExecutionId);
-        InsertTurn(connection, transaction, turn);
+        turn = InsertTurn(connection, transaction, turn);
         TouchSession(connection, sessionId, null, null, transaction);
         transaction.Commit();
         return turn;
-    }
-
-    private static Guid? ResolveUnownedToolExecutionId(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid sessionId,
-        string callId)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            SELECT call.ToolExecutionId
-            FROM AgentTurnItems call
-            INNER JOIN AgentTurns callTurn ON callTurn.TurnId = call.TurnId
-            WHERE callTurn.SessionId = $sessionId
-              AND callTurn.RunId IS NULL
-              AND call.Kind = 'ToolCall'
-              AND call.CallId = $callId
-              AND call.ToolExecutionId IS NOT NULL
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM AgentTurnItems result
-                  WHERE result.ToolExecutionId = call.ToolExecutionId
-                    AND result.Kind = 'ToolResult')
-            ORDER BY callTurn.CreatedAtUtc COLLATE BINARY DESC,
-                     callTurn.TurnId COLLATE BINARY DESC,
-                     call.SequenceNumber DESC
-            LIMIT 1;
-            """;
-        command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
-        command.Parameters.AddWithValue("$callId", callId);
-        return command.ExecuteScalar() is string value ? Guid.Parse(value) : null;
     }
 
     internal AgentTurnRecord? TryAppendToolResultTurn(
@@ -396,7 +365,7 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming FROM AgentTurns WHERE TurnId = $turnId;";
+        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, TurnSequence FROM AgentTurns WHERE TurnId = $turnId;";
         command.Parameters.AddWithValue("$turnId", turnId.ToString());
         using var reader = command.ExecuteReader();
         return reader.Read()
@@ -410,6 +379,7 @@ public sealed partial class AgentLocalStore
                 DateTimeOffset.Parse(reader.GetString(5)))
             {
                 ContentRevision = reader.GetInt64(6),
+                TurnSequence = reader.GetInt64(8),
                 IsStreaming = reader.GetInt64(7) != 0,
             }
             : null;
@@ -454,7 +424,7 @@ public sealed partial class AgentLocalStore
             FROM AgentTurnItems i
             INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
             WHERE t.SessionId = $sessionId
-              AND (t.CreatedAtUtc COLLATE BINARY > $anchorCreatedAtUtc COLLATE BINARY OR (t.CreatedAtUtc = $anchorCreatedAtUtc AND t.TurnId COLLATE BINARY >= $anchorTurnId COLLATE BINARY))
+              AND t.TurnSequence >= $anchorTurnSequence
               AND i.Kind = $toolCallKind
               AND i.CallId IS NOT NULL
               AND i.CallId <> '';
@@ -532,13 +502,14 @@ public sealed partial class AgentLocalStore
         command.CommandText = """
             DELETE FROM AgentPendingPermissionRequests
             WHERE SessionId = $sessionId
-              AND (CreatedAtUtc >= $anchorCreatedAtUtc
-                   OR UserTurnId IN (
+              AND (UserTurnId IN (
                        SELECT TurnId
                        FROM AgentTurns
                        WHERE SessionId = $sessionId
-                          AND (CreatedAtUtc COLLATE BINARY > $anchorCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $anchorCreatedAtUtc AND TurnId COLLATE BINARY >= $anchorTurnId COLLATE BINARY))
-                   ));
+                           AND TurnSequence >= $anchorTurnSequence
+                    ) OR ToolExecutionId IN (
+                        SELECT i.ToolExecutionId FROM AgentTurnItems i INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
+                        WHERE t.SessionId = $sessionId AND t.TurnSequence >= $anchorTurnSequence));
             """;
         AddRollbackTurnParameters(command, sessionId, anchorTurn);
         command.ExecuteNonQuery();
@@ -552,7 +523,11 @@ public sealed partial class AgentLocalStore
     {
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = "DELETE FROM AgentRunCheckpoints WHERE SessionId = $sessionId AND CreatedAtUtc >= $anchorCreatedAtUtc;";
+        command.CommandText = """
+            DELETE FROM AgentRunCheckpoints WHERE SessionId = $sessionId AND RunRevision IN (
+                SELECT r.RunRevision FROM AgentRuns r INNER JOIN AgentTurns t ON t.TurnId = r.UserTurnId
+                WHERE r.SessionId = $sessionId AND t.TurnSequence >= $anchorTurnSequence);
+            """;
         AddRollbackTurnParameters(command, sessionId, anchorTurn);
         command.ExecuteNonQuery();
     }
@@ -569,12 +544,22 @@ public sealed partial class AgentLocalStore
         using var deleteTurnItems = connection.CreateCommand();
         deleteTurnItems.Transaction = transaction;
         deleteTurnItems.CommandText = """
+            DELETE FROM AgentTranscriptEntries WHERE SessionId = $sessionId AND TurnSequence >= $anchorTurnSequence;
+            UPDATE AgentToolExecutions SET CallItemId = NULL, ResultItemId = NULL
+            WHERE SessionId = $sessionId AND CallItemId IN (
+                SELECT i.ItemId FROM AgentTurnItems i INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
+                WHERE t.SessionId = $sessionId AND t.TurnSequence >= $anchorTurnSequence);
+            UPDATE AgentToolExecutions SET ResultItemId = NULL,
+                HeaderRevision = HeaderRevision + 1, DetailRevision = DetailRevision + 1
+            WHERE SessionId = $sessionId AND ResultItemId IN (
+                SELECT i.ItemId FROM AgentTurnItems i INNER JOIN AgentTurns t ON t.TurnId = i.TurnId
+                WHERE t.SessionId = $sessionId AND t.TurnSequence >= $anchorTurnSequence);
             DELETE FROM AgentTurnItems
             WHERE TurnId IN (
                 SELECT TurnId
                 FROM AgentTurns
                 WHERE SessionId = $sessionId
-                  AND (CreatedAtUtc COLLATE BINARY > $anchorCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $anchorCreatedAtUtc AND TurnId COLLATE BINARY >= $anchorTurnId COLLATE BINARY))
+                  AND TurnSequence >= $anchorTurnSequence
             );
             """;
         AddRollbackTurnParameters(deleteTurnItems, sessionId, anchorTurn);
@@ -585,7 +570,7 @@ public sealed partial class AgentLocalStore
         deleteTurns.CommandText = """
             DELETE FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND (CreatedAtUtc COLLATE BINARY > $anchorCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $anchorCreatedAtUtc AND TurnId COLLATE BINARY >= $anchorTurnId COLLATE BINARY));
+              AND TurnSequence >= $anchorTurnSequence;
             """;
         AddRollbackTurnParameters(deleteTurns, sessionId, anchorTurn);
         deleteTurns.ExecuteNonQuery();
@@ -596,8 +581,8 @@ public sealed partial class AgentLocalStore
             {selectOrDelete}
             FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND (CreatedAtUtc COLLATE BINARY > $anchorCreatedAtUtc COLLATE BINARY OR (CreatedAtUtc = $anchorCreatedAtUtc AND TurnId COLLATE BINARY >= $anchorTurnId COLLATE BINARY))
-            ORDER BY CreatedAtUtc COLLATE BINARY, TurnId COLLATE BINARY;
+              AND TurnSequence >= $anchorTurnSequence
+            ORDER BY TurnSequence;
             """;
 
     private static void AddRollbackTurnParameters(SqliteCommand command, Guid sessionId, AgentTurnRecord anchorTurn)
@@ -605,18 +590,27 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
         command.Parameters.AddWithValue("$anchorCreatedAtUtc", anchorTurn.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$anchorTurnId", anchorTurn.TurnId.ToString());
+        command.Parameters.AddWithValue("$anchorTurnSequence", anchorTurn.TurnSequence);
     }
 
-    private static void InsertTurn(
+    internal static AgentTurnRecord InsertTurn(
         SqliteConnection connection,
         SqliteTransaction? transaction,
         AgentTurnRecord turn,
         bool ignoreConflicts = false,
         AgentDurableRunKey? runKey = null)
     {
+        ArgumentNullException.ThrowIfNull(transaction);
+        if (ignoreConflicts && GetTurn(connection, turn.TurnId, transaction) is { } existing) return existing;
+        turn = NormalizeToolIdentities(connection, transaction, turn with
+        {
+            TurnSequence = AllocateTurnSequence(connection, transaction, turn.SessionId),
+            RunId = runKey?.RunId ?? turn.RunId,
+            RunRevision = runKey?.RunRevision ?? turn.RunRevision,
+        });
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
-        command.CommandText = $"INSERT {(ignoreConflicts ? "OR IGNORE " : string.Empty)}INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision) VALUES ($id, $sessionId, $role, $kind, $created, $updated, $contentRevision, $isStreaming, $runId, $runRevision);";
+        command.CommandText = "INSERT INTO AgentTurns (TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence) VALUES ($id, $sessionId, $role, $kind, $created, $updated, $contentRevision, $isStreaming, $runId, $runRevision, $turnSequence);";
         command.Parameters.AddWithValue("$id", turn.TurnId.ToString());
         command.Parameters.AddWithValue("$sessionId", turn.SessionId.ToString());
         command.Parameters.AddWithValue("$role", turn.Role.ToString());
@@ -624,6 +618,7 @@ public sealed partial class AgentLocalStore
         command.Parameters.AddWithValue("$created", turn.CreatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$updated", turn.UpdatedAtUtc.ToString("O"));
         command.Parameters.AddWithValue("$contentRevision", turn.ContentRevision);
+        command.Parameters.AddWithValue("$turnSequence", turn.TurnSequence);
         command.Parameters.AddWithValue("$isStreaming", turn.IsStreaming ? 1 : 0);
         command.Parameters.AddWithValue(
             "$runId",
@@ -641,6 +636,10 @@ public sealed partial class AgentLocalStore
         {
             InsertTurnItem(connection, transaction, item, ignoreConflicts);
         }
+        IndexInsertedTurn(connection, transaction, turn);
+        return turn.Kind is AgentTurnKind.ToolCall or AgentTurnKind.ToolResult
+            ? GetTurn(connection, turn.TurnId, transaction) ?? throw new InvalidOperationException("The recorded tool turn could not be loaded.")
+            : turn;
     }
 
     private static void InsertTurnItem(
@@ -686,4 +685,5 @@ internal sealed record AgentTurnWriteResult(
     AgentTurnRecord Turn,
     AgentTurnMutationKind MutationKind,
     int BaseContentLength,
-    string? Text);
+    string? Text,
+    bool StructureChanged = false);

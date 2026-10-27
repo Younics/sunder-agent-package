@@ -8,7 +8,8 @@ namespace Sunder.Package.Agent.Provider.Gemini;
 internal sealed record GeminiResponseTranslation(
     IReadOnlyList<AIContent> Contents,
     IReadOnlyList<string> UnsupportedPartKinds,
-    ProviderUsageSnapshot Usage)
+    ProviderUsageSnapshot Usage,
+    ChatFinishReason? FinishReason = null)
 {
     public string FirstEventKind => ProviderResponseUpdates.Describe(Contents);
 }
@@ -21,10 +22,13 @@ internal sealed class GeminiResponseTranslator
     {
         var contents = new List<AIContent>();
         var unsupportedPartKinds = new List<string>();
+        var terminal = GetTerminalStatus(response);
+        ChatFinishReason? finishReason = terminal.IsOutputLimit ? ChatFinishReason.Length
+            : terminal.IsSuccess ? ChatFinishReason.Stop : null;
         var parts = response.Candidates?.FirstOrDefault()?.Content?.Parts;
         if (parts is null)
         {
-            return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response));
+            return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response), finishReason);
         }
 
         var functionCallCount = parts.Count(part => part.FunctionCall is not null);
@@ -35,6 +39,7 @@ internal sealed class GeminiResponseTranslator
 
         foreach (var part in parts)
         {
+            if (terminal.IsOutputLimit && part.FunctionCall is not null) continue;
             AIContent? translatedContent;
             if (part.Thought == true && (part.Text is not null || part.ThoughtSignature is not null))
             {
@@ -92,7 +97,9 @@ internal sealed class GeminiResponseTranslator
             }
         }
 
-        return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response));
+        if (finishReason == ChatFinishReason.Stop && contents.OfType<FunctionCallContent>().Any())
+            finishReason = ChatFinishReason.ToolCalls;
+        return new GeminiResponseTranslation(contents, unsupportedPartKinds, GetUsage(response), finishReason);
     }
 
     internal static IDictionary<string, object?> ParseArgumentsJson(string? argumentsJson)
@@ -118,6 +125,7 @@ internal sealed class GeminiResponseTranslator
             return GeminiTerminalStatus.Pending;
         }
 
+        if (candidate.FinishReason == FinishReason.MaxTokens) return GeminiTerminalStatus.OutputLimit;
         return candidate.FinishReason == FinishReason.Stop
             ? GeminiTerminalStatus.Succeeded
             : GeminiTerminalStatus.Failed(string.IsNullOrWhiteSpace(candidate.FinishMessage)
@@ -147,9 +155,10 @@ internal sealed class GeminiResponseTranslator
             : default;
 }
 
-internal readonly record struct GeminiTerminalStatus(bool IsTerminal, bool IsSuccess, string? Detail)
+internal readonly record struct GeminiTerminalStatus(bool IsTerminal, bool IsSuccess, string? Detail, bool IsOutputLimit = false)
 {
     public static GeminiTerminalStatus Pending => new(false, false, null);
     public static GeminiTerminalStatus Succeeded => new(true, true, null);
+    public static GeminiTerminalStatus OutputLimit => new(true, true, null, true);
     public static GeminiTerminalStatus Failed(string detail) => new(true, false, detail);
 }

@@ -84,7 +84,7 @@ public sealed class AgentProviderRequestBudgetTests
     }
 
     [Fact]
-    public void Assess_UsesHardLimitForCompactionAdmission()
+    public void Assess_CompactsBeforeTheHardLimitToLeaveRecoveryHeadroom()
     {
         var capabilities = new AgentProviderRunCapabilities(
             SupportsNativeToolCalling: true,
@@ -104,7 +104,7 @@ public sealed class AgentProviderRequestBudgetTests
             [],
             capabilities);
 
-        Assert.False(proactive.NeedsCompaction);
+        Assert.True(proactive.NeedsCompaction);
         Assert.True(proactive.FitsHardLimit);
         Assert.True(overflow.NeedsCompaction);
         Assert.False(overflow.FitsHardLimit);

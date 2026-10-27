@@ -102,8 +102,10 @@ public sealed class TranscriptToolDetailStateTests
         }
     }
 
-    [Fact]
-    public async Task Expansion_LoadsAndResolvesOneExactRevision()
+    [Theory]
+    [InlineData(17)]
+    [InlineData(18)]
+    public async Task Expansion_AcceptsExactOrNewerAuthoritativeDetailsWithoutRedundantRefresh(long returnedRevision)
     {
         var projection = CreateProjection(revision: 17);
         var loads = 0;
@@ -114,7 +116,7 @@ public sealed class TranscriptToolDetailStateTests
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 loads++;
-                return Task.FromResult<AgentTranscriptToolDetailRecord?>(CreateDetail(request, revision: 17));
+                return Task.FromResult<AgentTranscriptToolDetailRecord?>(CreateDetail(request, revision: returnedRevision));
             },
             (_, cancellationToken) =>
             {
@@ -133,6 +135,11 @@ public sealed class TranscriptToolDetailStateTests
         Assert.Equal(1, resolutions);
         Assert.Equal(CorePresentation.TranscriptToolExpansionState.Expanded, state.State);
         Assert.Same(materialized, state.Details);
+        var refreshes = 0;
+        state.RefreshRequested += () => refreshes++;
+        state.UpdateProjection(projection with { DetailRevision = returnedRevision });
+        Assert.Equal(0, refreshes);
+        Assert.True(state.IsExpanded);
 
         state.Collapse();
         Assert.Equal(CorePresentation.TranscriptToolExpansionState.Collapsed, state.State);
@@ -209,6 +216,8 @@ public sealed class TranscriptToolDetailStateTests
         Assert.Same(materialized, state.Details);
         var refresh = Assert.IsType<CorePresentation.TranscriptToolExpansionRequest>(state.BeginExpansion());
         Assert.True(state.IsExpanded);
+        state.UpdateProjection(projection); // A delayed call header cannot supersede its newer result's refresh.
+        Assert.True(state.IsCurrent(refresh));
         var replacement = await state.LoadAsync(refresh, CancellationToken.None);
         Assert.True(state.TryMaterialize(refresh, replacement, out var prepared));
         Assert.Same(materialized, state.Details);
@@ -256,6 +265,57 @@ public sealed class TranscriptToolDetailStateTests
         Assert.Equal(0, staged!.DetailMarkdownBuilder.Length);
         Assert.False(state.CommitExpanded(retry));
         Assert.False(state.TryMaterialize(retry, replacement, out _));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task StaleDetail_RereadsOnceWithoutResolvingTheWrongRevision(bool catchesUp)
+    {
+        var reads = 0;
+        var resolutions = 0;
+        using var state = new CorePresentation.TranscriptToolDetailState(CreateProjection(51),
+            (request, _) => Task.FromResult<AgentTranscriptToolDetailRecord?>(
+                CreateDetail(request, ++reads == 2 && catchesUp ? 51 : 50)),
+            (_, _) =>
+            {
+                resolutions++;
+                return ValueTask.FromResult(new AgentToolPresentation());
+            });
+        var request = state.BeginExpansion()!;
+        if (catchesUp)
+        {
+            var loaded = await state.LoadAsync(request, default);
+            Assert.True(state.TryMaterialize(request, loaded, out _));
+            Assert.True(state.CommitExpanded(request));
+            Assert.Equal(1, resolutions);
+        }
+        else
+        {
+            var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => state.LoadAsync(request, default));
+            state.Fail(request, failure);
+            Assert.Contains("changed while loading", state.FailureText, StringComparison.Ordinal);
+            Assert.DoesNotContain("no longer available", state.FailureText, StringComparison.Ordinal);
+            Assert.Equal(0, resolutions);
+        }
+        Assert.Equal(2, reads);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingOrForeignDetailsAreNotRetriedOrResolved(bool foreign)
+    {
+        var reads = 0;
+        using var state = new CorePresentation.TranscriptToolDetailState(CreateProjection(61),
+            (request, _) =>
+            {
+                reads++;
+                return Task.FromResult<AgentTranscriptToolDetailRecord?>(foreign
+                    ? CreateDetail(request, 60) with { SessionId = Guid.NewGuid() } : null);
+            }, (_, _) => throw new InvalidOperationException("Must not resolve foreign/missing details."));
+        Assert.Null(await state.LoadAsync(state.BeginExpansion()!, default));
+        Assert.Equal(1, reads);
     }
 
     private static CorePresentation.TranscriptToolProjection CreateProjection(long revision)

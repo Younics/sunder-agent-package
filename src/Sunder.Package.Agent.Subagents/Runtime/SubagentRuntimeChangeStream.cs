@@ -103,6 +103,7 @@ internal sealed class SubagentRuntimeChangeStream : IDisposable, IAsyncDisposabl
                         AgentSessionCatalogEvent value => value.Sequence,
                         AgentTurnCatalogEvent value => value.Sequence,
                         AgentProfileCatalogEvent value => value.Sequence,
+                        AgentRunActivityCatalogEvent value => value.Sequence,
                         _ => throw new InvalidDataException("Unknown Runtime catalog event."),
                     };
                     if (sequence != expected && change is not AgentRuntimeCatalogResetEvent) Publish(new(0, SubagentChangeKind.ResnapshotRequired));
@@ -111,8 +112,9 @@ internal sealed class SubagentRuntimeChangeStream : IDisposable, IAsyncDisposabl
                     {
                         case AgentRuntimeCatalogResetEvent: Publish(new(0, SubagentChangeKind.ResnapshotRequired)); break;
                         case AgentSessionCatalogEvent session: Publish(new(0, SubagentChangeKind.Session, SessionId: session.SessionId)); break;
-                        case AgentTurnCatalogEvent turn: Publish(new(0, SubagentChangeKind.Turn, SessionId: turn.SessionId, Turn: turn.Turn)); break;
+                        case AgentTurnCatalogEvent turn: Publish(new(0, SubagentChangeKind.Turn, SessionId: turn.SessionId, Turn: turn.Turn, ActivityGroup: turn.ActivityGroup)); break;
                         case AgentProfileCatalogEvent profile: Publish(new(0, SubagentChangeKind.Profile, ProfileId: profile.ProfileId)); break;
+                        case AgentRunActivityCatalogEvent activity: Publish(new(0, SubagentChangeKind.Activity, SessionId: activity.SessionId, Activity: activity.Activity)); break;
                     }
                 }
             }

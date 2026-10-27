@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text.Json;
+using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Runtime;
 using Xunit;
 
@@ -52,9 +53,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var dashboard = await restarted.Invoke("agent.owner.runtime", "agent-runtime", "dashboard", new { });
             Assert.Contains(dashboard.GetProperty("profiles").EnumerateArray(), item => item.GetProperty("profileId").GetString() == profileId);
             Assert.Contains(dashboard.GetProperty("workspaces").EnumerateArray(), item => item.GetProperty("workspaceId").GetString() == workspaceId);
-            var snapshot = await restarted.Invoke("agent.owner.runtime", "agent-runtime", "chat-snapshot", new
-            { initialTranscriptLimit = 10, preferredProfileId = profileId, preferredWorkspaceId = workspaceId, preferredSessionId = sessionId, includeInitialTranscript = true });
-            Assert.Equal(sessionId, snapshot.GetProperty("selectedSession").GetProperty("session").GetProperty("sessionId").GetGuid());
+            foreach (var compact in new[] { false, true })
+            {
+                var request = new AgentChatSnapshotRequest(10, profileId, workspaceId, sessionId, CompactTranscript: compact);
+                var snapshot = await restarted.Invoke("agent.owner.runtime", "agent-runtime", "chat-snapshot",
+                    JsonSerializer.SerializeToElement(request, CurrentPrivateRpcDescriptors.OwnerJson));
+                Assert.Equal(sessionId, snapshot.GetProperty("selectedSession").GetProperty("session").GetProperty("sessionId").GetGuid());
+                var transcript = snapshot.GetProperty("initialTranscript");
+                Assert.Empty(transcript.GetProperty("turns").EnumerateArray());
+                Assert.Equal(compact ? JsonValueKind.Object : JsonValueKind.Null, transcript.GetProperty("compact").ValueKind);
+                if (compact) Assert.Empty(transcript.GetProperty("compact").GetProperty("entries").EnumerateArray());
+            }
+            var compactPage = await restarted.Invoke("agent.owner.runtime", "agent-runtime", "compact-transcript-page",
+                JsonSerializer.SerializeToElement(new AgentCompactTranscriptRequest(sessionId, AgentCompactTranscriptDirection.Recent, 10),
+                    CurrentPrivateRpcDescriptors.OwnerJson));
+            Assert.Empty(compactPage.GetProperty("entries").EnumerateArray());
             await restarted.Shutdown();
         }
     }

@@ -28,7 +28,7 @@ public sealed class MakerToolContextBudgetTests(ITestOutputHelper output)
             new ChatOptions { Tools = declarations, Instructions = string.Join("\n", descriptors.Select(descriptor => descriptor.RuntimeInstructions).OfType<string>()) }, toolAware: true);
         using var document = JsonDocument.Parse(request.Body);
         var tools = document.RootElement.GetProperty("tools");
-        Assert.Equal(7, tools.GetArrayLength());
+        Assert.Equal(6, tools.GetArrayLength());
         var package = tools.EnumerateArray().Single(tool => tool.GetProperty("name").GetString() == "maker_package");
         Assert.Equal(new[] { "package" }, package.GetProperty("parameters").GetProperty("required").EnumerateArray().Select(value => value.GetString()));
         Assert.Equal("string", package.GetProperty("parameters").GetProperty("properties").GetProperty("query").GetProperty("type").GetString());

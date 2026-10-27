@@ -61,7 +61,7 @@ public sealed partial class AgentLocalStore
             return null;
         }
 
-        var turns = ListTurns(connection, sessionId, transaction);
+        var headers = ListTurnHeadersForSession(connection, sessionId, descending: false, transaction);
         var activeCheckpoint = ReadValidActiveSessionContextCheckpoint(
             connection,
             transaction,
@@ -69,7 +69,19 @@ public sealed partial class AgentLocalStore
             transcriptEpoch,
             activeCheckpointId,
             activeGeneration,
-            turns);
+            headers);
+        // Keep exact header anchors for validation/indexing, but do not reload
+        // already-summarized payloads on every provider/tool cycle.
+        var activeUserTurnId = sourceRun.UserTurnId
+            ?? (sourceRun.Suspension switch
+            {
+                AgentPermissionRunSuspension permission => permission.UserTurnId,
+                AgentChildJoinRunSuspension childJoin => childJoin.UserTurnId,
+                _ => Guid.Empty,
+            });
+        var rawIds = headers.Skip(activeCheckpoint?.Record.OmittedTurnCount ?? 0)
+            .Select(turn => turn.TurnId).Append(activeUserTurnId).Where(id => id != Guid.Empty).Distinct().ToArray();
+        var turns = AttachItems(headers, ListTurnItemsForTurns(connection, rawIds, transaction));
         transaction.Commit();
         return new AgentSessionContinuitySnapshot(
             sessionId,
@@ -78,13 +90,7 @@ public sealed partial class AgentLocalStore
             activeGeneration,
             sourceRun.Key,
             sourceRun.Epoch,
-            sourceRun.UserTurnId
-            ?? (sourceRun.Suspension switch
-            {
-                AgentPermissionRunSuspension permission => permission.UserTurnId,
-                AgentChildJoinRunSuspension childJoin => childJoin.UserTurnId,
-                _ => Guid.Empty,
-            }),
+            activeUserTurnId,
             turns,
             activeCheckpoint);
     }
@@ -106,7 +112,7 @@ public sealed partial class AgentLocalStore
             return null;
         }
 
-        var turns = ListTurns(connection, sessionId, transaction);
+        var turns = ListTurnHeadersForSession(connection, sessionId, descending: false, transaction);
         var checkpoint = ReadValidActiveSessionContextCheckpoint(
             connection,
             transaction,
@@ -313,7 +319,7 @@ public sealed partial class AgentLocalStore
         using (var command = connection.CreateCommand())
         {
             command.Transaction = transaction;
-            command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision FROM AgentTurns WHERE TurnId = $turnId AND SessionId = $sessionId;";
+            command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns WHERE TurnId = $turnId AND SessionId = $sessionId;";
             command.Parameters.AddWithValue("$turnId", request.LastOmittedTurnId.ToString());
             command.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
             using var reader = command.ExecuteReader();
@@ -338,14 +344,12 @@ public sealed partial class AgentLocalStore
                     SELECT TurnId
                     FROM AgentTurns firstTurn
                     WHERE firstTurn.SessionId = $sessionId
-                    ORDER BY firstTurn.CreatedAtUtc COLLATE BINARY, firstTurn.TurnId COLLATE BINARY
+                    ORDER BY firstTurn.TurnSequence
                     LIMIT 1
                 )
             FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND (
-                  CreatedAtUtc COLLATE BINARY < $anchorCreatedAtUtc COLLATE BINARY
-                  OR (CreatedAtUtc = $anchorCreatedAtUtc AND TurnId COLLATE BINARY <= $anchorTurnId COLLATE BINARY));
+              AND TurnSequence <= (SELECT TurnSequence FROM AgentTurns WHERE TurnId = $anchorTurnId AND SessionId = $sessionId);
             """;
         boundaryCommand.Parameters.AddWithValue("$sessionId", request.SessionId.ToString());
         boundaryCommand.Parameters.AddWithValue("$anchorCreatedAtUtc", request.CoveredThroughCreatedAtUtc.ToString("O"));
@@ -551,6 +555,6 @@ public sealed partial class AgentLocalStore
             transcriptEpoch,
             activeCheckpointId,
             activeGeneration,
-            ListTurns(connection, sessionId, transaction))?.Record.SummaryText;
+            ListTurnHeadersForSession(connection, sessionId, descending: false, transaction))?.Record.SummaryText;
     }
 }

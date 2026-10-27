@@ -25,6 +25,10 @@ public sealed record AgentTurnRecord(
     DateTimeOffset CreatedAtUtc,
     DateTimeOffset UpdatedAtUtc)
 {
+    /// <summary>Gets the durable session-local order, independent of wall-clock timestamps.</summary>
+    [Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")]
+    public long TurnSequence { get; init; }
+
     /// <summary>
     /// Gets the monotonically increasing, turn-local content revision. Each append, replacement, or streaming
     /// completion advances it; gaps require consumers to reload a full turn snapshot.

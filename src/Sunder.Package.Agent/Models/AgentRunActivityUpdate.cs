@@ -7,4 +7,7 @@ public sealed record AgentRunActivityUpdate(
     [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long RunRevision,
     AgentRunActivityKind Kind,
     string Text,
-    DateTimeOffset CreatedAtUtc);
+    DateTimeOffset CreatedAtUtc,
+    AgentRunRetryState? Retry = null,
+    string? ReasoningText = null,
+    [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Sequence = 0);

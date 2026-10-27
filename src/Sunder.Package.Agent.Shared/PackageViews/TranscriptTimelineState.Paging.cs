@@ -64,6 +64,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         object? protectedAnchorKey = null,
         CancellationToken cancellationToken = default)
     {
+        if (IsCompact) return await LoadCompactPageAsync(true, protectedAnchorKey, cancellationToken);
         var cursor = _olderPageCursor ?? GetOldestLoadedCursor();
         if (!CanLoadOlder
             || SessionId is not { } sessionId
@@ -124,6 +125,7 @@ internal sealed partial class TranscriptTimelineState<TRow>
         object? protectedAnchorKey = null,
         CancellationToken cancellationToken = default)
     {
+        if (IsCompact) return await LoadCompactPageAsync(false, protectedAnchorKey, cancellationToken);
         var cursor = _newerPageCursor ?? GetNewestLoadedCursor();
         if (!CanLoadNewer
             || SessionId is not { } sessionId
@@ -384,30 +386,30 @@ internal sealed partial class TranscriptTimelineState<TRow>
         => SessionId == sessionId && !cancellationToken.IsCancellationRequested;
 
     private TranscriptPageCursor? GetOldestLoadedCursor()
-        => _projector.TurnWindow.OldestCreatedAtUtc is { } createdAt
-           && _projector.TurnWindow.OldestTurnId is { } turnId
-            ? new TranscriptPageCursor(createdAt, turnId)
+        => _projector.TurnWindow.OrderedTurns().FirstOrDefault() is { } turn
+            ? TranscriptPageCursor.FromTurn(turn)
             : null;
 
     private TranscriptPageCursor? GetNewestLoadedCursor()
-        => _projector.TurnWindow.NewestCreatedAtUtc is { } createdAt
-           && _projector.TurnWindow.NewestTurnId is { } turnId
-            ? new TranscriptPageCursor(createdAt, turnId)
+        => _projector.TurnWindow.OrderedTurns().LastOrDefault() is { } turn
+            ? TranscriptPageCursor.FromTurn(turn)
             : null;
 
     private static bool IsBefore(TranscriptPageCursor candidate, TranscriptPageCursor boundary)
-        => AgentTranscriptTime.Read(candidate.CreatedAtUtc) < AgentTranscriptTime.Read(boundary.CreatedAtUtc)
+        => candidate.TurnSequence < boundary.TurnSequence
+           || candidate.TurnSequence == boundary.TurnSequence && (AgentTranscriptTime.Read(candidate.CreatedAtUtc) < AgentTranscriptTime.Read(boundary.CreatedAtUtc)
            || AgentTranscriptTime.Read(candidate.CreatedAtUtc) == AgentTranscriptTime.Read(boundary.CreatedAtUtc)
-           && string.CompareOrdinal(
-               candidate.TurnId.ToString("D"),
-               boundary.TurnId.ToString("D")) < 0;
+            && string.CompareOrdinal(
+                candidate.TurnId.ToString("D"),
+                boundary.TurnId.ToString("D")) < 0);
 
     private static bool IsAfter(TranscriptPageCursor candidate, TranscriptPageCursor boundary)
-        => AgentTranscriptTime.Read(candidate.CreatedAtUtc) > AgentTranscriptTime.Read(boundary.CreatedAtUtc)
+        => candidate.TurnSequence > boundary.TurnSequence
+           || candidate.TurnSequence == boundary.TurnSequence && (AgentTranscriptTime.Read(candidate.CreatedAtUtc) > AgentTranscriptTime.Read(boundary.CreatedAtUtc)
            || AgentTranscriptTime.Read(candidate.CreatedAtUtc) == AgentTranscriptTime.Read(boundary.CreatedAtUtc)
            && string.CompareOrdinal(
                candidate.TurnId.ToString("D"),
-               boundary.TurnId.ToString("D")) > 0;
+                boundary.TurnId.ToString("D")) > 0);
 
     private async Task<TResult> RunOnPresentationThreadAsync<TResult>(
         Func<TResult> action,
@@ -419,9 +421,8 @@ internal sealed partial class TranscriptTimelineState<TRow>
             var result = default(TResult)!;
             await _presentationDispatcher.InvokeAsync(() =>
             {
-                cancellationToken.ThrowIfCancellationRequested();
                 result = action();
-            }).ConfigureAwait(false);
+            }, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             return result;
         }

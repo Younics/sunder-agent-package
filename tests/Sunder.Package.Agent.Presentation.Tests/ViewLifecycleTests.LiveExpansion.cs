@@ -11,6 +11,7 @@ using Avalonia.Threading;
 using Avalonia.VisualTree;
 using AgentApp::Sunder.Package.Agent.PackageViews;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Runtime;
 using Sunder.Package.Agent.Tests;
@@ -34,19 +35,22 @@ public sealed partial class ViewLifecycleTests
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
         using var profiles = services.ProfileService;
-        await profiles.CreateProfileAsync("Live expansion");
+        var profile = await profiles.CreateProfileAsync("Live expansion");
         var workspace = services.WorkspaceService.CreateWorkspace("Live expansion");
         var session = services.SessionService.CreateSession("Live expansion", workspaceId: workspace.WorkspaceId);
         for (var index = 0; index < 12; index++) services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant,
             $"### Earlier {index}\n\n" + new string('a', 160 + index * 17));
         var content = string.Join('\n', Enumerable.Range(0, 90).Select(index => $"recorded line {index}"));
         var args = JsonSerializer.Serialize(new { path = "Views/DioramaControl.cs", content });
-        services.SessionService.AppendToolCallTurn(session.SessionId, AgentMessageRole.Assistant, "live-write", "write", args);
-        var stream = services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "Live response");
+        var call = services.SessionService.AppendToolCallTurn(session.SessionId, AgentMessageRole.Assistant, "live-write", "write", args);
+        var lease = new AgentDurableRunLease(services.SessionService.Store.ReserveRun(session.SessionId, profile.ProfileId, "Live response"));
+        Assert.NotNull(services.SessionService.TryTransitionRun(lease, AgentRunStatus.Running, "Thinking."));
+        var stream = services.SessionService.AppendTextTurn(lease, AgentMessageRole.Assistant, "Live response");
         for (var index = 0; index < 8; index++) services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant,
             $"Trailing context {index}\n\n" + new string('b', 240));
-        var revision = services.SessionService.GetNextRunRevision(session.SessionId);
-        services.SessionService.SaveCheckpoint(session.SessionId, revision, AgentRunStatus.Running, "Thinking.");
+        var revision = lease.Key.RunRevision;
+        var transcriptResets = 0;
+        services.SessionService.TranscriptReset += _ => transcriptResets++;
         var gateway = new BlockingToolDetailGateway(services.SessionService);
         using var view = RegressionTestAppViews.ChatView(profiles, services.WorkspaceService, gateway,
             NoOpPermissionGateway.Instance, NoOpRunGateway.Instance, new AgentChatSelectionStateService(scope.Context),
@@ -59,6 +63,12 @@ public sealed partial class ViewLifecycleTests
             await view.OnNavigatedToAsync(new("younics.ai.agent.chat", new Dictionary<string, string?>()));
             await Settle();
             var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            var loadingTrace = string.Empty;
+            model.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(model.IsTranscriptLoading) && model.IsTranscriptLoading)
+                    loadingTrace = Environment.StackTrace;
+            };
             model.IsDetailedTranscript = detailed;
             if (!detailed) await RevealCompactCallsAsync(view, model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
             var row = Assert.Single(model.Messages.OfType<AgentToolInvocationRowViewModel>());
@@ -104,7 +114,7 @@ public sealed partial class ViewLifecycleTests
             await gateway.DetailStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             for (var update = 0; update < 4; update++)
             {
-                services.SessionService.UpdateTextTurn(stream.TurnId, "Response while refreshing " + new string('s', 120 * (update + 1)));
+                services.SessionService.UpdateTextTurn(lease, stream.TurnId, "Response while refreshing " + new string('s', 120 * (update + 1)));
                 services.SessionService.ReportRunActivity(session.SessionId, revision, AgentRunActivityKind.Reasoning, $"Thinking during refresh {update}");
                 await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
@@ -114,14 +124,15 @@ public sealed partial class ViewLifecycleTests
                 Assert.False(gateway.DetailCanceled);
             }
             gateway.ReleaseDetail.TrySetResult();
-            await WaitUntilAsync(() => row.IsExpanded && !row.IsPreparing && !ReferenceEquals(row.ExpandedDetails, oldDetails));
+            await WaitUntilAsync(() => row.IsExpanded && !row.IsPreparing && !ReferenceEquals(row.ExpandedDetails, oldDetails),
+                () => $"state={row.ExpansionState}, revision={row.DetailRevision}, failure={row.DetailLoadFailureText}, cancelled={gateway.DetailCanceled}, retained={model.Messages.Contains(row)}");
             Assert.Same(row, Assert.Single(model.Messages.OfType<AgentToolInvocationRowViewModel>()));
-            var recorded = services.SessionService.Store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(session.SessionId, CallId: "live-write"));
+            var recorded = services.SessionService.Store.GetTranscriptToolDetail(new AgentTranscriptToolDetailRequest(session.SessionId, ToolExecutionId: call.Items[0].ToolExecutionId));
             Assert.True(row.ExpandedDetails!.HasToolDiff, $"status={row.StatusText},tool={recorded?.ToolId},args={recorded?.ArgumentsJson?.Length},payload={recorded?.PresentationPayloadJson?.Length},failure={row.DetailLoadFailureText}");
             for (var update = 0; update < 4; update++)
             {
                 stage = $"live update {update}";
-                services.SessionService.UpdateTextTurn(stream.TurnId, "Live response " + new string('s', 120 * (update + 1)));
+                services.SessionService.UpdateTextTurn(lease, stream.TurnId, "Live response " + new string('s', 120 * (update + 1)));
                 services.SessionService.ReportRunActivity(session.SessionId, revision, AgentRunActivityKind.Reasoning, $"Thinking update {update}");
                 services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, $"New row {update}");
                 await Settle();
@@ -146,7 +157,7 @@ public sealed partial class ViewLifecycleTests
                     queued = false;
                     if (!observing) return;
                     Assert.True(header.IsAttachedToVisualTree());
-                    Assert.False(model.IsTranscriptLoading);
+                    Assert.False(model.IsTranscriptLoading, loadingTrace);
                     frames.Add(header.TranslatePoint(default, viewer)!.Value.Y);
                 }, DispatcherPriority.Render);
             }
@@ -158,7 +169,7 @@ public sealed partial class ViewLifecycleTests
                 await Settle();
                 for (var update = 4; update < 8; update++)
                 {
-                    services.SessionService.UpdateTextTurn(stream.TurnId, "Continued stream " + new string('s', 120 * (update + 1)));
+                    services.SessionService.UpdateTextTurn(lease, stream.TurnId, "Continued stream " + new string('s', 120 * (update + 1)));
                     services.SessionService.ReportRunActivity(session.SessionId, revision, AgentRunActivityKind.Reasoning, $"Thinking after collapse {update}");
                     services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, $"New row {update}");
                     await Settle();
@@ -166,6 +177,7 @@ public sealed partial class ViewLifecycleTests
                 Assert.NotEmpty(frames);
                 Assert.All(frames, top => Assert.InRange(Math.Abs(top - before), 0, 1));
                 Assert.False(row.HasMaterializedDetails);
+                Assert.Equal(0, transcriptResets);
             }
             finally { observing = false; viewer.LayoutUpdated -= Observe; }
         }

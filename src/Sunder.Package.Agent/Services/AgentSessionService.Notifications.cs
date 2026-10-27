@@ -15,6 +15,7 @@ public sealed partial class AgentSessionService
 
     private void DispatchSessionChanged(Guid sessionId)
     {
+        _ = GetRunActivity(sessionId); // Retire ended/replaced runs before publishing their session state.
         var handlers = SessionChanged;
         if (handlers is null)
         {
@@ -76,6 +77,8 @@ public sealed partial class AgentSessionService
 
     private void DispatchTurnMutated(AgentTurnMutation mutation)
     {
+        if (mutation.Turn?.Kind is AgentTurnKind.ToolCall or AgentTurnKind.ToolResult)
+            mutation = mutation with { ActivityGroup = _store.ReadActivityGroupForTurn(mutation.SessionId, mutation.TurnId) };
         var handlers = TurnMutated;
         if (handlers is null)
         {
@@ -314,11 +317,6 @@ public sealed partial class AgentSessionService
             }
         }
     }
-
-    private void NotifyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
-        => QueueSessionNotification(
-            sessionId,
-            () => DispatchRunActivityChanged(sessionId, activity));
 
     private void DispatchRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
     {

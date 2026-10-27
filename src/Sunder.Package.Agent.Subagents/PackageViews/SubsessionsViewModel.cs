@@ -94,7 +94,8 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _runActivity = new AgentRunActivityState(
             () => IsSelectedSubsessionRunActive,
             () => _timeline.IsFollowingLatest,
-            activityQuietDelay);
+            activityQuietDelay,
+            () => (_timeline.IsCompact, _timeline.HasCompactRunningTools));
         _timeline.RowsChanging += isPageApplication => TranscriptChanging?.Invoke(isPageApplication);
         _timeline.RowsChanged += OnTimelineRowsChanged;
         _timeline.PropertyChanged += OnTimelinePropertyChanged;
@@ -540,7 +541,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         if (SelectedSubsession?.SessionId == sessionId)
         {
             _knownCheckpoints.TryGetValue(sessionId, out var checkpoint);
-            _runActivity.TrackCheckpoint(checkpoint);
+            TrackCheckpointActivity(checkpoint);
             ApplyRunActivityState();
             _timeline.NotifyRowsChanged();
         }
@@ -548,12 +549,12 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         _timeline.RefreshRelatedRows();
     }
 
-    private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
+    private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn, AgentTranscriptActivityGroup? group)
         => RunOnUiThread(() =>
         {
             if (!_disposed && SelectedSubsession?.SessionId == sessionId)
             {
-                _timeline.ApplyLiveTurn(turn);
+                _timeline.ApplyLiveTurn(turn, group);
                 ApplyRunActivityState();
             }
         });
@@ -578,17 +579,18 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
 
     private void ApplyRunActivityState()
     {
-        if (RunActivityRow.MatchesPresentation(_runActivity.Text, _runActivity.ShouldShow)) return;
+        if (RunActivityRow.MatchesRunPresentation(_runActivity.Text, _runActivity.ShouldShow, _runActivity.ReasoningText, _runActivity.Retry)) return;
         var changesLayout = !_timeline.IsInitialLoading && _timeline.SessionId is { } activitySession
                             && activitySession == SelectedSubsession?.SessionId
                             && (RunActivityRow.IsVisible || _runActivity.ShouldShow);
         if (changesLayout) TranscriptChanging?.Invoke(false);
-        try { RunActivityRow.SetPresentation(_runActivity.Text, _runActivity.ShouldShow); }
+        try { RunActivityRow.SetRunPresentation(_runActivity.Text, _runActivity.ShouldShow, _runActivity.ReasoningText, _runActivity.Retry); }
         finally { if (changesLayout) TranscriptChanged?.Invoke(); }
     }
 
     private void OnTimelineRowsChanged()
     {
+        if (_timeline.IsCompact) _runActivity.NotifyFollowStateChanged();
         NotifyTranscriptStateChanged();
         TranscriptChanged?.Invoke();
     }
@@ -723,10 +725,16 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
             selectionAuthorityRevision = IntentRevision;
         }, cancellationToken);
 
-        await ReloadSubsessionsAsync(null, cancellationToken);
+        // Reconcile metadata only: targeted live events already update the retained transcript.
+        await ReloadSubsessionsAsync(null, cancellationToken, suppressTranscriptLoad: true);
         Task transcriptLoad = Task.CompletedTask;
         await RunOnUiThreadAsync(() =>
         {
+            if (!IsPreparingAnchoredNavigation && _timeline.SessionId != SelectedSubsession?.SessionId)
+            {
+                LoadTranscript(SelectedSubsession?.SessionId);
+                transcriptLoad = Volatile.Read(ref _transcriptLoadOperation);
+            }
             if (selectionAuthorityRevision != IntentRevision
                 || SelectedSubsession?.SessionId != selectedSessionId)
             {
@@ -779,6 +787,7 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
         {
             _knownCheckpoints[checkpoint.SessionId] = checkpoint;
         }
+        MergeRunActivities(catalog.Activities);
     }
 
     private static Guid? TryGetSessionId(IReadOnlyDictionary<string, string?> parameters)
@@ -788,5 +797,4 @@ public sealed partial class SubsessionsViewModel : ObservableObject, IDisposable
            && Guid.TryParse(value, out var sessionId)
             ? sessionId
             : null;
-
 }

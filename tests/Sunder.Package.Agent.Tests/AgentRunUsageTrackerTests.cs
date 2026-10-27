@@ -6,46 +6,41 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class AgentRunBudgetTrackerTests
+public sealed class AgentRunUsageTrackerTests
 {
     [Fact]
-    public void DefaultLimits_BoundTheWholeRun()
+    public async Task Charges_HaveNoCumulativeLimitAndRetainInitialState()
     {
-        var limits = AgentRunBudgetLimits.Default;
-
-        Assert.Equal(TimeSpan.FromMinutes(30), limits.MaxWallClock);
-        Assert.Equal(64, limits.MaxProviderCycles);
-        Assert.Equal(128, limits.MaxToolCalls);
+        var tracker = new AgentRunUsageTracker(new AgentRunBudgetState(10_000, 20_000, 30_000));
+        Assert.Equal(new AgentRunBudgetState(10_001, 20_000, 30_100), await tracker.ChargeProviderAttemptAsync(100));
+        Assert.Equal(new AgentRunBudgetState(10_001, 21_000, 30_100), await tracker.ChargeToolCallsAsync(1_000));
     }
 
     [Fact]
-    public void Constructor_RejectsNonPositiveLimits()
+    public async Task Charges_ValidateInputsAndHonorCancellation()
     {
-        var limits = new AgentRunBudgetLimits(TimeSpan.Zero, 1, 1);
-
-        Assert.Throws<ArgumentOutOfRangeException>(() => new AgentRunBudgetTracker(limits));
+        var tracker = new AgentRunUsageTracker();
+        Assert.Throws<ArgumentOutOfRangeException>(() => tracker.ChargeProviderAttemptAsync(0));
+        Assert.Throws<ArgumentOutOfRangeException>(() => tracker.ChargeToolCallsAsync(-1));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        Assert.ThrowsAny<OperationCanceledException>(() => tracker.ChargeToolCallsAsync(1, cancellation.Token));
+        Assert.Equal(default, await tracker.ChargeToolCallsAsync(0));
     }
 
     [Fact]
-    public async Task ChargeProviderAttempt_AppliesInitialStateAcrossContinuation()
+    public async Task Charges_SaturateInsteadOfOverflowing()
     {
-        var tracker = new AgentRunBudgetTracker(
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 1, 10),
-            new AgentRunBudgetState(ProviderCycles: 1, ToolCalls: 0, SubmittedContextTokens: 10));
-
-        var exception = await Assert.ThrowsAsync<AgentRunBudgetExceededException>(() =>
-            tracker.ChargeProviderAttemptAsync(10).AsTask());
-
-        Assert.Equal(AgentRunBudgetKind.ProviderCycles, exception.Violation.Kind);
-        Assert.Equal(2, exception.Violation.Consumed);
+        var tracker = new AgentRunUsageTracker(new AgentRunBudgetState(long.MaxValue, long.MaxValue, long.MaxValue));
+        await tracker.ChargeProviderAttemptAsync(10);
+        Assert.Equal(new AgentRunBudgetState(long.MaxValue, long.MaxValue, long.MaxValue), await tracker.ChargeToolCallsAsync(10));
     }
 
     [Fact]
     public async Task Charges_UseDurableCounterAsSourceOfTruth()
     {
         var durableState = new AgentRunBudgetState(4, 8, 16);
-        var tracker = new AgentRunBudgetTracker(
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(1), 10, 10),
+        var tracker = new AgentRunUsageTracker(
             durableCharge: (charge, _) => ValueTask.FromResult(durableState = new AgentRunBudgetState(
                 durableState.ProviderCycles + charge.ProviderCycles,
                 durableState.ToolCalls + charge.ToolCalls,
@@ -54,22 +49,20 @@ public sealed class AgentRunBudgetTrackerTests
         await tracker.ChargeToolCallsAsync(2);
 
         Assert.Equal(new AgentRunBudgetState(4, 10, 16), durableState);
-        var exception = await Assert.ThrowsAsync<AgentRunBudgetExceededException>(() => tracker.ChargeToolCallsAsync(1).AsTask());
-        Assert.Equal(11, exception.Violation.Consumed);
+        Assert.Equal(new AgentRunBudgetState(4, 11, 16), await tracker.ChargeToolCallsAsync(1));
     }
 
     [Fact]
     public async Task DurableCharge_RemainsPendingUntilAuthoritativeAdmissionCompletes()
     {
         var admitted = new TaskCompletionSource<AgentRunBudgetState>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var tracker = new AgentRunBudgetTracker(new(TimeSpan.FromMinutes(1), 1, 1),
+        var tracker = new AgentRunUsageTracker(
             durableCharge: (_, token) => new(admitted.Task.WaitAsync(token)));
 
         var pending = tracker.ChargeProviderAttemptAsync(10).AsTask();
         Assert.False(pending.IsCompleted);
         admitted.SetResult(new(ProviderCycles: 2, ToolCalls: 0, SubmittedContextTokens: 10));
-        var rejected = await Assert.ThrowsAsync<AgentRunBudgetExceededException>(() => pending);
-        Assert.Equal(AgentRunBudgetKind.ProviderCycles, rejected.Violation.Kind);
+        Assert.Equal(new AgentRunBudgetState(2, 0, 10), await pending);
     }
 
     [Fact]

@@ -194,14 +194,11 @@ public sealed partial class AgentLocalStore
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision
+            SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence
             FROM AgentTurns
             WHERE SessionId = $sessionId
-              AND ($afterCreatedAtUtc IS NULL
-                   OR CreatedAtUtc COLLATE BINARY > $afterCreatedAtUtc COLLATE BINARY
-                   OR (CreatedAtUtc = $afterCreatedAtUtc
-                       AND TurnId COLLATE BINARY > $afterTurnId COLLATE BINARY))
-            ORDER BY CreatedAtUtc COLLATE BINARY, TurnId COLLATE BINARY
+              AND ($afterTurnId IS NULL OR TurnSequence > (SELECT TurnSequence FROM AgentTurns WHERE TurnId = $afterTurnId AND SessionId = $sessionId))
+            ORDER BY TurnSequence
             LIMIT $limit;
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
@@ -324,17 +321,27 @@ public sealed partial class AgentLocalStore
         int afterLimit,
         long revision = 0)
     {
-        var anchor = GetTranscriptHeader(turnId)
-            ?? throw new InvalidOperationException("The transcript anchor is no longer available.");
-        if (anchor.SessionId != sessionId)
+        using var connection = CreateConnection();
+        connection.Open();
+        using var transaction = connection.BeginTransaction(deferred: true);
+        var position = ResolveDetailedAnchor(connection, transaction, sessionId, turnId)
+            ?? throw new InvalidOperationException("The transcript anchor is no longer available in the requested session.");
+        var anchor = ReadDetailedHeaders(connection, transaction, [position.Turn]).Single();
+        if (position.Turn != turnId)
         {
-            throw new InvalidOperationException("The transcript anchor does not belong to the requested session.");
+            // Exact history navigation can select the result receipt of an
+            // invocation. Represent that same logical slot with the requested
+            // bounded receipt, preserving its exact turn/item identity and the
+            // invocation's durable position. Do not add a second timeline entry.
+            anchor = (GetTranscriptHeader(connection, turnId, transaction)
+                ?? throw new InvalidOperationException("The transcript anchor is no longer available."))
+                with { TurnSequence = position.Sequence };
         }
 
         var boundedBefore = Math.Clamp(beforeLimit, 0, HistorySearchLimits.AroundTurnSideLimit);
         var boundedAfter = Math.Clamp(afterLimit, 0, HistorySearchLimits.AroundTurnSideLimit);
-        var before = ListTranscriptHeadersBefore(sessionId, anchor.CreatedAtUtc, anchor.TurnId, boundedBefore + 1);
-        var after = ListTranscriptHeadersAfter(sessionId, anchor.CreatedAtUtc, anchor.TurnId, boundedAfter + 1);
+        var before = ReadDetailedTranscript(connection, transaction, sessionId, boundedBefore + 1, position.Sequence);
+        var after = ReadDetailedTranscript(connection, transaction, sessionId, boundedAfter + 1, position.Sequence, before: false);
         var hasOlder = before.Count > boundedBefore;
         var hasNewer = after.Count > boundedAfter;
         if (hasOlder)
@@ -346,6 +353,7 @@ public sealed partial class AgentLocalStore
             after = after.Take(boundedAfter).ToArray();
         }
 
+        transaction.Commit();
         return new AgentTranscriptAroundTurnPage(
             revision,
             [.. before, anchor, .. after],

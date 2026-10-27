@@ -78,9 +78,7 @@ public sealed partial class BuilderDevelopmentService
                     }
                     await worker.Service.CompleteDevelopmentCommandAsync(_appId, command.RequestId, response, error, token).ConfigureAwait(false);
                 }
-                catch (SunderRpcException error) when (!token.IsCancellationRequested && (error.Error.Kind is SunderRpcErrorKind.Unavailable
-                    or SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.ResourceExhausted
-                    || error.Error is { Kind: SunderRpcErrorKind.Domain, Code: "agent.builder.development-unavailable" }))
+                catch (SunderRpcException error) when (!token.IsCancellationRequested && IsObservationUnavailable(error))
                 {
                     // Reconnect command observation only. A read command was already
                     // removed from its original queue; it is never replayed here.
@@ -90,7 +88,17 @@ public sealed partial class BuilderDevelopmentService
             }
         }
         catch (OperationCanceledException error) when (error.CancellationToken == token && token.IsCancellationRequested) { }
+        catch (SunderRpcException error) when (token.IsCancellationRequested && IsObservationUnavailable(error))
+        {
+            // Retirement can settle the generated read with a stale-endpoint
+            // failure after activation cancellation wins. That is an ended
+            // observation, not a cleanup fault or authority to replay the batch.
+        }
     }
+
+    private static bool IsObservationUnavailable(SunderRpcException error)
+        => error.Error.Kind is SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.StaleEndpoint or SunderRpcErrorKind.ResourceExhausted
+            || error.Error is { Kind: SunderRpcErrorKind.Domain, Code: "agent.builder.development-unavailable" };
 
     private static bool TryClassifyRequestFailure(Exception failure, out string? code)
     {

@@ -59,13 +59,13 @@ public sealed partial class ViewLifecycleTests
             Assert.False(group.IsExpanded);
             Assert.Empty(model.TranscriptItems.OfType<AgentToolInvocationRowViewModel>());
             Assert.DoesNotContain(view.GetVisualDescendants().OfType<Button>(), button => button.Classes.Contains("tool-step-header"));
-            Assert.False(Assert.Single(model.Messages.OfType<AgentToolInvocationRowViewModel>()).HasMaterializedDetails);
+            Assert.Empty(model.Messages.OfType<AgentToolInvocationRowViewModel>());
         }
         finally { window.Close(); }
     }
 
     [AvaloniaFact]
-    public async Task AgentActivityGroups_HistoricalOperationReceiptsDoNotKeepIdleHistoryAnimating()
+    public async Task AgentActivityGroups_ReceiptMetadataCannotKeepCompletedInvocationsAnimating()
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
@@ -75,8 +75,8 @@ public sealed partial class ViewLifecycleTests
         var session = services.SessionService.CreateSession("Historical operations", workspaceId: workspace.WorkspaceId);
         foreach (var call in new[] { "apply", "observe" })
         {
-            services.SessionService.AppendToolCallTurn(session.SessionId, AgentMessageRole.Assistant, call, "maker_operation", "{}");
-            services.SessionService.AppendToolResultTurn(session.SessionId, call, "maker_operation", "{}", "Original receipt", "Package operation running",
+            services.SessionService.AppendToolCallTurn(session.SessionId, AgentMessageRole.Assistant, call, "maker_apply", "{}");
+            services.SessionService.AppendToolResultTurn(session.SessionId, call, "maker_apply", "{}", "Original receipt", "Package operation running",
                 null, null, false, false, null, null, "{\"operationStatus\":\"running\",\"operationRef\":\"o-original\"}");
         }
         services.SessionService.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "The operation was submitted; its final effect has not been verified.");
@@ -94,15 +94,21 @@ public sealed partial class ViewLifecycleTests
                 var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
                 var group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
                 Assert.False(group.IsRunning);
-                Assert.Equal("1 Unverified", group.StatusText); // Two checks of one operation.
+                Assert.Empty(group.StatusText);
+                Assert.Equal("✓", group.StatusIconText);
+                Assert.Empty(model.Messages.OfType<AgentToolInvocationRowViewModel>());
+                group.IsExpanded = true;
+                await WaitForPendingCoordinatorOperationsAsync(view);
+                Assert.Equal(2, model.Messages.OfType<AgentToolInvocationRowViewModel>().Count());
                 Assert.All(model.Messages.OfType<AgentToolInvocationRowViewModel>(), tool =>
                 {
                     Assert.False(tool.IsRunning);
-                    Assert.Equal("Checked · pending", tool.StatusText);
-                    Assert.False(tool.IsCompleted);
+                    Assert.Equal("Completed", tool.StatusText);
+                    Assert.True(tool.IsCompleted);
                 });
                 var header = Assert.Single(view.GetVisualDescendants().OfType<Button>(), button => ReferenceEquals(button.DataContext, group));
                 Assert.DoesNotContain(header.GetVisualDescendants().OfType<ProgressBar>(), bar => bar.IsVisible || bar.IsIndeterminate);
+                Assert.DoesNotContain(header.GetVisualDescendants().OfType<TextBlock>(), block => block.IsVisible && block.Text == "Completed");
             }
             finally { window.Close(); }
         }
@@ -143,9 +149,10 @@ public sealed partial class ViewLifecycleTests
             var model = Assert.IsType<AgentChatViewModel>(view.DataContext);
             var calls = model.Messages.OfType<AgentToolInvocationRowViewModel>().ToArray();
             var group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
-            Assert.Equal(8, calls.Length); // A call and its result are one invocation.
+            Assert.Empty(calls); // Collapsed groups do not create invocation headers.
             Assert.Equal("1 Read · 1 Glob · 1 Shell · 1 Web Search · 1 Edit · 1 Patch · 1 MCP Tool · 1 Web Fetch", group.Summary);
-            Assert.Equal("1 Failed", group.StatusText);
+            Assert.Equal("1!", group.StatusText);
+            Assert.Empty(group.StatusIconText);
             Assert.True(group.IsRunning);
             Assert.False(group.IsExpanded);
             Assert.All(calls, call => Assert.False(call.HasMaterializedDetails));
@@ -155,11 +162,16 @@ public sealed partial class ViewLifecycleTests
             Assert.Equal(HorizontalAlignment.Stretch, header.HorizontalAlignment);
             AssertActivityHeaderMatchesUserMessage(view, header);
             Assert.NotNull(Avalonia.Automation.AutomationProperties.GetHelpText(header));
-            Assert.Single(header.GetVisualDescendants().OfType<ProgressBar>(), progress => progress.IsVisible && progress.IsIndeterminate);
+            var progress = Assert.Single(header.GetVisualDescendants().OfType<ProgressBar>(), progress => progress.IsVisible && progress.IsIndeterminate);
+            Assert.Equal(12, progress.Width);
+            Assert.Single(header.GetVisualDescendants().OfType<TextBlock>(), block => block.IsVisible && block.Text == "1!");
+            Assert.DoesNotContain(header.GetVisualDescendants().OfType<TextBlock>(), block => block.IsVisible && block.Text is "Running" or "…" or "!");
             header.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await WaitForPendingCoordinatorOperationsAsync(view);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             Assert.True(group.IsExpanded);
+            calls = model.Messages.OfType<AgentToolInvocationRowViewModel>().ToArray();
+            Assert.Equal(8, calls.Length); // A call and its result are one invocation.
             Assert.All(calls, call => Assert.False(call.HasMaterializedDetails));
 
             var toolHeader = Assert.Single(view.GetVisualDescendants().OfType<Button>(), button =>
@@ -172,15 +184,29 @@ public sealed partial class ViewLifecycleTests
             await WaitForPendingCoordinatorOperationsAsync(view);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             Assert.False(group.IsExpanded);
+            Assert.Empty(model.Messages.OfType<AgentToolInvocationRowViewModel>());
+            var exactAnchor = calls[1].AnchorKey;
+            Assert.Equal(group.AnchorKey, model.ResolveVisibleTranscriptAnchor(exactAnchor));
+            group.IsExpanded = true;
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var reloaded = model.Messages.OfType<AgentToolInvocationRowViewModel>().Single(call => Equals(call.AnchorKey, exactAnchor));
+            Assert.NotSame(calls[1], reloaded);
+            Assert.False(reloaded.HasMaterializedDetails);
             var realized = typeof(AgentChatView).GetMethod("RealizeTranscriptAnchor", BindingFlags.Instance | BindingFlags.NonPublic)!
-                .Invoke(view, [calls[1].AnchorKey]);
+                .Invoke(view, [exactAnchor]);
             Assert.True(group.IsExpanded);
-            Assert.Same(calls[1], Assert.IsAssignableFrom<Control>(realized).DataContext);
+            Assert.Same(reloaded, Assert.IsAssignableFrom<Control>(realized).DataContext);
             model.IsDetailedTranscript = true;
+            await WaitForPendingCoordinatorOperationsAsync(view);
             Assert.Empty(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
-            Assert.All(calls, call => Assert.Contains(call, model.TranscriptItems));
+            Assert.Equal(8, model.TranscriptItems.OfType<AgentToolInvocationRowViewModel>().Count());
+            var groupAnchor = group.AnchorKey;
             model.IsDetailedTranscript = false;
-            Assert.Same(group, Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>()));
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
+            Assert.Equal(groupAnchor, group.AnchorKey);
+            Assert.Empty(model.Messages.OfType<AgentToolInvocationRowViewModel>());
             foreach (var width in new[] { 900, 480, 340, 900 })
             {
                 window.Width = width;
@@ -198,11 +224,13 @@ public sealed partial class ViewLifecycleTests
                 Assert.InRange(Math.Abs(row.Bounds.Width - toggle.Bounds.Right), 0, 1);
                 if (withPaths) Assert.True(area.Bounds.Right <= toggle.Bounds.Left);
                 toggle.IsChecked = true;
+                await WaitForPendingCoordinatorOperationsAsync(view);
                 await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
                 Assert.True(model.IsDetailedTranscript);
                 Assert.Equal("Compact activity", toggle.Content);
                 toggle.IsChecked = false;
                 await WaitForPendingCoordinatorOperationsAsync(view);
+                group = Assert.Single(model.TranscriptItems.OfType<AgentActivityGroupRowViewModel>());
             }
             Assert.Equal(history, JsonSerializer.Serialize(services.SessionService.ListTurns(session.SessionId)));
         }
@@ -210,7 +238,7 @@ public sealed partial class ViewLifecycleTests
     }
 
     [AvaloniaFact]
-    public async Task SubsessionActivityGroups_UseTheSameViewOnlyGroupingAndLazyCallExpansion()
+    public async Task SubsessionActivityGroups_UseTheSameSummaryPagingAndLazyCallExpansion()
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
@@ -220,7 +248,9 @@ public sealed partial class ViewLifecycleTests
         var parent = services.SessionService.CreateSession("Parent", workspaceId: workspace.WorkspaceId);
         var child = services.SessionService.CreateSession("Child", parentSessionId: parent.SessionId,
             rootSessionId: parent.SessionId, profileId: profile.ProfileId, agentKind: "subagent");
-        services.SessionService.AppendTextTurn(child.SessionId, AgentMessageRole.User, "Inspect the delegated workspace files.");
+        var attachment = await new AgentAttachmentService(scope.Context).StoreAttachmentAsync(child.SessionId,
+            new AgentAttachmentUploadRequest("note.txt", "text/plain", System.Text.Encoding.UTF8.GetBytes("Attachment fixture")));
+        services.SessionService.AppendUserTurn(child.SessionId, AgentMessageRole.User, string.Empty, [attachment]);
         AppendMixedActivity(services.SessionService, child.SessionId);
         services.ExtensionCatalog.AddRuntimeCatalog(new AgentRuntimeCatalog(services.SessionService, profiles, services.WorkspaceService));
         using var adapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, services.ExtensionCatalog);
@@ -236,24 +266,35 @@ public sealed partial class ViewLifecycleTests
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var group = Assert.Single(model.TranscriptItems.OfType<SubsessionActivityGroupRowViewModel>());
             var calls = model.Messages.OfType<SubsessionToolInvocationRowViewModel>().ToArray();
-            Assert.Equal(8, calls.Length);
-            Assert.Equal("1 Failed", group.StatusText);
+            Assert.Empty(calls);
+            Assert.Equal("1!", group.StatusText);
+            Assert.Empty(group.StatusIconText);
             Assert.True(group.IsRunning);
             Assert.False(group.IsExpanded);
             var header = Assert.Single(view.GetVisualDescendants().OfType<Button>(), button => ReferenceEquals(button.DataContext, group));
+            var progress = Assert.Single(header.GetVisualDescendants().OfType<ProgressBar>(), progress => progress.IsVisible && progress.IsIndeterminate);
+            Assert.Equal(12, progress.Width);
+            Assert.Single(header.GetVisualDescendants().OfType<TextBlock>(), block => block.IsVisible && block.Text == "1!");
             Assert.Equal(0, header.Margin.Left);
             AssertActivityHeaderMatchesUserMessage(view, header);
             header.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await GetPendingCoordinatorOperations(view);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             Assert.True(group.IsExpanded);
+            calls = model.Messages.OfType<SubsessionToolInvocationRowViewModel>().ToArray();
+            Assert.Equal(8, calls.Length);
             Assert.All(calls, call => Assert.False(call.HasMaterializedDetails));
             Assert.All(calls, call => Assert.Contains(call, model.TranscriptItems));
             model.IsDetailedTranscript = true;
+            await WaitForPendingCoordinatorOperationsAsync(view);
             Assert.Equal("Compact activity", model.ActivityViewToggleText);
             Assert.Empty(model.TranscriptItems.OfType<SubsessionActivityGroupRowViewModel>());
+            var groupAnchor = group.AnchorKey;
             model.IsDetailedTranscript = false;
-            Assert.Same(group, Assert.Single(model.TranscriptItems.OfType<SubsessionActivityGroupRowViewModel>()));
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            group = Assert.Single(model.TranscriptItems.OfType<SubsessionActivityGroupRowViewModel>());
+            Assert.Equal(groupAnchor, group.AnchorKey);
+            Assert.Empty(model.Messages.OfType<SubsessionToolInvocationRowViewModel>());
             group.IsExpanded = false;
             foreach (var width in new[] { 900, 480, 340, 900 })
             {
@@ -279,6 +320,48 @@ public sealed partial class ViewLifecycleTests
         Assert.NotNull(userOrigin);
         Assert.NotNull(headerOrigin);
         Assert.InRange(Math.Abs(userOrigin.Value.X - headerOrigin.Value.X), 0, 1);
+    }
+
+    [AvaloniaFact]
+    public async Task SubsessionActivityGroups_CompactHistoryNavigationRevealsACompleteLargeGroupWithoutToolPayloads()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var services = CreateAgentServices(scope);
+        using var profiles = services.ProfileService;
+        var profile = await profiles.CreateProfileAsync("Compact navigation");
+        var workspace = services.WorkspaceService.CreateWorkspace("Workspace");
+        var parent = services.SessionService.CreateSession("Parent", workspaceId: workspace.WorkspaceId);
+        var child = services.SessionService.CreateSession("Child", parentSessionId: parent.SessionId,
+            rootSessionId: parent.SessionId, profileId: profile.ProfileId, agentKind: "subagent");
+        var calls = Enumerable.Range(0, 123).Select(index => services.SessionService.AppendToolCallTurn(child.SessionId,
+            AgentMessageRole.Assistant, "navigate-" + index, "read", "{\"path\":\"file.txt\"}")).ToArray();
+        var target = calls[111];
+        for (var index = 0; index < 80; index++)
+            services.SessionService.AppendTextTurn(child.SessionId, AgentMessageRole.Assistant, "Later message " + index);
+        services.ExtensionCatalog.AddRuntimeCatalog(new AgentRuntimeCatalog(services.SessionService, profiles, services.WorkspaceService));
+        using var adapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, services.ExtensionCatalog);
+        var model = adapter.CreateViewModel();
+        using var view = new SubsessionsView(model);
+        var window = new Window { Width = 900, Height = 600, Content = view };
+        window.Show();
+        try
+        {
+            Assert.True(await view.PrepareNavigationAsync(CreateSubsessionNavigation(child.SessionId, target.TurnId,
+                target.Items.Single().ItemId, "Activity", target.CreatedAtUtc, target.Items.Single().CallId)));
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var group = Assert.Single(model.Messages.OfType<SubsessionActivityGroupRowViewModel>());
+            Assert.Equal("123 Reads", group.Summary);
+            Assert.True(group.IsExpanded);
+            var tools = model.Messages.OfType<SubsessionToolInvocationRowViewModel>().ToArray();
+            Assert.Equal(123, tools.Length);
+            Assert.All(tools, tool => Assert.False(tool.HasMaterializedDetails));
+            var selected = Assert.Single(tools, tool => Equals(tool.AnchorKey, model.NavigationAnchorKey));
+            var realized = typeof(SubsessionsView).GetMethod("RealizeTranscriptAnchor", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(view, [selected.AnchorKey]);
+            Assert.Same(selected, Assert.IsAssignableFrom<Control>(realized).DataContext);
+        }
+        finally { window.Close(); }
     }
 
     private static void AppendMixedActivity(AgentSessionService sessions, Guid sessionId)

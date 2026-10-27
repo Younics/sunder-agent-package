@@ -103,7 +103,7 @@ internal static class ProviderErrorDiagnosticExtractor
     {
         foreach (var segment in path)
         {
-            if (!element.TryGetProperty(segment, out element))
+            if (element.ValueKind != JsonValueKind.Object || !element.TryGetProperty(segment, out element))
             {
                 return null;
             }

@@ -1,4 +1,6 @@
 using Microsoft.Extensions.AI;
+using System.ClientModel;
+using System.ClientModel.Primitives;
 using OpenAI;
 using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using IChatProviderService = Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService;
@@ -24,7 +26,11 @@ public sealed partial class OpenAiAgentProvider(
     IPackageContext packageContext) : IChatProviderService
 {
     private readonly IPackageContext _packageContext = packageContext;
-    private readonly Func<string, OpenAIClient> _clientFactory = static key => new OpenAIClient(key);
+    private readonly Func<string, OpenAIClient> _clientFactory = static key => new OpenAIClient(new ApiKeyCredential(key),
+        CreateChatClientOptions());
+
+    internal static OpenAIClientOptions CreateChatClientOptions()
+        => new() { RetryPolicy = new ClientRetryPolicy(0) };
 
     internal OpenAiAgentProvider(ApiKeyAuthStrategy apiKeyAuthStrategy, CodexConnectedAuthStrategy codexConnectedAuthStrategy,
         CodexConnectedTransport codexConnectedTransport, CodexResponseContinuationStore codexResponseContinuationStore,

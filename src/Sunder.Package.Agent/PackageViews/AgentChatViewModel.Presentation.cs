@@ -109,6 +109,12 @@ public sealed partial class AgentChatViewModel
             OlderTranscriptTurnPageSize,
             TranscriptVisibleRowLimit,
             uiDispatcher);
+        if (sessionService is IAgentCompactTranscriptGateway compact)
+        {
+            _timeline.ConfigureCompact(compact.LoadCompactTranscriptAsync, compact.LoadActivityMembersAsync);
+            _timeline.SetCompactMode(true);
+            _timeline.CompactLoadFailed += ReportTranscriptPagingFailure;
+        }
         RunActivityRow = new AgentActivityTranscriptRowViewModel(_activityTicker);
         TailSentinelRow = new AgentTranscriptTailSentinelRowViewModel();
         _transcriptItemsProjection = new TranscriptActivityProjection<AgentTranscriptRowViewModel>(
@@ -117,11 +123,13 @@ public sealed partial class AgentChatViewModel
             static (first, state) => new AgentActivityGroupRowViewModel(first, state),
             RunActivityRow,
             TailSentinelRow) { InitialNavigationAnchor = () => _timeline.SelectedAnchorKey };
+        if (_timeline.SupportsCompact) _transcriptItemsProjection.SetPassThrough();
         TranscriptItems = _transcriptItemsProjection.Items;
         _runActivity = new AgentRunActivityState(
             () => IsDisplayedSessionRunActive,
             () => _timeline.IsFollowingLatest,
-            activityQuietDelay);
+            activityQuietDelay,
+            () => (_timeline.IsCompact, _timeline.HasCompactRunningTools));
         _timeline.RowsChanging += OnTimelineRowsChanging;
         _timeline.RowsChanged += OnTimelineRowsChanged;
         _timeline.PropertyChanged += OnTimelinePropertyChanged;

@@ -17,6 +17,8 @@ using AgentRunCheckpointRecord = SubagentsPackage::Sunder.Generated.Packages.You
 using AgentSessionRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
 using AgentSessionState = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
 using AgentTranscriptToolDetailRequest = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentCompactTranscriptRequest = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptRequest;
+using AgentTranscriptActivityMembersRequest = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersRequest;
 using AgentTurnItemKind = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
 using AgentTurnItemRecord = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemRecord;
 using AgentTurnKind = SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnKind;
@@ -579,7 +581,7 @@ public sealed class ShellViewInitializationTests
             remove { }
         }
 
-        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        public event Action<Guid, AgentTurnRecord, SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?>? TurnChanged
         {
             add { }
             remove { }
@@ -680,7 +682,7 @@ public sealed class ShellViewInitializationTests
             remove { }
         }
 
-        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        public event Action<Guid, AgentTurnRecord, SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?>? TurnChanged
         {
             add { }
             remove { }
@@ -805,6 +807,7 @@ public sealed class ShellViewInitializationTests
             => new()
             {
                 TurnId = turnId,
+                TurnSequence = 1,
                 SessionId = sessionId,
                 Role = AgentMessageRole.Assistant,
                 Kind = AgentTurnKind.Message,
@@ -857,7 +860,7 @@ public sealed class ShellViewInitializationTests
             remove { }
         }
 
-        public event Action<Guid, AgentTurnRecord>? TurnChanged
+        public event Action<Guid, AgentTurnRecord, SubagentsPackage::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?>? TurnChanged
         {
             add { }
             remove { }
@@ -977,6 +980,7 @@ public sealed class ShellViewInitializationTests
             => new()
             {
                 TurnId = turnId,
+                TurnSequence = 1,
                 SessionId = sessionId,
                 Role = AgentMessageRole.Assistant,
                 Kind = AgentTurnKind.Message,
@@ -1071,6 +1075,8 @@ public sealed class ShellViewInitializationTests
         public virtual ValueTask<SunderContent> TurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> AroundTurnAsync(Guid sessionId, Guid turnId, DateTimeOffset createdAtUtc, Guid itemId, int beforeLimit, int afterLimit, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> CompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> SaveAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> DeleteAsync(string subagentId, CancellationToken cancellationToken = default) => Unavailable();

@@ -1,6 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Security.Cryptography;
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Shared.PackageViews;
 
@@ -35,24 +33,18 @@ internal sealed class AgentComposerState
         }
     }
 
-    public AgentComposerSubmission? TryBeginSubmission(
-        Guid sessionId,
-        IReadOnlySet<Guid>? existingTurnIds = null)
+    public AgentComposerSubmission? TryBeginSubmission(Guid sessionId)
         => TryBeginSubmission(
             sessionId,
             Text,
             Attachments.ToArray(),
-            RollbackTurnId,
-            existingTurnIds ?? new HashSet<Guid>(),
-            useUserTurnCorrelation: true);
+            RollbackTurnId);
 
     public AgentComposerSubmission? TryBeginSubmission(
         Guid sessionId,
         string text,
         IReadOnlyList<AgentPendingAttachmentViewModel> attachments,
-        Guid? rollbackTurnId,
-        IReadOnlySet<Guid> existingTurnIds,
-        bool useUserTurnCorrelation = true)
+        Guid? rollbackTurnId)
     {
         lock (_syncRoot)
         {
@@ -67,8 +59,6 @@ internal sealed class AgentComposerState
                 text,
                 attachments,
                 rollbackTurnId,
-                existingTurnIds,
-                useUserTurnCorrelation,
                 DateTimeOffset.UtcNow);
             _pendingSubmissions.Add(sessionId, submission);
             return submission;
@@ -102,9 +92,9 @@ internal sealed class AgentComposerState
         }
     }
 
-    public void ClearSubmitted(AgentComposerSubmission submission)
+    public void ClearSubmitted(AgentComposerSubmission submission, bool clearText = true)
     {
-        if (string.Equals(Text, submission.Text, StringComparison.Ordinal))
+        if (clearText && string.Equals(Text, submission.Text, StringComparison.Ordinal))
         {
             Text = string.Empty;
         }
@@ -171,8 +161,6 @@ internal sealed class AgentComposerSubmission(
     string text,
     IReadOnlyList<AgentPendingAttachmentViewModel> attachments,
     Guid? rollbackTurnId,
-    IReadOnlySet<Guid> existingTurnIds,
-    bool useUserTurnCorrelation,
     DateTimeOffset startedAtUtc)
 {
     private const int CommittedFlag = 1;
@@ -192,9 +180,7 @@ internal sealed class AgentComposerSubmission(
 
     public Guid? RollbackTurnId { get; } = rollbackTurnId;
 
-    public IReadOnlySet<Guid> ExistingTurnIds { get; } = existingTurnIds;
-
-    public bool UseUserTurnCorrelation { get; } = useUserTurnCorrelation;
+    public long DraftRevision { get; set; }
 
     public DateTimeOffset StartedAtUtc { get; } = startedAtUtc;
 
@@ -218,70 +204,10 @@ internal sealed class AgentComposerSubmission(
 
     public bool Matches(AgentTurnRecord turn)
     {
-        if (turn.Role != AgentMessageRole.User
-            || turn.SessionId != SessionId)
-        {
-            return false;
-        }
-        if (UseUserTurnCorrelation)
-        {
-            return turn.TurnId == UserTurnId;
-        }
-        if (ExistingTurnIds.Contains(turn.TurnId)
-            || turn.CreatedAtUtc < StartedAtUtc
-            || !string.Equals(
-                TranscriptRowProjector<object>.ExtractTextContent(turn),
-                string.IsNullOrWhiteSpace(Text) ? string.Empty : Text,
-                StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        var turnAttachments = turn.Items
-            .Where(item => item.Kind == AgentTurnItemKind.Attachment)
-            .OrderBy(item => item.SequenceNumber)
-            .Select(TryReadAttachmentMetadata)
-            .ToArray();
-        if (turnAttachments.Length != Attachments.Count
-            || turnAttachments.Any(metadata => metadata is null))
-        {
-            return false;
-        }
-
-        for (var index = 0; index < turnAttachments.Length; index++)
-        {
-            var metadata = turnAttachments[index]!;
-            var attachment = Attachments[index];
-            var upload = attachment.UploadRequest;
-            var sha256 = Convert.ToHexString(SHA256.HashData(upload.Content)).ToLowerInvariant();
-            if (!string.Equals(metadata.FileName, attachment.FileName, StringComparison.Ordinal)
-                || metadata.SizeBytes != upload.Content.LongLength
-                || !string.Equals(metadata.Sha256, sha256, StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-        }
-
-        return true;
+        return turn.Role == AgentMessageRole.User && turn.SessionId == SessionId && turn.TurnId == UserTurnId;
     }
 
     private bool SetState(int flag)
         => (Interlocked.Or(ref _state, flag) | flag) == CompleteState;
 
-    private static AgentAttachmentMetadata? TryReadAttachmentMetadata(AgentTurnItemRecord item)
-    {
-        if (string.IsNullOrWhiteSpace(item.StructuredPayloadJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<AgentAttachmentMetadata>(item.StructuredPayloadJson);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
 }

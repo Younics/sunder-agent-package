@@ -31,12 +31,13 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
         }
         catch (Exception ex)
         {
+            if (cancellationToken.IsCancellationRequested) throw;
             if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
             {
                 throw providerException;
             }
 
-            throw;
+            throw OpenAiExceptionMapper.MapRequest(ex);
         }
     }
 
@@ -56,12 +57,13 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
         }
         catch (Exception ex)
         {
+            if (cancellationToken.IsCancellationRequested) throw;
             if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
             {
                 throw providerException;
             }
 
-            throw;
+            throw OpenAiExceptionMapper.MapRequest(ex);
         }
 
         var telemetry = context is null ? null : new ProviderStreamTelemetry(context);
@@ -81,12 +83,13 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
                 }
                 catch (Exception ex)
                 {
+                    if (cancellationToken.IsCancellationRequested) throw;
                     if (OpenAiExceptionMapper.TryMapContextWindowExceeded(ex, out var providerException))
                     {
                         throw providerException;
                     }
 
-                    throw;
+                    throw OpenAiExceptionMapper.MapRequest(ex);
                 }
 
                 ThrowIfTerminalFailure(update);
@@ -117,9 +120,19 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
                 ThrowTerminalFailure(error.Code.ToString(), error.Message);
                 break;
             case ResponseResult { IncompleteStatusDetails: { } incomplete }:
+                if (IsOutputLimit(incomplete.Reason.ToString()))
+                {
+                    response.FinishReason = ChatFinishReason.Length;
+                    break;
+                }
                 ThrowTerminalFailure("response.incomplete", incomplete.Reason.ToString());
                 break;
             default:
+                if (HasOutputLimit(response.AdditionalProperties))
+                {
+                    response.FinishReason = ChatFinishReason.Length;
+                    break;
+                }
                 ThrowIfTerminalFailure(response.AdditionalProperties);
                 break;
         }
@@ -143,15 +156,33 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
         }
         else if (update.RawRepresentation is StreamingResponseIncompleteUpdate incompleteUpdate)
         {
+            if (IsOutputLimit(incompleteUpdate.Response.IncompleteStatusDetails?.Reason.ToString()))
+            {
+                update.FinishReason = ChatFinishReason.Length;
+                return;
+            }
             ThrowTerminalFailure(
                 "response.incomplete",
                 incompleteUpdate.Response.IncompleteStatusDetails?.Reason.ToString());
         }
         else
         {
+            if (HasOutputLimit(update.AdditionalProperties))
+            {
+                update.FinishReason = ChatFinishReason.Length;
+                return;
+            }
             ThrowIfTerminalFailure(update.AdditionalProperties);
         }
     }
+
+    private static bool IsOutputLimit(string? reason)
+        => string.Equals(reason, "max_output_tokens", StringComparison.Ordinal);
+
+    private static bool HasOutputLimit(AdditionalPropertiesDictionary? properties)
+        => properties is not null && !properties.ContainsKey("Error") && !properties.ContainsKey("error")
+           && !properties.ContainsKey("response.failed")
+           && properties.TryGetValue("response.incomplete", out var reason) && IsOutputLimit(reason?.ToString());
 
     private static void ThrowIfTerminalFailure(AdditionalPropertiesDictionary? properties)
     {
@@ -183,8 +214,11 @@ internal sealed class OpenAiModelOptionsChatClient(IChatClient inner, AgentChatC
             string.IsNullOrWhiteSpace(diagnostic)
                 ? "OpenAI returned a terminal error response."
                 : $"OpenAI returned a terminal error response: {diagnostic}",
-            "### OpenAI request failed\n\nThe provider returned an error instead of a completed response.",
-            "openai-response-failed");
+            $"### OpenAI request failed\n\n{diagnostic}",
+            "openai-response-failed")
+        {
+            FailureKind = AgentProviderFailureClassifier.Classify(diagnostic),
+        };
     }
 
     private ChatOptions? PrepareOptions(ChatOptions? options)

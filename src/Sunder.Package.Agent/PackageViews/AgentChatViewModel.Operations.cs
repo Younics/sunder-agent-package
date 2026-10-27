@@ -83,12 +83,19 @@ public sealed partial class AgentChatViewModel
     private async Task ReconcileSessionPermissionsAsync(
         Guid sessionId,
         CancellationToken cancellationToken,
-        long? requiredIntentRevision = null)
+        long? requiredIntentRevision = null,
+        AgentPermissionPanelState.Decision? decision = null,
+        bool retryDecision = false)
     {
+        var runtimeInstanceId = _appliedRuntimeInstanceId;
         if (_chatPermissionCommandGateway is null)
         {
             await InvokeOnUiThreadAsync(() =>
             {
+                if (_disposed
+                    || !string.Equals(runtimeInstanceId, _appliedRuntimeInstanceId, StringComparison.Ordinal)
+                    || decision is not null && !_permissionPanel.IsCurrentDecision(decision)) return;
+                if (retryDecision && decision is not null) _permissionPanel.ReleaseFailedDecision(decision);
                 if (!_disposed
                     && SelectedSession?.SessionId == sessionId
                     && (requiredIntentRevision is null
@@ -108,14 +115,17 @@ public sealed partial class AgentChatViewModel
         await InvokeOnUiThreadAsync(() =>
         {
             if (_disposed
-                || SelectedSession?.SessionId != sessionId
+                || !string.Equals(runtimeInstanceId, _appliedRuntimeInstanceId, StringComparison.Ordinal)
+                || decision is not null && !_permissionPanel.IsCurrentDecision(decision)
                 || requiredIntentRevision is not null
                 && requiredIntentRevision != Volatile.Read(ref _unrestrictedModeIntentRevision)
-                || projection.Revision < _appliedPermissionRevision)
+                || SelectedSession?.SessionId == sessionId && projection.Revision < _appliedPermissionRevision)
             {
                 return;
             }
 
+            if (retryDecision && decision is not null) _permissionPanel.ReleaseFailedDecision(decision);
+            if (SelectedSession?.SessionId != sessionId) return;
             _appliedPermissionRevision = projection.Revision;
             _permissionPanel.ApplySnapshot(
                 sessionId,

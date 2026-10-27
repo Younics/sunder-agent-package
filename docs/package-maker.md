@@ -171,8 +171,7 @@ an old reload/input approval does not silently approve those broader operations.
 | Tool | Input and result |
 | --- | --- |
 | `maker_package` | `package`: absolute `.csproj` / `sunder.package.json` path or a returned project reference. `query`: `status` (default), `runtime`, `views`, or `outputs`. Returns only that selection. |
-| `maker_apply` | `package`, optional built `output` reference. Validates already-built output, loads it initially or reloads through its existing Maker owner. Never builds/restores. Multiple unloaded output candidates require explicit selection. |
-| `maker_operation` | Original `operation` reference; optional `wait` 0–10 seconds (default 5). Observes, never repeats a mutation. |
+| `maker_apply` | `package`, optional built `output` reference. Validates already-built output, loads it initially or reloads through its existing Maker owner, and awaits that operation's outcome. Never builds/restores. Multiple unloaded output candidates require explicit selection. |
 | `maker_logs` | `package` plus severity/source/time/literal `contains` filters, or `entry` alone to expand a returned diagnostic. |
 | `maker_view` | `target` view/element reference; literal `role`, `name`, `text`, optional `within`, `limit`, and `cursor`. Ordinary editable `value` is opt-in; protected values are excluded. |
 | `maker_screenshot` | `target` view/element; optional `detail` (`normal` / `high`). Returns an actual image, not base64 text in model context. |
@@ -195,13 +194,14 @@ without restarting the action. Original operation receipts are never evicted to
 make capacity for new mutations. Neither a replacement App nor a replacement view
 inherits an old operation or element's authority.
 
-A successful `maker_operation` read is a **check**, not another mutation. It may
-report an unresolved original outcome without marking the read ambiguously
-dispatched. If checking is unavailable, its observation error is separate from the
-retained original failure. Transcript headers follow later correlated observations
-without rewriting the original receipts; an unavailable later check cannot erase
-an already observed definite effect. Compact activity starts with the first call
-and counts an unresolved operation once, even when it has several status checks.
+The six-tool surface has no separate model-facing operation polling tool.
+`maker_apply` keeps its original invocation pending while the Worker observes the
+accepted operation, using cancellable waits with 200–1,000 ms backoff. App admission
+remains short; waiting does not occupy the App command consumer. A duplicate call
+observes the same original operation rather than dispatching it again. An uncertain
+or lost acknowledgement is retained as such, never converted into permission to
+replay the mutation. Cancellation stops observation; it does not claim to undo an
+already dispatched action.
 
 Queries return bounded semantic matches, not DOM dumps. View queries default to
 20 items, cap at 50 and page bounded results. Repeat the same filters with the

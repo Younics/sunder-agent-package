@@ -727,57 +727,7 @@ public sealed partial class AgentRunCoordinatorTests
              chatModelSettingsJson);
 
     private static AppModels.AgentTurnRecord ToAppTurn(AgentTurnRecord turn)
-        => new(
-            turn.TurnId,
-            turn.SessionId,
-            turn.Role switch
-            {
-                AgentMessageRole.System => AppModels.AgentMessageRole.System,
-                AgentMessageRole.User => AppModels.AgentMessageRole.User,
-                AgentMessageRole.Assistant => AppModels.AgentMessageRole.Assistant,
-                AgentMessageRole.Tool => AppModels.AgentMessageRole.Tool,
-                _ => throw new ArgumentOutOfRangeException(nameof(turn)),
-            },
-            turn.Kind switch
-            {
-                AgentTurnKind.Message => AppModels.AgentTurnKind.Message,
-                AgentTurnKind.ToolCall => AppModels.AgentTurnKind.ToolCall,
-                AgentTurnKind.ToolResult => AppModels.AgentTurnKind.ToolResult,
-                _ => throw new ArgumentOutOfRangeException(nameof(turn)),
-            },
-            turn.Items.Select(item => new AppModels.AgentTurnItemRecord(
-                item.ItemId,
-                item.TurnId,
-                item.SequenceNumber,
-                item.Kind switch
-                {
-                    AgentTurnItemKind.Text => AppModels.AgentTurnItemKind.Text,
-                    AgentTurnItemKind.ToolCall => AppModels.AgentTurnItemKind.ToolCall,
-                    AgentTurnItemKind.ToolResult => AppModels.AgentTurnItemKind.ToolResult,
-                    AgentTurnItemKind.Attachment => AppModels.AgentTurnItemKind.Attachment,
-                    _ => throw new ArgumentOutOfRangeException(nameof(item)),
-                },
-                item.TextContent,
-                item.CallId,
-                item.ToolId,
-                item.ArgumentsJson,
-                item.ResultSummary,
-                item.StructuredPayloadJson,
-                item.SourcesJson,
-                item.WasTruncated,
-                item.IsError,
-                item.ErrorCode,
-                item.BackendId,
-                PresentationPayloadJson: item.PresentationPayloadJson
-            )).ToArray(),
-            turn.CreatedAtUtc,
-            turn.UpdatedAtUtc)
-        {
-            ContentRevision = turn.ContentRevision,
-            IsStreaming = turn.IsStreaming,
-            RunId = turn.RunId,
-            RunRevision = turn.RunRevision,
-        };
+        => AgentRoleBoundary.As<AppModels.AgentTurnRecord>(turn);
 
     private sealed class BlockingTranscriptAnchorGateway(AgentTurnRecord turn) :
         AppRuntime.IAgentTranscriptAnchorGateway
@@ -895,13 +845,15 @@ public sealed partial class AgentRunCoordinatorTests
             => Task.FromResult(AgentRunCommandStatus.Absent);
     }
 
-    private sealed class PendingAdmissionRunGateway(AgentLocalStore store) :
+    private sealed class PendingAdmissionRunGateway(AgentLocalStore store, bool holdResponse = false) :
         IAgentRunGateway,
         IAgentCorrelatedRunGateway,
         IAgentRunCommandStatusGateway
     {
         private AgentUserTurnAdmissionRequest? _pending;
         private int _commandCount;
+        internal TaskCompletionSource ReleaseResponse { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         internal TaskCompletionSource StatusChecked { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -959,8 +911,16 @@ public sealed partial class AgentRunCoordinatorTests
                 RollbackAnchorTurnId: null,
                 fingerprint,
                 []);
+            if (holdResponse) return WaitForResponseAsync(userTurnId, cancellationToken);
             return Task.FromException<AgentRunCheckpointRecord>(
                 new InvalidOperationException("The Runtime response was lost while admission remained pending."));
+        }
+
+        private async Task<AgentRunCheckpointRecord> WaitForResponseAsync(Guid userTurnId, CancellationToken token)
+        {
+            await ReleaseResponse.Task.WaitAsync(token);
+            var run = store.GetRunByUserTurnId(userTurnId)!;
+            return store.GetLatestCheckpoint(run.Key.SessionId)!;
         }
 
         Task<AgentRunCheckpointRecord> IAgentCorrelatedRunGateway.RollbackAndQueueUserMessageAsync(
@@ -1121,25 +1081,18 @@ public sealed partial class AgentRunCoordinatorTests
         public static AgentTestRuntime Create(
             object provider,
             params IAgentTool[] tools
-        ) => CreateCore(provider, budgetLimits: null, tools: tools);
-
-        public static AgentTestRuntime CreateWithBudget(
-            object provider,
-            AgentRunBudgetLimits budgetLimits,
-            params IAgentTool[] tools
-        ) => CreateCore(provider, budgetLimits, tools: tools);
+        ) => CreateCore(provider, tools: tools);
 
         public static AgentTestRuntime CreateWithContinuityRefinement(
             object provider,
             params IAgentTool[] tools
-        ) => CreateCore(provider, budgetLimits: null, useContinuityRefinement: true, tools: tools);
+        ) => CreateCore(provider, useContinuityRefinement: true, tools: tools);
 
         public static AgentTestRuntime CreateWithoutChatProvider(params IAgentTool[] tools) =>
-            CreateCore(provider: null, budgetLimits: null, tools: tools);
+            CreateCore(provider: null, tools: tools);
 
         private static AgentTestRuntime CreateCore(
             object? provider,
-            AgentRunBudgetLimits? budgetLimits,
             bool useContinuityRefinement = false,
             params IAgentTool[] tools
         )
@@ -1205,8 +1158,7 @@ public sealed partial class AgentRunCoordinatorTests
                     sessionContextProjectionService),
                 new AgentProviderCycleRunner(new AgentStreamingTurnWriter(terminalHandler)),
                 new AgentToolCycleCoordinator(terminalHandler),
-                terminalHandler,
-                budgetLimits);
+                terminalHandler);
             extensionCatalog.AddBehaviorLoop(defaultBehaviorLoop, "younics.ai.agent");
             var runAttachmentStore = new AgentRunAttachmentStore(attachmentService);
             var activeRunRegistry = extensionCatalog.ActiveRuns;
@@ -1379,6 +1331,7 @@ public sealed partial class AgentRunCoordinatorTests
         {
             try
             {
+                RegressionTestAppViews.DrainChatViews(SessionService);
                 try
                 {
                     Dispatcher.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -1498,6 +1451,10 @@ public sealed partial class AgentRunCoordinatorTests
         public List<long> DataContentBytesByRequest { get; } = [];
 
         public Func<AgentProviderRequest, int, UsageDetails?>? UsageHandler { get; set; }
+
+        public Func<int, ChatFinishReason?>? FinishReasonHandler { get; set; }
+
+        public bool ContinueAfterToolCall { get; set; }
 
         public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
             CancellationToken cancellationToken = default
@@ -1673,10 +1630,13 @@ public sealed partial class AgentRunCoordinatorTests
                                 messageId,
                                 modelId
                             );
+                            if (_provider.ContinueAfterToolCall) break;
                             if (CreateUsageUpdate(capturedRequest, requestIndex, responseId, messageId, modelId) is { } batchUsage)
                             {
                                 yield return batchUsage;
                             }
+                            if (_provider.FinishReasonHandler?.Invoke(requestIndex) is { } batchFinish)
+                                yield return new ChatResponseUpdate { FinishReason = batchFinish };
                             yield break;
 
                         case AgentProviderStreamEventType.ToolCallRequested
@@ -1687,10 +1647,13 @@ public sealed partial class AgentRunCoordinatorTests
                                 messageId,
                                 modelId
                             );
+                            if (_provider.ContinueAfterToolCall) break;
                             if (CreateUsageUpdate(capturedRequest, requestIndex, responseId, messageId, modelId) is { } toolUsage)
                             {
                                 yield return toolUsage;
                             }
+                            if (_provider.FinishReasonHandler?.Invoke(requestIndex) is { } toolFinish)
+                                yield return new ChatResponseUpdate { FinishReason = toolFinish };
                             yield break;
 
                         case AgentProviderStreamEventType.Completed
@@ -1727,6 +1690,8 @@ public sealed partial class AgentRunCoordinatorTests
                     yield return usage;
                 }
 
+                if (_provider.FinishReasonHandler?.Invoke(requestIndex) is { } finish)
+                    yield return new ChatResponseUpdate { FinishReason = finish };
                 await Task.CompletedTask;
             }
 

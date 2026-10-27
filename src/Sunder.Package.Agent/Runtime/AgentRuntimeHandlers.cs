@@ -148,8 +148,11 @@ internal sealed class AgentRuntimeChangeHub : IDisposable
             WorkspaceId: session?.WorkspaceId,
             Session: session is null
                 ? null
-                : new AgentSessionSnapshot(session, _sessions.GetLatestCheckpoint(sessionId))));
+                : new AgentSessionSnapshot(session, _sessions.GetLatestCheckpoint(sessionId), _sessions.GetRunActivity(sessionId))));
+
     }
+
+    internal AgentRunActivityUpdate? GetRunActivity(Guid sessionId) => _sessions.GetRunActivity(sessionId);
 
     private void OnTurnChanged(Guid sessionId, AgentTurnRecord turn)
         => Publish(new AgentRuntimeChange(
@@ -337,6 +340,17 @@ internal sealed class AgentChatSnapshotHandler(
             maximumBytes,
             cancellationToken).ConfigureAwait(false);
         snapshot = snapshot with { RuntimeInstanceId = changes.InstanceId };
+        var sessionItems = snapshot.WorkspaceSessions.Select(item => item with
+        {
+            Activity = changes.GetRunActivity(item.Session.SessionId),
+        }).ToArray();
+        snapshot = snapshot with
+        {
+            WorkspaceSessions = sessionItems,
+            SelectedSession = snapshot.SelectedSession is { } selected
+                ? sessionItems.FirstOrDefault(item => item.Session.SessionId == selected.Session.SessionId) ?? selected : null,
+        };
+        snapshot = AgentChatSnapshotPayload.Fit(snapshot, maximumBytes);
         if (changes.Revision == revision)
         {
             lock (_cacheGate)
@@ -357,7 +371,7 @@ internal sealed class AgentChatSnapshotHandler(
         AgentChatSnapshotProjection Snapshot);
 }
 
-internal sealed class AgentTranscriptPageHandler(
+internal sealed partial class AgentTranscriptPageHandler(
     AgentSessionService sessions,
     AgentRuntimeChangeHub changes,
     AgentRuntimeTransportBudgetState? transportBudgets = null)
@@ -633,9 +647,11 @@ internal sealed class AgentRunCommandHandler(
     AgentRunCoordinator runs,
     AgentSessionService sessions,
     AgentAttachmentTransferService attachmentTransfers,
-    AgentRuntimeChangeHub changes)
+    AgentRuntimeChangeHub changes,
+    AgentRuntimeTransportBudgetState? transportBudgets = null)
 {
     private readonly ConcurrentDictionary<Guid, Guid> _pendingUserTurns = new();
+    private readonly AgentRuntimeTransportBudgetState _transportBudgets = transportBudgets ?? new();
 
     public async ValueTask<AgentRunCommandResult> HandleAsync(
         AgentRunCommand request, CancellationToken cancellationToken = default)
@@ -667,7 +683,14 @@ internal sealed class AgentRunCommandHandler(
                     changes.Revision,
                     admission.Checkpoint,
                     admission.Run.Key.RunId,
-                    userTurnId);
+                    userTurnId,
+                    admission.UserTurn is { } userTurn
+                        ? AgentRuntimePayloadLimits.FitTranscriptPage(
+                            new AgentTranscriptPage(changes.Revision, [userTurn], false),
+                            AgentTranscriptPageDirection.Turn,
+                            maximumBytes: AgentRuntimePayloadLimits.GetResponsePayloadBytes(
+                                _transportBudgets.Current) / 2).Turns.Single()
+                        : null);
             }
             finally
             {

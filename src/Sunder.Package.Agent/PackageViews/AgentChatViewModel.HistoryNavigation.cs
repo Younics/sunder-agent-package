@@ -68,6 +68,8 @@ public sealed partial class AgentChatViewModel
                 new AgentTranscriptAroundTurnRequest(
                     target.SessionId,
                     target.TurnId,
+                    BeforeLimit: _timeline.IsCompact ? 0 : 20,
+                    AfterLimit: _timeline.IsCompact ? 0 : 20,
                     ItemId: target.ItemId),
                 operationCancellation).ConfigureAwait(false);
             EnsureCurrentChatSnapshotRequest(snapshotOperation.Generation, operationCancellation);
@@ -77,6 +79,7 @@ public sealed partial class AgentChatViewModel
                 throw new AgentHistoryTargetUnavailableException();
             }
 
+            var compactNavigation = false;
             await InvokeOnUiThreadAsync(() =>
             {
                 EnsureCurrentChatSnapshotRequest(snapshotOperation.Generation, operationCancellation);
@@ -90,6 +93,8 @@ public sealed partial class AgentChatViewModel
                     operationCancellation,
                     targetUnavailableIsError: true,
                     requireTimelineSelection: false);
+                compactNavigation = _timeline.IsCompact;
+                if (compactNavigation) return;
                 var ticket = _timeline.BeginAnchoredInitialLoad(target.SessionId);
                 if (!_timeline.TryCompleteAnchoredInitialLoad(
                         ticket,
@@ -105,6 +110,20 @@ public sealed partial class AgentChatViewModel
                 ApplyRunActivityState();
                 snapshotApplied = true;
             }).ConfigureAwait(false);
+            if (compactNavigation)
+            {
+                if (!await _timeline.LoadCompactAroundAsync(target.SessionId, target.TurnId,
+                        target.AnchorKind == HistoryAnchorKind.Text ? null : target.ItemId, operationCancellation).ConfigureAwait(false))
+                    throw new AgentHistoryTargetUnavailableException();
+                await InvokeOnUiThreadAsync(() =>
+                {
+                    EnsureCurrentHistoryNavigation(target, snapshotOperation.Generation, operationCancellation,
+                        targetUnavailableIsError: true, requireTimelineSelection: false);
+                    if (!_timeline.TrySelectLoadedAnchor(target.SessionId, anchorKey)) throw new AgentHistoryTargetUnavailableException();
+                    ApplyRunActivityState();
+                    snapshotApplied = true;
+                });
+            }
             return new AgentHistoryNavigationPlacement(
                 anchorKey,
                 snapshotOperation.Generation,

@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Models;
 using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Services;
@@ -82,6 +83,13 @@ public sealed partial class AgentRuntimeCatalog(
     }
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    public ValueTask<AgentRunActivityUpdate?> GetRunActivityAsync(Guid sessionId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return ValueTask.FromResult(sessions.GetRunActivity(sessionId));
+    }
+
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid sessionId,
         [SunderValueConstraints(Minimum = "1", Maximum = "1000")] int limit, CancellationToken cancellationToken = default)
     {
@@ -137,6 +145,18 @@ public sealed partial class AgentRuntimeCatalog(
     }
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    public ValueTask<AgentCompactTranscriptPage> ReadCompactTranscriptAsync(
+        AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Sunder.Package.Agent.Shared.PackageViews.TranscriptCompactPayload.Fit(
+            sessions.Store.ReadCompactTranscript(request, cancellationToken), request.Direction));
+
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
+    public ValueTask<AgentTranscriptActivityMembersPage> ReadActivityMembersAsync(
+        AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
+        => ValueTask.FromResult(Sunder.Package.Agent.Shared.PackageViews.TranscriptCompactPayload.Fit(
+            sessions.Store.ReadActivityMembers(request, cancellationToken)));
+
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -181,11 +201,19 @@ public sealed partial class AgentRuntimeCatalog(
             lock (publishSync) channel.Writer.TryWrite((++sequence, create(sequence)));
         }
         void Session(Guid id) => Publish(next => new AgentSessionCatalogEvent(next, id));
-        void Turn(Guid id, AgentTurnRecord turn) => Publish(next => new AgentTurnCatalogEvent(next, id, turn));
+        void Turn(Guid id, AgentTurnRecord turn) => Publish(next => new AgentTurnCatalogEvent(next, id, turn)
+        {
+            ActivityGroup = turn.Kind is AgentTurnKind.ToolCall or AgentTurnKind.ToolResult
+                ? sessions.Store.ReadActivityGroupForTurn(id, turn.TurnId) : null,
+        });
         void Profile(string id) => Publish(next => new AgentProfileCatalogEvent(next, id));
+        void Activity(Guid id, AgentRunActivityUpdate activity) => Publish(next => new AgentRunActivityCatalogEvent(next, id, activity));
+        void Reset(Guid _) => Publish(next => new AgentRuntimeCatalogResetEvent(next));
         Publish(next => new AgentRuntimeCatalogResetEvent(next));
         sessions.SessionChanged += Session;
         sessions.TurnChanged += Turn;
+        sessions.TranscriptReset += Reset;
+        sessions.RunActivityChanged += Activity;
         profiles.ProfileChanged += Profile;
         try
         {
@@ -200,6 +228,8 @@ public sealed partial class AgentRuntimeCatalog(
         {
             sessions.SessionChanged -= Session;
             sessions.TurnChanged -= Turn;
+            sessions.TranscriptReset -= Reset;
+            sessions.RunActivityChanged -= Activity;
             profiles.ProfileChanged -= Profile;
             channel.Writer.TryComplete();
         }

@@ -73,6 +73,7 @@ internal sealed class AnthropicChatClient : IChatClient
             cancellationToken);
 
         var transport = _transportFactory(apiKey, request.UseFastMode, _context);
+        using var transportLifetime = transport as IDisposable;
         await foreach (var update in transport.SendAsync(request, modelId, cancellationToken))
         {
             yield return update;
@@ -94,14 +95,20 @@ internal sealed class AnthropicChatClient : IChatClient
         string apiKey,
         bool useFastMode,
         AgentChatClientContext context)
-        => CreateTransport(new AnthropicClient { ApiKey = apiKey }, useFastMode, context);
+        => CreateTransport(new AnthropicClient { ApiKey = apiKey, MaxRetries = 0 }, useFastMode, context);
 
     private static IAnthropicTransport CreateTransport(
         IAnthropicClient client,
         bool useFastMode,
         AgentChatClientContext context)
     {
-        var responseTranslator = new AnthropicResponseTranslator(context);
+        var retryMetadata = new ProviderRetryMetadata();
+        client = client.WithOptions(options => options with
+        {
+            MaxRetries = 0,
+            Handlers = [.. options.Handlers, new ProviderRetryMetadataHandler(retryMetadata)],
+        });
+        var responseTranslator = new AnthropicResponseTranslator(context, retryMetadata);
         return useFastMode
             ? new AnthropicFastTransport(client, responseTranslator)
             : new AnthropicStandardTransport(client, responseTranslator);

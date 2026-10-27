@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <SunderAgentProviderSupportSource Include="$(_AgentModels)Providers\AgentChatClientContext.cs;$(_AgentModels)Providers\AgentChatProviderException.cs;$(_AgentModels)Providers\AgentChatModelOptionKeys.cs;$(_AgentModels)Providers\AgentChatModelOptions.cs" />
+    <SunderAgentProviderSupportSource Include="$(_AgentModels)Providers\AgentProviderFailureClassifier.cs" />
     <SunderAgentProviderSupportSource Include="$(_AgentModels)Tools\AgentToolArgumentObject.cs;$(_AgentModels)Tools\AgentToolCallRequest.cs;$(_AgentModels)Tools\AgentPayloadLimits.cs" />
     <SunderAgentExecutionSupportSource Include="$(_AgentModels)Tools\AgentPermissionBoundaryIds.cs;$(_AgentModels)Tools\AgentFileReadErrorCodes.cs;$(_AgentModels)Tools\AgentToolResultErrorCodes.cs;$(_AgentModels)Execution\AgentFileSearchErrorCodes.cs;$(_AgentModels)Execution\AgentShellSyntaxKinds.cs;$(_AgentShared)Execution\AgentExecutionFacetIds.cs" />
     <SunderAgentExecutionSupportSource Include="$(_AgentExecution)*.cs" Exclude="$(_AgentExecution)InternalsVisibleTo.cs" />

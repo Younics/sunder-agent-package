@@ -87,8 +87,9 @@ internal sealed partial class SubagentAppRuntimeGateway :
     public event Action? SubagentsChanged;
     public event Action? CatalogChanged;
     public event Action<Guid>? SessionChanged;
-    public event Action<Guid, AgentTurnRecord>? TurnChanged;
+    public event Action<Guid, AgentTurnRecord, AgentTranscriptActivityGroup?>? TurnChanged;
     public event Action? ResnapshotRequired;
+    public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged;
     public bool IsOwnerStreamAvailable => _observer.IsAvailable;
     public event Action<bool>? OwnerStreamAvailabilityChanged
     {
@@ -142,7 +143,7 @@ internal sealed partial class SubagentAppRuntimeGateway :
     public async Task<SubsessionSessionCatalog> ListSessionsAsync(CancellationToken cancellationToken = default)
     {
         var projection = await GetRuntimeSnapshotAsync(cancellationToken).ConfigureAwait(false);
-        return new SubsessionSessionCatalog(projection.Sessions ?? [], projection.Profiles ?? []);
+        return new SubsessionSessionCatalog(projection.Sessions ?? [], projection.Profiles ?? [], projection.Activities);
     }
 
     public async Task<IReadOnlyList<AgentRunCheckpointRecord>> ListLatestCheckpointsAsync(
@@ -397,10 +398,14 @@ internal sealed partial class SubagentAppRuntimeGateway :
                 break;
             case SubagentChangeKind.Turn when change.SessionId is { } turnSessionId
                                                    && change.Turn is { } turn:
-                Dispatch(TurnChanged, turnSessionId, turn);
+                Dispatch(TurnChanged, turnSessionId, turn, change.ActivityGroup);
                 break;
             case SubagentChangeKind.Profile:
                 InvalidateRuntimeSnapshot();
+                break;
+            case SubagentChangeKind.Activity when change.SessionId is { } activitySessionId && change.Activity is { } activity:
+                InvalidateRuntimeSnapshot();
+                Dispatch(RunActivityChanged, activitySessionId, activity);
                 break;
             default:
                 throw new InvalidDataException("The Subagents Runtime returned a malformed change event.");
@@ -429,6 +434,19 @@ internal sealed partial class SubagentAppRuntimeGateway :
             catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
             {
                 // Change listeners are independent presentation refresh hints.
+            }
+        }
+    }
+
+    private static void Dispatch<T1, T2, T3>(Action<T1, T2, T3>? handlers, T1 first, T2 second, T3 third)
+    {
+        if (handlers is null) return;
+        foreach (Action<T1, T2, T3> handler in handlers.GetInvocationList())
+        {
+            try { handler(first, second, third); }
+            catch (Exception exception) when (!PresentationExceptionPolicy.IsFatal(exception))
+            {
+                // Presentation listeners do not own the Runtime change stream.
             }
         }
     }

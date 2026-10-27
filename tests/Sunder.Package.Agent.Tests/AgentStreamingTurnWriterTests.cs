@@ -10,7 +10,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class AgentStreamingTurnWriterTests
+public sealed partial class AgentStreamingTurnWriterTests
 {
     private static readonly TimeSpan AsyncTimeout = TimeSpan.FromSeconds(2);
 

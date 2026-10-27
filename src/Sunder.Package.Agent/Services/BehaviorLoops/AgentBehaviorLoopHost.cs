@@ -25,7 +25,7 @@ internal sealed partial class AgentBehaviorLoopHost(
     AgentWorkspaceBindingRecord? executionBinding,
     AgentDurableRunLease runLease,
     IAgentBehaviorLoop defaultBehaviorLoop,
-    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime, IAgentRunActivitySink, IAgentRunBudgetRuntime, IAgentSessionContextSelectionRuntime, IAgentPromptContextAcknowledgmentRuntime
+    Func<bool> isCurrentRun) : IAgentBehaviorLoopRuntime, IAgentInnerBehaviorLoopRuntime, IAgentRunActivitySink, IAgentProviderRetrySink, IAgentRunBudgetRuntime, IAgentSessionContextSelectionRuntime, IAgentPromptContextAcknowledgmentRuntime
 {
     private const int MaxParallelToolExecutions = 4;
 
@@ -158,7 +158,14 @@ internal sealed partial class AgentBehaviorLoopHost(
     }
 
     public void ReportRunActivity(AgentRunActivityKind kind, string text)
-        => _sessionService.ReportRunActivity(_session.SessionId, _runRevision, kind, text);
+    {
+        if (IsCurrentRun()) _sessionService.ReportRunActivity(_session.SessionId, _runRevision, kind, text, null, IsCurrentRun);
+    }
+
+    public void ReportProviderRetry(AgentRunRetryState retry)
+    {
+        if (IsCurrentRun()) _sessionService.ReportRunActivity(_session.SessionId, _runRevision, AgentRunActivityKind.Retrying, retry.Reason, retry, IsCurrentRun);
+    }
 
     public ValueTask PublishLifecycleEventAsync(
         AgentLifecycleEventKind kind,
@@ -570,6 +577,7 @@ internal sealed partial class AgentBehaviorLoopHost(
         }
 
         SaveCheckpoint(AgentRunStatus.Running, $"Executing approved tool '{pending.ToolId}'.");
+        ReportRunActivity(AgentRunActivityKind.Tool, "Running tools");
         cancellationToken.ThrowIfCancellationRequested();
         if (!IsCurrentRun())
         {

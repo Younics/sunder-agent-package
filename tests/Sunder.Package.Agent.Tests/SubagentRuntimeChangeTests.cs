@@ -14,6 +14,8 @@ using SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
 using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentCompactTranscriptRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptRequest;
+using AgentTranscriptActivityMembersRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersRequest;
 using AppAgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
 using AppAgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
 using AppAgentTurnItemKind = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnItemKind;
@@ -41,6 +43,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class SubagentRuntimeChangeTests
 {
+    private static long _nextTurnSequence;
     private static SunderRpcOffsetDateTime RpcTimestamp(DateTimeOffset value)
         => new(value.ToString("O", CultureInfo.InvariantCulture));
 
@@ -98,6 +101,7 @@ public sealed class SubagentRuntimeChangeTests
         {
             service.NotifySubagentsImported();
         }
+        var burstRevision = stream.Revision;
 
         SubagentChanged? terminal = null;
         while (await subscription.MoveNextAsync())
@@ -107,7 +111,9 @@ public sealed class SubagentRuntimeChangeTests
 
         Assert.NotNull(terminal);
         Assert.Equal(SubagentChangeKind.ResnapshotRequired, terminal!.Kind);
-        Assert.Equal(stream.Revision, terminal.Revision);
+        // The terminal cursor covers the entire burst. Independent metadata may
+        // arrive after it was yielded; that cannot retroactively advance it.
+        Assert.InRange(terminal.Revision, burstRevision, stream.Revision);
     }
 
     [Fact]
@@ -214,7 +220,7 @@ public sealed class SubagentRuntimeChangeTests
         var resnapshot = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var turnChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gateway.ResnapshotRequired += () => resnapshot.TrySetResult();
-        gateway.TurnChanged += (_, _) => turnChanged.TrySetResult();
+        gateway.TurnChanged += (_, _, _) => turnChanged.TrySetResult();
 
         await gateway.InitializeAsync();
         await resnapshot.Task.WaitAsync(TimeSpan.FromSeconds(3));
@@ -338,7 +344,7 @@ public sealed class SubagentRuntimeChangeTests
         await viewModel.InitializeAsync();
 
         Assert.Contains("Unable to load subsession transcript", viewModel.StatusText, StringComparison.Ordinal);
-        Assert.Contains("did not return the recent subsession transcript page", viewModel.StatusText, StringComparison.Ordinal);
+        Assert.Contains("did not return the Compact transcript page", viewModel.StatusText, StringComparison.Ordinal);
         Assert.Empty(viewModel.Messages);
     }
 
@@ -471,6 +477,8 @@ public sealed class SubagentRuntimeChangeTests
         public virtual ValueTask<SunderContent> TurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> AroundTurnAsync(Guid sessionId, Guid turnId, DateTimeOffset createdAtUtc, Guid itemId, int beforeLimit, int afterLimit, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> CompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default) => Unavailable();
+        public virtual ValueTask<SunderContent> ActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> CreateAsync(string displayName, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> SaveAsync(SubagentSaveRequest request, CancellationToken cancellationToken = default) => Unavailable();
         public virtual ValueTask<SunderContent> DeleteAsync(string subagentId, CancellationToken cancellationToken = default) => Unavailable();
@@ -571,6 +579,7 @@ public sealed class SubagentRuntimeChangeTests
             return new WorkerGeneratedAgentTurnRecord
             {
                 TurnId = turnId,
+                TurnSequence = Interlocked.Increment(ref _nextTurnSequence),
                 SessionId = sessionId,
                 Role = WorkerGeneratedAgentMessageRole.Assistant,
                 Kind = WorkerGeneratedAgentTurnKind.Message,
@@ -706,7 +715,7 @@ public sealed class SubagentRuntimeChangeTests
             add { }
             remove { }
         }
-        public event Action<Guid, AppAgentTurnRecord>? TurnChanged;
+        public event Action<Guid, AppAgentTurnRecord, SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup?>? TurnChanged;
         public event Action? ResnapshotRequired;
 
         public Task<AppRuntime.SubsessionSessionCatalog> ListSessionsAsync(
@@ -800,8 +809,8 @@ public sealed class SubagentRuntimeChangeTests
         internal RecentReadGate HoldNextRecentRead() => _nextRecentRead = new();
 
         internal void RaiseTurnChanged(string content)
-            => TurnChanged?.Invoke(ChildSessionId, CreateTurn(ChildSessionId, content));
-        internal void RaiseTurnChanged(AppAgentTurnRecord turn) => TurnChanged?.Invoke(ChildSessionId, turn);
+            => TurnChanged?.Invoke(ChildSessionId, CreateTurn(ChildSessionId, content), null);
+        internal void RaiseTurnChanged(AppAgentTurnRecord turn) => TurnChanged?.Invoke(ChildSessionId, turn, null);
 
         internal static AppAgentTurnRecord CreateTurn(Guid sessionId, string content)
         {
@@ -810,6 +819,7 @@ public sealed class SubagentRuntimeChangeTests
             return new AppAgentTurnRecord
             {
                 TurnId = turnId,
+                TurnSequence = Interlocked.Increment(ref _nextTurnSequence),
                 SessionId = sessionId,
                 Role = AppAgentMessageRole.Assistant,
                 Kind = AppAgentTurnKind.Message,
@@ -937,6 +947,12 @@ public sealed class SubagentRuntimeChangeTests
             Guid sessionId,
             int limit,
             CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ValueTask.FromResult(Content(new SubagentProjection()));
+        }
+
+        public override ValueTask<SunderContent> CompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
             return ValueTask.FromResult(Content(new SubagentProjection()));

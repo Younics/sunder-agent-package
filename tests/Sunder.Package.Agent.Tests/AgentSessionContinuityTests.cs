@@ -111,6 +111,10 @@ public sealed class AgentSessionContinuityTests
             projection.ContextCheckpoint?.ContextCheckpointId);
         Assert.Equal(compacted.OmittedHistoricalTurnCount, projection.OmittedHistoricalTurnCount);
         Assert.Contains(projection.PromptTurns, turn => turn.TurnId == appended.TurnId);
+        var snapshot = fixture.ReadSnapshot();
+        Assert.All(snapshot.Turns.Take(compacted.OmittedHistoricalTurnCount), turn => Assert.Empty(turn.Items));
+        Assert.All(snapshot.Turns.Skip(compacted.OmittedHistoricalTurnCount), turn => Assert.NotEmpty(turn.Items));
+        Assert.All(fixture.Store.ListTurns(fixture.SessionId), turn => Assert.NotEmpty(turn.Items));
     }
 
     [Fact]
@@ -231,7 +235,7 @@ public sealed class AgentSessionContinuityTests
     }
 
     [Fact]
-    public void CheckpointCas_RejectsHistoricalAppendBeforeAnchor()
+    public void CheckpointCas_BackdatedTailAppendCannotAlterTheDurablePrefix()
     {
         using var fixture = ContinuityFixture.CreateStartedWithHistory(24);
         var snapshot = fixture.ReadSnapshot();
@@ -239,7 +243,7 @@ public sealed class AgentSessionContinuityTests
         var inserted = fixture.Store.AppendTextTurn(fixture.SessionId, AgentMessageRole.User, "historically inserted");
         SetTurnCreatedAt(fixture.Store.DatabasePath, inserted.TurnId, snapshot.Turns[0].CreatedAtUtc.AddMinutes(-1));
 
-        Assert.Null(fixture.Store.TrySaveAnchoredSessionContextCheckpoint(request));
+        Assert.NotNull(fixture.Store.TrySaveAnchoredSessionContextCheckpoint(request));
     }
 
     [Fact]
@@ -577,7 +581,7 @@ public sealed class AgentSessionContinuityTests
     }
 
     [Fact]
-    public void TranscriptOrdering_UsesCreatedAtThenTurnIdTextOrdinal_ForPagingAndRollback()
+    public void TranscriptOrdering_UsesDurableSequenceDespiteClockTies_ForPagingAndRollback()
     {
         using var fixture = ContinuityFixture.Create();
         var inserted = Enumerable.Range(0, 6)
@@ -591,9 +595,7 @@ public sealed class AgentSessionContinuityTests
         {
             SetTurnCreatedAt(fixture.Store.DatabasePath, turn.TurnId, tiedAt);
         }
-        var expected = inserted.OrderBy(
-            turn => turn.TurnId.ToString("D"),
-            StringComparer.Ordinal).ToArray();
+        var expected = inserted;
 
         Assert.Equal(expected.Select(turn => turn.TurnId),
             fixture.Store.ListTurns(fixture.SessionId).Select(turn => turn.TurnId));

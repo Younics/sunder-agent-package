@@ -6,29 +6,21 @@ namespace Sunder.Package.Agent.Shared.PackageViews;
 
 internal sealed class AgentRunActivityState : IDisposable
 {
-    private static readonly TimeSpan DefaultQuietDelay = TimeSpan.FromMilliseconds(900);
-
-    private readonly TimedStatusController _quietTimer = new();
-    private readonly PresentationTaskScope _tasks = new(
-        PresentationTaskScope.IgnoreExpectedFailure);
-    private readonly TimeSpan _quietDelay;
     private readonly Func<bool> _isRunActive;
     private readonly Func<bool> _isFollowingLatest;
-    private readonly Dictionary<Guid, ActiveToolCall> _activeToolCalls = [];
-    private readonly HashSet<Guid> _observedToolResults = [];
-    private bool _hasVisibleRunActivity;
-    private bool _showAfterQuiet;
-    private bool _disposed;
+    private bool _waitingForApproval;
+    private long _runRevision;
+    private long _sequence;
     private ActivityPresentation _publishedPresentation;
 
     public AgentRunActivityState(
         Func<bool> isRunActive,
         Func<bool> isFollowingLatest,
-        TimeSpan? quietDelay = null)
+        TimeSpan? quietDelay = null,
+        Func<(bool Grouped, bool Running)>? groupedTools = null)
     {
         _isRunActive = isRunActive;
         _isFollowingLatest = isFollowingLatest;
-        _quietDelay = quietDelay ?? DefaultQuietDelay;
         _publishedPresentation = CurrentPresentation;
     }
 
@@ -37,38 +29,26 @@ internal sealed class AgentRunActivityState : IDisposable
     public string Text { get; private set; } = "Thinking";
 
     public bool IsReasoning { get; private set; }
+    public string ReasoningText { get; private set; } = string.Empty;
+    public AgentRunRetryState? Retry { get; private set; }
 
     public bool ShouldShow
-        => _isRunActive()
-           && _isFollowingLatest()
-           && _activeToolCalls.Count == 0
-           && (!_hasVisibleRunActivity || _showAfterQuiet);
+        => (_isRunActive() || _waitingForApproval) && _isFollowingLatest();
 
     public void Reset()
     {
-        _quietTimer.Cancel();
         Text = "Thinking";
         IsReasoning = false;
-        _hasVisibleRunActivity = false;
-        _showAfterQuiet = false;
-        _activeToolCalls.Clear();
-        _observedToolResults.Clear();
+        ReasoningText = string.Empty;
+        Retry = null;
+        _runRevision = 0;
+        _sequence = 0;
+        _waitingForApproval = false;
         PublishIfChanged();
     }
 
     public void RebuildActiveToolCalls(IEnumerable<AgentTurnRecord> turns)
     {
-        _activeToolCalls.Clear();
-        _observedToolResults.Clear();
-        var items = turns.SelectMany(turn => turn.Items).ToArray();
-        foreach (var item in items.Where(item => item.Kind == AgentTurnItemKind.ToolCall))
-        {
-            TrackActiveToolCall(item);
-        }
-        foreach (var item in items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
-        {
-            RemoveActiveToolCall(item);
-        }
         PublishIfChanged();
     }
 
@@ -85,36 +65,50 @@ internal sealed class AgentRunActivityState : IDisposable
             return;
         }
 
-        TrackActiveToolCalls(turn);
-        _hasVisibleRunActivity = true;
-        _showAfterQuiet = !scheduleQuietTimer;
+        if (Retry is not null) return;
         SetText(ResolveActivityText(turn), isReasoning: false, notify: false);
-        if (scheduleQuietTimer)
-        {
-            RestartQuietTimer();
-        }
 
         PublishIfChanged();
     }
 
     public void TrackCheckpoint(AgentRunCheckpointRecord? checkpoint)
     {
+        if (checkpoint?.RunRevision != _runRevision)
+        {
+            Reset();
+            _runRevision = checkpoint?.RunRevision ?? 0;
+        }
+        _waitingForApproval = checkpoint?.Status == AgentRunStatus.WaitingForApproval;
         if (checkpoint?.Status != AgentRunStatus.Running)
         {
-            _quietTimer.Cancel();
-            _showAfterQuiet = false;
+            Retry = null;
+            if (_waitingForApproval) SetText("Waiting for approval", isReasoning: false, notify: false);
             PublishIfChanged();
             return;
         }
-
+        if (Retry is not null || _sequence > 0) { PublishIfChanged(); return; }
         SetText(ResolveActivityText(checkpoint), isReasoning: false);
         PublishIfChanged();
     }
 
     public void TrackUpdate(string? text, bool isReasoning)
     {
-        SetText(string.IsNullOrWhiteSpace(text) ? "Thinking" : text, isReasoning, notify: false);
-        _showAfterQuiet = true;
+        if (isReasoning) ReasoningText = text?.Trim() ?? string.Empty;
+        Retry = null;
+        SetText(isReasoning || string.IsNullOrWhiteSpace(text) ? "Thinking" : text, isReasoning, notify: false);
+        PublishIfChanged();
+    }
+
+    public void TrackStatus(long runRevision, long sequence, string text, bool isReasoning, string? reasoning, AgentRunRetryState? retry)
+    {
+        if (runRevision < _runRevision || runRevision == _runRevision && sequence > 0 && sequence <= _sequence) return;
+        if (runRevision != _runRevision) Reset();
+        _runRevision = runRevision;
+        _sequence = sequence;
+        if (isReasoning) ReasoningText = text.Trim();
+        SetText(isReasoning ? "Thinking" : text, isReasoning, notify: false);
+        if (reasoning is not null) ReasoningText = reasoning;
+        Retry = retry;
         PublishIfChanged();
     }
 
@@ -122,8 +116,7 @@ internal sealed class AgentRunActivityState : IDisposable
     {
         if (!_isRunActive())
         {
-            _quietTimer.Cancel();
-            _showAfterQuiet = false;
+            Retry = null;
         }
 
         PublishIfChanged();
@@ -131,45 +124,7 @@ internal sealed class AgentRunActivityState : IDisposable
 
     public void NotifyFollowStateChanged() => PublishIfChanged();
 
-    public void Dispose()
-    {
-        if (_disposed)
-        {
-            return;
-        }
-
-        _disposed = true;
-        _quietTimer.Dispose();
-        _tasks.Dispose();
-    }
-
-    private void RestartQuietTimer()
-    {
-        _quietTimer.Cancel();
-        if (!_isRunActive())
-        {
-            return;
-        }
-
-        if (_quietDelay <= TimeSpan.Zero)
-        {
-            ShowAfterQuietPeriod();
-            return;
-        }
-
-        _tasks.Run(_ => _quietTimer.ScheduleAsync(_quietDelay, ShowAfterQuietPeriod));
-    }
-
-    private void ShowAfterQuietPeriod()
-    {
-        if (!_isRunActive())
-        {
-            return;
-        }
-
-        _showAfterQuiet = true;
-        PublishIfChanged();
-    }
+    public void Dispose() { }
 
     private void SetText(string text, bool isReasoning, bool notify = true)
     {
@@ -189,7 +144,7 @@ internal sealed class AgentRunActivityState : IDisposable
     }
 
     private ActivityPresentation CurrentPresentation
-        => new(Text, IsReasoning, ShouldShow);
+        => new(Text, IsReasoning, ShouldShow, ReasoningText, Retry);
 
     private void PublishIfChanged()
     {
@@ -217,7 +172,7 @@ internal sealed class AgentRunActivityState : IDisposable
         {
             AgentTurnKind.ToolCall => ResolveToolCallActivityText(turn),
             AgentTurnKind.ToolResult => "Processing result",
-            _ => turn.Role == AgentMessageRole.Assistant ? "Processing" : "Thinking",
+            _ => turn.Role == AgentMessageRole.Assistant ? "Responding" : "Thinking",
         };
 
     private static string ResolveToolCallActivityText(AgentTurnRecord turn)
@@ -287,86 +242,10 @@ internal sealed class AgentRunActivityState : IDisposable
                 CultureInfo.InvariantCulture.TextInfo.ToTitleCase(part.ToLowerInvariant())));
     }
 
-    private void TrackActiveToolCalls(AgentTurnRecord turn)
-    {
-        foreach (var item in turn.Items.Where(item => item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult))
-        {
-            if (item.Kind == AgentTurnItemKind.ToolResult
-                || item.ToolExecutionStatus is AgentToolExecutionStatus.Completed
-                    or AgentToolExecutionStatus.Failed
-                    or AgentToolExecutionStatus.Ambiguous)
-            {
-                RemoveActiveToolCall(item);
-            }
-            else
-            {
-                TrackActiveToolCall(item);
-            }
-        }
-    }
-
-    private void TrackActiveToolCall(AgentTurnItemRecord item)
-    {
-        if (item.ToolExecutionStatus is AgentToolExecutionStatus.Completed
-            or AgentToolExecutionStatus.Failed
-            or AgentToolExecutionStatus.Ambiguous)
-        {
-            _activeToolCalls.Remove(item.ItemId);
-            return;
-        }
-        _activeToolCalls[item.ItemId] = new ActiveToolCall(
-            item.ToolExecutionId,
-            NormalizeCallId(item.CallId),
-            item.ToolId);
-    }
-
-    private void RemoveActiveToolCall(AgentTurnItemRecord item)
-    {
-        if (item.Kind == AgentTurnItemKind.ToolResult && !_observedToolResults.Add(item.ItemId))
-        {
-            return;
-        }
-        if (_activeToolCalls.Remove(item.ItemId))
-        {
-            return;
-        }
-
-        var callId = NormalizeCallId(item.CallId);
-        Guid? matchingItemId = item.ToolExecutionId is { } executionId
-            ? _activeToolCalls
-                .Where(pair => pair.Value.ExecutionId == executionId)
-                .Select(pair => (Guid?)pair.Key)
-                .FirstOrDefault()
-            : null;
-        if (matchingItemId is null && callId is not null)
-        {
-            matchingItemId = _activeToolCalls
-                .Where(pair => string.Equals(pair.Value.CallId, callId, StringComparison.Ordinal))
-                .Select(pair => (Guid?)pair.Key)
-                .FirstOrDefault();
-        }
-        if (matchingItemId is null
-            && item.ToolExecutionId is null
-            && callId is null)
-        {
-            matchingItemId = _activeToolCalls
-                .Where(pair => string.Equals(pair.Value.ToolId, item.ToolId, StringComparison.Ordinal))
-                .Select(pair => (Guid?)pair.Key)
-                .FirstOrDefault();
-        }
-        if (matchingItemId is { } itemId)
-        {
-            _activeToolCalls.Remove(itemId);
-        }
-    }
-
-    private static string? NormalizeCallId(string? callId)
-        => string.IsNullOrWhiteSpace(callId) ? null : callId;
-
-    private sealed record ActiveToolCall(Guid? ExecutionId, string? CallId, string? ToolId);
-
     private readonly record struct ActivityPresentation(
         string Text,
         bool IsReasoning,
-        bool ShouldShow);
+        bool ShouldShow,
+        string ReasoningText,
+        AgentRunRetryState? Retry);
 }

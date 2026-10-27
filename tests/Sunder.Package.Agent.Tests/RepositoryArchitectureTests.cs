@@ -978,6 +978,14 @@ public sealed partial class RepositoryArchitectureTests
     private static readonly IReadOnlySet<string> ExplicitLocalAsyncRelayCommandBoundaries =
         new HashSet<string>(StringComparer.Ordinal)
         {
+            // These reserve/dismiss synchronously, then share ResolvePermissionAsync's
+            // observed operation and reconciliation; decision/affinity tests cover all three.
+            "Sunder.Package.Agent/PackageViews/AgentChatViewModel.Permissions.cs::ApprovePermissionAsync",
+            "Sunder.Package.Agent/PackageViews/AgentChatViewModel.Permissions.cs::ApprovePermissionForSessionAsync",
+            "Sunder.Package.Agent/PackageViews/AgentChatViewModel.Permissions.cs::DenyPermissionAsync",
+            // Delegates to SendMessageAsync's correlated presentation operation;
+            // it must not create a second submission or command replay boundary.
+            "Sunder.Package.Agent/PackageViews/AgentChatViewModel.Continuation.cs::ContinueRunAsync",
             "Sunder.Package.Agent.Execution.Docker/App/DockerExecutionSettingsViewModel.Commands.cs::RetryInitializationAsync",
             "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::DeleteSelectedShellAsync",
             "Sunder.Package.Agent.Execution.Local/App/LocalExecutionSettingsViewModel.cs::RetryInitializationAsync",

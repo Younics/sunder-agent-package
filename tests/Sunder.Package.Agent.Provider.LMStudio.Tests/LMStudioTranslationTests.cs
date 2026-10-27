@@ -12,6 +12,30 @@ namespace Sunder.Package.Agent.Provider.LMStudio.Tests;
 public sealed class LMStudioTranslationTests
 {
     [Fact]
+    public async Task ChatOverload_UsesOneSdkAttemptAndPreservesRetryHeaders()
+    {
+        var handler = new LMStudioTestHttpHandler((_, _, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+            { Content = new StringContent("""{"error":{"type":"server_error","message":"Servers overloaded"}}""") };
+            response.Headers.TryAddWithoutValidation("retry-after", "12");
+            return Task.FromResult(response);
+        });
+        var context = new ProviderTestPackageContext("younics.ai.agent.provider.lmstudio", new Dictionary<string, string>
+        { [LMStudioProviderConfiguration.BaseUrlKey] = "http://lmstudio.test/v1" });
+        using var connection = new LMStudioConnection(context, handler);
+        using var client = new LMStudioChatClient(new AgentChatClientContext("lmstudio", "lmstudio/model"), connection);
+        var error = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        {
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Test overload")])) { }
+        });
+        Assert.Single(handler.Requests);
+        Assert.Equal(AgentChatProviderFailureKind.Overloaded, error.FailureKind);
+        Assert.Equal(503, error.StatusCode);
+        Assert.Equal(12_000, error.RetryAfterMilliseconds);
+    }
+
+    [Fact]
     public async Task ToolImageIsNativeImageContentNotAStringifiedToolResult()
     {
         const string stream = "data: {\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
@@ -251,11 +275,8 @@ public sealed class LMStudioTranslationTests
 
         var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
         {
-            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")]))
-            {
-            }
+            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])) { }
         });
-
         Assert.Equal("lmstudio-incomplete-response", exception.ErrorCode);
         ProviderConformanceHarness.VerifyPrematureEof("LM Studio", exception.ErrorCode);
     }
@@ -263,9 +284,13 @@ public sealed class LMStudioTranslationTests
     [Theory]
     [InlineData("length")]
     [InlineData("content_filter")]
-    public async Task ChatClient_IncompleteFinishReasonsAreFailures(string finishReason)
+    public async Task ChatClient_OutputLimitIsContinuableButSafetyFilterRemainsFailure(string finishReason)
     {
-        var stream = $"data: {{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finishReason}\"}}]}}\n\n";
+        var stream = (finishReason == "length" ? """
+            data: {"id":"chatcmpl-1","object":"chat.completion.chunk","created":0,"model":"model","choices":[{"index":0,"delta":{"content":"Partial","tool_calls":[{"index":0,"id":"cut-off","type":"function","function":{"name":"write","arguments":"{\"path\":"}}]},"finish_reason":null}]}
+
+            """ + "\n" : "")
+            + $"data: {{\"id\":\"chatcmpl-1\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"model\",\"choices\":[{{\"index\":0,\"delta\":{{}},\"finish_reason\":\"{finishReason}\"}}]}}\n\n";
         var handler = new LMStudioTestHttpHandler((_, _, _) => Task.FromResult(new HttpResponseMessage
         {
             Content = new StringContent(stream, Encoding.UTF8, "text/event-stream"),
@@ -281,14 +306,23 @@ public sealed class LMStudioTranslationTests
             new AgentChatClientContext("lmstudio", "lmstudio/model"),
             connection);
 
-        var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
+        if (finishReason == "length")
         {
-            await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")]))
+            var updates = new List<ChatResponseUpdate>();
+            await foreach (var item in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")]))
+                updates.Add(item);
+            Assert.Equal(Microsoft.Extensions.AI.ChatFinishReason.Length, updates[^1].FinishReason);
+            Assert.Equal("Partial", string.Concat(updates.Select(update => update.Text)));
+            Assert.Empty(updates.SelectMany(update => update.Contents).OfType<FunctionCallContent>());
+        }
+        else
+        {
+            var exception = await Assert.ThrowsAsync<AgentChatProviderException>(async () =>
             {
-            }
-        });
-
-        Assert.Equal("lmstudio-incomplete-response", exception.ErrorCode);
+                await foreach (var _ in client.GetStreamingResponseAsync([new ChatMessage(ChatRole.User, "Continue.")])) { }
+            });
+            Assert.Equal("lmstudio-incomplete-response", exception.ErrorCode);
+        }
     }
 
     [Fact]

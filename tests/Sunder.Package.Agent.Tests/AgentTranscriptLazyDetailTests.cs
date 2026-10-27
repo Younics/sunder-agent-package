@@ -42,33 +42,41 @@ public sealed class AgentTranscriptLazyDetailTests
     }
 
     [Fact]
-    public void LaterOperationObservationUpdatesOnlySameSessionHeadersNotOriginalReceipts()
+    public void PresentationReferencesDoNotMergeIndependentExecutionReceipts()
     {
         using var scope = RegressionTestPackageScope.Create();
         var store = new AgentLocalStore(scope.Context);
         var sessions = new AgentSessionService(store);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Operation receipts");
         var session = sessions.CreateSession("Operation receipts", workspaceId: workspace.WorkspaceId);
-        var original = sessions.AppendToolResultTurn(session.SessionId, "apply", "maker_apply", "{}", "original-running-receipt", "Package operation running", null, null,
+        var original = sessions.AppendToolResultTurn(session.SessionId, "apply", "maker_apply", "{}", "original-receipt", "Package operation applied", null, null,
             false, false, null, null, "{\"operationStatus\":\"running\",\"operationRef\":\"o-original\"}");
-        sessions.AppendToolResultTurn(session.SessionId, "observe", "maker_operation", "{}", "later-applied-observation", "Package operation applied", null, null,
-            false, false, null, null, "{\"operationStatus\":\"applied\",\"operationRef\":\"o-original\"}");
-        var unavailable = sessions.AppendToolResultTurn(session.SessionId, "unavailable", "maker_operation", "{}", "check-unavailable", "Check unavailable", null, null,
-            false, true, "maker.observation-unavailable", null, "{\"operationStatus\":\"unknown\",\"operationRef\":\"o-original\",\"operationObservation\":\"unavailable\"}");
+        var originalHeader = Assert.Single(Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, original.TurnId, 0, 0).Turns).Items);
+        var originalGroup = Assert.Single(store.ReadCompactTranscript(new(session.SessionId, AgentCompactTranscriptDirection.Recent)).Entries).Group!;
+        var failed = sessions.AppendToolResultTurn(session.SessionId, "other", "maker_apply", "{}", "other-receipt", "Other operation failed", null, null,
+            false, true, "maker.failed", null, "{\"operationStatus\":\"failed\",\"operationRef\":\"o-original\"}");
         var foreign = sessions.CreateSession("Other session", workspaceId: workspace.WorkspaceId);
-        sessions.AppendToolResultTurn(foreign.SessionId, "foreign", "maker_operation", "{}", "foreign-failure", "Foreign failure", null, null,
+        sessions.AppendToolResultTurn(foreign.SessionId, "foreign", "maker_apply", "{}", "foreign-failure", "Foreign failure", null, null,
             false, true, null, null, "{\"operationStatus\":\"failed\",\"operationRef\":\"o-original\"}");
         var page = store.LoadTranscriptAroundTurn(session.SessionId, original.TurnId, 0, 0);
         var header = Assert.Single(Assert.Single(page.Turns).Items);
-        Assert.Contains("applied", header.PresentationPayloadJson);
+        Assert.Null(header.PresentationPayloadJson);
+        Assert.Equal(AgentToolExecutionStatus.Completed, header.ToolExecutionStatus);
         Assert.Equal("Package operation applied", header.ToolHeaderHint);
+        Assert.Equal(originalHeader.ToolDetailRevision, header.ToolDetailRevision);
+        var detail = store.GetTranscriptToolDetail(new(session.SessionId, null, "apply", header.ItemId));
+        Assert.NotNull(detail);
+        Assert.Equal(header.ToolDetailRevision, detail.Revision);
+        Assert.Equal("original-receipt", detail.OutputText);
+        var refreshedGroup = Assert.Single(store.ReadCompactTranscript(new(session.SessionId, AgentCompactTranscriptDirection.Recent)).Entries).Group!;
+        Assert.True(refreshedGroup.Revision > originalGroup.Revision);
         var raw = Assert.Single(store.GetTurn(original.TurnId)!.Items);
-        Assert.Equal("original-running-receipt", raw.TextContent);
+        Assert.Equal("original-receipt", raw.TextContent);
         Assert.Contains("running", raw.PresentationPayloadJson);
-        var check = Assert.Single(Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, unavailable.TurnId, 0, 0).Turns).Items);
-        Assert.Contains("applied", check.PresentationPayloadJson);
-        Assert.Contains("unavailable", check.PresentationPayloadJson);
-        Assert.Equal("Check unavailable", check.ToolErrorSummary);
+        var other = Assert.Single(Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, failed.TurnId, 0, 0).Turns).Items);
+        Assert.Equal(AgentToolExecutionStatus.Failed, other.ToolExecutionStatus);
+        Assert.Equal("Other operation failed", other.ToolErrorSummary);
+        Assert.NotEqual(header.ToolExecutionId, other.ToolExecutionId);
     }
     [Fact]
     public async Task RuntimeCatalogPagingPreservesPayloadsWhileSubsessionsReadHeaders()
@@ -89,11 +97,12 @@ public sealed class AgentTranscriptLazyDetailTests
         extensions.AddRuntimeCatalog(runtimeCatalog);
         var workspace = workspaces.CreateWorkspace("Catalog payloads");
         var session = sessions.CreateSession("Catalog payloads", workspaceId: workspace.WorkspaceId);
+        var first = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "before");
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await using var events = runtimeCatalog.WatchAsync(timeout.Token).GetAsyncEnumerator(timeout.Token);
         Assert.True(await events.MoveNextAsync());
         Assert.IsType<AgentRuntimeCatalogResetEvent>(events.Current);
-        sessions.AppendToolResultTurn(
+        var payload = sessions.AppendToolResultTurn(
             session.SessionId,
             "payload-call",
             "payload-tool",
@@ -107,46 +116,60 @@ public sealed class AgentTranscriptLazyDetailTests
             errorCode: "private-error-canary",
             backendId: "private-backend-canary",
             presentationPayloadJson: "{\"privatePresentation\":true}");
+        var last = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "after");
 
         while (await events.MoveNextAsync() && events.Current is not AgentTurnCatalogEvent) { }
         var catalogEvent = Assert.IsType<AgentTurnCatalogEvent>(events.Current);
         Assert.Equal(session.SessionId, catalogEvent.SessionId);
         AssertHydratedToolPayload(catalogEvent.Turn);
-        AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListRecentTurnsAsync(session.SessionId, 1)));
+        AssertHydratedToolPayload((await runtimeCatalog.ListRecentTurnsAsync(session.SessionId, 2))[0]);
         AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListTurnsBeforeAsync(
             session.SessionId,
-            DateTimeOffset.MaxValue,
-            Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            last.CreatedAtUtc,
+            last.TurnId,
             1)));
         AssertHydratedToolPayload(Assert.Single(await runtimeCatalog.ListTurnsAfterAsync(
             session.SessionId,
-            DateTimeOffset.MinValue,
-            Guid.Empty,
+            first.CreatedAtUtc,
+            first.TurnId,
             1)));
 
         var subsessions = Assert.Single((await extensions.Subagents()
             .Providers<IRuntimeCatalogService>()
             .ListAsync()).Providers).Service;
         var recent = await SubsessionTranscriptReader.RecentAsync(
-            subsessions, session.SessionId, 1, CancellationToken.None);
+            subsessions, session.SessionId, 2, CancellationToken.None);
         var before = await SubsessionTranscriptReader.BeforeAsync(
             subsessions,
             session.SessionId,
-            new SunderRpcOffsetDateTime(DateTimeOffset.MaxValue.ToString("O")),
-            Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            new SunderRpcOffsetDateTime(last.CreatedAtUtc.ToString("O")),
+            last.TurnId,
             1,
             CancellationToken.None);
         var after = await SubsessionTranscriptReader.AfterAsync(
             subsessions,
             session.SessionId,
-            new SunderRpcOffsetDateTime(DateTimeOffset.MinValue.ToString("O")),
-            Guid.Empty,
+            new SunderRpcOffsetDateTime(first.CreatedAtUtc.ToString("O")),
+            first.TurnId,
             1,
             CancellationToken.None);
 
-        AssertHeaderOnly(Assert.Single(Assert.Single(recent.Turns).Items));
+        AssertHeaderOnly(Assert.Single(Assert.Single(recent.Turns, turn => turn.TurnId == payload.TurnId).Items));
         AssertHeaderOnly(Assert.Single(Assert.Single(before.Turns).Items));
         AssertHeaderOnly(Assert.Single(Assert.Single(after.Turns).Items));
+
+        var child = sessions.CreateSession("child receipt", parentSessionId: session.SessionId,
+            rootSessionId: session.SessionId, workspaceId: workspace.WorkspaceId);
+        var childCall = sessions.AppendToolCallTurn(child.SessionId, AgentMessageRole.Assistant, "child-call", "read", "{}");
+        var childResult = sessions.AppendToolResultTurn(child.SessionId, "child-call", "read", "{}", "child-output-canary",
+            "finished", null, null, false, false, null, null);
+        var exact = await SubsessionTranscriptReader.AroundAsync(subsessions, child.SessionId, childResult.TurnId,
+            childResult.CreatedAtUtc, childResult.Items[0].ItemId, 0, 0, CancellationToken.None);
+        var exactTurn = Assert.Single(exact.Turns);
+        Assert.Equal(childResult.TurnId, exact.AnchorTurnId);
+        Assert.Equal(childResult.Items[0].ItemId, Assert.Single(exactTurn.Items).ItemId);
+        Assert.Equal(childCall.TurnSequence, exactTurn.TurnSequence);
+        AssertHeaderOnly(exactTurn.Items[0]);
     }
 
     [Fact]
@@ -167,63 +190,17 @@ public sealed class AgentTranscriptLazyDetailTests
 
         using (var connection = Open(store.DatabasePath))
         using (var transaction = connection.BeginTransaction())
-        using (var command = connection.CreateCommand())
         {
-            command.Transaction = transaction;
-            command.CommandText = """
-                INSERT INTO AgentTurns (
-                    TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc,
-                    ContentRevision, IsStreaming, RunId, RunRevision)
-                VALUES
-                    ($callTurnId, $sessionId, 'Assistant', 'ToolCall', $callCreated, $callUpdated,
-                     1, 0, $runId, 1),
-                    ($resultTurnId, $sessionId, 'Tool', 'ToolResult', $resultCreated, $resultUpdated,
-                     1, 0, $runId, 1);
-
-                INSERT INTO AgentTurnItems (
-                    ItemId, TurnId, SequenceNumber, Kind, TextContent, CallId, ToolId,
-                    ArgumentsJson, ResultSummary, WasTruncated, IsError, ToolExecutionId)
-                VALUES
-                    ($callItemId, $callTurnId, 0, 'ToolCall', NULL, $callId, 'parallel_tool',
-                     $arguments, NULL, 0, 0, $executionId),
-                    ($resultItemId, $resultTurnId, 0, 'ToolResult', $output, $callId, 'parallel_tool',
-                     NULL, $summary, 0, 0, $executionId);
-                """;
-            command.Parameters.Add("$callTurnId", SqliteType.Text);
-            command.Parameters.AddWithValue("$sessionId", session.SessionId.ToString());
-            command.Parameters.Add("$callCreated", SqliteType.Text);
-            command.Parameters.Add("$callUpdated", SqliteType.Text);
-            command.Parameters.AddWithValue("$runId", runId.ToString());
-            command.Parameters.Add("$resultTurnId", SqliteType.Text);
-            command.Parameters.Add("$resultCreated", SqliteType.Text);
-            command.Parameters.Add("$resultUpdated", SqliteType.Text);
-            command.Parameters.Add("$callItemId", SqliteType.Text);
-            command.Parameters.Add("$callId", SqliteType.Text);
-            command.Parameters.Add("$arguments", SqliteType.Text);
-            command.Parameters.Add("$executionId", SqliteType.Text);
-            command.Parameters.Add("$resultItemId", SqliteType.Text);
-            command.Parameters.Add("$output", SqliteType.Text);
-            command.Parameters.Add("$summary", SqliteType.Text);
-
             for (var index = 0; index < count; index++)
             {
-                var callTimestamp = start.AddTicks(index + 1);
-                var resultTimestamp = start.AddMinutes(1).AddTicks(index + 1);
-                command.Parameters["$callTurnId"].Value = callTurnIds[index].ToString();
-                command.Parameters["$callCreated"].Value = callTimestamp.ToString("O");
-                command.Parameters["$callUpdated"].Value = callTimestamp.ToString("O");
-                command.Parameters["$resultTurnId"].Value = resultTurnIds[index].ToString();
-                command.Parameters["$resultCreated"].Value = resultTimestamp.ToString("O");
-                command.Parameters["$resultUpdated"].Value = resultTimestamp.ToString("O");
-                command.Parameters["$callItemId"].Value = callItemIds[index].ToString();
-                command.Parameters["$callId"].Value = $"parallel-{index}";
-                command.Parameters["$arguments"].Value = $"{{\"index\":{index}}}";
-                command.Parameters["$executionId"].Value = executionIds[index].ToString();
-                command.Parameters["$resultItemId"].Value = resultItemIds[index].ToString();
-                command.Parameters["$output"].Value = $"output-{index}";
-                command.Parameters["$summary"].Value = $"summary-{index}";
-                command.ExecuteNonQuery();
+                SeedTool(connection, transaction, session.SessionId, callTurnIds[index], callItemIds[index], executionIds[index],
+                    start.AddTicks(index + 1), AgentTurnItemKind.ToolCall, $"parallel-{index}", "parallel_tool",
+                    $"{{\"index\":{index}}}", runId: runId);
             }
+            for (var index = 0; index < count; index++)
+                SeedTool(connection, transaction, session.SessionId, resultTurnIds[index], resultItemIds[index], executionIds[index],
+                    start.AddMinutes(1).AddTicks(index + 1), AgentTurnItemKind.ToolResult, $"parallel-{index}", "parallel_tool",
+                    output: $"output-{index}", summary: $"summary-{index}", runId: runId);
             transaction.Commit();
         }
 
@@ -235,8 +212,7 @@ public sealed class AgentTranscriptLazyDetailTests
             afterLimit: 30);
         var anchor = Assert.Single(page.Turns, turn => turn.TurnId == callTurnIds[anchorIndex]);
         var header = Assert.Single(anchor.Items);
-        var expectedTimestamp = start.AddMinutes(1).AddTicks(anchorIndex + 1);
-        var expectedRevision = (expectedTimestamp.UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10;
+        const long expectedRevision = 2;
 
         Assert.Equal(61, page.Turns.Count);
         Assert.DoesNotContain(page.Turns, turn => turn.TurnId == resultTurnIds[anchorIndex]);
@@ -270,45 +246,28 @@ public sealed class AgentTranscriptLazyDetailTests
         var workspaces = new AgentWorkspaceService(store, sessionService: sessions);
         var workspace = workspaces.CreateWorkspace("Huge fields");
         var session = sessions.CreateSession("Huge fields", workspaceId: workspace.WorkspaceId);
+        var first = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "before");
         var turnId = Guid.NewGuid();
         var itemId = Guid.NewGuid();
         var executionId = Guid.NewGuid();
         string? huge = new('x', 4 * 1024 * 1024);
         var timestamp = new DateTimeOffset(2026, 7, 28, 13, 0, 0, TimeSpan.Zero);
         using (var connection = Open(store.DatabasePath))
-        using (var command = connection.CreateCommand())
+        using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = """
-                INSERT INTO AgentTurns (
-                    TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc,
-                    ContentRevision, IsStreaming, RunId, RunRevision)
-                VALUES ($turnId, $sessionId, 'Tool', 'ToolResult', $created, $updated, 1, 0, NULL, NULL);
-                INSERT INTO AgentTurnItems (
-                    ItemId, TurnId, SequenceNumber, Kind, TextContent, CallId, ToolId,
-                    ArgumentsJson, ResultSummary, StructuredPayloadJson, SourcesJson,
-                    WasTruncated, IsError, ErrorCode, BackendId, PresentationPayloadJson,
-                    ToolExecutionId)
-                VALUES ($itemId, $turnId, 0, 'ToolResult', $huge, 'huge-call', 'huge_tool',
-                    $huge, $huge, $huge, $huge, 0, 0, NULL, 'huge-backend', $huge,
-                    $executionId);
-                """;
-            command.Parameters.AddWithValue("$turnId", turnId.ToString());
-            command.Parameters.AddWithValue("$sessionId", session.SessionId.ToString());
-            command.Parameters.AddWithValue("$created", timestamp.ToString("O"));
-            command.Parameters.AddWithValue("$updated", timestamp.ToString("O"));
-            command.Parameters.AddWithValue("$itemId", itemId.ToString());
-            command.Parameters.AddWithValue("$huge", huge);
-            command.Parameters.AddWithValue("$executionId", executionId.ToString());
-            command.ExecuteNonQuery();
+            SeedTool(connection, transaction, session.SessionId, turnId, itemId, executionId, timestamp,
+                AgentTurnItemKind.ToolResult, "huge-call", "huge_tool", huge, huge, huge, huge, huge, huge);
+            transaction.Commit();
         }
         huge = null;
+        var last = sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "after");
 
-        _ = store.ListRecentTranscriptHeaders(session.SessionId, 1);
+        _ = store.ListTranscriptHeadersBefore(session.SessionId, last.CreatedAtUtc, last.TurnId, 1);
         GC.Collect();
         GC.WaitForPendingFinalizers();
         GC.Collect();
         var beforeHeaderAllocation = GC.GetAllocatedBytesForCurrentThread();
-        var recent = store.ListRecentTranscriptHeaders(session.SessionId, 1);
+        var recent = store.ListTranscriptHeadersBefore(session.SessionId, last.CreatedAtUtc, last.TurnId, 1);
         var headerAllocation = GC.GetAllocatedBytesForCurrentThread() - beforeHeaderAllocation;
         var header = Assert.Single(Assert.Single(recent).Items);
 
@@ -317,13 +276,13 @@ public sealed class AgentTranscriptLazyDetailTests
         Assert.True(header.ToolHasDetails);
         Assert.Single(store.ListTranscriptHeadersBefore(
             session.SessionId,
-            DateTimeOffset.MaxValue,
-            Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff"),
+            last.CreatedAtUtc,
+            last.TurnId,
             1));
         Assert.Single(store.ListTranscriptHeadersAfter(
             session.SessionId,
-            DateTimeOffset.MinValue,
-            Guid.Empty,
+            first.CreatedAtUtc,
+            first.TurnId,
             1));
         Assert.NotNull(store.GetTranscriptHeader(turnId));
         Assert.Single(store.LoadTranscriptAroundTurn(session.SessionId, turnId, 0, 0).Turns);
@@ -331,10 +290,10 @@ public sealed class AgentTranscriptLazyDetailTests
         var snapshot = await store.ReadChatSnapshotAsync(
             1,
             new AgentChatSnapshotRequest(
-                InitialTranscriptLimit: 1,
+                InitialTranscriptLimit: 2,
                 PreferredWorkspaceId: workspace.WorkspaceId,
                 PreferredSessionId: session.SessionId));
-        var startupHeader = Assert.Single(Assert.Single(snapshot.InitialTranscript.Turns).Items);
+        var startupHeader = Assert.Single(Assert.Single(snapshot.InitialTranscript.Turns, turn => turn.TurnId == turnId).Items);
         AssertHeaderOnly(startupHeader);
         Assert.True(startupHeader.ToolHasDetails);
 
@@ -382,30 +341,11 @@ public sealed class AgentTranscriptLazyDetailTests
         var timestamp = new DateTimeOffset(2026, 7, 28, 14, 0, 0, TimeSpan.Zero);
         string? huge = new('x', 4 * 1024 * 1024);
         using (var connection = Open(store.DatabasePath))
-        using (var command = connection.CreateCommand())
+        using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = """
-                INSERT INTO AgentTurns (
-                    TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc,
-                    ContentRevision, IsStreaming, RunId, RunRevision)
-                VALUES ($turnId, $sessionId, 'Tool', 'ToolResult', $timestamp, $timestamp,
-                        1, 0, NULL, NULL);
-                INSERT INTO AgentTurnItems (
-                    ItemId, TurnId, SequenceNumber, Kind, TextContent, CallId, ToolId,
-                    ArgumentsJson, ResultSummary, StructuredPayloadJson, SourcesJson,
-                    WasTruncated, IsError, ErrorCode, BackendId, PresentationPayloadJson,
-                    ToolExecutionId)
-                VALUES ($itemId, $turnId, 0, 'ToolResult', $huge, 'live-heavy-call',
-                        'live-heavy-tool', $huge, $huge, $huge, $huge, 0, 0,
-                        'live-heavy-error', 'live-heavy-backend', $huge, $executionId);
-                """;
-            command.Parameters.AddWithValue("$turnId", turnId.ToString());
-            command.Parameters.AddWithValue("$sessionId", session.SessionId.ToString());
-            command.Parameters.AddWithValue("$timestamp", timestamp.ToString("O"));
-            command.Parameters.AddWithValue("$itemId", itemId.ToString());
-            command.Parameters.AddWithValue("$huge", huge);
-            command.Parameters.AddWithValue("$executionId", executionId.ToString());
-            command.ExecuteNonQuery();
+            SeedTool(connection, transaction, session.SessionId, turnId, itemId, executionId, timestamp,
+                AgentTurnItemKind.ToolResult, "live-heavy-call", "live-heavy-tool", huge, huge, huge, huge, huge, huge);
+            transaction.Commit();
         }
 
         // Warm the notification and serialization paths before measuring the exact heavy turn lookup.
@@ -452,38 +392,16 @@ public sealed class AgentTranscriptLazyDetailTests
         var session = sessions.CreateSession(
             "Empty tool detail",
             workspaceId: workspace.WorkspaceId);
-        var call = sessions.AppendToolCallTurn(
-            session.SessionId,
-            AgentMessageRole.Assistant,
-            "empty-call",
-            "empty-tool",
-            "{}");
-        var result = sessions.AppendToolResultTurn(
-            session.SessionId,
-            "empty-call",
-            "empty-tool",
-            argumentsJson: null,
-            content: null,
-            resultSummary: null,
-            structuredPayloadJson: null,
-            sourcesJson: null,
-            wasTruncated: false,
-            isError: false,
-            errorCode: null,
-            backendId: null);
         var executionId = Guid.NewGuid();
+        AgentTurnRecord call, result;
         using (var connection = Open(store.DatabasePath))
-        using (var command = connection.CreateCommand())
+        using (var transaction = connection.BeginTransaction())
         {
-            command.CommandText = """
-                UPDATE AgentTurnItems
-                SET ToolExecutionId = $executionId
-                WHERE ItemId IN ($callItemId, $resultItemId);
-                """;
-            command.Parameters.AddWithValue("$executionId", executionId.ToString());
-            command.Parameters.AddWithValue("$callItemId", call.Items[0].ItemId.ToString());
-            command.Parameters.AddWithValue("$resultItemId", result.Items[0].ItemId.ToString());
-            command.ExecuteNonQuery();
+            call = SeedTool(connection, transaction, session.SessionId, Guid.NewGuid(), Guid.NewGuid(), executionId,
+                DateTimeOffset.UtcNow, AgentTurnItemKind.ToolCall, "empty-call", "empty-tool", "{}");
+            result = SeedTool(connection, transaction, session.SessionId, Guid.NewGuid(), Guid.NewGuid(), executionId,
+                DateTimeOffset.UtcNow, AgentTurnItemKind.ToolResult, "empty-call", "empty-tool");
+            transaction.Commit();
         }
 
         var fullTurns = store.ListTurns(session.SessionId);
@@ -497,7 +415,8 @@ public sealed class AgentTranscriptLazyDetailTests
         Assert.False(Assert.Single(liveHeaders[call.TurnId].Items).ToolHasDetails);
         Assert.False(Assert.Single(liveHeaders[result.TurnId].Items).ToolHasDetails);
         Assert.False(Assert.Single(reloadedHeaders[call.TurnId].Items).ToolHasDetails);
-        Assert.False(Assert.Single(reloadedHeaders[result.TurnId].Items).ToolHasDetails);
+        Assert.Single(reloadedHeaders);
+        Assert.False(Assert.Single(store.GetTranscriptHeader(result.TurnId)!.Items).ToolHasDetails);
         var detail = Assert.IsType<AgentTranscriptToolDetailRecord>(store.GetTranscriptToolDetail(new(
             session.SessionId,
             executionId,
@@ -519,6 +438,17 @@ public sealed class AgentTranscriptLazyDetailTests
         Assert.Equal("private-backend-canary", item.BackendId);
         Assert.Equal("{\"privatePresentation\":true}", item.PresentationPayloadJson);
     }
+
+    private static AgentTurnRecord SeedTool(SqliteConnection connection, SqliteTransaction transaction, Guid session,
+        Guid turn, Guid item, Guid execution, DateTimeOffset timestamp, AgentTurnItemKind kind, string call, string tool,
+        string? arguments = null, string? output = null, string? summary = null, string? structured = null,
+        string? sources = null, string? presentation = null, Guid? runId = null)
+        => AgentLocalStore.InsertTurn(connection, transaction, new AgentTurnRecord(turn, session,
+            kind == AgentTurnItemKind.ToolCall ? AgentMessageRole.Assistant : AgentMessageRole.Tool,
+            kind == AgentTurnItemKind.ToolCall ? AgentTurnKind.ToolCall : AgentTurnKind.ToolResult,
+            [new(item, turn, 0, kind, output, call, tool, arguments, summary, structured, sources, false, false,
+                null, null, presentation) { ToolExecutionId = execution }], timestamp, timestamp)
+            { RunId = runId, RunRevision = runId is null ? null : 1 });
 
     private static void AssertHeaderOnly(AgentTurnItemRecord item)
         => AssertHeaderOnly(item.IsToolHeaderProjection, item.TextContent, item.ArgumentsJson, item.ResultSummary,

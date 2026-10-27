@@ -318,7 +318,7 @@ internal sealed partial class AgentAppRuntimeGateway :
     {
         lock (_cacheLock)
         {
-            return _knownTurns.GetValueOrDefault(turnId);
+            return _knownTurns.GetValueOrDefault(turnId) ?? _admissionReceipts.GetValueOrDefault(turnId);
         }
     }
     public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId)
@@ -332,6 +332,11 @@ internal sealed partial class AgentAppRuntimeGateway :
         }
 
         return null;
+    }
+
+    public AgentRunActivityUpdate? GetRunActivity(Guid sessionId)
+    {
+        lock (_cacheLock) return _knownSessions.GetValueOrDefault(sessionId)?.Activity;
     }
 
     public AgentSessionPermissionState GetSessionState(Guid sessionId)
@@ -508,7 +513,8 @@ internal sealed partial class AgentAppRuntimeGateway :
         {
             return _knownTurns.Values
                 .Where(turn => turn.SessionId == sessionId)
-                .OrderBy(turn => turn.CreatedAtUtc)
+                .OrderBy(turn => turn.TurnSequence)
+                .ThenBy(turn => turn.CreatedAtUtc)
                 .ThenBy(turn => turn.TurnId)
                 .ToArray();
         }
@@ -635,6 +641,8 @@ internal sealed partial class AgentAppRuntimeGateway :
             _workspaceSessions.Clear();
             _knownSessions.Clear();
             _knownTurns.Clear();
+            _admissionReceipts.Clear();
+            _admissionReceiptOrder.Clear();
             _globalPermissions = null;
             _globalPermissionRevision = -1;
             _globalPermissionGeneration++;
@@ -647,6 +655,9 @@ internal sealed partial class AgentAppRuntimeGateway :
     {
         lock (_cacheLock)
         {
+            if (_knownSessions.TryGetValue(snapshot.Session.SessionId, out var current)
+                && current.Checkpoint is { } checkpoint && IsCheckpointNewer(checkpoint, snapshot.Checkpoint))
+                snapshot = snapshot with { Checkpoint = checkpoint };
             RemoveCachedSessionCore(snapshot.Session.SessionId);
             _knownSessions[snapshot.Session.SessionId] = snapshot;
             if (!string.IsNullOrWhiteSpace(snapshot.Session.WorkspaceId)
@@ -663,6 +674,7 @@ internal sealed partial class AgentAppRuntimeGateway :
         lock (_cacheLock)
         {
             RemoveCachedSessionCore(sessionId);
+            RemoveAdmissionReceiptsCore(sessionId);
         }
     }
     private void RemoveCachedSessionCore(Guid sessionId)

@@ -23,6 +23,8 @@ internal sealed record AgentAnchoredSessionContextCheckpoint(
     string? ProviderId,
     string? ModelId);
 
+// Turns before ActiveCheckpoint's boundary retain header anchors only. Their
+// content is represented by the checkpoint; the active user turn is always raw.
 internal sealed record AgentSessionContinuitySnapshot(
     Guid SessionId,
     long TranscriptEpoch,

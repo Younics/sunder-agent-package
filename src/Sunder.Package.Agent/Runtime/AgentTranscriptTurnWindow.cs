@@ -53,6 +53,15 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
         NewestTurnId = null;
     }
 
+    // Compact member publication changes a batch of backing turns at once.
+    // Recalculate once, not once per retained turn after every header chunk.
+    internal void ApplyBatch(IEnumerable<AgentTurnRecord> turns, IEnumerable<Guid> removed)
+    {
+        foreach (var id in removed) _turnsById.Remove(id);
+        foreach (var turn in turns) _turnsById[turn.TurnId] = turn;
+        RecalculateBoundaries();
+    }
+
     /// <summary>
     /// Enforces the configured turn limit by discarding overflow from the selected edge.
     /// </summary>
@@ -88,7 +97,8 @@ public sealed class AgentTranscriptTurnWindow(int turnLimit)
     /// <returns>A caller-owned array ordered by creation time and then turn identifier.</returns>
     public AgentTurnRecord[] OrderedTurns()
         => _turnsById.Values
-            .OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
+            .OrderBy(turn => turn.TurnSequence)
+            .ThenBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc))
             .ThenBy(turn => turn.TurnId)
             .ToArray();
 

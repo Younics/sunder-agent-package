@@ -37,14 +37,15 @@ public sealed partial class TranscriptPresentationStateTests
         group.Update([member]);
 
         Assert.False(group.IsRunning);
-        Assert.NotEqual("Completed", projection.StatusText); // A completed RPC is not a verified application effect.
+        Assert.Equal(status == AgentToolExecutionStatus.Completed ? "Completed" : "Failed", projection.StatusText);
+        Assert.Contains("running", item.PresentationPayloadJson); // Evidence is not a fourth header state.
     }
 
     [Theory]
     [InlineData("dispatched", "Input dispatched")]
     [InlineData("applied", "Applied")]
     [InlineData("unknown", "Unconfirmed")]
-    public void CompletedToolRetainsItsDistinctObservedEffectWithoutAnimating(string receipt, string expected)
+    public void CompletedToolKeepsObservedEffectInDetailsWithoutAddingHeaderStates(string receipt, string expected)
     {
         var turn = CreateToolTurn(Guid.NewGuid(), Guid.NewGuid(), itemCount: 1);
         var item = turn.Items[0] with
@@ -54,7 +55,8 @@ public sealed partial class TranscriptPresentationStateTests
             PresentationPayloadJson = $"{{\"operationStatus\":\"{receipt}\"}}",
         };
         var projection = CorePresentation.TranscriptRowProjector<CoreViews.AgentTranscriptRowViewModel>.DescribeTool(turn, item);
-        Assert.Equal(expected, projection.StatusText);
+        Assert.Equal("Completed", projection.StatusText);
+        Assert.Equal(expected, AgentCore::Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Read(item.PresentationPayloadJson));
         Assert.False(projection.IsRunning);
     }
 
@@ -1865,7 +1867,7 @@ public sealed partial class TranscriptPresentationStateTests
     }
 
     [Fact]
-    public void Timeline_LiveEmptyToolResultPreservesCorrelatedCallDetails()
+    public void Timeline_LiveEmptyToolResultHonorsPersistedInvocationDetailsFlag()
     {
         using var timeline = CreateTimeline(initialLimit: 4, pageSize: 2, visibleLimit: 4);
         var sessionId = Guid.NewGuid();
@@ -1898,6 +1900,7 @@ public sealed partial class TranscriptPresentationStateTests
                     ErrorCode = null,
                     BackendId = null,
                     ToolExecutionId = executionId,
+                    ToolHasDetails = true, // Runtime's durable invocation includes its call's arguments.
                 },
             ],
         };
@@ -2066,52 +2069,6 @@ public sealed partial class TranscriptPresentationStateTests
     }
 
     [Fact]
-    public void Composer_LegacySubmissionMatchesAuthoritativePayload()
-    {
-        var composer = new CoreViews.AgentComposerState { Text = "legacy message" };
-        var sessionId = Guid.NewGuid();
-        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
-            composer.TryBeginSubmission(
-                sessionId,
-                "legacy message",
-                [],
-                rollbackTurnId: null,
-                existingTurnIds: new HashSet<Guid>(),
-                useUserTurnCorrelation: false));
-        var matchingTurn = CreateMessageTurn(
-            sessionId,
-            Guid.NewGuid(),
-            "legacy message",
-            submission.StartedAtUtc.AddSeconds(1),
-            submission.StartedAtUtc.AddSeconds(1));
-
-        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
-    }
-
-    [Fact]
-    public void Composer_LegacyWhitespaceMatchesCanonicalEmptyText()
-    {
-        var composer = new CoreViews.AgentComposerState { Text = "   " };
-        var sessionId = Guid.NewGuid();
-        var submission = Assert.IsType<CoreViews.AgentComposerSubmission>(
-            composer.TryBeginSubmission(
-                sessionId,
-                "   ",
-                [],
-                rollbackTurnId: null,
-                existingTurnIds: new HashSet<Guid>(),
-                useUserTurnCorrelation: false));
-        var matchingTurn = CreateMessageTurn(
-            sessionId,
-            Guid.NewGuid(),
-            string.Empty,
-            submission.StartedAtUtc.AddSeconds(1),
-            submission.StartedAtUtc.AddSeconds(1));
-
-        Assert.Same(submission, composer.CommitAuthoritativeUserTurn(matchingTurn));
-    }
-
-    [Fact]
     public void ComposerSubmission_CompletionHandshakeIsOrderIndependent()
     {
         var composer = new CoreViews.AgentComposerState { Text = "first" };
@@ -2153,8 +2110,7 @@ public sealed partial class TranscriptPresentationStateTests
                 sessionId,
                 "sent draft",
                 [],
-                rollbackTurnId: null,
-                existingTurnIds: new HashSet<Guid>()));
+                rollbackTurnId: null));
 
         composer.Text = "edited while transcript loaded";
 
@@ -2166,9 +2122,11 @@ public sealed partial class TranscriptPresentationStateTests
         int initialLimit,
         int pageSize,
         int visibleLimit,
-        TestRowFactory? factory = null)
+        TestRowFactory? factory = null,
+        AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher? dispatcher = null,
+        System.Collections.ObjectModel.ObservableCollection<TestRow>? rows = null)
     {
-        var rows = new System.Collections.ObjectModel.ObservableCollection<TestRow>();
+        rows ??= new System.Collections.ObjectModel.ObservableCollection<TestRow>();
         var projector = new CorePresentation.TranscriptRowProjector<TestRow>(
             rows,
             factory ?? new TestRowFactory(),
@@ -2177,7 +2135,8 @@ public sealed partial class TranscriptPresentationStateTests
             projector,
             initialLimit,
             pageSize,
-            visibleLimit);
+            visibleLimit,
+            dispatcher);
     }
 
     private static AgentTurnRecord[] CreateTurns(Guid sessionId, int start, int count)
@@ -2289,7 +2248,7 @@ public sealed partial class TranscriptPresentationStateTests
                     false,
                     false,
                     null,
-                    null))
+                    null) { ToolDetailRevision = 1 })
                 .ToArray(),
             timestamp,
             timestamp)
@@ -2325,7 +2284,7 @@ public sealed partial class TranscriptPresentationStateTests
                 false,
                 false,
                 null,
-                null)],
+                null) { ToolDetailRevision = 2, ToolExecutionStatus = AgentToolExecutionStatus.Completed }],
             timestamp,
             timestamp)
         {
@@ -2348,6 +2307,8 @@ public sealed partial class TranscriptPresentationStateTests
         public bool IsExpanded { get; set; }
         public bool HasDetails { get; set; }
         public string? Status { get; set; }
+        public CorePresentation.TranscriptActivityGroupState? GroupState { get; init; }
+        public bool Disposed { get; set; }
 
         public event Action? DetailVisualInvalidated;
 
@@ -2360,9 +2321,13 @@ public sealed partial class TranscriptPresentationStateTests
         }
     }
 
-    private sealed class TestRowFactory : CorePresentation.ITranscriptRowFactory<TestRow>
+    private sealed class TestRowFactory : CorePresentation.ITranscriptRowFactory<TestRow>, CorePresentation.ITranscriptActivityGroupRowFactory<TestRow>
     {
         public int UpdateToolCalls { get; private set; }
+        public int CreatedTools { get; private set; }
+
+        public TestRow CreateGroup(AgentTranscriptActivityGroup group, CorePresentation.TranscriptActivityGroupState state)
+            => new(group.First.TurnId, state.Anchor, string.Empty) { GroupState = state };
 
         public TestRow? CreateMessage(
             AgentTurnRecord turn,
@@ -2381,7 +2346,9 @@ public sealed partial class TranscriptPresentationStateTests
             AgentTurnRecord turn,
             AgentTurnItemRecord item,
             CorePresentation.TranscriptToolProjection projection)
-            => new(
+        {
+            CreatedTools++;
+            return new(
                 turn.TurnId,
                 projection.AnchorKey,
                 projection.ToolLabel,
@@ -2390,6 +2357,7 @@ public sealed partial class TranscriptPresentationStateTests
                 HasDetails = projection.HasDetails,
                 Status = projection.StatusText,
             };
+        }
 
         public void ApplyToolResult(
             TestRow row,
@@ -2411,6 +2379,7 @@ public sealed partial class TranscriptPresentationStateTests
             UpdateToolCalls++;
             row.Content = projection.StatusText;
             row.HasDetails = projection.HasDetails;
+            row.Status = projection.StatusText;
         }
 
         public TestRow CreateActivity(CorePresentation.TranscriptActivityProjection projection)
@@ -2426,6 +2395,6 @@ public sealed partial class TranscriptPresentationStateTests
         public Guid? GetResultTurnId(TestRow row) => row.ResultTurnId;
         public void SetExpanded(TestRow row, bool isExpanded) => row.IsExpanded = isExpanded;
         public void RefreshRelatedRows(TestRow row) { }
-        public void DisposeRow(TestRow row) { }
+        public void DisposeRow(TestRow row) => row.Disposed = true;
     }
 }

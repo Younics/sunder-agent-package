@@ -7,6 +7,7 @@ using Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Sunder.Sdk.Rpc;
 using AgentChatClientContext = Sunder.Package.Agent.Contracts.Models.AgentChatClientContext;
 using AgentChatProviderException = Sunder.Package.Agent.Contracts.Models.AgentChatProviderException;
+using AgentProviderFailureClassifier = Sunder.Package.Agent.Contracts.Models.AgentProviderFailureClassifier;
 using ProviderFailureKind = Sunder.Package.Agent.Contracts.Models.AgentChatProviderFailureKind;
 
 namespace Sunder.Package.Agent.Provider.Shared;
@@ -122,19 +123,17 @@ internal static class ProviderChatStream
         catch (AgentChatProviderException error)
         {
             failure = error;
+            var normalized = AgentProviderFailureClassifier.Normalize(error);
             try
             {
                 await writer.WriteAsync(new AgentChatErrorEvent
                 {
-                    ErrorCode = ProjectRpcFailure(error) ?? error.ErrorCode ?? "provider-error",
-                    ErrorMessage = error.Message,
-                    ErrorContent = error.Content,
-                    ErrorFailureKind = error.FailureKind switch
-                    {
-                        ProviderFailureKind.Unknown => AgentChatProviderFailureKind.Unknown,
-                        ProviderFailureKind.ContextWindowExceeded => AgentChatProviderFailureKind.ContextWindowExceeded,
-                        _ => throw new InvalidDataException("Unsupported provider failure kind."),
-                    },
+                    ErrorCode = ProjectRpcFailure(error) ?? normalized.ErrorCode ?? "provider-error",
+                    ErrorMessage = normalized.Message,
+                    ErrorContent = normalized.Content,
+                    ErrorFailureKind = Enum.Parse<AgentChatProviderFailureKind>(normalized.FailureKind.ToString()),
+                    StatusCode = normalized.StatusCode,
+                    RetryAfterMilliseconds = normalized.RetryAfterMilliseconds,
                 }, token).ConfigureAwait(false);
                 published = true;
             }
@@ -161,7 +160,9 @@ internal static class ProviderChatStream
             if (current is SunderRpcException rpc)
             {
                 if (rpc.Error.Code == StreamQueueLimitErrorCode) return StreamQueueLimitErrorCode;
-                unsafeFailure |= rpc.Error.RetrySafety == SunderRpcRetrySafety.Unsafe;
+                unsafeFailure |= rpc.Error.DispatchState != SunderRpcDispatchState.NotDispatched
+                    || rpc.Error.RetrySafety != SunderRpcRetrySafety.Safe
+                    || rpc.Error.Kind is not (SunderRpcErrorKind.Unavailable or SunderRpcErrorKind.DeadlineExceeded);
             }
             if (current is AggregateException aggregate)
                 for (var index = aggregate.InnerExceptions.Count - 1; index >= 0; index--) pending.Push(aggregate.InnerExceptions[index]);

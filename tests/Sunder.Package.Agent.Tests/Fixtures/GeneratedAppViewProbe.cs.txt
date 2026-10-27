@@ -390,8 +390,15 @@ static void VerifyBuilderView(Assembly assembly, ServiceProvider services, AppVi
             || !ReferenceEquals(settings.DataContext!.GetType().GetProperty("Cards")!.GetValue(settings.DataContext),
                 otherSettings.DataContext!.GetType().GetProperty("Cards")!.GetValue(otherSettings.DataContext)))
             throw new Exception("Transient Builder settings must borrow activation-owned SDK cards.");
-        var refresh = ((IPackageViewNavigationPreparationTarget)settings.DataContext!).PrepareNavigationAsync(
+        var settingsModel = settings.DataContext!;
+        var preparation = ((IPackageViewNavigationPreparationTarget)settingsModel).PrepareNavigationAsync(
             new(registration.Id, new Dictionary<string, string?>())).AsTask();
+        if (!preparation.IsCompletedSuccessfully || !preparation.Result)
+            throw new Exception("SDK discovery blocked Settings navigation.");
+        // Navigation is immediate; observe the activation-owned refresh itself,
+        // not the already-completed navigation waiter, when checking its lifetime.
+        var refresh = (Task)settingsModel.GetType().GetMethod("RefreshAsync")!
+            .Invoke(settingsModel, [CancellationToken.None])!;
         PumpUntil(() => blocked.Started == 3 && blocked.Active == 3);
         ((IDisposable)settings).Dispose(); ((IDisposable)otherSettings).Dispose();
         if (settings.DataContext is not null || otherSettings.DataContext is not null || refresh.IsCompleted || blocked.Active != 3)

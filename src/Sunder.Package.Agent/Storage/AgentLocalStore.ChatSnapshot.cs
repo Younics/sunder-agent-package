@@ -71,6 +71,7 @@ public sealed partial class AgentLocalStore
         var limit = Math.Clamp(request.InitialTranscriptLimit, 1, 500);
         IReadOnlyList<AgentTurnRecord> turns = selectedSession is null
             || !request.IncludeInitialTranscript
+            || request.CompactTranscript
             ? []
             : ListChatRecentTurns(
                 connection,
@@ -82,6 +83,10 @@ public sealed partial class AgentLocalStore
         {
             turns = turns.Skip(turns.Count - limit).ToArray();
         }
+        var compact = selectedSession is not null && request.IncludeInitialTranscript && request.CompactTranscript
+            ? ReadCompactTranscript(connection, transaction,
+                new AgentCompactTranscriptRequest(selectedSession.Session.SessionId, AgentCompactTranscriptDirection.Recent, limit), cancellationToken)
+            : null;
 
         var permissions = selectedSession is null
             ? new AgentChatPermissionProjection(revision, null, [])
@@ -157,7 +162,8 @@ public sealed partial class AgentLocalStore
             new AgentTranscriptPage(
                 revision,
                 turns.Select(SanitizeTurn).ToArray(),
-                hasMoreTurns),
+                compact?.HasOlder ?? hasMoreTurns,
+                Compact: compact),
             permissions);
         return AgentChatSnapshotPayload.Fit(snapshot, maximumBytes);
     }
@@ -196,21 +202,7 @@ public sealed partial class AgentLocalStore
         SqliteTransaction transaction,
         Guid sessionId,
         int limit)
-    {
-        var turns = ListRecentTurnHeadersForSession(
-                connection,
-                sessionId,
-                limit,
-                transaction)
-            .OrderBy(turn => turn.CreatedAtUtc)
-            .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
-            .ToArray();
-        var items = ListTranscriptHeaderItemsForTurns(
-            connection,
-            turns.Select(turn => turn.TurnId).ToArray(),
-            transaction);
-        return AttachItems(turns, items);
-    }
+        => ReadDetailedTranscript(connection, transaction, sessionId, limit);
 
     private static AgentSessionPermissionState ReadChatSessionPermissionState(
         SqliteConnection connection,
@@ -498,6 +490,19 @@ internal static class AgentChatSnapshotPayload
         var serializedBytes = GetSerializedByteCount(snapshot);
         while (serializedBytes > maximumBytes.Value)
         {
+            if (snapshot.InitialTranscript.Compact is { } compact)
+            {
+                var transcriptBytes = JsonSerializer.SerializeToUtf8Bytes(compact, JsonOptions).Length;
+                var available = maximumBytes.Value - (serializedBytes - transcriptBytes);
+                if (available > 0 && !initialTranscriptProjected)
+                {
+                    var fitted = TranscriptCompactPayload.Fit(compact, AgentCompactTranscriptDirection.Recent, available);
+                    snapshot = snapshot with { InitialTranscript = snapshot.InitialTranscript with { Compact = fitted, HasMore = fitted.HasOlder } };
+                    initialTranscriptProjected = true;
+                    serializedBytes = GetSerializedByteCount(snapshot);
+                    continue;
+                }
+            }
             if (snapshot.InitialTranscript.Turns.Count > 1)
             {
                 var turnCount = snapshot.InitialTranscript.Turns.Count;

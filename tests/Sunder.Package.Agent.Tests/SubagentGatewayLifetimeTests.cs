@@ -7,6 +7,8 @@ using Sunder.Sdk.Services;
 using Xunit;
 using SubagentManagementServices = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Subagents_Services;
 using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
+using AgentCompactTranscriptRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptRequest;
+using AgentTranscriptActivityMembersRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersRequest;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -79,6 +81,11 @@ public sealed class SubagentGatewayLifetimeTests
             => Unavailable();
 
         public ValueTask<SunderContent> ToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default)
+            => Unavailable();
+
+        public ValueTask<SunderContent> CompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+            => Unavailable();
+        public ValueTask<SunderContent> ActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
             => Unavailable();
 
         public async IAsyncEnumerable<SunderContent> ChangesAsync(long afterRevision, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)

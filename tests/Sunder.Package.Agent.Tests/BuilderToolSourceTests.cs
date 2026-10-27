@@ -77,7 +77,7 @@ public sealed class BuilderToolSourceTests
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
         var tools = await source.ListToolsAsync(null!);
-        Assert.Equal(new[] { "maker_package", "maker_apply", "maker_operation", "maker_logs", "maker_view", "maker_screenshot", "maker_interact" }, tools.Select(tool => tool.ToolId));
+        Assert.Equal(new[] { "maker_package", "maker_apply", "maker_logs", "maker_view", "maker_screenshot", "maker_interact" }, tools.Select(tool => tool.ToolId));
         Assert.Single(tools, tool => !string.IsNullOrWhiteSpace(tool.RuntimeInstructions));
         Assert.DoesNotContain(tools, tool => tool.ToolId == "maker_build_package");
         Assert.All(tools, tool => Assert.DoesNotContain("watch", tool.ToolId, StringComparison.OrdinalIgnoreCase));

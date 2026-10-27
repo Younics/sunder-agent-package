@@ -88,6 +88,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => _inner.GetWorkingSummaryAsync(sessionId, token);
         public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken token = default) => _inner.GetSessionContextCheckpointAsync(sessionId, token);
         public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid sessionId, CancellationToken token = default) => _inner.GetLatestCheckpointAsync(sessionId, token);
+        public ValueTask<Sunder.Package.Agent.Models.AgentRunActivityUpdate?> GetRunActivityAsync(Guid sessionId, CancellationToken token = default) => _inner.GetRunActivityAsync(sessionId, token);
         public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid sessionId, int limit, CancellationToken token = default) => _inner.ListRecentTurnsAsync(sessionId, limit, token);
         public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default)
             => _inner.ListTurnsBeforeAsync(sessionId, createdAtUtc, turnId, limit, token);
@@ -101,6 +102,10 @@ public sealed partial class AgentPublicSourceMigrationTests
             => _fullTranscript ? _inner.ListTurnsAfterAsync(sessionId, createdAtUtc, turnId, limit, token) : _inner.ListTranscriptHeadersAfterAsync(sessionId, createdAtUtc, turnId, limit, token);
         public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token = default)
             => _fullTranscript ? ValueTask.FromResult<AgentTranscriptToolDetailRecord?>(null) : _inner.GetTranscriptToolDetailAsync(request, token);
+        public ValueTask<AgentCompactTranscriptPage> ReadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken token = default)
+            => _inner.ReadCompactTranscriptAsync(request, token);
+        public ValueTask<AgentTranscriptActivityMembersPage> ReadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken token = default)
+            => _inner.ReadActivityMembersAsync(request, token);
         public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken token = default) => _inner.ListProfilesAsync(token);
         public ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken token = default) => _inner.GetProfileAsync(profileId, token);
         public ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(Guid sessionId, string capabilityKind, CancellationToken token = default)
@@ -115,12 +120,21 @@ public sealed partial class AgentPublicSourceMigrationTests
                 return typeof(RuntimeCatalogProbe).GetMethod(nameof(Watch), BindingFlags.Instance | BindingFlags.NonPublic)!
                     .MakeGenericMethod(resultType).Invoke(this, [token])!;
             return typeof(RuntimeCatalogProbe).GetMethod(nameof(Reply), BindingFlags.Instance | BindingFlags.NonPublic)!
-                .MakeGenericMethod(resultType).Invoke(this, [method, JsonSerializer.SerializeToElement(request, ExecutionJson), token])!;
+                .MakeGenericMethod(resultType).Invoke(this, [method, request, token])!;
         }
 
-        private async ValueTask<T> Reply<T>(string method, JsonElement request, CancellationToken token)
+        private async ValueTask<T> Reply<T>(string method, object? argument, CancellationToken token)
         {
             token.ThrowIfCancellationRequested();
+            // Imported numeric direction symbols differ from authored names.
+            // Use the candidate-authenticated model projection in both directions.
+            if (method == "ReadCompactTranscriptAsync")
+                return await ProjectAsync<T>(await ReadCompactTranscriptAsync(
+                    await ProjectAsync<AgentCompactTranscriptRequest>(argument, token), token), token);
+            if (method == "ReadActivityMembersAsync")
+                return await ProjectAsync<T>(await ReadActivityMembersAsync(
+                    await ProjectAsync<AgentTranscriptActivityMembersRequest>(argument, token), token), token);
+            var request = JsonSerializer.SerializeToElement(argument, ExecutionJson);
             string Text(string name) => request.ValueKind == JsonValueKind.String ? request.GetString()! : request.GetProperty(name).GetString()!;
             Guid Id(string name) => request.ValueKind == JsonValueKind.String ? request.GetGuid() : request.GetProperty(name).GetGuid();
             int Number(string name) => request.GetProperty(name).GetInt32();
@@ -139,6 +153,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 "GetWorkingSummaryAsync" => await GetWorkingSummaryAsync(Id("sessionId"), token),
                 "GetSessionContextCheckpointAsync" => await GetSessionContextCheckpointAsync(Id("sessionId"), token),
                 "GetLatestCheckpointAsync" => await GetLatestCheckpointAsync(Id("sessionId"), token),
+                "GetRunActivityAsync" => await GetRunActivityAsync(Id("sessionId"), token),
                 "ListRecentTurnsAsync" => await ListRecentTurnsAsync(Id("sessionId"), Number("limit"), token),
                 "ListTurnsBeforeAsync" => await ListTurnsBeforeAsync(Id("sessionId"), Time("createdAtUtc"), Id("turnId"), Number("limit"), token),
                 "ListTurnsAfterAsync" => await ListTurnsAfterAsync(Id("sessionId"), Time("createdAtUtc"), Id("turnId"), Number("limit"), token),

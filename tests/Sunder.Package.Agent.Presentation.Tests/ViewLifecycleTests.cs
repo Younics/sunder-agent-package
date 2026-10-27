@@ -349,6 +349,7 @@ public sealed partial class ViewLifecycleTests
         {
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            viewModel.IsDetailedTranscript = true; // The flat-page fixture owns Detailed's atomic placement contract.
             var selectionState = provider.GetRequiredService<AgentChatSelectionStateService>();
             Assert.Null(await selectionState.GetSelectedProfileIdAsync());
             Assert.Null(await selectionState.GetSelectedWorkspaceIdAsync());
@@ -574,6 +575,7 @@ public sealed partial class ViewLifecycleTests
         {
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+            viewModel.IsDetailedTranscript = true;
             var transcript = GetTranscriptScrollViewer(view);
             var coordinator = GetTranscriptScrollCoordinator(view);
             var writesBeforeNavigation = GetCoordinatorProgrammaticOffsetWrites(coordinator);
@@ -732,6 +734,7 @@ public sealed partial class ViewLifecycleTests
         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Loaded);
 
         var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
+        await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
         var repeater = view.FindControl<ItemsRepeater>("TranscriptItemsControl")!;
         var transcript = GetTranscriptScrollViewer(view);
         var realizedRows = Enumerable.Range(0, viewModel.Messages.Count)
@@ -823,8 +826,8 @@ public sealed partial class ViewLifecycleTests
             new Dictionary<string, string?>()));
         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
         var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
-        var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
+        var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
         Assert.False(toolRow.IsExpanded);
         Assert.False(toolRow.HasMaterializedDetails);
         Assert.Empty(FindToolDetailCards(view));
@@ -2236,11 +2239,14 @@ public sealed partial class ViewLifecycleTests
         var beginSubmission = composer.GetType()
             .GetMethods(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public)
             .Single(method => method.Name == "TryBeginSubmission"
-                              && method.GetParameters().Length == 2);
+                               && method.GetParameters().Length == 1);
         var submission = beginSubmission.Invoke(
             composer,
-            [session.SessionId, new HashSet<Guid>()]);
+            [session.SessionId]);
         Assert.NotNull(submission);
+        var draftRevisions = (System.Collections.IDictionary)typeof(AgentChatViewModel)
+            .GetField("_draftRevisions", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(viewModel)!;
+        submission.GetType().GetProperty("DraftRevision")!.SetValue(submission, draftRevisions[session.SessionId] ?? 0L);
         var recentReadsBeforeCompletion = sessionGateway.RecentTranscriptReadCount;
         var turn = services.SessionService.AppendTextTurn(
             session.SessionId,
@@ -2374,7 +2380,7 @@ public sealed partial class ViewLifecycleTests
 
             Assert.False(opacityWasHidden);
             Assert.False(jumpBecameVisible);
-            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.True(viewModel.RunActivityRow.IsVisible);
             Assert.Equal(0, collectionRemovals);
             Assert.NotEmpty(completedLayoutDistances);
             Assert.All(
@@ -2394,7 +2400,7 @@ public sealed partial class ViewLifecycleTests
     }
 
     [AvaloniaFact]
-    public async Task AgentChatView_RestoredRunningMcpToolSuppressesDuplicateActivityRow()
+    public async Task AgentChatView_RestoredRunningMcpToolKeepsPersistentStatusRow()
     {
         using var scope = RegressionTestPackageScope.Create();
         var services = CreateAgentServices(scope);
@@ -2427,11 +2433,11 @@ public sealed partial class ViewLifecycleTests
                 new Dictionary<string, string?>()));
             var viewModel = Assert.IsType<AgentChatViewModel>(view.DataContext);
             await WaitUntilAsync(() => viewModel.Messages
-                .OfType<AgentToolInvocationRowViewModel>()
+                .OfType<AgentActivityGroupRowViewModel>()
                 .Any(row => row.IsRunning));
 
-            Assert.False(viewModel.RunActivityRow.IsVisible);
-            Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
+            Assert.True(viewModel.RunActivityRow.IsVisible);
+            Assert.Single(viewModel.Messages.OfType<AgentActivityGroupRowViewModel>());
         }
         finally
         {
@@ -2465,6 +2471,7 @@ public sealed partial class ViewLifecycleTests
             "Thinking.");
 
         using var view = CreateAgentChatView(scope, services, profileService);
+        Assert.IsType<AgentChatViewModel>(view.DataContext).IsDetailedTranscript = true;
         var window = new Window { Width = 800, Height = 360, Content = view };
         window.Show();
         try
@@ -2503,7 +2510,7 @@ public sealed partial class ViewLifecycleTests
                 runRevision,
                 AgentRunActivityKind.Reasoning,
                 "Inspecting a longer reasoning activity update that changes the persistent row height.");
-            await WaitUntilAsync(() => viewModel.RunActivityRow.ThinkingText.Contains(
+            await WaitUntilAsync(() => viewModel.RunActivityRow.ReasoningText.Contains(
                 "Inspecting",
                 StringComparison.Ordinal));
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
@@ -2524,7 +2531,7 @@ public sealed partial class ViewLifecycleTests
                 "test_tool",
                 largeDetailArguments);
             await WaitUntilAsync(() => viewModel.Messages.OfType<AgentToolInvocationRowViewModel>().Any());
-            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.True(viewModel.RunActivityRow.IsVisible);
             await WaitForPendingCoordinatorOperationsAsync(view);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
@@ -2540,7 +2547,7 @@ public sealed partial class ViewLifecycleTests
                 runRevision,
                 AgentRunActivityKind.Tool,
                 "Running test tool");
-            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.True(viewModel.RunActivityRow.IsVisible);
             completedLayoutDistances.Clear();
             observeLayouts = true;
             services.SessionService.AppendToolResultTurn(
@@ -2559,7 +2566,7 @@ public sealed partial class ViewLifecycleTests
             await WaitUntilAsync(() => viewModel.Messages
                 .OfType<AgentToolInvocationRowViewModel>()
                 .Any(row => row.IsFailed && !row.IsExpanded));
-            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.True(viewModel.RunActivityRow.IsVisible);
             await WaitForPendingCoordinatorOperationsAsync(view);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
@@ -2600,7 +2607,7 @@ public sealed partial class ViewLifecycleTests
                 runRevision,
                 AgentRunActivityKind.Tool,
                 "Collecting detached failure output");
-            Assert.False(viewModel.RunActivityRow.IsVisible);
+            Assert.True(viewModel.RunActivityRow.IsVisible);
 
             window.MouseMove(new Point(400, 180), RawInputModifiers.None);
             window.MouseWheel(new Point(400, 180), new Vector(0, 3), RawInputModifiers.None);
@@ -2705,8 +2712,8 @@ public sealed partial class ViewLifecycleTests
             var transcript = GetTranscriptScrollViewer(view);
             var repeater = Assert.IsType<ItemsRepeater>(
                 view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
-            var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
             await RevealCompactCallsAsync(view, viewModel.TranscriptItems.OfType<AgentActivityGroupRowViewModel>().ToArray());
+            var toolRow = Assert.Single(viewModel.Messages.OfType<AgentToolInvocationRowViewModel>());
             Assert.True(toolRow.HasDetails);
             Button GetToolHeader() => Assert.Single(
                     view.GetVisualDescendants().OfType<Button>(),
@@ -3015,6 +3022,8 @@ public sealed partial class ViewLifecycleTests
         catalog.AddRuntimeCatalog(new SubsessionRuntimeCatalogServiceProxy(runtime));
         using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, catalog);
         var viewModel = runtimeAdapter.CreateViewModel();
+        // This legacy flat-page fixture owns Detailed's single-publication contract.
+        viewModel.IsDetailedTranscript = true;
         using var view = new SubsessionsView(viewModel);
         var source = new Border { Background = Avalonia.Media.Brushes.DimGray };
         var candidateHost = new ContentControl
@@ -3320,6 +3329,7 @@ public sealed partial class ViewLifecycleTests
         catalog.AddRuntimeCatalog(new SubsessionRuntimeCatalogServiceProxy(runtime));
         using var runtimeAdapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, catalog);
         var viewModel = runtimeAdapter.CreateViewModel();
+        viewModel.IsDetailedTranscript = true;
         using var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
         window.Show();
@@ -3466,10 +3476,10 @@ public sealed partial class ViewLifecycleTests
                 view.FindControl<ScrollViewer>("TranscriptScrollViewer"));
             var repeater = Assert.IsType<ItemsRepeater>(
                 view.FindControl<ItemsRepeater>("TranscriptItemsControl"));
-            var toolRow = Assert.Single(viewModel.Messages.OfType<SubsessionToolInvocationRowViewModel>());
             foreach (var group in viewModel.TranscriptItems.OfType<SubagentsApp::Sunder.Package.Agent.Subagents.PackageViews.SubsessionActivityGroupRowViewModel>().ToArray()) group.IsExpanded = true;
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
             await GetPendingCoordinatorOperations(view);
+            var toolRow = Assert.Single(viewModel.Messages.OfType<SubsessionToolInvocationRowViewModel>());
             Assert.Same(viewModel.RunActivityRow, viewModel.TranscriptItems[^2]);
             Assert.IsType<SubsessionTranscriptTailSentinelRowViewModel>(viewModel.TranscriptItems[^1]);
             Button GetToolHeader() => Assert.Single(
@@ -5301,11 +5311,12 @@ public sealed partial class ViewLifecycleTests
     private static Task GetPendingCoordinatorOperations(AgentChatView view)
     {
         var coordinator = GetTranscriptScrollCoordinator(view);
-        return Assert.IsAssignableFrom<Task>(coordinator.GetType()
+        return Task.WhenAll((view.DataContext as AgentChatViewModel)?.PendingTranscriptActivities ?? Task.CompletedTask,
+            Assert.IsAssignableFrom<Task>(coordinator.GetType()
             .GetProperty(
                 "PendingPagingOperations",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(coordinator));
+            .GetValue(coordinator)));
     }
 
     private static Task GetViewportMutationCompletionOperation(object coordinator)
@@ -5332,11 +5343,12 @@ public sealed partial class ViewLifecycleTests
     private static Task GetPendingCoordinatorOperations(SubsessionsView view)
     {
         var coordinator = GetTranscriptScrollCoordinator(view);
-        return Assert.IsAssignableFrom<Task>(coordinator.GetType()
+        return Task.WhenAll((view.DataContext as SubsessionsViewModel)?.PendingTranscriptActivities ?? Task.CompletedTask,
+            Assert.IsAssignableFrom<Task>(coordinator.GetType()
             .GetProperty(
                 "PendingPagingOperations",
                 System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
-            .GetValue(coordinator));
+            .GetValue(coordinator)));
     }
 
     private static Task GetPendingRuntimeRefresh(SubsessionsViewModel viewModel)
@@ -5449,6 +5461,7 @@ public sealed partial class ViewLifecycleTests
             scope.Context,
             catalog);
         var viewModel = runtimeAdapter.CreateViewModel();
+        viewModel.IsDetailedTranscript = true;
         var view = new SubsessionsView(viewModel);
         var window = new Window { Width = 900, Height = 500, Content = view };
         window.Show();
@@ -6013,9 +6026,17 @@ public sealed partial class ViewLifecycleTests
             CancellationToken cancellationToken = default) => Task.FromResult<AgentRunCheckpointRecord?>(null);
     }
 
-    private sealed class ProviderFaultingRunGateway : IAgentRunGateway
+    private sealed class ProviderFaultingRunGateway : IAgentRunGateway, IAgentCorrelatedRunGateway
     {
         public static ProviderFaultingRunGateway Instance { get; } = new();
+
+        public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(Guid sessionId, string profileId, string userMessage,
+            string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments, Guid userTurnId,
+            CancellationToken cancellationToken = default) => Task.FromException<AgentRunCheckpointRecord>(ProviderFailure());
+
+        public Task<AgentRunCheckpointRecord> RollbackAndQueueUserMessageAsync(Guid sessionId, Guid rollbackAnchorTurnId,
+            string profileId, string userMessage, string workspaceId, IReadOnlyList<AgentAttachmentUploadRequest> attachments,
+            Guid userTurnId, CancellationToken cancellationToken = default) => Task.FromException<AgentRunCheckpointRecord>(ProviderFailure());
 
         public Task<AgentRunCheckpointRecord> QueueUserMessageAsync(
             Guid sessionId,

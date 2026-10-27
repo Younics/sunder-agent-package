@@ -129,6 +129,24 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
     private string _activityTextBase;
     private bool _isTickerSubscribed;
     private int _tick = 3;
+    private AgentRunRetryState? _retry;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasReasoningText))]
+    private string _reasoningText = string.Empty;
+
+    public bool HasReasoningText => ReasoningText.Length > 0;
+
+    internal void SetRunPresentation(string text, bool visible, string reasoning, AgentRunRetryState? retry)
+    {
+        _retry = retry;
+        ReasoningText = reasoning;
+        SetPresentation(text, visible);
+        if (retry is not null) ThinkingText = RunActivityText.FormatRetry(retry, DateTimeOffset.UtcNow);
+    }
+
+    internal bool MatchesRunPresentation(string text, bool visible, string reasoning, AgentRunRetryState? retry)
+        => MatchesPresentation(text, visible) && ReasoningText == reasoning && Equals(_retry, retry);
 
     internal SubsessionActivityTranscriptRowViewModel(IActivityTicker ticker, string activityTextBase = "Thinking")
         : base(Guid.Empty, DateTimeOffset.UtcNow, TranscriptRowAnchorKey.Activity())
@@ -193,6 +211,7 @@ public sealed partial class SubsessionActivityTranscriptRowViewModel : Subsessio
 
     private void OnTick()
     {
+        if (_retry is not null) { ThinkingText = RunActivityText.FormatRetry(_retry, DateTimeOffset.UtcNow); return; }
         _tick++;
         ThinkingText = FormatThinkingText(_activityTextBase, _tick);
     }
@@ -302,7 +321,6 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
             .Where(value => !string.IsNullOrWhiteSpace(value)));
     public IBrush? StateBrush { get; private set; }
     public IBrush? StateSoftBrush { get; private set; }
-    public bool IsAmbiguous => StatusText is "Ambiguous" or "Unconfirmed";
     public Guid? ResultTurnId => _resultTurnId;
     public ObservableCollection<SubsessionChildSessionLinkViewModel> ChildSessionLinks { get; } = [];
     public bool HasChildSessionLinks => ChildSessionLinks.Count > 0;
@@ -361,6 +379,7 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
 
     private void UpdateProjection(TranscriptToolProjection projection)
     {
+        if (projection.SameInvocation(_projection) && projection.DetailRevision < _projection.DetailRevision) return;
         _projection = projection;
         _detailState.UpdateProjection(projection);
         ApplyHeaderProjection();
@@ -368,8 +387,8 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
 
     private void ApplyHeaderProjection()
     {
-        StateBrush = ResolveStateBrush(StatusText);
-        StateSoftBrush = ResolveStateSoftBrush(StatusText);
+        StateBrush = SubagentThemeBrushes.Resolve(TranscriptToolStates.Brush(_projection.State));
+        StateSoftBrush = SubagentThemeBrushes.Resolve(TranscriptToolStates.SoftBrush(_projection.State));
         OnPropertyChanged(nameof(ToolLabel));
         OnPropertyChanged(nameof(StatusText));
         OnPropertyChanged(nameof(StatusIconText));
@@ -381,7 +400,6 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
         OnPropertyChanged(nameof(SessionId));
         OnPropertyChanged(nameof(StateBrush));
         OnPropertyChanged(nameof(StateSoftBrush));
-        OnPropertyChanged(nameof(IsAmbiguous));
         OnPropertyChanged(nameof(HeaderAccessibilityText));
     }
 
@@ -450,28 +468,6 @@ public sealed class SubsessionToolInvocationRowViewModel : SubsessionTranscriptR
 
     private static string? FirstNonBlank(params string?[] values)
         => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
-
-    private static IBrush? ResolveStateBrush(string statusText)
-        => SubagentThemeBrushes.Resolve(statusText switch
-        {
-            "Completed" or "Applied" => SunderThemeKeys.SuccessBrush,
-            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.AccentBrush,
-            "Running (last observed)" => SunderThemeKeys.ForegroundMutedBrush,
-            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningBrush,
-            "Prepared" => SunderThemeKeys.ForegroundMutedBrush,
-            _ => SunderThemeKeys.DangerBrush,
-        });
-
-    private static IBrush? ResolveStateSoftBrush(string statusText)
-        => SubagentThemeBrushes.Resolve(statusText switch
-        {
-            "Completed" or "Applied" => SunderThemeKeys.SuccessSoftBrush,
-            "Started" or "Running" or "Opened" or "Input dispatched" => SunderThemeKeys.InfoSoftBrush,
-            "Running (last observed)" => SunderThemeKeys.SurfacePopoverBrush,
-            "Ambiguous" or "Unconfirmed" => SunderThemeKeys.WarningSoftBrush,
-            "Prepared" => SunderThemeKeys.SurfacePopoverBrush,
-            _ => SunderThemeKeys.DangerSoftBrush,
-        });
 
     public void Dispose()
     {

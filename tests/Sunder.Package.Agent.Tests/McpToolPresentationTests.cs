@@ -87,7 +87,7 @@ public sealed class McpToolPresentationTests
             new AgentToolPresentationService());
 
         Assert.Equal("Stitch: Edit Screens", row.ToolLabel);
-        Assert.Equal("Ambiguous", row.StatusText);
+        Assert.Equal("Failed", row.StatusText);
         Assert.Equal("Outcome uncertain.", row.HeaderDetailText);
         Assert.DoesNotContain("m1_", row.SummaryText, StringComparison.OrdinalIgnoreCase);
     }

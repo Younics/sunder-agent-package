@@ -6,25 +6,7 @@ namespace Sunder.Package.Agent.Subagents.PackageViews;
 public partial class SubsessionsView
 {
     private IEnumerable<(object Item, Control Visual)> EnumerateRealizedTranscriptAnchors()
-    {
-        var transcriptItems = ViewModel?.TranscriptItems;
-        if (transcriptItems is null)
-        {
-            yield break;
-        }
-
-        for (var index = 0; index < transcriptItems.Count; index++)
-        {
-            if (transcriptItems[index] is ITranscriptAnchorItem
-                {
-                    AnchorRole: TranscriptAnchorItemRole.Transient,
-                } anchorItem
-                && TranscriptItemsControl.TryGetElement(index) is Control visual)
-            {
-                yield return (anchorItem.AnchorKey, visual);
-            }
-        }
-    }
+        => TranscriptRepeaterAnchors.Enumerate(TranscriptItemsControl, ViewModel?.TranscriptItems);
 
     private Control? RealizeTranscriptAnchor(object anchorKey)
     {

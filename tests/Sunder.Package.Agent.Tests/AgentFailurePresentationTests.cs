@@ -79,27 +79,10 @@ public sealed class AgentFailurePresentationTests
     }
 
     [Fact]
-    public async Task ProviderResilience_DoesNotRetryTypedUnsafeStreamQueueFailure()
+    public void ProviderResilience_DoesNotRetryTypedUnsafeStreamQueueFailure()
     {
         var exception = StreamQueueFailure("connection timed out while queue was overloaded");
-        var attemptCount = 0;
-        var retryNotificationCount = 0;
-        var pipeline = AgentProviderResilience.CreatePipeline(
-            _ => retryNotificationCount++,
-            canRetry: () => true);
-
-        var observed = await Assert.ThrowsAsync<SunderRpcException>(async () =>
-            await pipeline.ExecuteAsync(
-                _ =>
-                {
-                    attemptCount++;
-                    return ValueTask.FromException(exception);
-                },
-                CancellationToken.None));
-
-        Assert.Same(exception, observed);
-        Assert.Equal(1, attemptCount);
-        Assert.Equal(0, retryNotificationCount);
+        Assert.Null(new AgentProviderRetryState().TrySchedule(exception, false, default));
     }
 
     [Fact]
@@ -120,7 +103,7 @@ public sealed class AgentFailurePresentationTests
     }
 
     [Fact]
-    public async Task LoopTerminalHandler_StreamQueueLimitReplacesPartialDraftAndInterruptsRun()
+    public async Task LoopTerminalHandler_StreamQueueLimitPreservesPartialDraftAndInterruptsRun()
     {
         var host = new RecordingBehaviorLoopRuntime();
         var partialTurn = host.CreatePartialAssistantTurn("partial assistant draft");
@@ -140,8 +123,12 @@ public sealed class AgentFailurePresentationTests
             AgentFailurePresentationPolicy.StreamInterruptedSummary,
             result.Checkpoint.Summary);
         Assert.Equal(AgentFailurePresentationPolicy.StreamInterruptedMarkdown, host.PersistedContent);
-        Assert.Equal(partialTurn.TurnId, state.Turn?.TurnId);
-        Assert.Equal(1, host.CompleteCount);
+        Assert.NotEqual(partialTurn.TurnId, state.Turn?.TurnId);
+        Assert.Equal(2, host.CompleteCount);
+        Assert.Equal(new[] { "partial assistant draft", AgentFailurePresentationPolicy.StreamInterruptedMarkdown },
+            host.CompletedTurns.Select(RenderText));
+        Assert.Equal(partialTurn.TurnId, host.CompletedTurns[0].TurnId);
+        Assert.All(host.CompletedTurns, turn => Assert.False(turn.IsStreaming));
         Assert.Equal(AgentLifecycleEventKind.RunInterrupted, host.LifecycleKind);
         Assert.Equal(AgentRunStatus.Interrupted, host.LifecycleStatus);
         Assert.True(host.LifecycleIsInterrupted);
@@ -150,6 +137,7 @@ public sealed class AgentFailurePresentationTests
             RenderText(host.LifecycleTriggerTurn!));
         Assert.DoesNotContain(SensitiveDiagnostic, host.PersistedContent, StringComparison.Ordinal);
         Assert.DoesNotContain(SensitiveDiagnostic, result.Checkpoint.Summary, StringComparison.Ordinal);
+        AssertPresentationHasNoDiagnostics(host.CompletedTurns.Select(RenderText).ToArray());
 
         var log = Assert.Single(host.Logs);
         Assert.Equal(PackageLogLevel.Warning, log.Level);
@@ -162,9 +150,10 @@ public sealed class AgentFailurePresentationTests
     public async Task LoopTerminalHandler_GenericFailureSanitizesPresentationAndFailsRun()
     {
         var host = new RecordingBehaviorLoopRuntime();
+        var partialTurn = host.CreatePartialAssistantTurn("partial assistant draft");
         var state = new AgentAssistantTurnState
         {
-            Turn = host.CreatePartialAssistantTurn("partial assistant draft"),
+            Turn = partialTurn,
         };
         var exception = new InvalidOperationException(SensitiveDiagnostic);
 
@@ -179,7 +168,13 @@ public sealed class AgentFailurePresentationTests
         Assert.Equal(AgentRunStatus.Failed, result.Checkpoint.Status);
         Assert.Equal(AgentFailurePresentationPolicy.GenericFailureMarkdown, host.PersistedContent);
         Assert.Equal(AgentFailurePresentationPolicy.GenericFailureSummary, result.Checkpoint.Summary);
-        Assert.Equal(1, host.CompleteCount);
+        Assert.Equal(2, host.CompleteCount);
+        Assert.NotEqual(partialTurn.TurnId, state.Turn?.TurnId);
+        Assert.Equal(new[] { "partial assistant draft", AgentFailurePresentationPolicy.GenericFailureMarkdown },
+            host.CompletedTurns.Select(RenderText));
+        Assert.Equal(partialTurn.TurnId, host.CompletedTurns[0].TurnId);
+        Assert.All(host.CompletedTurns, turn => Assert.False(turn.IsStreaming));
+        AssertPresentationHasNoDiagnostics(host.CompletedTurns.Select(RenderText).ToArray());
         Assert.Equal(AgentLifecycleEventKind.RunFailed, host.LifecycleKind);
         Assert.Equal(AgentRunStatus.Failed, host.LifecycleStatus);
         Assert.False(host.LifecycleIsInterrupted);
@@ -416,6 +411,7 @@ public sealed class AgentFailurePresentationTests
         public Guid SessionId { get; } = Guid.NewGuid();
         public string PersistedContent { get; private set; } = string.Empty;
         public int CompleteCount { get; private set; }
+        public List<AgentTurnRecord> CompletedTurns { get; } = [];
         public AgentLifecycleEventKind? LifecycleKind { get; private set; }
         public AgentRunStatus? LifecycleStatus { get; private set; }
         public bool LifecycleIsInterrupted { get; private set; }
@@ -481,11 +477,13 @@ public sealed class AgentFailurePresentationTests
         public AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn)
         {
             CompleteCount++;
-            return assistantTurn with
+            var completed = assistantTurn with
             {
                 ContentRevision = assistantTurn.ContentRevision + 1,
                 IsStreaming = false,
             };
+            CompletedTurns.Add(completed);
+            return completed;
         }
 
         public ValueTask PublishLifecycleEventAsync(

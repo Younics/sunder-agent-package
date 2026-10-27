@@ -6,6 +6,7 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
+    private readonly Dictionary<Guid, long> _draftRevisions = [];
     private bool CommitSubmittedUserTurn(AgentTurnRecord turn)
     {
         var submission = _composer.CommitAuthoritativeUserTurn(turn);
@@ -16,12 +17,6 @@ public sealed partial class AgentChatViewModel
 
         try
         {
-            if (DisplayedTranscriptSessionId == turn.SessionId
-                && !_timeline.IsFollowingLatest)
-            {
-                RequestTranscriptTailFollow(turn.SessionId);
-            }
-
             if (DisplayedTranscriptSessionId == turn.SessionId)
             {
                 _runActivity.TrackTurn(turn, scheduleQuietTimer: false);
@@ -59,7 +54,6 @@ public sealed partial class AgentChatViewModel
             return submission.IsCommitted;
         }
 
-        PrepareForSubmittedUserTurn(turn);
         RunTranscriptNotificationBatch(() =>
         {
             var result = _timeline.ApplyAuthoritativeTurn(turn);
@@ -71,27 +65,18 @@ public sealed partial class AgentChatViewModel
         return submission.IsCommitted;
     }
 
-    private void PrepareForSubmittedUserTurn(AgentTurnRecord turn)
-    {
-        if (DisplayedTranscriptSessionId == turn.SessionId
-            && !_timeline.IsFollowingLatest
-            && _composer.IsPendingAuthoritativeUserTurn(turn))
-        {
-            RequestTranscriptTailFollow(turn.SessionId);
-        }
-    }
-
     private void ClearSubmittedComposerState(
         AgentSessionListItemViewModel? submittedSession,
         AgentComposerSubmission submission
     )
     {
-        if (submittedSession is not null
+        var clearText = _draftRevisions.GetValueOrDefault(submission.SessionId) == submission.DraftRevision;
+        if (clearText && submittedSession is not null
             && string.Equals(submittedSession.DraftMessage, submission.Text, StringComparison.Ordinal))
         {
             submittedSession.DraftMessage = string.Empty;
         }
-        if (_sessionDrafts.TryGetValue(submission.SessionId, out var cachedDraft)
+        if (clearText && _sessionDrafts.TryGetValue(submission.SessionId, out var cachedDraft)
             && string.Equals(cachedDraft, submission.Text, StringComparison.Ordinal))
         {
             _sessionDrafts.Remove(submission.SessionId);
@@ -102,7 +87,7 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _composer.ClearSubmitted(submission);
+        _composer.ClearSubmitted(submission, clearText);
         NotifyComposerStateChanged();
     }
 
@@ -140,16 +125,22 @@ public sealed partial class AgentChatViewModel
             return true;
         }
 
-        var transcriptRequest = submission.UseUserTurnCorrelation
-            ? new AgentTranscriptPageRequest(
-                submission.SessionId,
-                AgentTranscriptPageDirection.Turn,
-                1,
-                AnchorTurnId: submission.UserTurnId)
-            : new AgentTranscriptPageRequest(
-                submission.SessionId,
-                AgentTranscriptPageDirection.Recent,
-                500);
+        if (_sessionService.GetTurn(submission.UserTurnId) is { } cachedTurn
+            && submission.Matches(cachedTurn))
+        {
+            var reconciled = await EnqueueTranscriptBoundaryAsync(() =>
+                ReconcileAuthoritativeSubmissionTurn(cachedTurn, submission)).ConfigureAwait(false);
+            if (reconciled)
+            {
+                await submission.AuthoritativeReconciliation.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+                return true;
+            }
+        }
+        var transcriptRequest = new AgentTranscriptPageRequest(
+            submission.SessionId,
+            AgentTranscriptPageDirection.Turn,
+            1,
+            AnchorTurnId: submission.UserTurnId);
         var transcript = await LoadTranscriptPageAsync(
             transcriptRequest,
             _lifetimeCancellation.Token);

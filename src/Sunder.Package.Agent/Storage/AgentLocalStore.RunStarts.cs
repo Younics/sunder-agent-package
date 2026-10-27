@@ -79,7 +79,7 @@ public sealed partial class AgentLocalStore
                 attachments,
                 now,
                 now);
-        InsertTurn(connection, transaction, userTurn, runKey: runKey);
+        userTurn = InsertTurn(connection, transaction, userTurn, runKey: runKey);
 
         var transition = TryTransitionRun(
             connection,

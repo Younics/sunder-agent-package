@@ -12,6 +12,14 @@ public enum AgentChatProviderFailureKind
     /// <summary>The request exceeded the selected model's context window.</summary>
     [JsonStringEnumMemberName("context-window-exceeded")]
     ContextWindowExceeded = 1,
+    [JsonStringEnumMemberName("transient")] Transient = 2,
+    [JsonStringEnumMemberName("overloaded")] Overloaded = 3,
+    [JsonStringEnumMemberName("rate-limited")] RateLimited = 4,
+    [JsonStringEnumMemberName("timeout")] Timeout = 5,
+    [JsonStringEnumMemberName("authentication")] Authentication = 6,
+    [JsonStringEnumMemberName("quota-exceeded")] QuotaExceeded = 7,
+    [JsonStringEnumMemberName("invalid-request")] InvalidRequest = 8,
+    [JsonStringEnumMemberName("content-policy")] ContentPolicy = 9,
 }
 
 /// <summary>
@@ -40,4 +48,10 @@ public sealed class AgentChatProviderException(
 
     /// <summary>Gets the normalized provider failure category.</summary>
     public AgentChatProviderFailureKind FailureKind { get; init; }
+
+    /// <summary>Gets the provider HTTP status, when known.</summary>
+    public int? StatusCode { get; init; }
+
+    /// <summary>Gets the provider's requested minimum retry delay in milliseconds.</summary>
+    public long? RetryAfterMilliseconds { get; init; }
 }

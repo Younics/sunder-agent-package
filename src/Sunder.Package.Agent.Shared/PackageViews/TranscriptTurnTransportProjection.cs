@@ -19,7 +19,7 @@ internal static class TranscriptTurnTransportProjection
             return turn;
         }
 
-        var revision = CreateDetailRevision(turn);
+        var revision = Math.Max(1, turn.ContentRevision);
         return turn with
         {
             Items = turn.Items.Select(item => item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult
@@ -27,10 +27,6 @@ internal static class TranscriptTurnTransportProjection
                 : item).ToArray(),
         };
     }
-
-    internal static long CreateDetailRevision(AgentTurnRecord turn)
-        // Unix microseconds retain timestamp ordering while staying within the RPC safe-integer bound.
-        => Math.Max(1, (AgentTranscriptTime.Read(turn.UpdatedAtUtc).UtcDateTime.Ticks - DateTime.UnixEpoch.Ticks) / 10);
 
     internal static bool HasToolDetails(AgentTurnItemRecord item)
         => item.ToolHasDetails
@@ -167,14 +163,14 @@ internal static class TranscriptTurnTransportProjection
             SourcesJson = null,
             ErrorCode = null,
             BackendId = null,
-            PresentationPayloadJson = Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation.Compact(item.PresentationPayloadJson),
+            PresentationPayloadJson = null,
             ToolOwnerPackageId = null,
             ToolSchemaId = null,
             ToolSchemaVersion = null,
-            ToolHeaderHint = Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.FromArguments(item.ToolId, item.ArgumentsJson)
+            ToolHeaderHint = item.ToolHeaderHint ?? Sunder.Package.Agent.Shared.Presentation.FileToolHeaderHint.FromArguments(item.ToolId, item.ArgumentsJson)
                              ?? (isFailure ? null : summary),
-            ToolErrorSummary = isFailure ? summary ?? CompactHeader(item.ErrorCode) : null,
-            ToolDetailRevision = revision,
+            ToolErrorSummary = item.ToolErrorSummary ?? (isFailure ? summary ?? CompactHeader(item.ErrorCode) : null),
+            ToolDetailRevision = item.ToolDetailRevision > 0 ? item.ToolDetailRevision : revision,
             ToolHasDetails = hasDetails,
             IsToolHeaderProjection = true,
         };

@@ -19,11 +19,11 @@ internal static class GeminiExceptionMapper
             "gemini-client-init",
             exception);
 
-    public static AgentChatProviderException Request(Exception exception)
+    public static AgentChatProviderException Request(Exception exception, long? retryAfterMilliseconds = null)
     {
         if (exception is AgentChatProviderException providerException)
         {
-            return providerException;
+            return AgentProviderFailureClassifier.Normalize(providerException, retryAfterMilliseconds);
         }
 
         return new AgentChatProviderException(
@@ -34,7 +34,10 @@ internal static class GeminiExceptionMapper
         {
             FailureKind = ProviderContextWindowFailureClassifier.IsGemini(exception)
                 ? AgentChatProviderFailureKind.ContextWindowExceeded
-                : AgentChatProviderFailureKind.Unknown,
+                : AgentProviderFailureClassifier.Classify(ProviderErrorDiagnosticExtractor.Extract(exception.Message),
+                    exception is Google.GenAI.ApiException api ? api.StatusCode : null),
+            StatusCode = exception is Google.GenAI.ApiException http ? http.StatusCode : null,
+            RetryAfterMilliseconds = retryAfterMilliseconds,
         };
     }
 

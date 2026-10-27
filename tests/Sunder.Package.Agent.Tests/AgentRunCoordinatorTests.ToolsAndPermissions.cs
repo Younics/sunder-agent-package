@@ -67,10 +67,8 @@ using McpStatusKind = McpApp::Sunder.Package.Agent.Mcp.McpStatusKind;
 public sealed partial class AgentRunCoordinatorTests
 {
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CorrectiveArgumentFeedbackReachesTheNextProviderCycleAndStillConsumesTheToolBudget(bool exhaustBudget)
+    [Fact]
+    public async Task CorrectiveArgumentFeedbackReachesTheNextProviderCycleAndStillCountsToolUsage()
     {
         const string toolId = "mutate";
         var source = new PermissionAwareMutationToolSource(toolId)
@@ -91,11 +89,9 @@ public sealed partial class AgentRunCoordinatorTests
                         && item.TextContent?.Contains("Supply oldString and newString", StringComparison.Ordinal) == true));
                 return ToolRequest("corrected-call", toolId, "{\"path\":\"File.cs\",\"oldString\":\"old\",\"newString\":\"new\"}");
             }
-            Assert.False(exhaustBudget, "The budget must stop before another provider attempt.");
             return Complete("Only the corrected invocation executed.");
         });
-        using var runtime = AgentTestRuntime.CreateWithBudget(provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 10, exhaustBudget ? 1 : 2));
+        using var runtime = AgentTestRuntime.Create(provider);
         runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, source);
         runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, source);
         runtime.PermissionService.SaveOverride("test.mutate", "test-boundary", AgentPermissionDecision.Allow);
@@ -104,17 +100,13 @@ public sealed partial class AgentRunCoordinatorTests
         var checkpoint = await runtime.RunCoordinator.QueueUserMessageAsync(session, runtime.CurrentProfileId,
             "Edit the file using valid replacement arguments.", runtime.CurrentWorkspaceId);
 
-        Assert.Equal(exhaustBudget ? AgentRunStatus.Failed : AgentRunStatus.Completed, checkpoint.Status);
-        Assert.Equal(exhaustBudget ? 0 : 1, source.ExecutionCount);
-        Assert.Equal(exhaustBudget ? 2 : 3, provider.Requests.Count);
+        Assert.Equal(AgentRunStatus.Completed, checkpoint.Status);
+        Assert.Equal(1, source.ExecutionCount);
+        Assert.Equal(3, provider.Requests.Count);
+        Assert.Equal(2, runtime.SessionService.GetLatestRun(session)?.ToolCallCount);
         var invalid = Assert.Single(runtime.Store.ListToolExecutions(session), execution => execution.CallId == "invalid-call");
         Assert.Null(invalid.StartedAtUtc);
         Assert.Equal(AgentToolExecutionStatus.Failed, invalid.Status);
-        if (exhaustBudget)
-        {
-            Assert.Contains("1-call tool budget", checkpoint.Summary, StringComparison.Ordinal);
-            Assert.Equal(0, source.PermissionResolutionCount);
-        }
     }
 
     [Fact]
@@ -1014,17 +1006,14 @@ public sealed partial class AgentRunCoordinatorTests
     }
 
     [Fact]
-    public async Task ApprovePendingPermissionAsync_ReusesDurableProviderBudget()
+    public async Task ApprovePendingPermissionAsync_RetainsUsageWithoutAnAgeOrCycleLimit()
     {
         const string toolId = "approval_tool";
         var provider = new ScriptedProvider(
             (_, requestIndex) => requestIndex == 1
                 ? ToolRequest("call-1", toolId, "{\"path\":\"~\"}")
-                : throw new Xunit.Sdk.XunitException(
-                    $"Provider request {requestIndex} must be rejected by the cumulative budget."));
-        using var runtime = AgentTestRuntime.CreateWithBudget(
-            provider,
-            new AgentRunBudgetLimits(TimeSpan.FromMinutes(5), 1, 10));
+                : Complete("Approved work completed."));
+        using var runtime = AgentTestRuntime.Create(provider);
         var toolSource = new PermissionedToolSource(toolId);
         runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.ToolSources, toolSource);
         runtime.ExtensionCatalog.AddProvider(RegressionTestBindings.PermissionSurfaces, toolSource);
@@ -1036,16 +1025,26 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.CurrentWorkspaceId);
         var pending = Assert.Single(runtime.PermissionService.ListPendingRequests(sessionId));
 
+        using (var connection = new SqliteConnection($"Data Source={runtime.Store.DatabasePath}"))
+        {
+            connection.Open();
+            using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE AgentRuns SET StartedAtUtc = $started, ProviderCycleCount = 500, ToolCallCount = 1000 WHERE RunId = $run;";
+            command.Parameters.AddWithValue("$started", DateTimeOffset.UtcNow.AddHours(-2).ToString("O"));
+            command.Parameters.AddWithValue("$run", pending.RunId.ToString());
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
+
         var completed = await runtime.RunCoordinator.ApprovePendingPermissionAsync(
             sessionId,
             pending.RequestId);
 
         Assert.Equal(AgentRunStatus.WaitingForApproval, waiting.Status);
-        Assert.Equal(AgentRunStatus.Failed, completed?.Status);
-        Assert.Contains("1-cycle provider budget", completed?.Summary, StringComparison.Ordinal);
-        Assert.Single(provider.Requests);
+        Assert.Equal(AgentRunStatus.Completed, completed?.Status);
+        Assert.Equal(2, provider.Requests.Count);
         Assert.Equal(1, toolSource.ExecutionCount);
-        Assert.Equal(2, runtime.Store.GetRun(pending.RunId)?.ProviderCycleCount);
+        Assert.Equal(501, runtime.Store.GetRun(pending.RunId)?.ProviderCycleCount);
+        Assert.Equal(1000, runtime.Store.GetRun(pending.RunId)?.ToolCallCount);
     }
 
     [Fact]

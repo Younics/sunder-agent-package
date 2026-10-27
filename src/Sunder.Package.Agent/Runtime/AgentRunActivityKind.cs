@@ -10,4 +10,6 @@ public enum AgentRunActivityKind
     [JsonStringEnumMemberName("reasoning")] Reasoning = 1,
     [JsonStringEnumMemberName("tool")] Tool = 2,
     [JsonStringEnumMemberName("processing")] Processing = 3,
+    [JsonStringEnumMemberName("retrying")] Retrying = 4,
+    [JsonStringEnumMemberName("responding")] Responding = 5,
 }

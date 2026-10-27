@@ -476,21 +476,10 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IServiceP
         }
     }
 
-    public void ReportRunActivity(Guid sessionId, long runRevision, AgentRunActivityKind kind, string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return;
-        }
-
-        NotifyRunActivityChanged(
-            sessionId,
-            new AgentRunActivityUpdate(runRevision, kind, text.Trim(), DateTimeOffset.UtcNow));
-    }
-
     public AgentTurnRecord UpdateTextTurn(Guid turnId, string content)
     {
         var turn = _store.UpdateTextTurn(turnId, content);
+        NotifyTranscriptResetAndSessionChanged(turn.SessionId);
         NotifyTurnChanged(
             turn.SessionId,
             turn,
@@ -521,10 +510,11 @@ public sealed partial class AgentSessionService(AgentLocalStore store, IServiceP
                 content);
             if (result is not null)
             {
-                EnqueueLeaseNotification(lease, () => NotifyTurnChanged(
-                    lease.Key.SessionId,
-                    result.Turn,
-                    CreateTurnMutation(result)));
+                EnqueueLeaseNotification(lease, () =>
+                {
+                    if (result.StructureChanged) NotifyTranscriptResetAndSessionChanged(lease.Key.SessionId);
+                    NotifyTurnChanged(lease.Key.SessionId, result.Turn, CreateTurnMutation(result));
+                });
             }
         }
 

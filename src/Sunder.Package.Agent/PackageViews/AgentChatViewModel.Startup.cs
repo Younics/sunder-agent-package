@@ -6,6 +6,8 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
+    private Task _chatSnapshotOperation = Task.CompletedTask;
+
     public Task InitializeAsync(CancellationToken cancellationToken = default)
         => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
 
@@ -24,7 +26,7 @@ public sealed partial class AgentChatViewModel
 
         var operation = BeginChatSnapshotRequest();
         await LoadAndApplyChatSnapshotAsync(
-            new AgentChatSnapshotRequest(InitialTranscriptTurnLimit),
+            new AgentChatSnapshotRequest(InitialTranscriptTurnLimit, CompactTranscript: _timeline.IsCompact),
             operation.Generation,
             operation.CancellationToken).ConfigureAwait(false);
     }
@@ -150,8 +152,9 @@ public sealed partial class AgentChatViewModel
             InitialTranscriptTurnLimit,
             preferredProfileId,
             preferredWorkspaceId,
-            preferredSessionId);
-        _backgroundTasks.Run(async _ =>
+            preferredSessionId,
+            CompactTranscript: _timeline.IsCompact);
+        _chatSnapshotOperation = _backgroundTasks.Track(async _ =>
         {
             try
             {
@@ -356,7 +359,8 @@ public sealed partial class AgentChatViewModel
         var sessionSnapshots = sessionRecords
             .Select(session => new AgentSessionSnapshot(
                 session,
-                _sessionService.GetLatestCheckpoint(session.SessionId)))
+                _sessionService.GetLatestCheckpoint(session.SessionId),
+                _sessionService.GetRunActivity(session.SessionId)))
             .ToArray();
         var selectedSession = selectedSessionRecord is null
             ? null
@@ -364,6 +368,7 @@ public sealed partial class AgentChatViewModel
         var limit = Math.Clamp(request.InitialTranscriptLimit, 1, 500);
         IReadOnlyList<AgentTurnRecord> turns = selectedSession is null
             || !request.IncludeInitialTranscript
+            || request.CompactTranscript
             ? []
             : _sessionService is IAgentTranscriptHeaderGateway transcriptHeaders
                 ? transcriptHeaders.ListRecentTranscriptHeaders(
@@ -377,6 +382,11 @@ public sealed partial class AgentChatViewModel
         {
             turns = turns.Skip(turns.Count - limit).ToArray();
         }
+        var compact = selectedSession is not null && request.IncludeInitialTranscript && request.CompactTranscript
+                      && _sessionService is IAgentCompactTranscriptGateway compactGateway
+            ? await compactGateway.LoadCompactTranscriptAsync(new(selectedSession.Session.SessionId,
+                AgentCompactTranscriptDirection.Recent, limit), cancellationToken).ConfigureAwait(false)
+            : null;
 
         var snapshot = new AgentChatSnapshotProjection(
             0,
@@ -390,8 +400,9 @@ public sealed partial class AgentChatViewModel
             new AgentTranscriptPage(
                 0,
                 turns,
-                hasMoreTurns,
-                turns.Count == 0 ? null : TranscriptPageCursor.FromTurn(turns[0])),
+                compact?.HasOlder ?? hasMoreTurns,
+                turns.Count == 0 ? null : TranscriptPageCursor.FromTurn(turns[0]),
+                compact),
             new AgentChatPermissionProjection(
                 0,
                 selectedSession is null
@@ -494,9 +505,7 @@ public sealed partial class AgentChatViewModel
                 StringComparison.Ordinal);
             if (runtimeInstanceChanged)
             {
-                _appliedRuntimeInstanceId = snapshot.RuntimeInstanceId;
-                _appliedPermissionRevision = 0;
-                Interlocked.Increment(ref _permissionRequestGeneration);
+                ResetPermissionRuntime(snapshot.RuntimeInstanceId);
             }
             if (runtimeInstanceChanged
                 || isSessionReplacement
@@ -561,6 +570,23 @@ public sealed partial class AgentChatViewModel
             if (_timeline.SessionId is not null)
             {
                 _timeline.ClearSession();
+            }
+            return;
+        }
+
+        if (_timeline.IsCompact)
+        {
+            if (snapshot.InitialTranscript.Compact is not { } compact) { RefreshTranscript(forceReplacement); return; }
+            if (!forceReplacement && _timeline.SessionId == DisplayedSession.SessionId)
+            {
+                _timeline.ReconcileCompactSnapshot(compact);
+                return;
+            }
+            var compactTicket = _timeline.BeginInitialLoad(DisplayedSession.SessionId, forceReplacement);
+            if (_timeline.TryCompleteCompactInitialLoad(compactTicket, compact))
+            {
+                TrackCheckpointActivity(snapshot.SelectedSession?.Checkpoint);
+                ApplyRunActivityState();
             }
             return;
         }

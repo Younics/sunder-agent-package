@@ -159,7 +159,7 @@ public sealed partial class AgentRunControlService(AgentActiveRunRegistry runs)
         cancellationToken.ThrowIfCancellationRequested();
         if (streamFailure is not null) ExceptionDispatchInfo.Capture(streamFailure).Throw();
         if (providerFailure is not null)
-            yield return AgentChatStreamEvent.Error(providerFailure.ErrorCode ?? "provider-error", providerFailure.Message, providerFailure.Content, providerFailure.FailureKind);
+            yield return AgentChatFailureProjection.CreateErrorEvent(providerFailure);
         else if (cleanupFailure is not null) ExceptionDispatchInfo.Capture(cleanupFailure).Throw();
     }
 

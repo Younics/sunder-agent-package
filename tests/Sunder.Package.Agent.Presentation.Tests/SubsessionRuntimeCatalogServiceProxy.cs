@@ -35,6 +35,7 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
     public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetWorkingSummaryAsync(sessionId, token);
     public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetSessionContextCheckpointAsync(sessionId, token);
     public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetLatestCheckpointAsync(sessionId, token);
+    public ValueTask<Sunder.Package.Agent.Models.AgentRunActivityUpdate?> GetRunActivityAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetRunActivityAsync(sessionId, token);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListRecentTurnsAsync(Guid sessionId, int limit, CancellationToken token = default) => _fallback.ListRecentTurnsAsync(sessionId, limit, token);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsBeforeAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default) => _fallback.ListTurnsBeforeAsync(sessionId, createdAtUtc, turnId, limit, token);
     public ValueTask<IReadOnlyList<AgentTurnRecord>> ListTurnsAfterAsync(Guid sessionId, DateTimeOffset createdAtUtc, Guid turnId, int limit, CancellationToken token = default) => _fallback.ListTurnsAfterAsync(sessionId, createdAtUtc, turnId, limit, token);
@@ -49,6 +50,10 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
             : await Task.Run(() => _catalog.ListTurnsAfter(sessionId, createdAtUtc, turnId, limit), token);
     public ValueTask<AgentTranscriptToolDetailRecord?> GetTranscriptToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken token = default)
         => ToolDetailOverride?.Invoke(request, token) ?? _fallback.GetTranscriptToolDetailAsync(request, token);
+    public ValueTask<AgentCompactTranscriptPage> ReadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken token = default)
+        => _fallback.ReadCompactTranscriptAsync(request, token);
+    public ValueTask<AgentTranscriptActivityMembersPage> ReadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken token = default)
+        => _fallback.ReadActivityMembersAsync(request, token);
     public ValueTask<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken token = default) => _fallback.ListProfilesAsync(token);
     public ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken token = default) => _fallback.GetProfileAsync(profileId, token);
     public ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(Guid sessionId, string capabilityKind, CancellationToken token = default) => _fallback.GetSessionModelBindingAsync(sessionId, capabilityKind, token);

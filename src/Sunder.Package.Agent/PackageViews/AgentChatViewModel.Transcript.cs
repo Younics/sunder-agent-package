@@ -9,6 +9,10 @@ namespace Sunder.Package.Agent.PackageViews;
 
 public sealed partial class AgentChatViewModel
 {
+    private Task _transcriptRefreshOperation = Task.CompletedTask;
+    internal Task PendingTranscriptActivities => Task.WhenAll(_chatSnapshotOperation, _transcriptRefreshOperation, _transcriptModeOperation,
+        _timeline.PendingCompactOperations);
+
     private void RefreshTranscript(bool forceReplacement = false)
     {
         var displayedSession = DisplayedSession;
@@ -33,7 +37,7 @@ public sealed partial class AgentChatViewModel
             displayedSession.SessionId,
             forceReplacement);
         StatusText = "Loading transcript...";
-        _backgroundTasks.Run(_ => RefreshTranscriptAsync(
+        _transcriptRefreshOperation = _backgroundTasks.Track(_ => RefreshTranscriptAsync(
             displayedSession,
             ticket,
             previousRunActivityTurns));
@@ -47,6 +51,15 @@ public sealed partial class AgentChatViewModel
         try
         {
             ticket.Generation.CancellationToken.ThrowIfCancellationRequested();
+            if (ticket.Compact && _sessionService is IAgentCompactTranscriptGateway compact)
+            {
+                var compactPage = await compact.LoadCompactTranscriptAsync(
+                    _timeline.CreateCompactRefreshRequest(displayedSession.SessionId, InitialTranscriptTurnLimit),
+                    ticket.Generation.CancellationToken).ConfigureAwait(false);
+                await InvokeOnUiThreadAsync(() => CompleteTranscriptRefresh(displayedSession, ticket,
+                    new AgentTranscriptPage(0, [], compactPage.HasOlder, Compact: compactPage), previousRunActivityTurns));
+                return;
+            }
             var page = await LoadTranscriptPageAsync(
                 new AgentTranscriptPageRequest(
                     displayedSession.SessionId,
@@ -81,11 +94,13 @@ public sealed partial class AgentChatViewModel
         AgentTranscriptPage page,
         IReadOnlyList<AgentTurnRecord>? previousRunActivityTurns)
     {
-        if (!_timeline.TryCompleteInitialLoad(
+        if (!(page.Compact is { } compact
+            ? _timeline.TryCompleteCompactInitialLoad(ticket, compact)
+            : _timeline.TryCompleteInitialLoad(
                 ticket,
                 page.Turns,
                 page.HasMore,
-                page.Continuation))
+                page.Continuation)))
         {
             return;
         }
@@ -268,6 +283,7 @@ public sealed partial class AgentChatViewModel
 
     private void OnTimelineRowsChanged()
     {
+        if (_timeline.IsCompact) _runActivity.NotifyFollowStateChanged();
         if (_isBatchingTranscriptNotifications)
         {
             _transcriptChangedInBatch = true;
@@ -288,7 +304,6 @@ public sealed partial class AgentChatViewModel
         {
             if (DisplayedSession?.SessionId == sessionId)
             {
-                PrepareForSubmittedUserTurn(turn);
                 _timeline.ApplyLiveTurn(turn);
             }
         });
@@ -454,10 +469,6 @@ public sealed partial class AgentChatViewModel
             {
                 try
                 {
-                    if (mutation.Turn is { } submittedTurn)
-                    {
-                        PrepareForSubmittedUserTurn(submittedTurn);
-                    }
                     var result = _timeline.ApplyLiveMutation(mutation);
                     if (mutation.Turn is { } turn
                         && DisplayedTranscriptSessionId != turn.SessionId)
@@ -546,8 +557,7 @@ public sealed partial class AgentChatViewModel
     private void ApplyRunActivityChanged(Guid sessionId, AgentRunActivityUpdate activity)
     {
         if (DisplayedSession?.SessionId != sessionId
-            || !IsDisplayedSessionRunActive
-            || !_timeline.IsFollowingLatest)
+            || !IsDisplayedSessionRunActive)
         {
             return;
         }
@@ -559,9 +569,8 @@ public sealed partial class AgentChatViewModel
             return;
         }
 
-        _runActivity.TrackUpdate(
-            activity.Text,
-            activity.Kind == AgentRunActivityKind.Reasoning);
+        _runActivity.TrackStatus(activity.RunRevision, activity.Sequence, activity.Text,
+            activity.Kind == AgentRunActivityKind.Reasoning, activity.ReasoningText, activity.Retry);
     }
 
     private void OnTimelineTurnProjected(
@@ -579,7 +588,11 @@ public sealed partial class AgentChatViewModel
     private void UpdateActivityRowForCurrentState() => ApplyRunActivityState();
 
     private void TrackCheckpointActivity(AgentRunCheckpointRecord? checkpoint)
-        => _runActivity.TrackCheckpoint(checkpoint);
+    {
+        _runActivity.TrackCheckpoint(checkpoint);
+        if (DisplayedSession is { } session && _sessionService.GetRunActivity(session.SessionId) is { } activity)
+            ApplyRunActivityChanged(session.SessionId, activity);
+    }
 
     private void OnTimelinePropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
@@ -724,66 +737,4 @@ public sealed partial class AgentChatViewModel
             : "Agent";
     }
 
-    private Task<AgentTranscriptPage> LoadTranscriptPageAsync(
-        AgentTranscriptPageRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (_transcriptPageGateway is not null)
-        {
-            return _transcriptPageGateway.LoadTranscriptPageAsync(request, cancellationToken);
-        }
-
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var limit = Math.Clamp(request.Limit, 1, 500);
-            var transcriptHeaders = _sessionService as IAgentTranscriptHeaderGateway;
-            IReadOnlyList<AgentTurnRecord> turns = request.Direction switch
-            {
-                AgentTranscriptPageDirection.Recent =>
-                    transcriptHeaders?.ListRecentTranscriptHeaders(request.SessionId, limit + 1)
-                    ?? _sessionService.ListRecentTurns(request.SessionId, limit + 1)
-                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
-                        .ToArray(),
-                AgentTranscriptPageDirection.Before when request.AnchorCreatedAtUtc is { } createdAt
-                                                          && request.AnchorTurnId is { } turnId =>
-                    transcriptHeaders?.ListTranscriptHeadersBefore(
-                        request.SessionId,
-                        createdAt,
-                        turnId,
-                        limit + 1)
-                    ?? _sessionService.ListTurnsBefore(request.SessionId, createdAt, turnId, limit + 1)
-                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
-                        .ToArray(),
-                AgentTranscriptPageDirection.After when request.AnchorCreatedAtUtc is { } createdAt
-                                                         && request.AnchorTurnId is { } turnId =>
-                    transcriptHeaders?.ListTranscriptHeadersAfter(
-                        request.SessionId,
-                        createdAt,
-                        turnId,
-                        limit + 1)
-                    ?? _sessionService.ListTurnsAfter(request.SessionId, createdAt, turnId, limit + 1)
-                        .Select(TranscriptTurnTransportProjection.ProjectToolHeaders)
-                        .ToArray(),
-                AgentTranscriptPageDirection.Turn when request.AnchorTurnId is { } turnId =>
-                    (transcriptHeaders is null
-                        ? _sessionService.GetTurn(turnId)
-                        : transcriptHeaders.GetTranscriptHeader(turnId)) is { } turn
-                        ? [TranscriptTurnTransportProjection.ProjectToolHeaders(turn)]
-                        : [],
-                _ => throw new InvalidOperationException("The transcript page anchor is invalid."),
-            };
-            cancellationToken.ThrowIfCancellationRequested();
-            var hasMore = turns.Count > limit;
-            var pageTurns = !hasMore
-                ? turns
-                : request.Direction is AgentTranscriptPageDirection.Recent or AgentTranscriptPageDirection.Before
-                    ? turns.Skip(turns.Count - limit).ToArray()
-                    : turns.Take(limit).ToArray();
-            return new AgentTranscriptPage(
-                0,
-                pageTurns,
-                hasMore);
-        }, cancellationToken);
-    }
 }

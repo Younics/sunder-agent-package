@@ -47,10 +47,6 @@ public sealed partial class BuilderDevelopmentRelayTests
         fixture.Backend.Projects[fixture.Project.EntryPoint] = fixture.Project with { SourceRevision = "changed-source" };
         Assert.False((await tools.ExecuteAsync(context, request)).IsError);
         Assert.Single(fixture.Development.Loads);
-        var operation = result.RootElement.GetProperty("operation").GetString();
-        var observed = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "observe-original" }, new("maker_operation", JsonSerializer.Serialize(new { operation, wait = 0 })));
-        Assert.False(observed.IsError, observed.Content);
-        Assert.Contains("applied", observed.Content);
     }
 
     [Fact]
@@ -121,11 +117,9 @@ public sealed partial class BuilderDevelopmentRelayTests
         Assert.Equal("tool-outcome-ambiguous", unknown.ErrorCode);
         using var json = JsonDocument.Parse(unknown.Content!);
         Assert.Equal("unknown", json.RootElement.GetProperty("status").GetString());
-        var check = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "observe-unknown-load" },
-            new("maker_operation", JsonSerializer.Serialize(new { operation = json.RootElement.GetProperty("operation").GetString(), wait = 0 })));
-        Assert.False(check.IsError, check.Content); // The read succeeded; the original mutation remains uncertain.
-        Assert.Null(check.ErrorCode);
-        Assert.Contains("Initial load reply lost", check.Content);
+        var duplicate = await tools.ExecuteAsync(fixture.Context, request);
+        Assert.Equal(unknown.Content, duplicate.Content);
+        Assert.Equal(unknown.ErrorCode, duplicate.ErrorCode);
         var blocked = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "new-call-must-not-replay-load" }, request);
         Assert.True(blocked.IsError);
         Assert.Equal("maker.busy", blocked.ErrorCode);
@@ -140,25 +134,26 @@ public sealed partial class BuilderDevelopmentRelayTests
         var tools = await fixture.ConnectToolsAsync();
         var identity = await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        fixture.Development.BeforeLoad = (_, _, token) => release.Task.WaitAsync(token);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Development.BeforeLoad = (_, _, token) => { entered.TrySetResult(); return release.Task.WaitAsync(token); };
         fixture.Development.PackageIdResolver = _ => fixture.Project.PackageId;
         fixture.Development.AfterLoad = session => session.Status = session.Status with { AppliedRevision = new(Guid.NewGuid(), 1, identity) };
         var request = new AgentToolRequest("maker_apply", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint }));
         try
         {
-            var pending = await tools.ExecuteAsync(fixture.Context, request).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
-            using var receipt = JsonDocument.Parse(pending.Content!);
-            Assert.Equal("running", receipt.RootElement.GetProperty("status").GetString());
-            var operation = receipt.RootElement.GetProperty("operation").GetString();
+            var pending = tools.ExecuteAsync(fixture.Context, request).AsTask();
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(pending.IsCompleted);
             var status = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "pending-status" }, new("maker_package", request.ArgumentsJson)).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             Assert.False(status.IsError, status.Content);
             using var statusJson = JsonDocument.Parse(status.Content!);
-            Assert.Equal(operation, statusJson.RootElement.GetProperty("pending").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(statusJson.RootElement.GetProperty("pending").GetString()));
+            Assert.False(pending.IsCompleted);
             var second = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "second-apply" }, request).AsTask().WaitAsync(TimeSpan.FromSeconds(2));
             Assert.True(second.IsError);
             Assert.Equal("maker.busy", second.ErrorCode);
             release.SetResult();
-            var resolved = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "resolve-pending" }, new("maker_operation", JsonSerializer.Serialize(new { operation, wait = 10 })));
+            var resolved = await pending.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(resolved.IsError, resolved.Content);
             Assert.Contains("applied", resolved.Content);
             Assert.Single(fixture.Development.Loads);

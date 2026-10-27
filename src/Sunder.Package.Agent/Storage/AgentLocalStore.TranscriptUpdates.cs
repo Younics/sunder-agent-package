@@ -6,33 +6,6 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private static void UpdateToolCallTurnDetailRevision(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid executionId,
-        DateTimeOffset updatedAtUtc)
-    {
-        using var command = connection.CreateCommand();
-        command.Transaction = transaction;
-        command.CommandText = """
-            UPDATE AgentTurns
-            SET UpdatedAtUtc = $updatedAtUtc
-            WHERE TurnId = (
-                SELECT TurnId
-                FROM AgentTurnItems
-                WHERE ToolExecutionId = $executionId
-                  AND Kind = 'ToolCall'
-                LIMIT 1);
-            """;
-        command.Parameters.AddWithValue("$updatedAtUtc", updatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$executionId", executionId.ToString());
-        if (command.ExecuteNonQuery() != 1)
-        {
-            throw new InvalidOperationException(
-                $"Tool execution '{executionId}' has no durable tool-call transcript item.");
-        }
-    }
-
     private static IReadOnlyList<AgentCompletedStreamingTurn> CompleteStreamingTextTurns(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -56,7 +29,7 @@ public sealed partial class AgentLocalStore
                   AND t.IsStreaming = 1
                   AND t.RunId = $runId
                   AND t.RunRevision = $runRevision
-                ORDER BY t.CreatedAtUtc COLLATE BINARY, t.TurnId COLLATE BINARY;
+                ORDER BY t.TurnSequence;
                 """;
             readCommand.Parameters.AddWithValue("$sessionId", runKey.SessionId.ToString());
             readCommand.Parameters.AddWithValue("$runId", runKey.RunId.ToString());
@@ -134,7 +107,8 @@ public sealed partial class AgentLocalStore
         InvalidateSessionContext(connection, transaction, existingTurn.SessionId);
         TouchSession(connection, existingTurn.SessionId, null, null, transaction);
         var turn = GetTurn(connection, messageId, transaction)
-                   ?? throw new InvalidOperationException($"Turn '{messageId}' was not found after update.");
+                    ?? throw new InvalidOperationException($"Turn '{messageId}' was not found after update.");
+        IndexMessage(connection, transaction, turn, invalidateContext: false);
         transaction.Commit();
         return turn;
     }
@@ -229,6 +203,7 @@ public sealed partial class AgentLocalStore
 
         TouchSession(connection, runKey.SessionId, null, null, transaction);
         var turn = GetTurn(connection, turnId, transaction);
+        var structureChanged = turn is not null && IndexMessage(connection, transaction, turn);
         transaction.Commit();
         return turn is null
             ? null
@@ -236,7 +211,8 @@ public sealed partial class AgentLocalStore
                 turn,
                 mutationKind,
                 previousContent.Length,
-                mutationText);
+                mutationText,
+                structureChanged);
     }
 
     internal AgentTurnWriteResult? TryCompleteTextTurn(

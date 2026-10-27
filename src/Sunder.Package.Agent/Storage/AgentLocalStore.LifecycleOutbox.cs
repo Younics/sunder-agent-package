@@ -538,7 +538,8 @@ public sealed partial class AgentLocalStore
         Guid sessionId)
     {
         var headers = ListRecentTurnHeadersForSession(connection, sessionId, MaxLifecycleTurns, transaction)
-            .OrderBy(turn => turn.CreatedAtUtc)
+            .OrderBy(turn => turn.TurnSequence)
+            .ThenBy(turn => turn.CreatedAtUtc)
             .ThenBy(turn => turn.TurnId.ToString("D"), StringComparer.Ordinal)
             .ToArray();
         return AttachItems(headers, ListTurnItemsForTurns(connection, headers.Select(turn => turn.TurnId).ToArray(), transaction));
@@ -555,7 +556,7 @@ public sealed partial class AgentLocalStore
             SELECT TurnId
             FROM AgentTurns
             WHERE SessionId = $sessionId AND RunId = $runId AND RunRevision = $runRevision
-            ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC
+            ORDER BY TurnSequence DESC
             LIMIT 1;
             """;
         command.Parameters.AddWithValue("$sessionId", key.SessionId.ToString());

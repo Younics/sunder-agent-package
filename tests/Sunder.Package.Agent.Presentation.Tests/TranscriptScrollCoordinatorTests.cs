@@ -61,7 +61,7 @@ public sealed class TranscriptScrollCoordinatorTests
     }
 
     [Fact]
-    public void RunActivityState_AuthoritativeRebuildHandlesDuplicateAndMissingCallIds()
+    public void RunActivityState_RebuildKeepsFooterVisibleWithDuplicateAndMissingCallIds()
     {
         using var state = new AgentRunActivityState(
             isRunActive: () => true,
@@ -86,7 +86,7 @@ public sealed class TranscriptScrollCoordinatorTests
 
         state.RebuildActiveToolCalls([firstDuplicate, secondDuplicate, firstResult]);
 
-        Assert.False(state.ShouldShow);
+        Assert.True(state.ShouldShow);
 
         state.TrackTurn(CreateToolActivityTurn(
             sessionId,

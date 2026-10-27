@@ -14,6 +14,12 @@ internal static class AgentRoleExceptionBoundary
     internal static Exception Project(Exception error, Assembly role)
     {
         if (error.GetType().Assembly == role) return error;
+        if (error is AggregateException aggregate)
+        {
+            var projectedErrors = aggregate.InnerExceptions.Select(inner => Project(inner, role)).ToArray();
+            return projectedErrors.Where((inner, index) => !ReferenceEquals(inner, aggregate.InnerExceptions[index])).Any()
+                ? new AggregateException(aggregate.Message, projectedErrors) : error;
+        }
         var name = error.GetType().FullName;
         if (name is not ("Sunder.Package.Agent.Contracts.Models.AgentChatProviderException"
             or "Sunder.Package.Agent.Contracts.Contracts.AgentDurableLifecycleIntegrityException"
@@ -25,12 +31,19 @@ internal static class AgentRoleExceptionBoundary
         if (name.EndsWith("AgentDurableLifecycleIntegrityException", StringComparison.Ordinal))
             return (Exception)Activator.CreateInstance(target, error.Message)!;
         if (name.EndsWith("OperationException", StringComparison.Ordinal))
-            return (Exception)Activator.CreateInstance(target, error.Message, error.InnerException)!;
+            return (Exception)Activator.CreateInstance(target, error.Message,
+                error.InnerException is { } operationInner ? Project(operationInner, role) : null)!;
         var source = error.GetType();
         var projected = (Exception)Activator.CreateInstance(target, error.Message,
-            source.GetProperty("Content")!.GetValue(error), source.GetProperty("ErrorCode")!.GetValue(error), error.InnerException)!;
+            source.GetProperty("Content")!.GetValue(error), source.GetProperty("ErrorCode")!.GetValue(error),
+            error.InnerException is { } providerInner ? Project(providerInner, role) : null)!;
         var failure = target.GetProperty("FailureKind")!;
         failure.SetValue(projected, AgentRoleBoundary.Convert(source.GetProperty("FailureKind")!.GetValue(error), failure.PropertyType));
+        foreach (var nameOfProperty in new[] { "StatusCode", "RetryAfterMilliseconds" })
+        {
+            var property = target.GetProperty(nameOfProperty)!;
+            property.SetValue(projected, source.GetProperty(nameOfProperty)!.GetValue(error));
+        }
         return projected;
     }
 

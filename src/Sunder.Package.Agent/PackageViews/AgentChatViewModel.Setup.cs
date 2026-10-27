@@ -21,6 +21,7 @@ public sealed partial class AgentChatViewModel
         }
 
         OnPropertyChanged(nameof(CanUseChat));
+        NotifyContinuationStateChanged();
         OnPropertyChanged(nameof(CannotUseChat));
         OnPropertyChanged(nameof(HasProfiles));
         OnPropertyChanged(nameof(HasNoProfiles));

@@ -21,17 +21,20 @@ internal sealed class GeminiWireServer : IAsyncDisposable
     private readonly string _contentType;
     private readonly string _responseBody;
     private readonly bool _hangAfterRequest;
+    private readonly IReadOnlyDictionary<string, string>? _responseHeaders;
 
     public GeminiWireServer(
         string responseBody = "",
         string contentType = "application/json",
         int statusCode = 200,
-        bool hangAfterRequest = false)
+        bool hangAfterRequest = false,
+        IReadOnlyDictionary<string, string>? responseHeaders = null)
     {
         _responseBody = responseBody;
         _contentType = contentType;
         _statusCode = statusCode;
         _hangAfterRequest = hangAfterRequest;
+        _responseHeaders = responseHeaders;
         _listener.Start();
         var endpoint = (IPEndPoint)_listener.LocalEndpoint;
         BaseUrl = $"http://127.0.0.1:{endpoint.Port}";
@@ -91,6 +94,7 @@ internal sealed class GeminiWireServer : IAsyncDisposable
             $"HTTP/1.1 {_statusCode} {reason}\r\n" +
             $"Content-Type: {_contentType}\r\n" +
             $"Content-Length: {responseBytes.Length}\r\n" +
+            string.Concat((_responseHeaders ?? new Dictionary<string, string>()).Select(pair => $"{pair.Key}: {pair.Value}\r\n")) +
             "Connection: close\r\n\r\n");
         await stream.WriteAsync(responseHeaders, _cancellation.Token);
         await stream.WriteAsync(responseBytes, _cancellation.Token);

@@ -4,6 +4,25 @@ namespace Sunder.Package.Agent.Runtime;
 
 internal sealed partial class AgentAppRuntimeGateway
 {
+    private readonly Dictionary<Guid, AgentTurnRecord> _admissionReceipts = [];
+    private readonly Queue<Guid> _admissionReceiptOrder = [];
+
+    private void CacheAdmissionReceipt(AgentTurnRecord turn)
+    {
+        lock (_cacheLock)
+        {
+            if (!_admissionReceipts.ContainsKey(turn.TurnId)) _admissionReceiptOrder.Enqueue(turn.TurnId);
+            _admissionReceipts[turn.TurnId] = turn;
+            while (_admissionReceiptOrder.Count > 64) _admissionReceipts.Remove(_admissionReceiptOrder.Dequeue());
+        }
+    }
+
+    private void RemoveAdmissionReceiptsCore(Guid sessionId)
+    {
+        foreach (var id in _admissionReceipts.Values.Where(turn => turn.SessionId == sessionId).Select(turn => turn.TurnId).ToArray())
+            _admissionReceipts.Remove(id);
+    }
+
     private void CacheTurns(IEnumerable<AgentTurnRecord> turns)
     {
         lock (_cacheLock)
@@ -109,6 +128,7 @@ internal sealed partial class AgentAppRuntimeGateway
         lock (_cacheLock)
         {
             RemoveCachedTurnsCore(sessionId);
+            RemoveAdmissionReceiptsCore(sessionId);
         }
     }
 

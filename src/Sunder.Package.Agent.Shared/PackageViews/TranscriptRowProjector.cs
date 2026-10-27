@@ -39,10 +39,13 @@ internal readonly record struct TranscriptToolProjection(
     bool HasDetails,
     object AnchorKey)
 {
-    // A display receipt describes the last observed effect, not a live execution.
+    public TranscriptToolState State { get; init; }
     public bool IsRunning { get; init; }
-    public string? OperationReference { get; init; }
-    public string? OperationStatus { get; init; }
+
+    internal bool SameInvocation(TranscriptToolProjection other)
+        => SessionId == other.SessionId && Equals(AnchorKey, other.AnchorKey)
+            && ToolExecutionId == other.ToolExecutionId && RunId == other.RunId && RunRevision == other.RunRevision
+            && CallId == other.CallId && ToolId == other.ToolId;
 }
 
 internal readonly record struct TranscriptActivityProjection(
@@ -152,7 +155,23 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             .Where(item => item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult)
             .Select(item => CreateToolKey(previousTurn, item))
             .ToHashSet(StringComparer.Ordinal) ?? [];
-        _turnWindow.AddOrUpdate(turn);
+        if (turn.Kind == AgentTurnKind.ToolResult && turn.Items.Count == 1
+            && _toolRowsByKey.TryGetValue(CreateToolKey(turn, turn.Items[0]), out var originalRow)
+            && _turnWindow.OrderedTurns().FirstOrDefault(candidate => candidate.TurnId == _factory.GetRowId(originalRow)) is { } canonical
+            && canonical.TurnId != turn.TurnId && canonical.Items.Count == 1)
+        {
+            var incoming = turn.Items[0];
+            if (incoming.ToolDetailRevision < canonical.Items[0].ToolDetailRevision) return 0;
+            // One invocation spends one presentation slot even while separate
+            // authoritative result receipts arrive. Preserve its original cursor.
+            _turnWindow.AddOrUpdate(canonical with
+            {
+                UpdatedAtUtc = turn.UpdatedAtUtc,
+                Items = [incoming with { TurnId = canonical.TurnId, ItemId = canonical.Items[0].ItemId,
+                    SequenceNumber = canonical.Items[0].SequenceNumber, Kind = canonical.Items[0].Kind }],
+            });
+        }
+        else _turnWindow.AddOrUpdate(turn);
 
         switch (turn.Kind)
         {
@@ -192,7 +211,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                             existingToolRow,
                             turn,
                             item,
-                            DescribeCorrelatedTool(turn, item));
+                            DescribeTool(turn, item));
                         continue;
                     }
 
@@ -201,7 +220,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                         continue;
                     }
 
-                    var row = _factory.CreateTool(turn, item, DescribeCorrelatedTool(turn, item));
+                    var row = _factory.CreateTool(turn, item, DescribeTool(turn, item));
                     _toolRowsByKey[key] = row;
                     InsertRow(row, insertMode, prependIndex + insertedRows);
                     RowCreated?.Invoke(row);
@@ -234,11 +253,9 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                 break;
         }
 
-        ApplyOperationObservation(turn, force: true);
         TrimTurnWindow(insertMode == TranscriptInsertMode.Append
             ? AgentTranscriptTrimDirection.Oldest
             : AgentTranscriptTrimDirection.Newest);
-        PruneOperationHeaders();
 
         return insertedRows;
     }
@@ -389,7 +406,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     public TRow? FindByAnchorKey(object? anchorKey)
         => anchorKey is null
             ? null
-            : _rows.FirstOrDefault(row => Equals(_factory.GetAnchorKey(row),
+            : _rows.FirstOrDefault(row => Equals(_factory.GetAnchorKey(row), anchorKey) || Equals(_factory.GetAnchorKey(row),
                 anchorKey is TranscriptActivityGroupAnchor group ? group.SourceAnchor : anchorKey));
 
     public void Reset()
@@ -403,7 +420,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         _activityProjection = null;
         _messageRowsByTurnId.Clear();
         _toolRowsByKey.Clear();
-        _operationHeaders.Clear();
+        ClearCompactBacking();
         _turnWindow.Reset();
         // Keep reset/cancellation state changes without publishing an empty-to-empty reset.
         if (_rows.Count > 0)
@@ -441,7 +458,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
     }
 
     public static AgentTurnRecord[] OrderTurns(IEnumerable<AgentTurnRecord> turns)
-        => turns.OrderBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc)).ThenBy(turn => turn.TurnId).ToArray();
+        => turns.OrderBy(turn => turn.TurnSequence).ThenBy(turn => AgentTranscriptTime.Read(turn.CreatedAtUtc)).ThenBy(turn => turn.TurnId).ToArray();
 
     public static TranscriptMessageProjection DescribeMessage(AgentTurnRecord turn)
         => new(
@@ -484,6 +501,9 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         AgentTurnRecord turn,
         bool replaceOnEqualTimestamp)
     {
+        var previousDetail = previousTurn.Items.Select(item => item.ToolDetailRevision).DefaultIfEmpty().Max();
+        var incomingDetail = turn.Items.Select(item => item.ToolDetailRevision).DefaultIfEmpty().Max();
+        if (previousDetail != incomingDetail) return previousDetail > incomingDetail;
         if (previousTurn.ContentRevision != turn.ContentRevision)
         {
             return previousTurn.ContentRevision > turn.ContentRevision;
@@ -562,6 +582,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         IReadOnlySet<object> retainedAnchorKeys)
     {
         RowsChanging?.Invoke();
+        ClearCompactBacking();
         var activityRow = _activityRow;
         if (activityRow is not null)
         {
@@ -591,8 +612,6 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         }
 
         ReconcileRows(desiredRows);
-        PruneOperationHeaders();
-        foreach (var turn in orderedTurns) ApplyOperationObservation(turn, force: true);
         _activityRow = activityRow;
         if (activityRow is not null)
         {
@@ -646,7 +665,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
                 foreach (var item in turn.Items.Where(item => item.Kind == AgentTurnItemKind.ToolResult))
                 {
                     var key = CreateToolKey(turn, item);
-                    var toolProjection = DescribeCorrelatedTool(turn, item);
+                    var toolProjection = DescribeTool(turn, item);
                     if (!retainedAnchorKeys.Contains(toolProjection.AnchorKey))
                     {
                         continue;
@@ -710,10 +729,10 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
             _factory.DisposeRow(row);
         }
 
-        if (_rows is TranscriptObservableCollection<TRow> resettableRows
-            && !_rows.Any(desiredRowSet.Contains))
+        if (_rows is TranscriptObservableCollection<TRow> resettableRows)
         {
-            resettableRows.ReplaceAll(desiredRows);
+            if (!_rows.Any(desiredRowSet.Contains)) resettableRows.ReplaceAll(desiredRows);
+            else resettableRows.ReconcilePresentation(desiredRows);
             return;
         }
 
@@ -727,6 +746,7 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
         for (var targetIndex = 0; targetIndex < desiredRows.Count; targetIndex++)
         {
             var row = desiredRows[targetIndex];
+            if (targetIndex < _rows.Count && ReferenceEquals(_rows[targetIndex], row)) continue;
             var currentIndex = _rows.IndexOf(row);
             if (currentIndex < 0)
             {
@@ -747,28 +767,6 @@ internal sealed partial class TranscriptRowProjector<TRow> where TRow : class
               && !string.IsNullOrWhiteSpace(item.CallId)
             ? $"tool-call:{runId:N}:{runRevision}:{item.CallId}"
             : $"tool-item:{turn.TurnId:N}:{item.ItemId:N}";
-
-    private TranscriptToolProjection DescribeCorrelatedTool(
-        AgentTurnRecord turn,
-        AgentTurnItemRecord item)
-    {
-        var projection = DescribeTool(turn, item);
-        if (projection.HasDetails)
-        {
-            return projection;
-        }
-
-        var key = CreateToolKey(turn, item);
-        var correlatedItemHasDetails = _turnWindow.OrderedTurns()
-            .SelectMany(peerTurn => peerTurn.Items.Select(peerItem => (Turn: peerTurn, Item: peerItem)))
-            .Any(peer => peer.Item.ItemId != item.ItemId
-                         && peer.Item.Kind is AgentTurnItemKind.ToolCall or AgentTurnItemKind.ToolResult
-                         && string.Equals(CreateToolKey(peer.Turn, peer.Item), key, StringComparison.Ordinal)
-                         && TranscriptTurnTransportProjection.HasToolDetails(peer.Item));
-        return correlatedItemHasDetails
-            ? projection with { HasDetails = true }
-            : projection;
-    }
 
     private static string ResolveRoleGlyph(AgentMessageRole role)
         => role switch

@@ -10,10 +10,16 @@ using SubagentsApp::Sunder.Package.Agent.Shared.Presentation;
 using WorkerService = SubagentsWorker::Sunder.Package.Agent.Subagents.Services.SubagentService;
 using AgentProfileSelectableCapabilityDescriptor = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentProfileSelectableCapabilityDescriptor;
 using AgentRunCheckpointRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunCheckpointRecord;
+using AgentRunActivityUpdate = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentRunActivityUpdate;
 using AgentToolDescriptor = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentToolDescriptor;
 using AgentTranscriptToolDetailRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRecord;
 using AgentTranscriptToolDetailRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptToolDetailRequest;
 using AgentTurnRecord = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
+using AgentCompactTranscriptRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptRequest;
+using AgentCompactTranscriptPage = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentCompactTranscriptPage;
+using AgentTranscriptActivityMembersRequest = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersRequest;
+using AgentTranscriptActivityMembersPage = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityMembersPage;
+using AgentTranscriptActivityGroup = SubagentsApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTranscriptActivityGroup;
 
 namespace Sunder.Package.Agent.TestSupport.Avalonia;
 
@@ -21,6 +27,7 @@ namespace Sunder.Package.Agent.TestSupport.Avalonia;
 // client. Domain models never cross this boundary by CLR cast or shared reference.
 internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagementGateway,
     ISubsessionSessionReader, ISubsessionCheckpointReader, ISubsessionTranscriptPageReader,
+    ISubsessionCompactTranscriptReader,
     ISubsessionChangeNotifications, ISubagentPresentationInitialization, IDisposable, IAsyncDisposable
 {
     private const string PackageId = "younics.ai.agent.subagents";
@@ -65,7 +72,8 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
     }
 
     public event Action<Guid>? SessionChanged { add => _app.SessionChanged += value; remove => _app.SessionChanged -= value; }
-    public event Action<Guid, AgentTurnRecord>? TurnChanged { add => _app.TurnChanged += value; remove => _app.TurnChanged -= value; }
+    public event Action<Guid, AgentTurnRecord, AgentTranscriptActivityGroup?>? TurnChanged { add => _app.TurnChanged += value; remove => _app.TurnChanged -= value; }
+    public event Action<Guid, AgentRunActivityUpdate>? RunActivityChanged { add => _app.RunActivityChanged += value; remove => _app.RunActivityChanged -= value; }
     public event Action? ResnapshotRequired { add => _app.ResnapshotRequired += value; remove => _app.ResnapshotRequired -= value; }
 
     public Task InitializeAsync(CancellationToken cancellationToken = default) => _initialization.WaitAsync(cancellationToken);
@@ -82,6 +90,10 @@ internal sealed class WorkerBackedSubagentManagementGateway : ISubagentManagemen
         => _app.LoadAroundTurnAsync(sessionId, turnId, turnCreatedAtUtc, itemId, beforeLimit, afterLimit, cancellationToken);
     public Task<AgentTranscriptToolDetailRecord?> LoadToolDetailAsync(AgentTranscriptToolDetailRequest request, CancellationToken cancellationToken = default)
         => _app.LoadToolDetailAsync(request, cancellationToken);
+    public Task<AgentCompactTranscriptPage> LoadCompactTranscriptAsync(AgentCompactTranscriptRequest request, CancellationToken cancellationToken = default)
+        => _app.LoadCompactTranscriptAsync(request, cancellationToken);
+    public Task<AgentTranscriptActivityMembersPage> LoadActivityMembersAsync(AgentTranscriptActivityMembersRequest request, CancellationToken cancellationToken = default)
+        => _app.LoadActivityMembersAsync(request, cancellationToken);
 
     public Task<IReadOnlyList<SubagentRecord>> ListSubagentsAsync(CancellationToken cancellationToken = default)
         => _app.ListSubagentsAsync(cancellationToken);

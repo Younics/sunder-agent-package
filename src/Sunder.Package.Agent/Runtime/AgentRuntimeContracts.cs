@@ -36,7 +36,8 @@ internal sealed record AgentChatSnapshotRequest(
     string? PreferredProfileId = null,
     string? PreferredWorkspaceId = null,
     Guid? PreferredSessionId = null,
-    bool IncludeInitialTranscript = true);
+    bool IncludeInitialTranscript = true,
+    bool CompactTranscript = false);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentChatPermissionProjection(
     [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
@@ -85,7 +86,7 @@ internal interface IAgentDashboardLoader
 }
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
-internal sealed record AgentSessionSnapshot(AgentSessionRecord Session, AgentRunCheckpointRecord? Checkpoint);
+internal sealed record AgentSessionSnapshot(AgentSessionRecord Session, AgentRunCheckpointRecord? Checkpoint, AgentRunActivityUpdate? Activity = null);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal enum AgentTranscriptPageDirection { Recent, Before, After, Turn }
@@ -101,7 +102,8 @@ internal sealed record AgentTranscriptPage(
     [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     IReadOnlyList<AgentTurnRecord> Turns,
     bool HasMore,
-    TranscriptPageCursor? Continuation = null);
+    TranscriptPageCursor? Continuation = null,
+    AgentCompactTranscriptPage? Compact = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentTranscriptToolDetailResult(
     bool Found,
@@ -336,7 +338,8 @@ internal sealed record AgentRunCommandResult(
     [property: Sunder.Sdk.Services.SunderValueConstraints(Minimum = "0")] long Revision,
     AgentRunCheckpointRecord? Checkpoint,
     Guid? RunId = null,
-    Guid? UserTurnId = null);
+    Guid? UserTurnId = null,
+    AgentTurnRecord? UserTurn = null);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal sealed record AgentRunCommandStatusRequest(Guid SessionId, Guid UserTurnId);
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]

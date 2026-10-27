@@ -16,12 +16,12 @@ public interface IAgentRunActivitySink
     void ReportRunActivity(AgentRunActivityKind kind, string text);
 }
 
-/// <summary>Reads and atomically charges the durable budget for one run generation.</summary>
+/// <summary>Reads and atomically increments durable usage counters for one run generation. The budget-named contract is retained for compatibility; it does not limit task length.</summary>
 public interface IAgentRunBudgetRuntime
 {
-    /// <summary>Gets the current durable budget counters.</summary>
+    /// <summary>Gets the current durable usage counters.</summary>
     AgentRunBudgetState GetRunBudgetState();
 
-    /// <summary>Atomically applies a budget charge and returns the resulting counters.</summary>
+    /// <summary>Atomically records usage and returns the resulting counters.</summary>
     AgentRunBudgetState ChargeRunBudget(AgentRunBudgetCharge charge);
 }
