@@ -494,7 +494,12 @@ public sealed class BuilderLocalNuGetTests
                 "get_WorkspaceRootPath" => Root, "GetLocalPath" => PathOf((string)args![0]!), _ => throw new NotSupportedException(method.Name),
             });
             var storage = Proxy.Create<IPackageStorageContext>((method, _) => method.Name == "get_RoleLocalWorkspace" ? workspace : throw new NotSupportedException(method.Name));
-            return Proxy.Create<IPackageContext>((method, _) => method.Name == "get_Storage" ? storage : throw new NotSupportedException(method.Name));
+            return Proxy.Create<IPackageContext>((method, _) => method.Name switch
+            {
+                "get_Storage" => storage,
+                "get_DevelopmentToolchain" => new SunderDevelopmentToolchain("10.0.402", "24.22.0", "11.19.1"),
+                _ => throw new NotSupportedException(method.Name),
+            });
         }
         internal void WritePackage(string id, string? failure = null, string marker = "original", int paddingBytes = 0, string? dependencyVersion = null)
         {
@@ -528,7 +533,7 @@ public sealed class BuilderLocalNuGetTests
                     coordinatedPackageVersionRange = new { type = "generated", generator = "constant", parameters = new { value = "[1.1.0,1.2.0)" } },
                 } }));
                 string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"SUNDER_TEMPLATE_PACKAGE_VERSION_RANGE\" />";
-                Add(project + "Sunder.Package.Template.csproj", "<Project><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net11.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + Reference("Sunder.Package.Build") + "</ItemGroup></Project>");
+                Add(project + "Sunder.Package.Template.csproj", "<Project><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + Reference("Sunder.Package.Build") + "</ItemGroup></Project>");
                 Add(project + "Views/Avalonia.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Avalonia") + "</ItemGroup></Project>");
                 Add(project + "Stacks/Stacks.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Stacks") + "</ItemGroup></Project>");
             }
@@ -586,6 +591,8 @@ public sealed class BuilderLocalNuGetTests
         internal bool ProduceDevelopment;
         public async Task<BuilderLocalProcessResult> RunAsync(BuilderLocalProcessRequest request, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
+            if (request.Arguments.Contains("-getProperty:TargetFramework"))
+                return new(0, "net10.0\n", "");
             Requests.Enqueue(request);
             if (request.Arguments[0] == "restore") return new(0, "", "");
             if (InstallTemplate && request.Arguments[0] == "new" && request.Arguments[1] is "install" or "list") return new(0, "sunder-package", "");
@@ -600,7 +607,7 @@ public sealed class BuilderLocalNuGetTests
                 await File.WriteAllTextAsync(Path.Combine(root, "manifest/sunder-package.json"), JsonSerializer.Serialize(new
                 {
                     archiveFormatVersion = 1, manifestVersion = 1, id = "sample.local", version = "1.0.0",
-                    targets = new[] { new { role = "runtime", rid, kind = "worker", entryPoint = "worker.js" } },
+                    targets = new[] { new { role = "runtime", rid, kind = "worker", entryPoint = "worker.js", targetFramework = "net10.0" } },
                 }), cancellationToken);
                 var files = Directory.GetFiles(root, "*", SearchOption.AllDirectories).Where(path => Path.GetFileName(path) != "content-index.json").Select(path => new
                 {

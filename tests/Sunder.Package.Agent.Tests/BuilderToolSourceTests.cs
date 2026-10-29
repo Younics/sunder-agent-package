@@ -4,51 +4,42 @@ using BuilderWorker::Sunder.Package.Agent.Builder;
 using BuilderModels = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using PermissionSurface = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
 using Xunit;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderToolSourceTests
 {
     [Theory]
-    [InlineData("{\"state\":\"failed\",\"outcomeUnknown\":true}", true, "tool-outcome-ambiguous")]
-    [InlineData("{\"state\":\"failed\",\"outcomeUnknown\":false}", true, "maker.operation-failed")]
-    [InlineData("{\"state\":\"succeeded\"}", false, null)]
+    [InlineData("{\"status\":\"unknown\"}", true, "tool-outcome-ambiguous")]
+    [InlineData("{\"status\":\"failed\"}", true, "maker.operation-failed")]
+    [InlineData("{\"status\":\"applied\"}", false, null)]
     public void OperationResultsPreserveAgentAmbiguitySemantics(string json, bool error, string? errorCode)
     {
-        using var result = JsonDocument.Parse(json);
-        var rendered = BuilderToolSource.Result("maker_hotreload_package", result.RootElement, "Observed operation.");
+        var rendered = BuilderToolSource.CompactResult("maker_apply", JsonNode.Parse(json)!, "Observed operation.",
+            failed: error, unknown: errorCode == "tool-outcome-ambiguous");
         Assert.Equal(error, rendered.IsError);
         Assert.Equal(errorCode, rendered.ErrorCode);
     }
 
     [Theory]
-    [InlineData("maker_build_package", "{\"entryPoint\":\"relative.csproj\"}", false)]
-    [InlineData("maker_hotreload_package", "{\"path\":\"/project/Package.csproj\"}", false)]
-    [InlineData("maker_get_package_info", "{\"entryPoint\":\"/project/Package.csproj\",\"entryPoint\":\"/other/Package.csproj\"}", false)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/Package.csproj\",\"operationId\":\"untrusted\"}", false)]
-    [InlineData("maker_build_package", "{\"entryPoint\":\"/project/Package.csproj\"}", false)]
-    [InlineData("maker_hotreload_package", "{\"entryPoint\":\"/project/Package.csproj\"}", true)]
-    [InlineData("maker_build_package", "{\"entryPoint\":\"/project/app/index.html\"}", false)]
-    [InlineData("maker_hotreload_package", "{\"entryPoint\":\"/project/package.json\"}", false)]
-    [InlineData("maker_hotreload_package", "{\"entryPoint\":\"/project/sunder.package.json\"}", true)]
-    [InlineData("maker_get_package_info", "{\"entryPoint\":\"/project/sunder.package.json\",\"operationId\":null}", true)]
     [InlineData("maker_package", "{\"package\":\"/project/sunder.package.json\",\"query\":null}", true)]
     [InlineData("maker_view", "{\"target\":\"v1\",\"role\":null,\"name\":null,\"text\":null,\"within\":null,\"value\":null,\"limit\":null,\"cursor\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":null,\"verify\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":\"unexpected\"}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":\"10\"}", false)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/sunder.package.json\",\"limit\":20,\"minLevel\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/sunder.package.json\",\"limit\":101}", false)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/sunder.package.json\",\"limit\":\"20\"}", false)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/sunder.package.json\",\"since\":\"2026-10-24T03:35:00\"}", false)]
-    [InlineData("maker_get_package_logs", "{\"entryPoint\":\"/project/sunder.package.json\",\"since\":\"2026-10-24T04:00:00Z\",\"until\":\"2026-10-24T03:00:00Z\"}", false)]
-    [InlineData("maker_inspect_package_view", "{\"entryPoint\":\"/project/app/index.html\",\"viewId\":\"local.main\"}", false)]
-    [InlineData("maker_inspect_package_view", "{\"entryPoint\":\"/project/Package.csproj\",\"viewId\":\"local.main\"}", true)]
-    [InlineData("maker_inspect_package_view", "{\"entryPoint\":\"/project/Package.csproj\",\"viewId\":\"local.main\",\"selector\":\"body\"}", false)]
-    [InlineData("maker_interact_package_view", "{\"entryPoint\":\"/project/Package.csproj\",\"viewId\":\"local.main\",\"snapshotId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"elementReference\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"action\":\"invoke\"}", true)]
-    [InlineData("maker_interact_package_view", "{\"entryPoint\":\"/project/Package.csproj\",\"viewId\":\"local.main\",\"snapshotId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"elementReference\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"action\":\"evaluate-script\"}", false)]
-    [InlineData("maker_interact_package_view", "{\"entryPoint\":\"/project/Package.csproj\",\"viewId\":\"local.main\",\"snapshotId\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"elementReference\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"action\":\"invoke\",\"text\":\"unadvertised input\"}", false)]
+    [InlineData("maker_logs", "{\"package\":\"/project/sunder.package.json\",\"limit\":20,\"level\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
+    [InlineData("maker_apply", "{\"package\":\"/project/Package.csproj\"}", true)]
+    [InlineData("maker_apply", "{\"package\":\"/project/package.json\"}", false)]
+    [InlineData("maker_package", "{\"package\":\"/project/Package.csproj\",\"package\":\"/other/Package.csproj\"}", false)]
+    [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":51}", false)]
+    [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T03:35:00\"}", false)]
+    [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T04:00:00Z\",\"until\":\"2026-10-24T03:00:00Z\"}", false)]
+    [InlineData("maker_view", "{\"target\":\"v1\",\"selector\":\"body\"}", false)]
+    [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"evaluate-script\"}", false)]
+    [InlineData("maker_apply", "{\"package\":\"relative.csproj\"}", false)]
+    [InlineData("maker_apply", "{\"path\":\"/project/Package.csproj\"}", false)]
+    [InlineData("maker_logs", "{\"package\":\"p1\",\"operationId\":\"untrusted\"}", false)]
     public async Task ArgumentValidationIsPureAndRejectsMalformedIntentBeforeAnyAuthority(string tool, string json, bool valid)
     {
         await using var runtime = new BuilderRuntimeService(null!);
@@ -59,13 +50,33 @@ public sealed class BuilderToolSourceTests
         Assert.False(runtime.HasDevelopmentApp);
     }
 
+    [Theory]
+    [InlineData("maker_get_package_info")]
+    [InlineData("maker_get_package_logs")]
+    [InlineData("maker_hotreload_package")]
+    [InlineData("maker_inspect_package_view")]
+    [InlineData("maker_interact_package_view")]
+    [InlineData("maker_build_package")]
+    public async Task RetiredToolIdsCannotAcquireReadinessPermissionOrExecutionAuthority(string tool)
+    {
+        await using var runtime = new BuilderRuntimeService(null!);
+        var source = new BuilderToolSource(runtime);
+        var request = new BuilderModels.AgentToolRequest { ToolId = tool, ArgumentsJson = "{\"entryPoint\":\"/project/Package.csproj\"}" };
+        Assert.NotNull(await source.ValidateArgumentsAsync(request));
+        Assert.Null(await source.GetReadinessAsync(new() { ToolId = tool, Context = null! }));
+        Assert.Null(await source.PermissionAsync(new() { Request = request, Context = null! }));
+        Assert.NotNull(await source.PreflightAsync(new() { Request = request, Context = null! }));
+        Assert.True((await source.ExecuteAsync(new() { Request = request, Context = null! })).IsError);
+        Assert.False(runtime.HasDevelopmentApp);
+    }
+
     [Fact]
     public async Task InvalidEntryPointExplainsTheProjectFileRatherThanOnlyRequestingAnAbsolutePath()
     {
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
         var result = await source.ValidateArgumentsAsync(new BuilderModels.AgentToolRequest
-            { ToolId = "maker_build_package", ArgumentsJson = "{\"entryPoint\":\"app/index.html\"}" });
+            { ToolId = "maker_apply", ArgumentsJson = "{\"package\":\"app/index.html\"}" });
         Assert.NotNull(result);
         Assert.Contains(".csproj", result.Content);
         Assert.Contains("sunder.package.json", result.Content);
@@ -81,6 +92,7 @@ public sealed class BuilderToolSourceTests
         Assert.Single(tools, tool => !string.IsNullOrWhiteSpace(tool.RuntimeInstructions));
         Assert.DoesNotContain(tools, tool => tool.ToolId == "maker_build_package");
         Assert.All(tools, tool => Assert.DoesNotContain("watch", tool.ToolId, StringComparison.OrdinalIgnoreCase));
+        Assert.All(tools, tool => Assert.Empty(tool.Aliases ?? []));
         var permissions = await ((PermissionSurface)source).DescribeAsync(default);
         Assert.DoesNotContain(permissions.Actions, action => action.ActionId == "maker.build");
         Assert.Equal(BuilderModels.AgentPermissionDecision.Ask,

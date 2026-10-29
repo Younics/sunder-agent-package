@@ -4,12 +4,6 @@ namespace Sunder.Package.Agent.Builder;
 
 public sealed partial class BuilderPackageOperations
 {
-    internal Task<PackageDevelopmentViewSnapshot> InspectViewAsync(BuilderProjectInspection project, string viewId, CancellationToken token)
-        => WithViewSessionAsync(project, (session, operation) => session.InspectViewAsync(viewId, operation), token);
-
-    internal Task<PackageDevelopmentViewInputResult> InteractViewAsync(BuilderProjectInspection project, PackageDevelopmentViewInput request, CancellationToken token)
-        => WithViewSessionAsync(project, (session, operation) => session.InteractViewAsync(request, operation), token);
-
     private async Task<T> WithViewSessionAsync<T>(BuilderProjectInspection project, Func<IPackageDevelopmentSession, CancellationToken, Task<T>> action, CancellationToken token, string? expectedOwner = null)
     {
         using var operation = Begin(token);

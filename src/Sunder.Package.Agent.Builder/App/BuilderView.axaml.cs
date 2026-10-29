@@ -70,6 +70,7 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     private void OnHotreloadClicked(object? sender, RoutedEventArgs e) => Submit("builder.hotreload", model => model.HotreloadSelectedProjectAsync());
     private void OnArchiveClicked(object? sender, RoutedEventArgs e) => Submit("builder.archive", model => model.CreatePackageArchiveAsync());
     private void OnRetrySetupClicked(object? sender, RoutedEventArgs e) => Submit("builder.setup", model => model.RetrySelectedSetupAsync());
+    private void OnUpgradeToolchainClicked(object? sender, RoutedEventArgs e) => Submit("builder.upgrade-toolchain", model => model.UpgradeSelectedToolchainAsync());
     private void OnSaveMetadataClicked(object? sender, RoutedEventArgs e) => Submit("builder.save-metadata", model => model.SaveSelectedMetadataAsync());
     private void OnRemoveClicked(object? sender, RoutedEventArgs e) => Submit("builder.remove", model => model.DeleteSelectedProjectAsync());
     private void OnLogsClicked(object? sender, RoutedEventArgs e) => Submit("builder.logs", model => model.OpenPackageLogsAsync());
@@ -80,6 +81,8 @@ public partial class BuilderView : UserControl, IDisposable, IPackageViewWarmupT
     private void OnDiscardClicked(object? sender, RoutedEventArgs e) => Model?.DiscardSelectedMetadata();
     private void OnCancelCreationClicked(object? sender, RoutedEventArgs e) => Model?.CancelCreation();
     private void OnCancelOperationClicked(object? sender, RoutedEventArgs e) => Model?.CancelCurrentOperation();
+    private void OnDismissAttentionClicked(object? sender, RoutedEventArgs e) => Model?.SelectedProject?.DismissAttentionNotice();
+    private void OnDismissStatusClicked(object? sender, RoutedEventArgs e) => Model?.SelectedProject?.DismissStatusNotice();
     private void OnProjectItemTapped(object? sender, TappedEventArgs e)
     {
         if (sender is Control { DataContext: BuilderProjectViewModel row }) Model?.ActivateProject(row);

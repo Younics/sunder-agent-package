@@ -993,6 +993,8 @@ public sealed class AgentRuntimeCorrectnessTests
         using var viewModel = new AgentProfilesViewModel(client, gateway);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
         await WaitUntilAsync(() => viewModel.DisplayName == original.Profile.DisplayName && !viewModel.IsBusy);
+        var reenteredHydration = false;
+        viewModel.PropertyChanged += (_, _) => reenteredHydration |= viewModel.IsHydrating;
 
         client.SetState(current.Snapshot, current.Dashboard, current.Catalog);
         var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
@@ -1005,6 +1007,7 @@ public sealed class AgentRuntimeCorrectnessTests
         Assert.Equal(current.Profile.Instructions, viewModel.Instructions);
         Assert.True(Assert.Single(viewModel.PackageCapabilities).IsEnabled);
         Assert.Equal(current.Assignment, Assert.Single(viewModel.Capabilities.Assignments));
+        Assert.False(reenteredHydration);
     }
 
     [Fact]
@@ -1036,7 +1039,11 @@ public sealed class AgentRuntimeCorrectnessTests
         using var viewModel = new AgentProfilesViewModel(client, gateway);
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
         await WaitUntilAsync(() => viewModel.PackageCapabilities.Count == 1
-                                   && viewModel.PackageCapabilities[0].DisplayName == "Read file");
+                                    && viewModel.PackageCapabilities[0].DisplayName == "Read file");
+        var retainedOption = Assert.Single(viewModel.PackageCapabilities);
+        var retainedGroup = Assert.Single(viewModel.CapabilityGroups);
+        var becameBusy = false;
+        viewModel.PropertyChanged += (_, _) => becameBusy |= viewModel.IsBusy;
 
         client.SetState(updatedSnapshot, updatedDashboard, updatedCatalog);
         var snapshot = await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest());
@@ -1047,6 +1054,90 @@ public sealed class AgentRuntimeCorrectnessTests
 
         Assert.True(Assert.Single(viewModel.PackageCapabilities).IsEnabled);
         Assert.Equal(fixture.Assignment, Assert.Single(viewModel.Capabilities.Assignments));
+        Assert.Same(retainedOption, Assert.Single(viewModel.PackageCapabilities));
+        Assert.Same(retainedGroup, Assert.Single(viewModel.CapabilityGroups));
+        Assert.False(becameBusy);
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_RepeatedEquivalentRpcSnapshotsDoNotRehydrateTheEditor()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ProfileDashboardRuntimeClient(fixture.Snapshot, fixture.Dashboard, fixture.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var viewModel = new AgentProfilesViewModel(client, gateway);
+        await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(10));
+        await WaitUntilAsync(() => !viewModel.IsBusy && viewModel.PackageCapabilities.Count == 1);
+        var selected = viewModel.SelectedProfile;
+        var option = Assert.Single(viewModel.PackageCapabilities);
+        var group = Assert.Single(viewModel.CapabilityGroups);
+        viewModel.Instructions = "Unsaved instructions";
+        var becameBusy = false;
+        viewModel.PropertyChanged += (_, _) => becameBusy |= viewModel.IsBusy;
+
+        for (var revision = 32; revision <= 34; revision++)
+        {
+            var profile = fixture.Profile with
+            {
+                ModelBindings = [],
+                SelectableCapabilityAssignments = [fixture.Assignment with { }],
+            };
+            var snapshot = fixture.Snapshot with { Revision = revision };
+            client.SetState(snapshot, fixture.Dashboard with { Revision = revision, Profiles = [profile] },
+                fixture.Catalog with { Revision = revision });
+            var queries = client.ProfileQueryCount;
+            gateway.CompleteChatSnapshot(await gateway.LoadChatSnapshotAsync(new AgentChatSnapshotRequest()), applied: true);
+            await WaitUntilAsync(() => client.ProfileQueryCount > queries);
+            await viewModel.CurrentRuntimeRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Same(selected, viewModel.SelectedProfile);
+            Assert.Same(option, Assert.Single(viewModel.PackageCapabilities));
+            Assert.Same(group, Assert.Single(viewModel.CapabilityGroups));
+        }
+
+        Assert.False(becameBusy);
+        Assert.True(viewModel.IsDirty);
+        Assert.Equal("Unsaved instructions", viewModel.Instructions);
+    }
+
+    [Fact]
+    public async Task AgentProfilesViewModel_CatalogBurstCoalescesWithoutBlockingEditsOrRestoringOldSelections()
+    {
+        var fixture = CreateProfileDashboardFixture(revision: 31);
+        var client = new ProfileDashboardRuntimeClient(fixture.Snapshot, fixture.Dashboard, fixture.Catalog);
+        using var gateway = new AgentAppRuntimeGateway(client);
+        using var model = new AgentProfilesViewModel(client, gateway, null, new InlineProfileDispatcher());
+        await model.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(5));
+        await model.CurrentCapabilityRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.BeforeCatalog = async (request, token) =>
+        {
+            if (request.Profile is null) return;
+            entered.TrySetResult();
+            await release.Task.WaitAsync(token);
+        };
+        var before = client.CatalogRequests.Count;
+        var applyChange = typeof(AgentAppRuntimeGateway).GetMethod("ApplyCurrentChange", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        try
+        {
+            _ = applyChange.Invoke(gateway, [new AgentRuntimeChange(32, AgentRuntimeChangeKind.Catalog)]);
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(model.IsBusy);
+            Assert.True(model.IsEditorEnabled);
+            var option = Assert.Single(model.PackageCapabilities);
+            option.IsEnabled = false;
+            for (var revision = 33; revision <= 42; revision++)
+                _ = applyChange.Invoke(gateway, [new AgentRuntimeChange(revision, AgentRuntimeChangeKind.Catalog)]);
+            release.TrySetResult();
+            await model.CurrentCapabilityRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Equal(4, client.CatalogRequests.Count - before); // One active refresh and one trailing refresh, two queries each.
+            Assert.Same(option, Assert.Single(model.PackageCapabilities));
+            Assert.False(option.IsEnabled);
+            Assert.True(model.IsDirty);
+            Assert.False(model.IsBusy);
+        }
+        finally { release.TrySetResult(); }
     }
 
     [Theory]
@@ -4127,6 +4218,7 @@ public sealed class AgentRuntimeCorrectnessTests
         public int ProfileQueryCount => Volatile.Read(ref _profileQueryCount);
         public ConcurrentQueue<AgentCatalogRequest> CatalogRequests { get; } = new();
         public ConcurrentQueue<AgentProfileCommand> ProfileCommands { get; } = new();
+        public Func<AgentCatalogRequest, CancellationToken, Task>? BeforeCatalog { get; set; }
 
         public override Task<IReadOnlyList<AgentProfileRecord>> ListProfilesAsync(CancellationToken token = default)
         {
@@ -4173,6 +4265,8 @@ public sealed class AgentRuntimeCorrectnessTests
             if (request is AgentCatalogRequest)
             {
                 CatalogRequests.Enqueue((AgentCatalogRequest)(object)request);
+                if (BeforeCatalog is { } before)
+                    return new ValueTask<TResponse>(ReadCatalogAsync((AgentCatalogRequest)(object)request, before, cancellationToken));
                 lock (_sync)
                 {
                     return ValueTask.FromResult((TResponse)(object)_catalog);
@@ -4209,6 +4303,13 @@ public sealed class AgentRuntimeCorrectnessTests
                 }
             }
             return ValueTask.FromException<TResponse>(new NotSupportedException(typeof(TRequest).Name));
+
+            async Task<TResponse> ReadCatalogAsync(AgentCatalogRequest catalogRequest,
+                Func<AgentCatalogRequest, CancellationToken, Task> before, CancellationToken token)
+            {
+                await before(catalogRequest, token);
+                lock (_sync) return (TResponse)(object)_catalog;
+            }
         }
 
         public override async IAsyncEnumerable<TEvent> ObserveAsync<TRequest, TEvent>(
@@ -4220,6 +4321,12 @@ public sealed class AgentRuntimeCorrectnessTests
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             yield break;
         }
+    }
+
+    private sealed class InlineProfileDispatcher : AgentPresentationDispatcher
+    {
+        public bool CheckAccess() => true;
+        public Task InvokeAsync(Action action) { action(); return Task.CompletedTask; }
     }
 
     private sealed class ActiveChatDashboardCursorRuntimeClient(

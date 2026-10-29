@@ -5,6 +5,17 @@ namespace Sunder.Package.Agent.Memory.Semantic.PackageViews;
 
 public sealed partial class MemoryInspectorViewModel
 {
+    private void ClearSelectionRelations()
+    {
+        EvidenceItems.Clear();
+        SupersededMemoryItems.Clear();
+        SupersedingMemory = null;
+        CorrectionLineageSummaryText = string.Empty;
+        OnPropertyChanged(nameof(HasSupersedingMemory));
+        OnPropertyChanged(nameof(HasSupersededMemories));
+        OnPropertyChanged(nameof(HasCorrectionLineage));
+    }
+
     private void StartMemoryDetailsLoad(MemoryListItemViewModel? selection)
     {
         var version = ++_memoryDetailsLoadVersion;
@@ -78,6 +89,9 @@ public sealed partial class MemoryInspectorViewModel
         var supersededTask = _memoryInspectorService.ListSupersededMemoriesAsync(selection.MemoryId, cancellationToken);
         var lineageTask = _memoryInspectorService.ListCorrectionLineageAsync(selection.MemoryId, cancellationToken);
         await Task.WhenAll(evidenceTask, supersedingTask, supersededTask, lineageTask).ConfigureAwait(false);
+        var current = (await lineageTask.ConfigureAwait(false)).FirstOrDefault(memory => memory.MemoryId == selection.MemoryId
+            && memory.SessionId == selection.Record.SessionId) ?? selection.Record;
+        var indexTask = _memoryInspectorService.GetSemanticIndexStatusAsync(current, semanticContext, cancellationToken);
         var supersedingMemory = await supersedingTask.ConfigureAwait(false);
         var supersededMemories = await supersededTask.ConfigureAwait(false);
         var supersedingStatusTask = supersedingMemory is null
@@ -91,9 +105,9 @@ public sealed partial class MemoryInspectorViewModel
                         semanticContext,
                         cancellationToken)
                     .ConfigureAwait(false))));
-        await Task.WhenAll(supersedingStatusTask, supersededItemsTask).ConfigureAwait(false);
+        await Task.WhenAll(supersedingStatusTask, supersededItemsTask, indexTask).ConfigureAwait(false);
         return new MemorySelectionDetails(
-            selection,
+            new MemoryListItemViewModel(current, await indexTask.ConfigureAwait(false)),
             (await evidenceTask.ConfigureAwait(false))
                 .Select(item => new MemoryEvidenceItemViewModel(item))
                 .ToArray(),

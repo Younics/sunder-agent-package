@@ -46,7 +46,7 @@ public sealed class WebFetchTool(WebFetchService fetchService)
         }
         """,
         Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null,
-        SelectionGroupDisplayName = null, SelectionGroupDescription = null, RuntimeInstructions = null,
+        SelectionGroupDisplayName = null, SelectionGroupDescription = null, SelectionGroupAllowsBulkSelection = true, RuntimeInstructions = null,
         ActivationRequirement = null, Priority = AgentToolPriority.Medium,
         ConcurrencyMode = AgentToolConcurrencyMode.ParallelSafe,
     };

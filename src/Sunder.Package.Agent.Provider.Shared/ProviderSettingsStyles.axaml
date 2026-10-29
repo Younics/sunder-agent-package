@@ -1,17 +1,16 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:provider="using:Sunder.Package.Agent.Provider.Shared"
+        xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
         xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews">
   <Styles.Resources>
     <DataTemplate x:Key="ProviderApiKeySettingsTemplate"
                   x:DataType="provider:ApiKeySettingsState">
       <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
-                       Text="API Key"
-                       VerticalAlignment="Center" />
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:ResponsiveGrid ColumnDefinitions="*,Auto"
+                ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
+            <p:SectionHeader Title="API key" HelpText="{Binding Description}" />
             <Border Grid.Column="1"
                     Classes="settings-status-pill"
                     Classes.success="{Binding HasStoredCredential}"
@@ -19,12 +18,9 @@
               <TextBlock Classes="settings-status-label"
                          Text="{Binding CredentialStatusLabel}" />
             </Border>
-          </Grid>
+          </p:ResponsiveGrid>
 
-            <StackPanel Spacing="6">
-              <TextBlock Classes="caption"
-                         Text="{Binding Description}"
-                         TextWrapping="Wrap" />
+            <StackPanel Spacing="{DynamicResource Sunder.Spacing.XSmall}">
               <TextBlock Classes="muted"
                          Text="{Binding CredentialStatusDetail}"
                          TextWrapping="Wrap" />
@@ -43,8 +39,7 @@
                      Classes.danger="{Binding IsOperationStatusError}"
                      TextWrapping="Wrap" />
 
-          <StackPanel Orientation="Horizontal"
-                      Spacing="10"
+          <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}"
                       IsVisible="{Binding !IsClearConfirmationRequested}">
             <Button Classes="primary-action"
                     Content="Save API Key"
@@ -55,15 +50,14 @@
                     Command="{Binding RequestClearCredentialCommand}"
                     IsEnabled="{Binding CanRequestClearCredential}"
                     IsVisible="{Binding HasStoredCredential}" />
-          </StackPanel>
+          </WrapPanel>
 
           <Border Classes="settings-confirmation-card"
                   IsVisible="{Binding IsClearConfirmationRequested}">
-            <StackPanel Spacing="10">
+            <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
               <TextBlock Text="Clear the stored API key? This cannot be undone."
                          TextWrapping="Wrap" />
-              <StackPanel Orientation="Horizontal"
-                          Spacing="10">
+              <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
                 <Button Classes="danger-action"
                         Content="Clear API Key"
                         Command="{Binding ClearCredentialCommand}"
@@ -71,7 +65,7 @@
                 <Button Classes="secondary-action"
                         Content="Cancel"
                         Command="{Binding CancelClearCredentialCommand}" />
-              </StackPanel>
+              </WrapPanel>
             </StackPanel>
           </Border>
         </StackPanel>
@@ -81,18 +75,12 @@
     <DataTemplate x:Key="ProviderUtilityModelSettingsTemplate"
                   x:DataType="provider:UtilityModelSettingsState">
       <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Utility Model" />
-            <TextBlock Classes="caption"
-                       Text="Used for short background tasks such as generating session names. Regular agent replies keep using the model selected on the Agent profile."
-                       TextWrapping="Wrap" />
-          </StackPanel>
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:SectionHeader Title="Utility model" HelpText="Used for background tasks such as naming sessions. Agent replies use the model selected on the agent." />
 
           <shared:SunderComboBox ItemsSource="{Binding UtilityModels}"
                                  SelectedItem="{Binding SelectedUtilityModel, Mode=TwoWay}"
-                                 HorizontalAlignment="Left">
+                                 HorizontalAlignment="Stretch">
             <shared:SunderComboBox.ItemTemplate>
               <DataTemplate x:DataType="provider:ProviderUtilityModelOption">
                 <TextBlock Text="{Binding DisplayName}" />
@@ -108,8 +96,7 @@
                      Classes.danger="{Binding IsOperationStatusError}"
                      TextWrapping="Wrap" />
 
-          <StackPanel Orientation="Horizontal"
-                      Spacing="10">
+          <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
             <Button Classes="primary-action"
                     Content="Save Utility Model"
                     Command="{Binding SaveUtilityModelCommand}"
@@ -119,7 +106,7 @@
                     Command="{Binding CancelUtilityModelSaveCommand}"
                     IsEnabled="{Binding CanCancelUtilityModelSave}"
                     IsVisible="{Binding CanCancelUtilityModelSave}" />
-          </StackPanel>
+          </WrapPanel>
         </StackPanel>
       </Border>
     </DataTemplate>

@@ -94,6 +94,9 @@ public contract tuple.
 Builder's App role also requires `app-state-updates.v1` for accepted bookmark
 settlement. This is a host-owned App service, supplied by composition fixtures as
 well as the production shell; it must never be required by a Worker role.
+Builder's Worker additionally requires `development-toolchain.v1` to read the
+running Host's exact .NET SDK and Node/npm pins. Updating those development tools
+does not change a package's execution-runtime binding or its target framework.
 The App role additionally requires `package-development-revisions.v1` for sampled
 and applied output identities, and `worker-execution-observations.v1` for exact
 pre-Start execution capture and Host cleanup observations. Both are App-only:
@@ -139,6 +142,28 @@ relocations and old descriptors are historical facts, not current invariants.
 Frozen captures and genuine domain source bytes remain intact.
 
 ## Current qualified-artifact record proposal
+
+### Capability selection and Memory Inspector evolution
+
+The non-Chat UI refactor explicitly adds package-authored bulk-selection flags.
+`AgentToolDescriptor.SelectionGroupAllowsBulkSelection` affects prompt-context
+contributor `3.0.0`, run-control `4.0.0`, system-prompt contributor `3.0.0`, and
+tool-source `3.0.0`. `AgentProfileSelectableCapabilityDescriptor.GroupAllowsBulkSelection`
+affects selectable-capability-provider `2.0.0`. Each change is the new required
+boolean in the generated DTO and its reviewed version, not a change to assignment
+or authorization semantics. The preceding descriptors remain in owned history.
+Private profile/workspace projections may transitively carry the same descriptor.
+
+The private Memory Inspector adds an idempotent `graph` method with the existing
+`memory.semantic.operation-failed` error. It returns a prefix bounded to at most
+1,000 records and to the encoded content-byte budget, with a `hasMore` indicator.
+This does not add a public graph contract or change recall. Graph edges show only
+recorded source-turn, evidence, and supersession links; node placement is local UI
+state, not semantic similarity or a stored-memory mutation.
+
+These intentional changes require a fresh all-family qualified-artifact proposal
+and semantic review before replacing current byte records. Earlier toolchain and
+detail-refresh results do not qualify this refactor.
 
 The verifier consumes a complete index with this shape (all fifteen rows required):
 

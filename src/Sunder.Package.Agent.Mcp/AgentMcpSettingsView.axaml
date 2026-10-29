@@ -3,19 +3,20 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Mcp"
+             xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              xmlns:ae="clr-namespace:AvaloniaEdit;assembly=AvaloniaEdit"
              x:Class="Sunder.Package.Agent.Mcp.AgentMcpSettingsView"
              x:DataType="vm:AgentMcpSettingsViewModel"
-             mc:Ignorable="d">
+             mc:Ignorable="d" Classes="agent-page">
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="Border.mcp-list-pane">
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,1,0" />
-      <Setter Property="Padding" Value="0,0,20,0" />
     </Style>
 
     <Style Selector="Border.mcp-editor-pane">
-      <Setter Property="Padding" Value="20,0,0,0" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <Style Selector="Border.mcp-pane.compact">
@@ -23,46 +24,46 @@
     </Style>
 
     <Style Selector="Border.mcp-pane-header">
-      <Setter Property="Padding" Value="0,0,0,16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.mcp-list-body">
-      <Setter Property="Padding" Value="0,16,0,0" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <Style Selector="Border.mcp-editor-body">
-      <Setter Property="Padding" Value="0,16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
     </Style>
 
     <Style Selector="Border.mcp-actions">
-      <Setter Property="Padding" Value="0,16,0,0" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
     <Style Selector="TextBlock.mcp-title">
-      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
     <Style Selector="TextBlock.mcp-caption">
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.mcp-field-label">
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
       <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style Selector="TextBlock.mcp-field-help">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
@@ -94,7 +95,7 @@
 
     <Style Selector="TextBlock.mcp-status-message">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -115,7 +116,7 @@
       <Setter Property="MinWidth" Value="36" />
       <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -137,19 +138,12 @@
                   RowDefinitions="Auto,Auto,Auto"
                   ColumnSpacing="12"
                   RowSpacing="8">
-              <TextBlock Grid.Column="0"
-                         Classes="mcp-title"
-                         Text="MCP Servers"
-                         VerticalAlignment="Center" />
+              <p:SectionHeader Title="MCP servers" IsPageTitle="True" HelpText="Configure a server here, then enable it on the agents that should use it." />
               <Button Grid.Column="1"
                       Classes="secondary-action compact-action mcp-add-action"
                       Content="+"
                       Command="{Binding CreateServerCommand}"
                       ToolTip.Tip="New server" />
-              <TextBlock Grid.Row="1"
-                         Grid.ColumnSpan="2"
-                         Classes="mcp-caption"
-                          Text="Configure shared Model Context Protocol servers once, then enable them per agent." />
               <WrapPanel Grid.Row="2" Grid.ColumnSpan="2">
                 <Button x:Name="ImportCommonConfigsButton" Content="Import Common Configs"
                         Classes="secondary-action compact-action" Margin="0,0,8,8"
@@ -166,7 +160,7 @@
             <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           MinHeight="0"
                           VerticalScrollBarVisibility="Auto">
-              <ListBox Classes="mcp-list"
+              <ListBox Classes="mcp-list" Margin="{DynamicResource Sunder.Padding.Panel}"
                        IsEnabled="{Binding CanNavigateServers}"
                        ItemsSource="{Binding Servers}"
                        SelectedItem="{Binding SelectedServer, Mode=TwoWay}">
@@ -201,10 +195,7 @@
           <Border Grid.Row="0"
                   Classes="mcp-pane-header">
             <StackPanel Spacing="8">
-              <TextBlock Classes="mcp-title"
-                         Text="MCP Server Editor" />
-              <TextBlock Classes="mcp-caption"
-                         Text="Paste the bare local or remote MCP object. JSONC comments and trailing commas are accepted and reformatted on save." />
+              <p:SectionHeader Title="Configuration" HelpText="Paste a local or remote MCP configuration object. Comments and trailing commas are accepted. Saving reformats the JSON." />
             </StackPanel>
           </Border>
 
@@ -216,30 +207,24 @@
               <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto"
                     RowSpacing="14">
                   <StackPanel Spacing="6">
-                    <TextBlock Classes="mcp-field-label"
-                               Text="Machine name" />
+                    <p:SectionHeader Title="Machine name" HelpText="A stable identifier used by agent assignments and saved connections." />
                     <TextBox Text="{Binding Name, Mode=TwoWay}"
                              IsEnabled="{Binding IsDocumentReady}"
                              PlaceholderText="context7" />
-                    <TextBlock Classes="mcp-field-help"
-                               Text="Use a stable machine-readable name for profile assignments and runtime connection state." />
                   </StackPanel>
 
                   <StackPanel Grid.Row="1" Spacing="10">
                     <StackPanel Spacing="4">
-                      <TextBlock Classes="mcp-field-label"
-                                 Text="Editor tools" />
-                       <TextBlock Classes="mcp-field-help"
-                                   Text="Start from a local or remote template, then format before saving. Timeouts are non-negative milliseconds. discoveryTimeout uses a 15s default and 120s maximum; zero uses the default. toolTimeout optionally caps each call at 30 minutes; zero disables that local timer. Without a user or agent-requested limit, execution waits until Stop/cancellation or the global 30-minute run safety limit." />
+                    <p:SectionHeader Title="Configuration tools" HelpText="Templates provide a starting configuration. Timeouts use milliseconds: discoveryTimeout defaults to 15 seconds and is capped at 120 seconds; zero uses the default. toolTimeout may cap a call at up to 30 minutes; zero disables that local timer. Stop and the global 30-minute run safety limit still apply." />
                     </StackPanel>
                     <WrapPanel Orientation="Horizontal">
-                      <Button Content="Local Template"
+                      <Button Content="Local Template" Classes="secondary-action"
                               Margin="0,0,10,10"
                               Command="{Binding LoadLocalTemplateCommand}" />
-                      <Button Content="Remote Template"
+                      <Button Content="Remote Template" Classes="secondary-action"
                               Margin="0,0,10,10"
                               Command="{Binding LoadRemoteTemplateCommand}" />
-                      <Button Content="Format"
+                      <Button Content="Format" Classes="secondary-action"
                                Margin="0,0,10,10"
                                Command="{Binding FormatCommand}" />
                     </WrapPanel>
@@ -260,8 +245,8 @@
                                  VerticalScrollBarVisibility="Auto"
                                   Background="{DynamicResource Sunder.Brush.Surface.Code}"
                                   Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
-                                  FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
-                                  FontSize="13"
+                                  FontFamily="{DynamicResource Sunder.Agent.FontFamily.Code}"
+                                  FontSize="{DynamicResource Sunder.FontSize.Body}"
                                   MinWidth="0"
                                   MinHeight="0"
                                   HorizontalAlignment="Stretch"
@@ -270,8 +255,7 @@
                 </Border>
 
                   <StackPanel Grid.Row="3" Spacing="6">
-                    <TextBlock Classes="mcp-field-label"
-                               Text="Connection status" />
+                    <p:SectionHeader Title="Connection" HelpText="Discover tools checks the server's available tools. Reconnect restarts the connection. OAuth authorization is separate from the server connection." />
                     <TextBlock Classes="mcp-status-message"
                                Classes.success="{Binding IsConnectionStatusSuccess}"
                                Classes.warning="{Binding IsConnectionStatusWarning}"
@@ -281,37 +265,32 @@
                                Text="{Binding ConnectionStatusDetail}"
                                IsVisible="{Binding HasConnectionStatusDetail}" />
                     <WrapPanel Orientation="Horizontal">
-                      <Button Content="Discover Tools"
+                      <Button Content="Discover Tools" Classes="secondary-action"
                               Margin="0,6,10,0"
                               Command="{Binding DiscoverToolsCommand}" />
-                      <Button Content="Cancel Discovery"
+                      <Button Content="Cancel Discovery" Classes="secondary-action"
                               Margin="0,6,10,0"
                               Command="{Binding CancelDiscoveryCommand}" />
-                      <Button Content="Disconnect"
+                      <Button Content="Disconnect" Classes="secondary-action"
                               Margin="0,6,10,0"
                               Command="{Binding DisconnectMcpServerCommand}" />
-                      <Button Content="Reconnect"
+                      <Button Content="Reconnect" Classes="secondary-action"
                                Margin="0,6,10,0"
                                Command="{Binding ReconnectMcpServerCommand}" />
-                      <Button Content="Authorize OAuth"
+                      <Button Content="Authorize OAuth" Classes="secondary-action"
                               Margin="0,6,10,0"
                               Command="{Binding AuthorizeMcpServerCommand}"
                               IsVisible="{Binding HasSelectedOAuthServer}" />
-                      <Button Content="Disconnect OAuth"
+                      <Button Content="Disconnect OAuth" Classes="secondary-action"
                               Margin="0,6,10,0"
                               Command="{Binding DisconnectMcpServerOAuthCommand}"
                               IsVisible="{Binding HasSelectedOAuthServer}" />
                     </WrapPanel>
                   </StackPanel>
 
-                  <Grid Grid.Row="4" IsVisible="{Binding HasSelectedServer}" RowDefinitions="Auto,*"
+                  <Expander Grid.Row="4" Header="Diagnostics" IsVisible="{Binding HasSelectedServer}">
+                  <Grid RowDefinitions="Auto,*"
                         RowSpacing="8">
-                    <StackPanel Spacing="4">
-                      <TextBlock Classes="mcp-field-label"
-                                 Text="Connection diagnostics" />
-                      <TextBlock Classes="mcp-field-help"
-                                 Text="Status history, discovered tools, connection errors, and recent MCP process stderr." />
-                    </StackPanel>
                     <Border Grid.Row="1"
                             Background="{DynamicResource Sunder.Brush.Surface.Code}"
                             BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}"
@@ -322,43 +301,45 @@
                             ClipToBounds="True">
                       <ScrollViewer HorizontalScrollBarVisibility="Auto"
                                     VerticalScrollBarVisibility="Auto">
-                        <TextBlock Text="{Binding ConnectionDiagnosticsText}"
+                        <SelectableTextBlock Text="{Binding ConnectionDiagnosticsText}"
                                    Foreground="{DynamicResource Sunder.Brush.Foreground.Code}"
-                                   FontFamily="Cascadia Code,Consolas,Menlo,Monospace"
-                                   FontSize="12"
+                                   FontFamily="{DynamicResource Sunder.Agent.FontFamily.Code}"
+                                   FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                    TextWrapping="NoWrap" />
                       </ScrollViewer>
                     </Border>
                   </Grid>
+                  </Expander>
               </Grid>
             </Border>
           </ScrollViewer>
 
           <Border Grid.Row="2"
                   Classes="mcp-actions">
-            <Grid ColumnDefinitions="Auto,*,Auto,Auto"
-                  ColumnSpacing="12">
+            <p:EditorFooter>
               <Button Grid.Column="0"
                       Classes="secondary-action compact-action danger-action"
-                      Content="Delete Server"
+                      Content="Delete"
                       Command="{Binding DeleteCommand}" />
-              <Button Grid.Column="2"
+              <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource Sunder.Spacing.Small}">
+              <Button
                       Classes="secondary-action compact-action"
                       Content="Back"
                       Command="{Binding BackToServerListCommand}"
                       IsVisible="{Binding IsCompactLayout}" />
-              <Button Grid.Column="3"
+              <Button
                       Classes="primary-action"
-                      Content="Save Server"
+                      Content="Save"
                       Command="{Binding SaveCommand}" />
-            </Grid>
+              </StackPanel>
+            </p:EditorFooter>
           </Border>
         </Grid>
       </Border>
     </Grid>
     <StackPanel Grid.Row="1" Spacing="8">
       <ProgressBar IsVisible="{Binding IsBusy}" IsIndeterminate="True" Height="3" />
-      <TextBlock x:Name="McpOperationStatus" Classes="mcp-status-message"
+      <TextBlock x:Name="McpOperationStatus" Classes="mcp-status-message" Margin="{DynamicResource Sunder.Padding.Panel}"
                  Classes.success="{Binding IsStatusSuccess}" Classes.warning="{Binding IsStatusWarning}"
                  Classes.error="{Binding IsStatusError}" Text="{Binding StatusText}"
                  IsVisible="{Binding HasStatus}" />

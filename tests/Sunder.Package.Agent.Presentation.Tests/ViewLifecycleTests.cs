@@ -1356,6 +1356,8 @@ public sealed partial class ViewLifecycleTests
             new AgentChatView(),
             new AgentProfilesView(),
             new AgentWorkspacesView(),
+            new AgentPermissionsView(),
+            new AgentHistorySearchView(),
             new SubagentsView(),
             new SubsessionsView(),
             new LocalExecutionSettingsView(),
@@ -1676,7 +1678,8 @@ public sealed partial class ViewLifecycleTests
         var folder = Path.Combine(Path.GetTempPath(), "builder-layout", new string('a', 100));
         var source = new BuilderProjectInspection { Kind = BuilderProjectKind.Node, ProjectFolder = folder,
             EntryPoint = Path.Combine(folder, "package.json"), PackageId = "local.layout", DisplayName = "A long project name for responsive layout",
-            SourceRevision = "layout", CanEditDisplayName = true, CanEditPackageId = true };
+            SourceRevision = "layout", CanEditDisplayName = true, CanEditPackageId = true,
+            ToolchainAssessment = new(true, true, "Project pins require an explicit toolchain upgrade.") };
         await using var model = CreateColdBuilderViewModel(new BlockingBuilderProjectStore(), source);
         var row = new BuilderProjectViewModel(new("layout", source.DisplayName, source.PackageId, folder, source.EntryPoint,
             source.Kind, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
@@ -1698,11 +1701,26 @@ public sealed partial class ViewLifecycleTests
                 Assert.Equal(width < 820 ? 0 : 1, Grid.GetColumn(actions));
                 Assert.Equal(width < 820 ? 2 : 1, Grid.GetColumnSpan(actions));
                 Assert.Equal(width < 820 ? HorizontalAlignment.Left : HorizontalAlignment.Right, actions.HorizontalAlignment);
-                var details = Assert.Single(view.GetVisualDescendants().OfType<ScrollViewer>(), scroll => scroll.Content is ContentControl { Content: BuilderProjectViewModel });
+                var details = Assert.Single(view.GetVisualDescendants().OfType<ScrollViewer>(), scroll => scroll.Name == "ProjectContentScroll");
                 Assert.True(details.Extent.Width <= details.Viewport.Width + 0.5,
                     $"Builder details overflowed at {width}px: {details.Extent.Width} > {details.Viewport.Width}.");
                 var settings = Assert.Single(view.GetVisualDescendants().OfType<Expander>(), expander => Equals(expander.Header, "Project settings"));
                 Assert.False(settings.IsExpanded);
+                var headerButtons = actions.GetVisualDescendants().OfType<Button>().ToArray();
+                Assert.Contains(headerButtons, button => Equals(button.Content, "Load into Sunder"));
+                Assert.DoesNotContain(headerButtons, button => Equals(button.Content, "Build") || Equals(button.Content, "Create Bundle"));
+                var buildActions = view.GetVisualDescendants().OfType<WrapPanel>().Single(control => control.Name == "ProjectBuildActions");
+                var notices = view.GetVisualDescendants().OfType<StackPanel>().Single(control => control.Name == "ProjectNotices");
+                Assert.True(buildActions.TranslatePoint(default, view)!.Value.Y >= notices.TranslatePoint(default, view)!.Value.Y + notices.Bounds.Height);
+                var editor = view.FindControl<Border>("BuilderEditorPane")!;
+                Assert.InRange(Math.Abs(details.TranslatePoint(default, editor)!.Value.X + details.Bounds.Width - editor.Bounds.Width), 0, 0.5);
+                var footer = view.GetVisualDescendants().OfType<Grid>().Single(control => control.Name == "ProjectEditorFooter");
+                var back = footer.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Back"));
+                var save = footer.GetVisualDescendants().OfType<Button>().Single(button => Equals(button.Content, "Save"));
+                Assert.InRange(Math.Abs(back.TranslatePoint(default, footer)!.Value.Y - save.TranslatePoint(default, footer)!.Value.Y), 0, 0.5);
+                Assert.DoesNotContain(footer.GetVisualAncestors(), control => ReferenceEquals(control, details));
+                Assert.Contains(footer.GetVisualDescendants().OfType<Button>(), button => Equals(button.Content, "Remove"));
+                UiCapture.Save(window, $"maker-project-{width:0}");
                 if (width >= 820)
                 {
                     var list = Assert.Single(view.GetVisualDescendants().OfType<ListBox>(), control => control.Classes.Contains("projects"));
@@ -3510,6 +3528,13 @@ public sealed partial class ViewLifecycleTests
                     .Select((row, index) => (row.AnchorKey, Index: index))
                     .Single(item => Equals(item.AnchorKey, toolRow.AnchorKey))
                     .Index;
+                RecordDiagnostic(viewportTrace, "tool-frame: " + string.Join("; ", viewModel.TranscriptItems
+                    .Skip(toolIndex).Select(row =>
+                    {
+                        var index = viewModel.TranscriptItems.IndexOf(row);
+                        var control = repeater.TryGetElement(index) as Control;
+                        return $"{row.AnchorKey}: top={control?.TranslatePoint(default, transcript)?.Y:F3}, height={control?.Bounds.Height:F3}, visible={row.IsLayoutVisible}, minimum={row.MinimumLayoutHeight:F3}";
+                    })));
                 return new ToolExpansionFrame(
                     Assert.IsType<Point>(header.TranslatePoint(default, transcript)).Y,
                     CaptureFollowingRowPositions(
@@ -3517,7 +3542,11 @@ public sealed partial class ViewLifecycleTests
                         repeater,
                         transcript,
                         toolIndex,
-                        static row => row.AnchorKey));
+                        static row => row.AnchorKey,
+                        // Internal one-pixel activity/tail markers can follow a newly
+                        // realized markdown row's final measure without moving content.
+                        // Their identities and following state are asserted separately.
+                        static row => row.IsLayoutVisible && row is not SubsessionTranscriptTailSentinelRowViewModel));
             }
             string DescribeToolExpansionState(string stage)
                 => $"{stage}: expanded={toolRow.IsExpanded}, preparing={toolRow.IsPreparing}, failed={toolRow.IsDetailLoadFailed}, materialized={toolRow.HasMaterializedDetails}; "
@@ -5228,12 +5257,14 @@ public sealed partial class ViewLifecycleTests
         ItemsRepeater repeater,
         ScrollViewer transcript,
         int anchorIndex,
-        Func<TRow, object> getAnchorKey)
+        Func<TRow, object> getAnchorKey,
+        Func<TRow, bool>? includeRow = null)
     {
         var positions = new Dictionary<object, double>();
         for (var index = anchorIndex + 1; index < transcriptItems.Count; index++)
         {
-            if (repeater.TryGetElement(index) is not Control row
+            if ((includeRow is not null && !includeRow(transcriptItems[index]))
+                || repeater.TryGetElement(index) is not Control row
                 || row.TranslatePoint(default, transcript) is not { } point)
             {
                 continue;

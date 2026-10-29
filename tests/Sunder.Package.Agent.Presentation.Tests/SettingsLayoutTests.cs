@@ -12,9 +12,10 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
-public sealed class SettingsLayoutTests
+public sealed partial class SettingsLayoutTests
 {
     [AvaloniaTheory]
+    [InlineData(360)]
     [InlineData(620)]
     [InlineData(1000)]
     public async Task McpImportsBelongToOverviewAndTheirFeedbackRemainsVisible(double width)
@@ -53,11 +54,13 @@ public sealed class SettingsLayoutTests
             Assert.True(editor.IsEffectivelyVisible);
             Assert.DoesNotContain(editor.GetVisualDescendants().OfType<Button>(), button => button.Content is string text && text.StartsWith("Import", StringComparison.Ordinal));
             Assert.Contains(editor.GetVisualDescendants().OfType<Button>(), button => Equals(button.Content, "Local Template"));
+            UiCapture.Save(window, $"mcp-editor-{width:0}");
         }
         finally { window.Close(); }
     }
 
     [AvaloniaTheory]
+    [InlineData(360)]
     [InlineData(620)]
     [InlineData(1000)]
     public async Task SkillsOverviewOwnsCommonImportWhileDetailShowsExactlyOneSourceWithoutLosingUrl(double width)
@@ -94,11 +97,13 @@ public sealed class SettingsLayoutTests
             Assert.True(github.IsEffectivelyVisible);
             Assert.False(local.IsEffectivelyVisible);
             Assert.Equal("https://github.com/example/skills/tree/main/docs", model.GithubUrl);
+            UiCapture.Save(window, $"skills-import-{width:0}");
         }
         finally { window.Close(); }
     }
 
     [AvaloniaTheory]
+    [InlineData(360)]
     [InlineData(620)]
     [InlineData(1000)]
     public async Task MakerUsesCompactCardsWithCollapsedInstallationDetailsAndVisibleDiscoveryAndErrors(double width)
@@ -118,7 +123,10 @@ public sealed class SettingsLayoutTests
             await backend.Entered.Task.WaitAsync(TimeSpan.FromSeconds(3));
             window.UpdateLayout();
             var details = view.GetVisualDescendants().OfType<Expander>().Where(expander => Equals(expander.Header, "Details")).ToArray();
+            var sdkActions = view.GetVisualDescendants().OfType<Button>().Where(button => button.Classes.Contains("primary-action")).ToArray();
             Assert.Equal(2, details.Length);
+            Assert.Equal(2, sdkActions.Length);
+            Assert.All(sdkActions, button => Assert.False(button.IsEffectivelyVisible));
             Assert.All(details, expander => Assert.False(expander.IsExpanded));
             Assert.All(model.Cards, card => Assert.Equal("Checking SDKs…", card.Status));
             Assert.Contains(view.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == ".NET");
@@ -126,15 +134,40 @@ public sealed class SettingsLayoutTests
             backend.Release.TrySetResult();
             await model.RefreshAsync().WaitAsync(TimeSpan.FromSeconds(3));
             window.UpdateLayout();
+            Assert.All(sdkActions, button => Assert.False(button.IsEffectivelyVisible));
             Assert.DoesNotContain(view.GetVisualDescendants().OfType<SelectableTextBlock>(), text => text.IsEffectivelyVisible && text.Text!.StartsWith("/synthetic", StringComparison.Ordinal));
             details[0].IsExpanded = true;
             window.UpdateLayout();
             Assert.Contains(view.GetVisualDescendants().OfType<SelectableTextBlock>(), text => text.IsEffectivelyVisible && text.Text == "/synthetic/sdk/dotnet");
             Assert.All(view.GetVisualDescendants().OfType<Button>().Where(button => Equals(button.Content, "Repair") || Equals(button.Content, "Remove")), button => Assert.False(button.IsEffectivelyEnabled));
             details[0].IsExpanded = false;
+            foreach (var button in sdkActions)
+            {
+                var card = Assert.IsType<BuilderSdkCardViewModel>(button.DataContext);
+                var current = new BuilderToolchainStatus(card.Kind, card.Installations.Select(row => row.Installation).ToArray(),
+                    card.RecommendedVersion, DateTimeOffset.UtcNow, false, null);
+                card.Apply(current with { Installed = [], UpdateAvailable = true });
+                Assert.True(button.IsEffectivelyVisible);
+                Assert.Equal("Install SDK", button.Content);
+                card.IsRefreshing = true;
+                Assert.False(button.IsEffectivelyVisible);
+                card.IsRefreshing = false;
+                Assert.True(button.IsEffectivelyVisible);
+                card.Apply(current with { UpdateAvailable = true });
+                Assert.True(button.IsEffectivelyVisible);
+                Assert.Equal("Update SDK", button.Content);
+                card.Apply(current);
+                Assert.False(button.IsEffectivelyVisible);
+                card.Apply(current with { UpdateAvailable = null, CatalogError = "Offline" });
+                Assert.False(button.IsEffectivelyVisible);
+            }
+            model.Cards[0].Apply(new(BuilderProjectKind.Dotnet, [], null, null, null, null));
+            Assert.True(sdkActions[0].IsEffectivelyVisible);
             model.Cards[0].SetRefreshError("SDK observation unavailable");
+            Assert.False(sdkActions[0].IsEffectivelyVisible);
             Assert.Contains(view.GetVisualDescendants().OfType<TextBlock>(), text => text.IsEffectivelyVisible && text.Text == "SDK observation unavailable");
             Assert.Equal(2, backend.Checks);
+            UiCapture.Save(window, $"sdk-settings-{width:0}");
         }
         finally { backend.Release.TrySetResult(); window.Close(); }
     }

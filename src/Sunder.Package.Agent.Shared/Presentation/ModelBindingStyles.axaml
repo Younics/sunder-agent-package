@@ -23,7 +23,7 @@
         <TextBlock Text="{Binding Label}" />
         <TextBlock Text="{Binding Description}"
                    IsVisible="{Binding HasDescription}"
-                   FontSize="12"
+                   FontSize="{DynamicResource Sunder.FontSize.Caption}"
                    Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
                    TextWrapping="Wrap" />
       </StackPanel>
@@ -35,7 +35,7 @@
         <TextBlock Text="{Binding Label}" />
         <TextBlock Text="{Binding Description}"
                    IsVisible="{Binding HasDescription}"
-                   FontSize="12"
+                   FontSize="{DynamicResource Sunder.FontSize.Caption}"
                    Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
                    TextWrapping="Wrap" />
       </StackPanel>
@@ -47,7 +47,7 @@
         <TextBlock Text="{Binding Label}" />
         <TextBlock Text="{Binding Description}"
                    IsVisible="{Binding HasDescription}"
-                   FontSize="12"
+                   FontSize="{DynamicResource Sunder.FontSize.Caption}"
                    Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
                    TextWrapping="Wrap" />
       </StackPanel>
@@ -56,16 +56,19 @@
     <DataTemplate x:Key="CapabilityOptionTemplate"
                   x:DataType="p:CapabilityOptionState">
       <Border Padding="0,4">
-        <StackPanel Spacing="4">
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.XSmall}">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.XSmall}">
           <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay}"
                     IsEnabled="{Binding CanSelect}">
-            <TextBlock Text="{Binding DisplayName}" />
+            <TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" />
           </CheckBox>
-          <TextBlock Text="{Binding Description}"
-                     Margin="24,0,0,0"
-                     MaxLines="2"
-                     TextTrimming="CharacterEllipsis"
-                     FontSize="12"
+          <p:SectionHelpButton Grid.Column="1" HelpText="{Binding Description}"
+                               IsVisible="{Binding Description, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          </Grid>
+          <TextBlock Text="{Binding StatusText}"
+                     IsVisible="{Binding HasStatusText}"
+                     Margin="{DynamicResource Sunder.Agent.ChildIndent}"
+                     FontSize="{DynamicResource Sunder.FontSize.Caption}"
                      Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
                      TextWrapping="Wrap" />
         </StackPanel>
@@ -74,22 +77,27 @@
 
     <DataTemplate x:Key="CapabilityGroupTemplate"
                   x:DataType="p:CapabilityGroupState">
-      <StackPanel Spacing="8"
+      <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}"
                   Margin="0,4,0,10">
-        <StackPanel Spacing="2">
-          <TextBlock Text="{Binding Title}"
-                     FontSize="14"
-                     FontWeight="SemiBold"
-                     Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-          <TextBlock Text="{Binding Description}"
-                     MaxLines="2"
-                     TextTrimming="CharacterEllipsis"
-                     IsVisible="{Binding HasDescription}"
-                     FontSize="12"
-                     Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                     TextWrapping="Wrap" />
-        </StackPanel>
+        <Border Classes="capability-group-header">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.XSmall}">
+          <CheckBox Classes="capability-group-toggle"
+                    IsVisible="{Binding AllowsBulkSelection}"
+                    IsChecked="{Binding IsEnabled, Mode=TwoWay}"
+                    IsEnabled="{Binding CanSelect}">
+            <TextBlock Text="{Binding Title}"
+                       FontSize="{DynamicResource Sunder.FontSize.SectionTitle}"
+                       FontWeight="SemiBold" TextWrapping="Wrap"
+                       Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+          </CheckBox>
+          <TextBlock Text="{Binding Title}" IsVisible="{Binding !AllowsBulkSelection}"
+                     VerticalAlignment="Center" FontWeight="SemiBold" TextWrapping="Wrap"
+                     FontSize="{DynamicResource Sunder.FontSize.SectionTitle}" />
+          <p:SectionHelpButton Grid.Column="1" HelpText="{Binding Description}" IsVisible="{Binding HasDescription}" />
+        </Grid>
+        </Border>
         <ItemsControl ItemsSource="{Binding Options}"
+                      Margin="{DynamicResource Sunder.Agent.ChildIndent}"
                       ItemTemplate="{StaticResource CapabilityOptionTemplate}" />
       </StackPanel>
     </DataTemplate>

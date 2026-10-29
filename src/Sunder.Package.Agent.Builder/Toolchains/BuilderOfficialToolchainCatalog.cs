@@ -1,14 +1,15 @@
 using System.Text;
 using System.Text.Json;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
-public sealed class BuilderOfficialToolchainCatalog(IBuilderToolchainTransport transport, BuilderToolchainPlatform platform)
+public sealed class BuilderOfficialToolchainCatalog(IBuilderToolchainTransport transport, BuilderToolchainPlatform platform, SunderDevelopmentToolchain versions)
     : IBuilderToolchainCatalog
 {
     public async Task<IReadOnlyList<BuilderToolchainRelease>> GetReleasesAsync(BuilderProjectKind kind, CancellationToken cancellationToken)
     {
-        var bytes = await ReadAsync(kind == BuilderProjectKind.Dotnet ? BuilderToolchainPolicy.DotnetMetadataUri : BuilderToolchainPolicy.NodeMetadataUri,
+        var bytes = await ReadAsync(kind == BuilderProjectKind.Dotnet ? BuilderToolchainPolicy.DotnetMetadataUri(versions) : BuilderToolchainPolicy.NodeMetadataUri,
             cancellationToken).ConfigureAwait(false);
         using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
         var releases = kind switch
@@ -40,9 +41,9 @@ public sealed class BuilderOfficialToolchainCatalog(IBuilderToolchainTransport t
 
     private List<BuilderToolchainRelease> ReadDotnet(JsonElement root)
     {
-        if (Text(root, "channel-version") != BuilderToolchainPolicy.DotnetChannel || Text(root, "release-type") != "lts" ||
+        if (Text(root, "channel-version") != $"{Version.Parse(versions.DotnetSdkVersion).Major}.0" || Text(root, "release-type") is not ("lts" or "sts") ||
             Text(root, "support-phase") is not ("active" or "maintenance"))
-            throw new InvalidDataException("The .NET channel is not a supported LTS channel.");
+            throw new InvalidDataException("The .NET channel is not supported.");
         var rid = platform.DotnetRid;
         var suffix = rid.StartsWith("win-", StringComparison.Ordinal) ? ".zip" : ".tar.gz";
         var result = new Dictionary<string, BuilderToolchainRelease>(StringComparer.Ordinal);
@@ -55,7 +56,7 @@ public sealed class BuilderOfficialToolchainCatalog(IBuilderToolchainTransport t
             foreach (var sdk in sdks)
             {
                 var version = Text(sdk, "version");
-                if (!BuilderToolchainPolicy.IsSupported(BuilderProjectKind.Dotnet, version)) continue;
+                if (version != versions.DotnetSdkVersion) continue;
                 var expectedName = $"dotnet-sdk-{rid}{suffix}";
                 foreach (var file in sdk.GetProperty("files").EnumerateArray())
                 {
@@ -83,13 +84,13 @@ public sealed class BuilderOfficialToolchainCatalog(IBuilderToolchainTransport t
         foreach (var item in root.EnumerateArray())
         {
             var version = Text(item, "version").TrimStart('v');
-            if (!BuilderToolchainPolicy.IsSupported(BuilderProjectKind.Node, version) ||
+            if (version != versions.NodeVersion ||
                 !item.TryGetProperty("lts", out var lts) || lts.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(lts.GetString()) ||
                 !BuilderToolchainPolicy.TryVersion(Text(item, "npm"), out _)) continue;
             if (!item.GetProperty("files").EnumerateArray().Any(file => file.GetString() == catalogPlatform)) continue;
             var archiveRoot = $"node-v{version}-{target}";
             var candidate = new BuilderToolchainRelease(BuilderProjectKind.Node, version, target,
-                new Uri($"https://nodejs.org/dist/v{version}/{archiveRoot}{suffix}"), "SHA256", null, archiveRoot, Text(item, "npm"));
+                 new Uri($"https://nodejs.org/dist/v{version}/{archiveRoot}{suffix}"), "SHA256", null, archiveRoot, Text(item, "npm"));
             BuilderToolchainPolicy.ValidateRelease(candidate, requireChecksum: false);
             if (result.Any(previous => previous.Version == version)) throw new InvalidDataException("The Node catalog contains duplicate versions.");
             result.Add(candidate);

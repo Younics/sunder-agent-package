@@ -1,26 +1,21 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:Sunder.Package.Agent.Provider.OpenAI"
+              xmlns:vm="using:Sunder.Package.Agent.Provider.OpenAI"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
              x:Class="Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsView"
-             x:DataType="vm:OpenAiSettingsViewModel">
+             x:DataType="vm:OpenAiSettingsViewModel" Classes="agent-page">
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <StyleInclude Source="/Provider.Shared/ProviderSettingsStyles.axaml" />
   </UserControl.Styles>
 
-  <ScrollViewer>
-    <StackPanel Margin="0,0,0,8"
-                Spacing="16">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="{DynamicResource Sunder.Padding.Panel}"
+                Spacing="{DynamicResource Sunder.Spacing.Large}" HorizontalAlignment="Stretch">
       <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Authentication Mode" />
-            <TextBlock Classes="caption"
-                       Text="Choose which credential OpenAI chat uses. ChatGPT Plus/Pro remains the default until another mode is saved."
-                       TextWrapping="Wrap" />
-          </StackPanel>
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:SectionHeader Title="Authentication" HelpText="Choose the credential used for chat, then save. Connecting an account or storing an API key does not switch the saved mode." />
           <shared:SunderComboBox ItemsSource="{Binding AuthModes}"
                                  SelectedItem="{Binding SelectedAuthMode, Mode=TwoWay}"
                                  HorizontalAlignment="Left">
@@ -39,12 +34,10 @@
       </Border>
 
       <Border Classes="card-surface">
-        <StackPanel Spacing="14">
-          <Grid ColumnDefinitions="*,Auto"
-                ColumnSpacing="12">
-            <TextBlock Classes="section-title"
-                       Text="ChatGPT Plus/Pro"
-                       VerticalAlignment="Center" />
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:ResponsiveGrid ColumnDefinitions="*,Auto"
+                ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
+            <p:SectionHeader Title="ChatGPT Plus/Pro" HelpText="Select ChatGPT Plus/Pro as the authentication mode and save. Authorize opens your browser to sign in; return here while Sunder waits for the callback." />
             <Border Grid.Column="1"
                     Classes="settings-status-pill"
                     Classes.success="{Binding IsCodexConnected}"
@@ -53,17 +46,13 @@
               <TextBlock Classes="settings-status-label"
                          Text="{Binding CodexStatusLabel}" />
             </Border>
-          </Grid>
+          </p:ResponsiveGrid>
             <StackPanel Spacing="6">
-              <TextBlock Classes="caption"
-                         Text="Select ChatGPT Plus/Pro above, click Authorize, then finish sign-in in the browser. You can return here while Sunder waits for the callback."
-                         TextWrapping="Wrap" />
               <TextBlock Classes="muted"
                          Text="{Binding CodexStatusDetail}"
                          TextWrapping="Wrap" />
             </StackPanel>
-          <StackPanel Orientation="Horizontal"
-                      Spacing="10">
+          <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
             <Button x:Name="AuthorizeButton"
                     Classes="primary-action"
                     Content="{Binding AuthorizationButtonLabel}"
@@ -73,7 +62,7 @@
                     Content="Disconnect"
                     Command="{Binding DisconnectCommand}"
                     IsEnabled="{Binding CanDisconnectAction}" />
-          </StackPanel>
+          </WrapPanel>
         </StackPanel>
       </Border>
 

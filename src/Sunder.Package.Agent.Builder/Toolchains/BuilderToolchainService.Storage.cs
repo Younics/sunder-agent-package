@@ -21,7 +21,7 @@ public sealed partial class BuilderToolchainService
 
     private Task<BuilderToolchainLocks.Operation> LockAsync(BuilderProjectKind kind, string version, CancellationToken token)
     {
-        if (!BuilderToolchainPolicy.IsSupported(kind, version)) throw new ArgumentException("Unsupported toolchain version.", nameof(version));
+        if (!BuilderToolchainPolicy.IsKnownVersion(kind, version)) throw new ArgumentException("Invalid toolchain version.", nameof(version));
         var path = Path.Combine(root, "locks", $"{KindName(kind)}-{platform.For(kind)}-{version}.lock");
         BuilderToolchainFiles.CheckPath(root, path);
         return BuilderToolchainLocks.Operation.AcquireAsync(path, token);
@@ -30,7 +30,7 @@ public sealed partial class BuilderToolchainService
     private void ValidateOwned(BuilderToolchainInstallation installation)
     {
         if (!installation.IsManaged) throw new InvalidOperationException("External toolchains are read-only in Builder. Use their original installer to repair or remove them.");
-        if (!BuilderToolchainPolicy.IsSupported(installation.Kind, installation.Version) ||
+        if (!BuilderToolchainPolicy.IsKnownVersion(installation.Kind, installation.Version) ||
             !string.Equals(installation.RootPath, InstallRoot(installation.Kind, installation.Version), BuilderToolchainFiles.PathComparison))
             throw new InvalidOperationException("This installation is not owned by this Builder workspace.");
         BuilderToolchainFiles.CheckPath(root, installation.RootPath);
@@ -82,7 +82,7 @@ public sealed partial class BuilderToolchainService
         if (!repair && Directory.Exists(destination))
         {
             var current = await ReadManagedAsync(release.Kind, release.Version, token).ConfigureAwait(false);
-            if (current.IsHealthy) return current;
+            if (current.IsHealthy && IsCurrent(current)) return current;
         }
         using var mutation = operation.BeginMutation();
         var staging = Path.Combine(root, "staging", $"{KindName(release.Kind)}-{release.Version}-{Guid.NewGuid():N}");
@@ -115,8 +115,14 @@ public sealed partial class BuilderToolchainService
             phase = "extraction";
             progress?.Report("Extracting the verified distribution into private staging.");
             await BuilderToolchainArchive.ExtractAsync(archive, payload, release.ArchiveRoot, token).ConfigureAwait(false);
+            if (release.Kind == BuilderProjectKind.Node && release.NpmVersion != versions.NpmVersion)
+            {
+                phase = "npm";
+                await InstallNpmAsync(payload, staging, progress, token).ConfigureAwait(false);
+                release = release with { NpmVersion = versions.NpmVersion };
+            }
             phase = "verification";
-            progress?.Report(release.Kind == BuilderProjectKind.Dotnet ? "Checking the .NET SDK and SDK resolver." : "Checking Node.js and the bundled npm CLI.");
+            progress?.Report(release.Kind == BuilderProjectKind.Dotnet ? "Checking the .NET SDK and SDK resolver." : "Checking the exact Node.js/npm toolchain.");
             var verified = await VerifyAsync(InstallationAt(release.Kind, release.Version, payload, release.NpmVersion), token).ConfigureAwait(false);
             if (!verified.IsHealthy) throw new InvalidOperationException(verified.HealthError);
             var installedAt = clock.GetUtcNow();
@@ -175,7 +181,8 @@ public sealed partial class BuilderToolchainService
             IReadOnlyList<BuilderToolchainRelease>? releases = null;
             try
             {
-                releases = await catalog.GetReleasesAsync(kind, token).ConfigureAwait(false);
+                releases = (await catalog.GetReleasesAsync(kind, token).ConfigureAwait(false))
+                    .Where(item => item.Version == RequiredVersion(kind)).ToArray();
                 foreach (var release in releases)
                 {
                     BuilderToolchainPolicy.ValidateRelease(release, requireChecksum: false);
@@ -202,7 +209,8 @@ public sealed partial class BuilderToolchainService
         {
             var path = StatePath(kind, "catalog");
             BuilderToolchainFiles.CheckPath(root, path);
-            return await BuilderToolchainFiles.ReadJsonAsync<CatalogState>(path, token).ConfigureAwait(false) ?? new();
+            var saved = await BuilderToolchainFiles.ReadJsonAsync<CatalogState>(path, token).ConfigureAwait(false) ?? new();
+            return saved.Recommended is null || saved.Recommended == RequiredVersion(kind) ? saved : new();
         }
         catch (Exception ex) when (Recoverable(ex)) { return new(Error: $"Saved catalog state is unavailable: {ex.Message}"); }
     }
@@ -235,7 +243,7 @@ public sealed partial class BuilderToolchainService
         catch (Exception ex) when (Recoverable(ex)) { progress?.Report($"Toolchain temporary-directory cleanup could not complete at {path}: {ex.Message}"); }
     }
 
-    private static bool Recoverable(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
+    internal static bool Recoverable(Exception ex) => ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException
         or JsonException or HttpRequestException or TimeoutException or System.ComponentModel.Win32Exception or ArgumentException
-        or NotSupportedException or CryptographicException;
+        or NotSupportedException or CryptographicException or FormatException or KeyNotFoundException;
 }

@@ -51,7 +51,7 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        var info = await tools.ExecuteAsync(fixture.Context, new AgentToolRequest("maker_get_package_info", fixture.Reload.ArgumentsJson));
+        var info = await tools.ExecuteAsync(fixture.Context, new AgentToolRequest("maker_package", fixture.Reload.ArgumentsJson));
         Assert.False(info.IsError, info.Content);
         using (var json = JsonDocument.Parse(info.Content!))
         {
@@ -60,8 +60,8 @@ public sealed partial class BuilderDevelopmentRelayTests
             Assert.False(json.RootElement.TryGetProperty("job", out _));
         }
         var since = DateTimeOffset.Parse("2026-10-24T03:35:00+08:00");
-        var logs = new AgentToolRequest("maker_get_package_logs", JsonSerializer.Serialize(new { entryPoint = fixture.Project.EntryPoint,
-            since, minLevel = "error", source = "runtime", limit = 7, maxBytes = 2048 }));
+        var logs = new AgentToolRequest("maker_logs", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint,
+            since, level = "error", source = "runtime", limit = 7 }));
         var denied = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "unloaded-logs" }, logs);
         Assert.True(denied.IsError);
         Assert.Equal("maker.development.unavailable", denied.ErrorCode);
@@ -74,7 +74,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         Assert.Equal(Sunder.Sdk.Logging.PackageLogLevel.Error, query.MinimumLevel);
         Assert.Equal("runtime", query.Source);
         Assert.Equal(7, query.MaximumEntries);
-        Assert.Equal(2048, query.MaximumBytes);
+        Assert.Equal(4096, query.MaximumBytes);
         Assert.Single(fixture.Development.Loads);
         Assert.True(fixture.Development.Sessions[0].Disposed);
         Assert.Empty(fixture.Backend.Starts);
@@ -91,17 +91,15 @@ public sealed partial class BuilderDevelopmentRelayTests
         var accepted = await tools.ExecuteAsync(fixture.Context, fixture.Reload);
         Assert.False(accepted.IsError, accepted.Content);
         using var acceptance = JsonDocument.Parse(accepted.Content!);
-        var id = acceptance.RootElement.GetProperty("operationId").GetString()!;
-        var final = await fixture.ObserveAsync(tools, id, "succeeded");
-        Assert.False(final.WasTruncated);
-        using var result = JsonDocument.Parse(final.Content!);
-        Assert.Equal(fixture.BuiltIdentity, result.RootElement.GetProperty("appliedRevision").GetProperty("sourceContentIdentity").GetString());
-        Assert.False(result.RootElement.TryGetProperty("job", out _));
+        Assert.Equal("applied", acceptance.RootElement.GetProperty("status").GetString());
+        Assert.False(accepted.WasTruncated);
+        Assert.Equal(fixture.BuiltIdentity, Assert.Single(fixture.Development.Sessions[0].Reloads).Item2);
+        Assert.False(acceptance.RootElement.TryGetProperty("job", out _));
 
         fixture.Backend.Projects[fixture.Project.EntryPoint] = fixture.Project with { SourceRevision = "later-source" };
         var repeated = await tools.ExecuteAsync(fixture.Context, fixture.Reload);
         Assert.False(repeated.IsError, repeated.Content);
-        Assert.Contains("no new mutation", repeated.Summary, StringComparison.Ordinal);
+        Assert.Equal(accepted.Content, repeated.Content);
         Assert.Empty(fixture.Backend.Starts);
         Assert.Single(fixture.Development.Loads);
         Assert.Single(Assert.Single(fixture.Development.Sessions).Reloads);
@@ -122,8 +120,8 @@ public sealed partial class BuilderDevelopmentRelayTests
         if (entryName == "sunder.package.json") await File.WriteAllTextAsync(Path.Combine(fixture.Project.ProjectFolder, entryName), "{invalid-json");
         // Real discovery, generated owner-only inspection, App relay and generated
         // tool-source boundary. No fixture backend can turn this into a success.
-        var invalid = new AgentToolRequest("maker_hotreload_package", JsonSerializer.Serialize(new
-            { entryPoint = Path.Combine(fixture.Project.ProjectFolder, entryName) }));
+        var invalid = new AgentToolRequest("maker_apply", JsonSerializer.Serialize(new
+            { package = Path.Combine(fixture.Project.ProjectFolder, entryName) }));
         var rejected = await tools.PreflightAsync(fixture.Context, invalid);
         Assert.NotNull(rejected);
         Assert.True(rejected.IsError);
@@ -137,7 +135,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         var accepted = await tools.ExecuteAsync(fixture.Context, fixture.Reload);
         Assert.False(accepted.IsError, accepted.Content);
         using var receipt = JsonDocument.Parse(accepted.Content!);
-        await fixture.ObserveAsync(tools, receipt.RootElement.GetProperty("operationId").GetString()!, "succeeded");
+        Assert.Equal("applied", receipt.RootElement.GetProperty("status").GetString());
         Assert.Empty(fixture.Backend.Starts);
         Assert.Single(Assert.Single(fixture.Development.Sessions).Reloads);
     }
@@ -171,9 +169,9 @@ public sealed partial class BuilderDevelopmentRelayTests
         var acceptance = await tools.ExecuteAsync(context, request);
         Assert.False(acceptance.IsError, acceptance.Content);
         using var receipt = JsonDocument.Parse(acceptance.Content!);
-        await fixture.ObserveAsync(tools, receipt.RootElement.GetProperty("operationId").GetString()!, "succeeded");
+        Assert.Equal("applied", receipt.RootElement.GetProperty("status").GetString());
         Assert.Equal(buildsBefore, fixture.Backend.Starts.Count);
-        Assert.Equal((receipt.RootElement.GetProperty("operationId").GetString()!, fixture.BuiltIdentity!), Assert.Single(owner.Reloads));
+        Assert.Equal(fixture.BuiltIdentity, Assert.Single(owner.Reloads).Item2);
         Assert.Single(fixture.Development.Loads);
         Assert.False(owner.Disposed);
         Assert.Same(owner, fixture.Operations.GetSession(fixture.Project.EntryPoint)!.Handle);
@@ -243,9 +241,9 @@ public sealed partial class BuilderDevelopmentRelayTests
         Assert.Null(await tools.PreflightAsync(fixture.Context, fixture.Reload));
         var completing = BuilderUiFixture.Signal();
         var release = BuilderUiFixture.Signal();
-        fixture.Transport.Before = async (method, _, token) =>
+        fixture.Transport.Before = async (method, request, token) =>
         {
-            if (method != "complete-development-command") return;
+            if (method != "complete-development-command" || !ContainsOperationReceipt(request)) return;
             completing.TrySetResult();
             await release.Task.WaitAsync(token);
         };
@@ -262,10 +260,10 @@ public sealed partial class BuilderDevelopmentRelayTests
             var recovered = await tools.ExecuteAsync(fixture.Context, fixture.Reload).AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(recovered.IsError, recovered.Content);
             using var receipt = JsonDocument.Parse(recovered.Content!);
-            await fixture.ObserveAsync(tools, receipt.RootElement.GetProperty("operationId").GetString()!, "succeeded");
+            Assert.Equal("applied", receipt.RootElement.GetProperty("status").GetString());
             Assert.Empty(fixture.Backend.Starts);
             Assert.Single(fixture.Development.Sessions[0].Reloads);
-            Assert.Contains("no new mutation", recovered.Summary, StringComparison.Ordinal);
+            Assert.Equal(recovered.Content, (await tools.ExecuteAsync(fixture.Context, fixture.Reload)).Content);
         }
         finally { release.TrySetResult(); }
     }
@@ -278,6 +276,8 @@ public sealed partial class BuilderDevelopmentRelayTests
         await fixture.LoadOutputAsync();
         var entered = BuilderUiFixture.Signal();
         var cancelled = BuilderUiFixture.Signal();
+        var readEntered = BuilderUiFixture.Signal();
+        var readCancelled = BuilderUiFixture.Signal();
         fixture.Development.Sessions[0].OnReload = async (_, _, token) =>
         {
             entered.TrySetResult();
@@ -286,12 +286,25 @@ public sealed partial class BuilderDevelopmentRelayTests
             throw new InvalidOperationException("The reload must be cancelled by its owning activation.");
         };
         Assert.Null(await tools.PreflightAsync(fixture.Context, fixture.Reload));
-        var accepted = await tools.ExecuteAsync(fixture.Context, fixture.Reload);
-        Assert.False(accepted.IsError, accepted.Content);
+        fixture.Transport.Before = async (method, _, token) =>
+        {
+            if (method != "read-development-command" || !entered.Task.IsCompleted) return;
+            readEntered.TrySetResult();
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+            finally { if (token.IsCancellationRequested) readCancelled.TrySetResult(); }
+        };
+        using var caller = new CancellationTokenSource();
+        var executing = tools.ExecuteAsync(fixture.Context, fixture.Reload, caller.Token).AsTask();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await fixture.Activation.CancelAsync();
         await fixture.AppServices.GetRequiredService<App.BuilderDevelopmentService>().DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await readCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        // The current tool waits for observation, unlike the retired admission-only
+        // reply. Stopping its caller is separate from revoking the App-owned work/read.
+        caller.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => executing.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Empty(fixture.Backend.Starts);
         Assert.Single(fixture.Development.Sessions[0].Reloads);
         Assert.Equal(0, fixture.PageResolutions);
@@ -329,11 +342,12 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         private const string MakerId = "younics.sunder.package.maker";
         private readonly RegressionTestPackageScope _package = RegressionTestPackageScope.Create();
+        private readonly BuilderInspectionOnlyContext _inspectionContext = new();
         private readonly GeneratedServiceTestScope _receiver;
         private readonly GeneratedServiceTestScope _agent;
         private readonly ConcurrentBag<GeneratedServiceTestScope> _owned = [];
         internal RegressionTestRpcState State { get; } = new(workerStyleProviderBoundary: true);
-        internal Worker.BuilderRuntimeService Runtime { get; } = new(null!);
+        internal Worker.BuilderRuntimeService Runtime { get; }
         internal BuilderUiBackend Backend { get; } = new();
         internal BuilderUiDevelopment Development { get; } = new();
         internal App.BuilderProjectApplicationService Application { get; }
@@ -345,12 +359,13 @@ public sealed partial class BuilderDevelopmentRelayTests
         internal TransportProbe Transport { get; }
         internal LocalTarget Target { get; } = new();
         internal AgentToolExecutionContext Context { get; private set; } = null!;
-        internal AgentToolRequest Reload => new("maker_hotreload_package", JsonSerializer.Serialize(new { entryPoint = Project.EntryPoint }));
+        internal AgentToolRequest Reload => new("maker_apply", JsonSerializer.Serialize(new { package = Project.EntryPoint }));
         internal string? BuiltIdentity;
         internal int PageResolutions;
 
         internal RelayFixture(App.BuilderProjectKind kind = App.BuilderProjectKind.Dotnet)
         {
+            Runtime = new(_inspectionContext);
             var client = new RegressionTestRpcClient(State, MakerId);
             _receiver = new(client);
             _agent = new(client.ForCaller("younics.ai.agent"));
@@ -361,7 +376,8 @@ public sealed partial class BuilderDevelopmentRelayTests
             State.Add(MakerId, MakerContract.Descriptor, Runtime, Transport, Noop.Instance, registration.ProviderId, "2.0.0");
             var root = new App.BuilderPathService().ResolveContainedHostPath(_package.RootPath, Path.GetTempPath());
             Project = BuilderUiFixture.Project("relay", kind) with { ProjectFolder = root,
-                EntryPoint = Path.Combine(root, kind == App.BuilderProjectKind.Dotnet ? "Package.csproj" : "sunder.package.json") };
+                EntryPoint = Path.Combine(root, kind == App.BuilderProjectKind.Dotnet ? "Package.csproj" : "sunder.package.json"),
+                TargetFramework = kind == App.BuilderProjectKind.Dotnet ? "net10.0" : null };
             Backend.Projects[Project.EntryPoint] = Project;
             var store = new BuilderUiStore();
             var queue = new BuilderUiBackgroundQueue();
@@ -407,20 +423,6 @@ public sealed partial class BuilderDevelopmentRelayTests
             return Assert.Single((await _agent.Providers<IToolSourceService>().ListAsync()).Providers).Service;
         }
 
-        internal async Task<AgentToolResult> ObserveAsync(IToolSourceService tools, string id, string state)
-        {
-            var request = new AgentToolRequest("maker_get_package_info", JsonSerializer.Serialize(new { entryPoint = Project.EntryPoint, operationId = id }));
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            while (true)
-            {
-                var result = await tools.ExecuteAsync(Context with { ToolCallId = "observe-call" }, request, timeout.Token);
-                Assert.False(result.IsError, result.Content);
-                using var json = JsonDocument.Parse(result.Content!);
-                if (json.RootElement.GetProperty("state").GetString() == state) return result;
-                await Task.Delay(10, timeout.Token);
-            }
-        }
-
         public async ValueTask DisposeAsync()
         {
             await Activation.CancelAsync();
@@ -435,6 +437,7 @@ public sealed partial class BuilderDevelopmentRelayTests
                     await _receiver.DisposeAsync();
                     foreach (var owner in _owned) await owner.DisposeAsync();
                     State.Dispose(); Activation.Dispose(); _package.Dispose();
+                    Assert.Equal(0, _inspectionContext.ForbiddenAccesses);
                 }
             }
         }
@@ -457,6 +460,23 @@ public sealed partial class BuilderDevelopmentRelayTests
         }
         public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId, string methodId, JsonElement request, CancellationToken token = default)
             => generated.InvokeServerStreamAsync(context, serviceId, methodId, request, token);
+    }
+
+    private static bool ContainsOperationReceipt(JsonElement request)
+    {
+        foreach (var property in request.EnumerateObject())
+        {
+            if (property.Value.ValueKind != JsonValueKind.String) continue;
+            try
+            {
+                using var response = JsonDocument.Parse(property.Value.GetString()!);
+                if (response.RootElement.ValueKind == JsonValueKind.Object
+                    && response.RootElement.TryGetProperty("state", out var state) && state.ValueKind == JsonValueKind.String)
+                    return true;
+            }
+            catch (JsonException) { }
+        }
+        return false;
     }
 
     private sealed class LocalTarget : IAgentExecutionTarget

@@ -18,7 +18,8 @@ internal static class BuilderTestDevelopmentOutput
         await File.WriteAllTextAsync(Path.Combine(folder, "manifest", "sunder-package.json"), JsonSerializer.Serialize(new
         {
             archiveFormatVersion = 1, manifestVersion = 1, id = project.PackageId, version = "1.0.0",
-            targets = new[] { new { role = "runtime", rid, kind = "worker", entryPoint = "worker.js" } },
+            targets = new[] { new { role = "runtime", rid, kind = "worker", entryPoint = "worker.js",
+                targetFramework = project.TargetFramework ?? (project.Kind == App.BuilderProjectKind.Dotnet ? "net10.0" : "node24") } },
         }));
         var files = Directory.GetFiles(folder, "*", SearchOption.AllDirectories).Where(path => Path.GetFileName(path) != "content-index.json")
             .Select(path => new { path = Path.GetRelativePath(folder, path).Replace('\\', '/'), size = new FileInfo(path).Length,

@@ -15,8 +15,21 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 internal static class TestApplicationBuilder
 {
     public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<TestApplication>()
-            .UseHeadless(new AvaloniaHeadlessPlatformOptions());
+    {
+        var capture = !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("SUNDER_UI_CAPTURE_ROOT"));
+        var builder = AppBuilder.Configure<TestApplication>();
+        if (capture)
+        {
+            // Skia comes from the source-App test closure, not the public SDK.
+            // Keep ordinary NuGet-mode/headless tests free of that optional dependency.
+            var extensions = Type.GetType("Avalonia.SkiaApplicationExtensions, Avalonia.Skia")
+                ?? throw new InvalidOperationException("PNG capture requires the source-App test closure with Avalonia.Skia.");
+            var useSkia = extensions.GetMethod("UseSkia", [typeof(AppBuilder)])
+                ?? throw new InvalidOperationException("The selected Avalonia.Skia has no compatible renderer setup method.");
+            useSkia.Invoke(null, [builder]);
+        }
+        return builder.UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = !capture });
+    }
 }
 
 internal sealed class TestApplication : Application
@@ -40,6 +53,16 @@ internal sealed class TestApplication : Application
         {
             Source = new Uri("avares://Sunder.Sdk.Avalonia/Themes/SunderPackageStyles.axaml"),
         });
+
+        // Source-hosted captures use the real graphite palette, Fluent accent
+        // aliases and shadows. Keep the portable NuGet-only fixture independent
+        // of an optional App reference, just as with the optional Skia renderer.
+        if (Type.GetType("Sunder.App.Services.ThemeManager, Sunder.App") is { } managerType)
+        {
+            var manager = managerType.GetConstructor([typeof(Application)])!.Invoke([this]);
+            managerType.GetMethod("Initialize")!.Invoke(manager, null);
+            return;
+        }
 
         foreach (var field in typeof(SunderThemeKeys).GetFields()
                      .Where(field => field.IsLiteral

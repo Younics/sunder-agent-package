@@ -1,9 +1,86 @@
-<Styles xmlns="https://github.com/avaloniaui">
+<Styles xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Styles.Resources>
+    <x:Double x:Key="Sunder.Agent.HelpWidth">360</x:Double>
+    <x:Double x:Key="Sunder.Agent.FormWidth">880</x:Double>
+    <x:Double x:Key="Sunder.Agent.IconSize">28</x:Double>
+    <x:Double x:Key="Sunder.Agent.RowMinimumWidth">480</x:Double>
+    <Thickness x:Key="Sunder.Agent.ChildIndent">24,4,0,0</Thickness>
+    <x:Double x:Key="Sunder.Agent.Graph.NodeWidth">220</x:Double>
+    <x:Double x:Key="Sunder.Agent.Graph.NodeHeight">84</x:Double>
+    <x:Double x:Key="Sunder.Agent.Graph.EditorHeight">140</x:Double>
+    <FontFamily x:Key="Sunder.Agent.FontFamily.Code">Cascadia Code,Consolas,Menlo,Monospace</FontFamily>
+  </Styles.Resources>
+  <Style Selector=":is(UserControl).agent-page">
+    <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Selected}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page ListBoxItem:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page Expander">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page Expander /template/ ToggleButton#ExpanderHeader">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page Expander /template/ ToggleButton#ExpanderHeader:pointerover /template/ Border#ToggleButtonBackground">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+  </Style>
+  <Style Selector="Button.agent-info">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+    <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
+    <Setter Property="MinWidth" Value="{DynamicResource Sunder.Agent.IconSize}" />
+    <Setter Property="MinHeight" Value="{DynamicResource Sunder.Agent.IconSize}" />
+    <Setter Property="Width" Value="{DynamicResource Sunder.Agent.IconSize}" />
+    <Setter Property="Height" Value="{DynamicResource Sunder.Agent.IconSize}" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
+    <Setter Property="Padding" Value="0" />
+    <Setter Property="VerticalAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.agent-info:pointerover">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+  <Style Selector="FlyoutPresenter.agent-help-popover">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+    <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+  </Style>
+  <Style Selector="FlyoutPresenter.agent-help-popover /template/ Border">
+    <Setter Property="BoxShadow" Value="{DynamicResource Sunder.Shadow.Toast}" />
+  </Style>
+  <Style Selector=":is(UserControl).agent-page TextBlock.agent-heading">
+    <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.SectionTitle}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
+  </Style>
+  <Style Selector="Border.capability-group-header">
+    <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
+    <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
+  </Style>
   <Style Selector="Border.settings-status-pill">
     <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
     <Setter Property="BorderThickness" Value="1" />
-    <Setter Property="CornerRadius" Value="10" />
+    <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Full}" />
     <Setter Property="Padding" Value="10,4" />
     <Setter Property="VerticalAlignment" Value="Center" />
   </Style>
@@ -24,7 +101,7 @@
   </Style>
 
   <Style Selector="TextBlock.settings-status-label">
-    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
     <Setter Property="FontWeight" Value="SemiBold" />
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
   </Style>
@@ -42,7 +119,7 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-    <Setter Property="Padding" Value="12" />
+    <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
   </Style>
 
   <Style Selector="TextBox.secret-field">
@@ -54,11 +131,11 @@
     <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Danger}" />
     <Setter Property="BorderThickness" Value="1" />
     <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-    <Setter Property="Padding" Value="12" />
+    <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
   </Style>
 
   <Style Selector="TextBlock.settings-operation-status">
-    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
     <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
   </Style>
 

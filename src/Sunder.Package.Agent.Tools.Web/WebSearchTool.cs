@@ -36,7 +36,7 @@ public sealed class WebSearchTool(WebSearchService webSearchService, WebToolsSet
         }
         """,
         Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null,
-        SelectionGroupDisplayName = null, SelectionGroupDescription = null, RuntimeInstructions = null,
+        SelectionGroupDisplayName = null, SelectionGroupDescription = null, SelectionGroupAllowsBulkSelection = true, RuntimeInstructions = null,
         ActivationRequirement = null, Priority = AgentToolPriority.Medium,
         ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
     };

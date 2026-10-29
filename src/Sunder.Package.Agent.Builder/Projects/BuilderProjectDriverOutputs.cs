@@ -14,7 +14,7 @@ internal static class BuilderProjectDriverOutputs
 
     internal static string DevelopmentFolder(BuilderProjectInspection project, string configuration)
     {
-        var root = project.Kind == BuilderProjectKind.Dotnet ? Path.Combine(project.ProjectFolder, "bin", configuration, "net10.0") : NodeOutput(project);
+        var root = project.Kind == BuilderProjectKind.Dotnet ? Path.Combine(project.ProjectFolder, "bin", configuration, DotnetFramework(project)) : NodeOutput(project);
         var path = Path.Combine(root, "sunder-dev");
         BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, path);
         return path;
@@ -22,7 +22,7 @@ internal static class BuilderProjectDriverOutputs
 
     internal static string ArchivePath(BuilderProjectInspection project)
     {
-        if (project.Kind == BuilderProjectKind.Dotnet) return Path.Combine(project.ProjectFolder, "bin", "Release", "net10.0", project.PackageId + ".sunderpkg");
+        if (project.Kind == BuilderProjectKind.Dotnet) return Path.Combine(project.ProjectFolder, "bin", "Release", DotnetFramework(project), project.PackageId + ".sunderpkg");
         using var config = ReadJson(project.EntryPoint);
         var version = config.RootElement.GetProperty("version").GetString() ?? "";
         if (!Regex.IsMatch(version, @"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)) || version.Length > 128)
@@ -105,6 +105,10 @@ internal static class BuilderProjectDriverOutputs
             manifest.GetProperty("id").GetString() != project.PackageId || string.IsNullOrEmpty(manifest.GetProperty("version").GetString()))
             throw new InvalidDataException("Output manifest does not describe the selected canonical Sunder package.");
         var targets = manifest.GetProperty("targets").EnumerateArray().ToArray();
+        if (project.Kind == BuilderProjectKind.Dotnet && project.TargetFramework is { } framework
+            && targets.Where(target => target.GetProperty("role").GetString() == "runtime").Any(target =>
+                !target.TryGetProperty("targetFramework", out var actual) || actual.GetString() != framework))
+            throw new InvalidDataException("The built Worker target framework differs from the evaluated project. Inspect and rebuild the current source.");
         if (targets.Length is < 1 or > 32 || !targets.Any(target => target.GetProperty("rid").GetString() == rid &&
             target.GetProperty("role").GetString() == "runtime" && target.GetProperty("kind").GetString() == "worker") ||
             requireApp && !targets.Any(target => target.GetProperty("rid").GetString() == rid && target.GetProperty("role").GetString() == "app"))
@@ -160,6 +164,35 @@ internal static class BuilderProjectDriverOutputs
         using var json = ReadJson(project.EntryPoint);
         var directory = json.RootElement.TryGetProperty("outputDirectory", out var output) ? output.GetString() ?? "" : "dist";
         return Contained(project.ProjectFolder, directory);
+    }
+
+    private static string DotnetFramework(BuilderProjectInspection project)
+    {
+        if (project.TargetFramework is { } evaluated) return evaluated;
+        var xml = System.Xml.Linq.XDocument.Load(project.EntryPoint);
+        var frameworks = xml.Descendants("TargetFramework").Select(element => element.Value.Trim()).Distinct().ToArray();
+        if (frameworks.Length == 1 && Regex.IsMatch(frameworks[0], @"^net[1-9][0-9]\.0$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+            return frameworks[0];
+        throw new InvalidDataException("The project's target framework must be evaluated before locating its build output.");
+    }
+
+    internal static IReadOnlyList<string> BuiltOutputs(BuilderProjectInspection project)
+    {
+        if (project.Kind == BuilderProjectKind.Node) return [DevelopmentFolder(project, "Debug")];
+        var outputs = new List<string>();
+        foreach (var configuration in new[] { "Debug", "Release" })
+        {
+            var root = Path.Combine(project.ProjectFolder, "bin", configuration);
+            BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, root);
+            if (!Directory.Exists(root)) continue;
+            foreach (var directory in Directory.EnumerateDirectories(root).Take(32))
+            {
+                BuilderProjectFiles.EnsureSafePath(project.ProjectFolder, directory);
+                if (Regex.IsMatch(Path.GetFileName(directory), @"^net[1-9][0-9]\.0$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                    outputs.Add(Path.Combine(directory, "sunder-dev"));
+            }
+        }
+        return outputs;
     }
 
     private static string Contained(string root, string relative)

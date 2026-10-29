@@ -5,28 +5,35 @@ namespace Sunder.Package.Agent.Builder;
 
 internal sealed class BuilderToolchainRequirements
 {
+    private string? projectRoot;
+    private IReadOnlyDictionary<string, byte[]>? proposedFiles;
     private readonly List<Func<Version, bool>> node = [];
     private readonly List<Func<Version, bool>> npm = [];
     private Version? sdk;
     private string rollForward = "patch";
     internal List<string> DotnetExecutables { get; } = [];
-    internal string Description { get; private set; } = "the supported stable LTS policy";
+    internal string Description { get; private set; } = "Sunder's exact development-toolchain versions";
 
-    internal static BuilderToolchainRequirements Read(BuilderProjectKind kind, string? projectDirectory)
+    internal static BuilderToolchainRequirements Read(BuilderProjectKind kind, string? projectDirectory,
+        Sunder.Sdk.Abstractions.SunderDevelopmentToolchain? versions = null, IReadOnlyDictionary<string, byte[]>? proposedFiles = null)
     {
         var result = new BuilderToolchainRequirements();
         if (projectDirectory is null) return result;
         var directory = Path.GetFullPath(projectDirectory);
+        result.projectRoot = directory;
+        result.proposedFiles = proposedFiles;
         if (!Directory.Exists(directory)) throw new DirectoryNotFoundException($"Project directory does not exist: {directory}");
         if (kind == BuilderProjectKind.Dotnet) result.ReadDotnet(directory);
         else if (kind == BuilderProjectKind.Node) result.ReadNode(directory);
         else throw new ArgumentOutOfRangeException(nameof(kind));
+        if (versions is not null && !result.Allows(kind, kind == BuilderProjectKind.Dotnet ? versions.DotnetSdkVersion : versions.NodeVersion, versions.NpmVersion))
+            throw new BuilderToolchainException("selection", $"{result.Description} excludes Sunder's current toolchain ({versions.DotnetSdkVersion}, Node {versions.NodeVersion}, npm {versions.NpmVersion}). Update the project's development pins; its target framework was not changed.", false);
         return result;
     }
 
     internal bool Allows(BuilderProjectKind kind, string version, string? npmVersion)
     {
-        if (!BuilderToolchainPolicy.IsSupported(kind, version)) return false;
+        if (!BuilderToolchainPolicy.IsKnownVersion(kind, version)) return false;
         var parsed = Version.Parse(version);
         if (kind == BuilderProjectKind.Node)
             return node.All(test => test(parsed)) && (npm.Count == 0 ||
@@ -68,8 +75,8 @@ internal sealed class BuilderToolchainRequirements
         if (settings.TryGetProperty("version", out var version))
         {
             var text = version.GetString();
-            if (text is null || !BuilderToolchainPolicy.IsSupported(BuilderProjectKind.Dotnet, text))
-                throw new InvalidOperationException($"{path} requests an unsupported SDK. Builder supports stable .NET {BuilderToolchainPolicy.DotnetChannel} SDKs; the existing pin was not changed.");
+            if (text is null || !BuilderToolchainPolicy.TryVersion(text, out _))
+                throw new InvalidOperationException($"{path} requests an invalid SDK version; the existing pin was not changed.");
             sdk = Version.Parse(text);
         }
         if (settings.TryGetProperty("rollForward", out var roll))
@@ -116,7 +123,8 @@ internal sealed class BuilderToolchainRequirements
             }
             else text = text.Split('#')[0].Trim();
             if (text.Length == 0) throw new InvalidDataException($"The Node version pin is empty: {path}");
-            if (text is "lts/*" or "lts/krypton") text = "24";
+            if (text.StartsWith("lts/", StringComparison.Ordinal))
+                throw new InvalidDataException($"{path} uses a floating LTS alias. Replace it with Sunder's exact Node version.");
             node.Add(BuilderToolchainVersionRange.Parse(text));
             sources.Add(path);
         }
@@ -179,8 +187,13 @@ internal sealed class BuilderToolchainRequirements
         return null;
     }
 
-    private static string ReadSmall(string path)
+    private string ReadSmall(string path)
     {
+        if (projectRoot is not null && proposedFiles?.TryGetValue(Path.GetRelativePath(projectRoot, path), out var bytes) == true)
+        {
+            if (bytes.Length > 1024 * 1024) throw new InvalidDataException($"Toolchain requirements file is too large: {path}");
+            return new BuilderSourceFile(path, bytes).Text;
+        }
         if (new FileInfo(path).Length > 1024 * 1024) throw new InvalidDataException($"Toolchain requirements file is too large: {path}");
         return File.ReadAllText(path);
     }

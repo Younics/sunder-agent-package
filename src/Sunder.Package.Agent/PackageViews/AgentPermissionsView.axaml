@@ -1,66 +1,60 @@
 <UserControl xmlns="https://github.com/avaloniaui"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
               xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.PackageViews"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.PackageViews.AgentPermissionsView"
              x:DataType="vm:AgentPermissionsViewModel"
-             mc:Ignorable="d">
+              mc:Ignorable="d" Classes="agent-page">
+  <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
+    <Style Selector="ListBox.permission-rows ListBoxItem">
+      <Setter Property="Margin" Value="20,0,20,12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
+      <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+    </Style>
+  </UserControl.Styles>
   <Grid RowDefinitions="Auto,*,Auto"
         RowSpacing="16">
-    <StackPanel Spacing="8">
-      <TextBlock Classes="page-title"
-                 Text="Permissions" />
-      <TextBlock Classes="caption"
-                 Text="Packages define actions and request contexts. Choose the default decision for each context."
-                 TextWrapping="Wrap" />
+    <StackPanel Spacing="8" Margin="{DynamicResource Sunder.Padding.Panel}">
+      <p:SectionHeader Title="Permissions" HelpText="Choose the default decision for each action and request context. Reset restores package defaults; save applies your choices." />
     </StackPanel>
 
       <Grid Grid.Row="1" RowDefinitions="Auto,*">
-        <Grid ColumnDefinitions="2*,3*,Auto,Auto"
-              ColumnSpacing="12"
-              Margin="8,0,8,8">
-          <TextBlock Classes="section-title" Text="Action" />
-          <TextBlock Grid.Column="1" Classes="section-title" Text="Request Context" />
-          <TextBlock Grid.Column="2" Classes="section-title" Text="Package Default" />
-          <TextBlock Grid.Column="3" Classes="section-title" Text="Decision" />
-        </Grid>
-        <ListBox Grid.Row="1"
+        <ListBox Grid.Row="1" Classes="permission-rows" Padding="0" BorderThickness="0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ItemsSource="{Binding Rows}">
           <ListBox.ItemTemplate>
             <DataTemplate x:DataType="vm:PermissionBoundaryRowViewModel">
-              <Grid ColumnDefinitions="2*,3*,Auto,Auto"
-                    ColumnSpacing="12"
-                    Margin="0,4">
+              <p:ResponsiveGrid ColumnDefinitions="2*,3*,Auto,Auto"
+                    ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
                 <TextBlock Text="{Binding ActionDisplayName}"
                            TextWrapping="Wrap" />
                 <StackPanel Grid.Column="1"
                             Spacing="2">
-                  <TextBlock Text="{Binding BoundaryDisplayName}"
-                             TextWrapping="Wrap" />
-                  <TextBlock Text="{Binding BoundaryDescription}"
-                             FontSize="11"
-                             Opacity="0.7"
-                             TextWrapping="Wrap" />
+                  <p:SectionHeader Title="{Binding BoundaryDisplayName}" HelpText="{Binding BoundaryDescription}" />
                 </StackPanel>
-                <TextBlock Grid.Column="2"
-                           Text="{Binding DefaultDecision}"
-                           VerticalAlignment="Center" />
-                <shared:SunderComboBox Grid.Column="3"
-                                       ItemsSource="{Binding Decisions}"
-                                       SelectedItem="{Binding SelectedDecision, Mode=TwoWay}" />
-              </Grid>
+                <StackPanel Grid.Column="2" Spacing="{DynamicResource Sunder.Spacing.XSmall}">
+                  <TextBlock Text="Package default" Classes="caption" />
+                  <TextBlock Text="{Binding DefaultDecision}" />
+                </StackPanel>
+                <StackPanel Grid.Column="3" Spacing="{DynamicResource Sunder.Spacing.XSmall}">
+                <TextBlock Text="Decision" Classes="caption" />
+                <shared:SunderComboBox
+                                        ItemsSource="{Binding Decisions}"
+                                        SelectedItem="{Binding SelectedDecision, Mode=TwoWay}" />
+                </StackPanel>
+              </p:ResponsiveGrid>
             </DataTemplate>
           </ListBox.ItemTemplate>
         </ListBox>
       </Grid>
 
-    <StackPanel Grid.Row="2"
-                Orientation="Horizontal"
-                Spacing="10">
+    <WrapPanel Grid.Row="2" Margin="{DynamicResource Sunder.Padding.Panel}" ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
       <Button Classes="primary-action"
-              Content="Save Permissions"
+              Content="Save"
               Command="{Binding SaveCommand}" />
       <Button Classes="secondary-action"
               Content="Reset To Package Defaults"
@@ -69,6 +63,6 @@
                  Text="{Binding StatusText}"
                  TextWrapping="Wrap"
                  VerticalAlignment="Center" />
-    </StackPanel>
+    </WrapPanel>
   </Grid>
 </UserControl>

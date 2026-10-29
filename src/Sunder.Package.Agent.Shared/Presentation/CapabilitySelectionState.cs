@@ -9,7 +9,8 @@ internal sealed record CapabilityGroupDefinition(
     string Key,
     string Title,
     string? Description,
-    int SortOrder);
+    int SortOrder,
+    bool AllowsBulkSelection = false);
 
 internal sealed record CapabilityOptionDefinition(
     string Category,
@@ -24,14 +25,56 @@ internal sealed record CapabilityOptionDefinition(
     IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord>? Aliases = null,
     bool AllowUnscopedAssignment = false);
 
-internal sealed record CapabilityGroupState(
-    string Category,
-    string Title,
-    string? Description,
-    int SortOrder,
-    IReadOnlyList<CapabilityOptionState> Options)
+internal sealed class CapabilityGroupState(
+    string category,
+    string key,
+    Action<CapabilityGroupState, bool> setEnabled) : INotifyPropertyChanged, IDisposable
 {
+    private CapabilityGroupDefinition _definition = new(key, string.Empty, null, 0);
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Category { get; } = category;
+    internal string Key { get; } = key;
+    public string Title => _definition.Title;
+    public string? Description => _definition.Description;
+    public int SortOrder => _definition.SortOrder;
+    public ObservableCollection<CapabilityOptionState> Options { get; } = [];
     public bool HasDescription => !string.IsNullOrWhiteSpace(Description);
+    public bool AllowsBulkSelection => _definition.AllowsBulkSelection;
+    public bool CanSelect => Options.Any(option => option.CanSelect);
+    public bool? IsEnabled
+    {
+        get
+        {
+            var selectable = Options.Where(option => option.CanSelect).ToArray();
+            var enabled = selectable.Count(option => option.IsEnabled);
+            return enabled == 0 ? false : enabled == selectable.Length ? true : null;
+        }
+        set { if (value.HasValue) setEnabled(this, value.Value); }
+    }
+
+    internal void Apply(CapabilityGroupDefinition definition, IReadOnlyList<CapabilityOptionState> options)
+    {
+        foreach (var option in Options.Except(options)) option.PropertyChanged -= OnOptionChanged;
+        foreach (var option in options.Except(Options)) option.PropertyChanged += OnOptionChanged;
+        // A conflicting declaration must not broaden another package's selection UI.
+        definition = definition with { AllowsBulkSelection = options.All(option => option.Definition.Group.AllowsBulkSelection) };
+        var metadataChanged = _definition != definition;
+        var optionsChanged = !Options.SequenceEqual(options);
+        _definition = definition;
+        ObservableCollectionReconciler.Apply(Options, options);
+        if (metadataChanged || optionsChanged) PropertyChanged?.Invoke(this, new(null));
+    }
+
+    private void OnOptionChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        PropertyChanged?.Invoke(this, new(nameof(IsEnabled)));
+        PropertyChanged?.Invoke(this, new(nameof(CanSelect)));
+    }
+
+    public void Dispose()
+    {
+        foreach (var option in Options) option.PropertyChanged -= OnOptionChanged;
+    }
 }
 
 internal sealed class CapabilityOptionState : INotifyPropertyChanged
@@ -48,7 +91,18 @@ internal sealed class CapabilityOptionState : INotifyPropertyChanged
 
     public event Action? SelectionChanged;
 
-    internal CapabilityOptionDefinition Definition { get; }
+    internal CapabilityOptionDefinition Definition { get; private set; }
+
+    internal void Apply(CapabilityOptionDefinition definition, bool isEnabled)
+    {
+        var enabled = definition.CanSelect && isEnabled;
+        var changed = Definition with { Aliases = definition.Aliases } != definition
+            || !(Definition.Aliases ?? []).SequenceEqual(definition.Aliases ?? [])
+            || _isEnabled != enabled;
+        Definition = definition;
+        _isEnabled = enabled;
+        if (changed) PropertyChanged?.Invoke(this, new(null));
+    }
 
     public string Category => Definition.Category;
 
@@ -105,6 +159,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
         => new(kind, capabilityId, sourceId);
 #endif
     private IReadOnlyList<AgentProfileSelectableCapabilityAssignmentRecord> _unresolvedAssignments = [];
+    private bool _changingGroup;
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -139,6 +194,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
     public void Clear()
     {
         UnsubscribeOptions();
+        foreach (var group in Groups) group.Dispose();
         Options.Clear();
         Groups.Clear();
         _unresolvedAssignments = [];
@@ -180,8 +236,8 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
         var assigned = assignments.Distinct(AssignmentComparer).ToArray();
         var matched = new HashSet<AgentProfileSelectableCapabilityAssignmentRecord>(AssignmentComparer);
 
-        UnsubscribeOptions();
-        Options.Clear();
+        var retained = Options.ToDictionary(option => OptionKey(option.Definition), StringComparer.OrdinalIgnoreCase);
+        var options = new List<CapabilityOptionState>();
         foreach (var definition in desired)
         {
             var matchingAssignments = assigned
@@ -192,12 +248,18 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
                 matched.Add(assignment);
             }
 
-            var option = new CapabilityOptionState(
-                definition,
-                definition.CanSelect && matchingAssignments.Length > 0);
-            option.SelectionChanged += OnOptionSelectionChanged;
-            Options.Add(option);
+            if (retained.TryGetValue(OptionKey(definition), out var option))
+                option.Apply(definition, matchingAssignments.Length > 0);
+            else
+            {
+                option = new CapabilityOptionState(definition, matchingAssignments.Length > 0);
+                option.SelectionChanged += OnOptionSelectionChanged;
+            }
+            options.Add(option);
         }
+
+        foreach (var option in Options.Except(options)) option.SelectionChanged -= OnOptionSelectionChanged;
+        ObservableCollectionReconciler.Apply(Options, options);
 
         _unresolvedAssignments = assigned
             .Where(assignment => !matched.Contains(assignment))
@@ -208,22 +270,43 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
 
     private void RebuildGroups()
     {
-        Groups.Clear();
-        foreach (var group in Options
+        var groups = Options
             .GroupBy(
                 option => string.Concat(option.Category, "\n", option.GroupKey),
                 StringComparer.OrdinalIgnoreCase)
-            .Select(group => new CapabilityGroupState(
-                group.First().Category,
-                group.First().GroupTitle,
-                group.First().GroupDescription,
-                group.First().GroupSortOrder,
-                group.OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray()))
+            .Select(options =>
+            {
+                var definition = options.First().Definition;
+                var group = Groups.FirstOrDefault(group => string.Equals(group.Category, definition.Category, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(group.Key, definition.Group.Key, StringComparison.OrdinalIgnoreCase))
+                    ?? new CapabilityGroupState(definition.Category, definition.Group.Key, SetGroupEnabled);
+                group.Apply(definition.Group, options.OrderBy(option => option.DisplayName, StringComparer.OrdinalIgnoreCase).ToArray());
+                return group;
+            })
             .OrderBy(group => group.SortOrder)
-            .ThenBy(group => group.Title, StringComparer.OrdinalIgnoreCase))
+            .ThenBy(group => group.Title, StringComparer.OrdinalIgnoreCase).ToArray();
+        foreach (var group in Groups.Except(groups)) group.Dispose();
+        ObservableCollectionReconciler.Apply(Groups, groups);
+    }
+
+    private static string OptionKey(CapabilityOptionDefinition definition)
+        => string.Concat(definition.Kind, "\n", definition.SourceId ?? string.Empty, "\n", definition.CapabilityId);
+
+    private void SetGroupEnabled(CapabilityGroupState group, bool enabled)
+    {
+        if (!Groups.Contains(group) || !group.AllowsBulkSelection) return;
+        var changed = false;
+        _changingGroup = true;
+        try
         {
-            Groups.Add(group);
+            foreach (var option in group.Options.Where(option => option.CanSelect && option.IsEnabled != enabled))
+            {
+                changed = true;
+                option.IsEnabled = enabled;
+            }
         }
+        finally { _changingGroup = false; }
+        if (changed) OnOptionSelectionChanged();
     }
 
     private static bool Matches(
@@ -271,6 +354,7 @@ internal sealed class CapabilitySelectionState : INotifyPropertyChanged
 
     private void OnOptionSelectionChanged()
     {
+        if (_changingGroup) return;
         OnPropertyChanged(nameof(Assignments));
         Changed?.Invoke();
     }
@@ -335,10 +419,11 @@ internal static class CapabilityGrouping
             descriptor.SourceKind,
             title)!;
         return new CapabilityGroupDefinition(
-            "tool:" + key,
+            string.Concat("tool:", descriptor.SourceId, ":", key),
             title,
             descriptor.SelectionGroupDescription,
-            10);
+            10,
+            descriptor.SelectionGroupAllowsBulkSelection);
     }
 
     public static CapabilityGroupDefinition ForPackage(
@@ -357,10 +442,11 @@ internal static class CapabilityGrouping
             capability.Kind,
             title)!;
         return new CapabilityGroupDefinition(
-            "package:" + key,
+            string.Concat("package:", capability.SourceId, ":", key),
             title,
             capability.GroupDescription,
-            checked((int)capability.GroupSortOrder));
+            checked((int)capability.GroupSortOrder),
+            capability.GroupAllowsBulkSelection);
     }
 
     private static string? FirstNonEmpty(params string?[] values)

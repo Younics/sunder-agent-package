@@ -34,7 +34,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         using var package = RegressionTestPackageScope.Create();
         var physical = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-        var context = new TestPackageContext("younics.sunder.package.maker", physical, version: "2.0.0");
+        var context = new TestPackageContext("younics.sunder.package.maker", physical, version: "2.0.0")
+            { DevelopmentToolchain = ReadDevelopmentToolchain() };
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var client = new RegressionTestRpcClient(state, context.PackageId);
         var composition = CreateGeneratedWorker(runtime, context, client);
@@ -64,6 +65,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await ActivateGeneratedComposition(composition.Options);
         Assert.Equal(0, state.DiscoveryCount);
         await BuilderSourceMigrationTests.VerifyAppAsync(worker, runtime, presentation, context, descriptor, registration, lifetime, state, client);
+    }
+
+    private static Sunder.Sdk.Abstractions.SunderDevelopmentToolchain ReadDevelopmentToolchain()
+    {
+        using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(), "../sunder-core/eng/toolchains.json")));
+        var policy = document.RootElement;
+        return new(policy.GetProperty("dotnetSdk").GetString()!, policy.GetProperty("node").GetString()!, policy.GetProperty("npm").GetString()!);
     }
 
     private static async Task<object?> Call(object instance, string method, params object?[] args)

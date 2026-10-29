@@ -47,6 +47,9 @@ public sealed record AgentToolDescriptor(
     AgentToolActivationRequirement? ActivationRequirement = null,
     AgentToolPriority Priority = AgentToolPriority.Medium)
 {
+    /// <summary>Whether the owning package offers bulk selection for this presentation group. Does not change assignment or permission semantics.</summary>
+    public bool SelectionGroupAllowsBulkSelection { get; init; }
+
     /// <summary>
     /// Gets the execution scheduling promise made by the tool implementation.
     /// </summary>

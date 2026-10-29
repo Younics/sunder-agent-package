@@ -1,6 +1,8 @@
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
+using Sunder.Sdk.Worker;
+using Microsoft.Extensions.Logging;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -15,14 +17,43 @@ namespace Sunder.Package.Agent.Builder;
 [SunderServiceError("agent.builder.project-conflict")]
 [SunderServiceError("agent.builder.backend-changed")]
 [SunderServiceError("agent.builder.development-unavailable")]
-public sealed partial class BuilderRuntimeService(IPackageContext context) : IAsyncDisposable
+public sealed partial class BuilderRuntimeService(IPackageContext context) : IAsyncDisposable, ISunderWorkerActivationService
 {
     private readonly object sync = new();
     private readonly string backendId = Guid.NewGuid().ToString("N");
     private Backend? backend;
     private bool stopping;
     private Task? disposal;
+    private readonly CancellationTokenSource toolchainUpdateCancellation = new();
+    private Task toolchainUpdate = Task.CompletedTask;
+    private bool toolchainUpdateStarted;
     private readonly BuilderDevelopmentCommandHub development = new();
+
+    public ValueTask ActivateAsync(SunderWorkerContext workerContext, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        lock (sync)
+        {
+            ObjectDisposedException.ThrowIf(stopping, this);
+            if (toolchainUpdateStarted) return ValueTask.CompletedTask;
+            var service = GetBackend().Service;
+            toolchainUpdateStarted = true;
+            toolchainUpdate = Task.Run(async () =>
+            {
+                foreach (var kind in new[] { BuilderProjectKind.Dotnet, BuilderProjectKind.Node })
+                {
+                    try { await service.UpgradeManagedAsync(kind, cancellationToken: toolchainUpdateCancellation.Token).ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (toolchainUpdateCancellation.IsCancellationRequested) { return; }
+                    catch (Exception error) when (BuilderToolchainService.Recoverable(error))
+                    {
+                        context.Logging.LoggerFactory.CreateLogger<BuilderRuntimeService>().LogWarning(error,
+                            "Managed {Kind} toolchain update failed; the previous installation was preserved. Retry from Package Maker settings.", kind);
+                    }
+                }
+            });
+        }
+        return ValueTask.CompletedTask;
+    }
     internal bool HasDevelopmentApp => development.IsConnected;
     internal Task<BuilderDevelopmentReply> InvokeDevelopmentAsync(string operation, string operationId, string requestJson,
         string? expectedAppId, CancellationToken token) => development.InvokeAsync(operation, operationId, requestJson, expectedAppId, token);
@@ -67,7 +98,7 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
         {
             BuilderContent.ValidateRequest(folder);
             folder = BuilderJobValidation.Absolute(folder, "Discovery folder");
-            var projects = await Task.Run(() => new BuilderProjectDiscovery().DiscoverAsync(folder, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var projects = await Task.Run(() => new BuilderProjectDiscovery(context.DevelopmentToolchain).DiscoverAsync(folder, cancellationToken), cancellationToken).ConfigureAwait(false);
             return BuilderContent.Create(projects);
         }, cancellationToken);
 
@@ -78,7 +109,7 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
         {
             BuilderContent.ValidateRequest(entryPoint);
             entryPoint = BuilderJobValidation.Absolute(entryPoint, "Project entry point");
-            var project = await Task.Run(() => new BuilderProjectDiscovery().InspectAsync(entryPoint, cancellationToken), cancellationToken).ConfigureAwait(false);
+            var project = await Task.Run(() => new BuilderProjectDiscovery(context.DevelopmentToolchain).InspectAsync(entryPoint, cancellationToken), cancellationToken).ConfigureAwait(false);
             return BuilderContent.Create(project);
         }, cancellationToken);
 
@@ -151,7 +182,7 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
                 {
                     var toolchains = new BuilderProjectDriverToolchains(service);
                     var driver = new BuilderConfiguredJobDriver(toolchains, new BuilderLocalProcessRunner(),
-                        new BuilderProjectDriverOptions(Path.Combine(service.RootPath, "project-tools")));
+                        new BuilderProjectDriverOptions(Path.Combine(service.RootPath, "project-tools")), new(context.DevelopmentToolchain));
                     backend = new(service, toolchains, new BuilderJobManager(driver));
                 }
                 catch { service.Dispose(); throw; }
@@ -190,13 +221,19 @@ public sealed partial class BuilderRuntimeService(IPackageContext context) : IAs
         {
             if (disposal is not null) return new(disposal);
             stopping = true;
+            toolchainUpdateCancellation.Cancel();
             development.Dispose();
             var current = backend;
             disposal = Task.Run(async () =>
             {
-                if (current is null) return;
-                await current.Jobs.DisposeAsync().ConfigureAwait(false);
-                current.Service.Dispose();
+                try
+                {
+                    await toolchainUpdate.ConfigureAwait(false);
+                    if (current is null) return;
+                    await current.Jobs.DisposeAsync().ConfigureAwait(false);
+                    current.Service.Dispose();
+                }
+                finally { toolchainUpdateCancellation.Dispose(); }
             });
             return new(disposal);
         }

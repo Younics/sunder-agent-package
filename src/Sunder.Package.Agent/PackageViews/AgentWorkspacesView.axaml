@@ -1,15 +1,17 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.PackageViews"
               xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.PackageViews.AgentWorkspacesView"
              x:DataType="vm:AgentWorkspacesViewModel"
-             mc:Ignorable="d">
+              mc:Ignorable="d" Classes="agent-page">
 
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="Border.workspace-shell">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Raised}" />
       <Setter Property="BorderThickness" Value="0" />
@@ -27,21 +29,22 @@
     </Style>
 
     <Style Selector="Border.workspace-pane-header">
-      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.workspace-list-body">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
     </Style>
 
     <Style Selector="Border.workspace-editor-body">
-      <Setter Property="Padding" Value="28,24" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
+      <Setter Property="MaxWidth" Value="{DynamicResource Sunder.Agent.FormWidth}" />
     </Style>
 
     <Style Selector="Border.workspace-actions">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
@@ -51,7 +54,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12,10" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
 
@@ -68,7 +71,7 @@
     <Style Selector="TextBlock.workspace-status-message">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="TextWrapping" Value="Wrap" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
     </Style>
 
     <Style Selector="TextBlock.workspace-status-message.success">
@@ -80,32 +83,32 @@
     </Style>
 
     <Style Selector="TextBlock.workspace-title">
-      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
     <Style Selector="TextBlock.workspace-caption">
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.field-label">
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
       <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style Selector="TextBlock.field-help">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.field-help.warning-text">
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="ListBox.workspace-list">
@@ -119,7 +122,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,8" />
     </Style>
 
@@ -136,7 +139,7 @@
 
     <Style Selector="TextBlock.workspace-list-meta">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
     </Style>
 
     <Style Selector="Button.workspace-open-action">
@@ -149,7 +152,7 @@
       <Setter Property="BorderThickness" Value="0" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -170,7 +173,7 @@
       <Setter Property="MinWidth" Value="36" />
       <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -181,7 +184,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Border.editor-card.editor-error-card">
@@ -192,7 +195,7 @@
 
     <Style Selector="TextBlock.editor-error-diagnostic">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -201,7 +204,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Border.default-icon">
@@ -223,7 +226,7 @@
     </Style>
 
     <Style Selector="TextBlock.path-row-label">
-      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="Margin" Value="0,0,0,2" />
     </Style>
@@ -238,7 +241,7 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="17" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -250,15 +253,15 @@
     </Style>
 
     <Style Selector="Button.warning-action">
-      <Setter Property="Background" Value="#2B251C" />
-      <Setter Property="BorderBrush" Value="#6F5735" />
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="Button.warning-action:pointerover">
-      <Setter Property="Background" Value="#32291E" />
-      <Setter Property="BorderBrush" Value="#80643D" />
-      <Setter Property="Foreground" Value="#C09A64" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="ListBox.path-list">
@@ -309,7 +312,7 @@
 
     <Style Selector="TextBlock.path-row-text">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="VerticalAlignment" Value="Center" />
       <Setter Property="TextTrimming" Value="LeadingCharacterEllipsis" />
     </Style>
@@ -335,7 +338,7 @@
 
     <Style Selector="TextBlock.default-badge-text">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Accent}" />
-      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="HorizontalAlignment" Value="Center" />
       <Setter Property="VerticalAlignment" Value="Center" />
@@ -351,7 +354,7 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -387,10 +390,6 @@
                        Content="+"
                        Command="{Binding CreateWorkspaceCommand}"
                        ToolTip.Tip="New workspace" />
-              <TextBlock Classes="workspace-caption"
-                         Grid.Row="1"
-                         Grid.ColumnSpan="2"
-                         Text="Workspaces bind sessions to an execution environment" />
             </Grid>
           </Border>
 
@@ -433,9 +432,7 @@
             <Grid>
               <StackPanel Spacing="8">
                 <TextBlock Classes="workspace-title"
-                           Text="Workspace" />
-                <TextBlock Classes="workspace-caption"
-                           Text="Configure workspace and other settings." />
+                            Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
               </StackPanel>
             </Grid>
           </Border>
@@ -465,16 +462,12 @@
                         RowDefinitions="Auto,Auto"
                         ColumnSpacing="10"
                         RowSpacing="4">
-                    <TextBlock Classes="field-label"
-                               Text="Workspace Docs" />
+                    <p:SectionHeader Title="Reference documents" HelpText="These files provide read-only context in every session using this workspace. Scoped AGENTS.md instructions are discovered separately by first-party Files within configured folders. Shell commands do not enforce file-path policy." />
                     <Button Grid.Column="1"
                             Classes="secondary-action compact-action path-icon-action"
                             Content="+"
                             ToolTip.Tip="Add file"
                             Click="OnAddWorkspaceDocumentClick" />
-                    <TextBlock Grid.Row="1"
-                               Classes="field-help"
-                                 Text="Explicit documents are global read-only reference context. With first-party Files and a compatible target, exact AGENTS.md instructions are loaded within configured roots. Only structured Files mutations fail closed on missing or unacknowledged policy; shell commands refresh known context but are not path-enforced." />
                   </Grid>
 
                   <Border Classes="path-list"
@@ -518,7 +511,7 @@
                   <Border Classes="editor-empty-state"
                           IsVisible="{Binding !HasWorkspaceDocuments}">
                     <TextBlock Classes="field-help"
-                                 Text="No explicit global reference documents. Add selected markdown or text files here. Scoped AGENTS.md needs no document entry, but requires first-party Files plus a compatible Local/Docker target and accepts no partial or oversized policy." />
+                                 Text="No reference documents." />
                   </Border>
                 </StackPanel>
 
@@ -527,16 +520,12 @@
                         RowDefinitions="Auto,Auto"
                         ColumnSpacing="10"
                         RowSpacing="4">
-                    <TextBlock Classes="field-label"
-                               Text="Workspace Paths" />
+                    <p:SectionHeader Title="Folders" HelpText="Folders available to file tools and execution targets. The default folder is used as the working directory. Docker may mount these folders into its container." />
                     <Button Grid.Column="1"
                             Classes="secondary-action compact-action path-icon-action"
                             Content="+"
                             ToolTip.Tip="Add folder"
                             Click="OnAddWorkspacePathClick" />
-                    <TextBlock Grid.Row="1"
-                               Classes="field-help"
-                               Text="Folders the agent can use for local file access and Docker mounts. Set one path as the default working directory." />
                   </Grid>
 
                   <Border Classes="path-list"
@@ -567,7 +556,7 @@
                               <Border Grid.Column="1"
                                       Classes="default-badge"
                                       IsVisible="{Binding IsDefault}"
-                                      ToolTip.Tip="Default working directory">
+                                      ToolTip.Tip="Default path" AutomationProperties.Name="Default path">
                                 <TextBlock Classes="default-badge-text"
                                            Text="D" />
                               </Border>
@@ -587,7 +576,7 @@
                   <Border Classes="editor-empty-state"
                           IsVisible="{Binding !HasWorkspacePaths}">
                     <TextBlock Classes="field-help"
-                               Text="No workspace paths configured. Chat can still work, but file and shell tools need at least one path." />
+                               Text="No folders. Add one to use file and shell tools." />
                   </Border>
                 </StackPanel>
 
@@ -619,7 +608,7 @@
                              Text="Execution target" />
                   <Border Classes="editor-empty-state">
                     <TextBlock Classes="field-help"
-                               Text="No execution packages are installed. Install an execution package to configure shell/file-backed tools. This workspace can still be used for chat." />
+                              Text="Install an execution package to use file and shell tools." />
                   </Border>
                 </StackPanel>
 
@@ -631,14 +620,7 @@
                                 Margin="0,0,0,12"
                                 IsVisible="{Binding IsContent}">
                           <StackPanel Spacing="12">
-                            <StackPanel Spacing="4">
-                              <TextBlock Text="{Binding Title}"
-                                         FontWeight="SemiBold"
-                                         Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                              <TextBlock Text="{Binding Description}"
-                                         Classes="workspace-caption"
-                                         IsVisible="{Binding HasDescription}" />
-                            </StackPanel>
+                            <p:SectionHeader Title="{Binding Title}" HelpText="{Binding Description}" />
 
                             <ItemsControl ItemsSource="{Binding Fields}">
                             <ItemsControl.DataTemplates>
@@ -761,7 +743,7 @@
                                                   VerticalAlignment="Bottom"
                                                   ToolTip.Tip="Default working directory">
                                             <TextBlock Text="✓"
-                                                       FontSize="14"
+                                                       FontSize="{DynamicResource Sunder.FontSize.Body}"
                                                        FontWeight="Bold"
                                                        Foreground="{DynamicResource Sunder.Brush.Accent}"
                                                        HorizontalAlignment="Center"
@@ -870,23 +852,23 @@
                            Text="{Binding StatusText}" />
               </Border>
 
-              <Grid Grid.Row="1"
-                    ColumnDefinitions="Auto,*,Auto,Auto"
-                    ColumnSpacing="12">
+              <p:EditorFooter Grid.Row="1">
                 <Button Grid.Column="0"
                         Classes="secondary-action compact-action danger-action"
-                        Content="Delete Workspace"
+                        Content="Delete"
                         Command="{Binding DeleteWorkspaceCommand}" />
-                <Button Grid.Column="2"
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource Sunder.Spacing.Small}">
+                <Button
                         Classes="secondary-action compact-action"
                         Content="Back"
                         Command="{Binding BackToWorkspaceListCommand}"
                         IsVisible="{Binding IsCompactLayout}" />
-                <Button Grid.Column="3"
+                <Button
                         Classes="primary-action"
                         Content="Save"
                         Command="{Binding SaveWorkspaceCommand}" />
-              </Grid>
+                </StackPanel>
+              </p:EditorFooter>
             </Grid>
           </Border>
         </Grid>

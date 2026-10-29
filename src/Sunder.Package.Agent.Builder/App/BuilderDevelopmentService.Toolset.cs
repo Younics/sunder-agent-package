@@ -80,9 +80,10 @@ public sealed partial class BuilderDevelopmentService
         return BuilderContent.Create(new { type = "sunder.tool-image.v1", mediaType = "image/png", sha256 = content.Sha256, bytes });
     }
 
-    private async ValueTask<SunderContent> StartToolsetOperationAsync(string id, string kind, string json, CancellationToken token)
+    internal async ValueTask<SunderContent> StartToolsetOperationAsync(string id, string kind, string json, CancellationToken token = default)
     {
-        if (!Guid.TryParseExact(id, "N", out _)) throw new JsonException();
+        if (!Guid.TryParseExact(id, "N", out _) || kind is not ("apply" or "open-view" or "input-view"))
+            throw Error("maker.development.invalid-request", "A current correlated package operation is required.");
         lock (_sync)
         {
             if (_toolsetOperations.TryGetValue(id, out var prior))
@@ -108,7 +109,7 @@ public sealed partial class BuilderDevelopmentService
             {
                 var input = root["input"]!.Deserialize<PackageDevelopmentViewInput>(ToolsetJson)!;
                 if (input.OperationId != id) throw new JsonException();
-                lock (_sync) RequireViewSelection(project, new(ReadRequest(root["project"]!.ToJsonString()), viewId, input));
+                lock (_sync) RequireViewSelection(project, viewId, input.SnapshotId);
             }
         }
         lock (_sync)
@@ -123,7 +124,7 @@ public sealed partial class BuilderDevelopmentService
             if (_toolsetOperations.Values.Any(existing => existing.Project.EntryPoint == project.EntryPoint
                 && (existing.Result["state"]?.GetValue<string>() == "running" || existing.Result["outcomeUnknown"]?.GetValue<bool>() == true)))
                 throw Error("maker.busy", "Observe this project's pending operation before another mutation.");
-            if (_toolsetOperations.Count + _operations.Count >= 64) throw Error("maker.development.unavailable", "Resolve existing Maker operations; retained receipts cannot be evicted.");
+            if (_toolsetOperations.Count >= 64) throw Error("maker.development.unavailable", "Resolve existing Maker operations; retained receipts cannot be evicted.");
             var operation = new ToolsetOperation(id, kind, json, project, root, selected);
             _toolsetOperations.Add(id, operation);
             if (ExecutionContext.IsFlowSuppressed()) operation.Work = Task.Run(() => RunToolsetAsync(operation));

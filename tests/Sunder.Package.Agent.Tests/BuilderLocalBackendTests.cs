@@ -12,7 +12,7 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class BuilderLocalBackendTests
+public sealed partial class BuilderLocalBackendTests
 {
     [Fact]
     public void PrivateRpcSurfaceIsLocalAndFinite()
@@ -61,17 +61,25 @@ public sealed class BuilderLocalBackendTests
         var entry = fixture.WriteDotnet("project");
         var text = await File.ReadAllTextAsync(entry);
         await File.WriteAllTextAsync(entry, text.Replace("</Project>", "<Target Name=\"BeforeBuild\"><Error Text=\"Opening must never execute this target\" /></Target></Project>", StringComparison.Ordinal));
-        await using var service = new BuilderRuntimeService(null!); // any attempt to construct toolchains would fail
+        var context = new BuilderInspectionOnlyContext();
+        var pin = Path.Combine(Path.GetDirectoryName(entry)!, "global.json");
+        const string originalPin = "{\"sdk\":{\"version\":\"10.0.100\",\"rollForward\":\"disable\"}}";
+        await File.WriteAllTextAsync(pin, originalPin);
+        await using var service = new BuilderRuntimeService(context); // backend/storage access still fails immediately
         await using var content = await service.InspectAsync(entry);
         await using var stream = await content.OpenReadAsync(default);
         using var json = await JsonDocument.ParseAsync(stream);
         Assert.Equal("sample.hello", json.RootElement.GetProperty("packageId").GetString());
         Assert.Equal(entry, json.RootElement.GetProperty("entryPoint").GetString());
+        Assert.True(json.RootElement.GetProperty("toolchainAssessment").GetProperty("requiresUpgrade").GetBoolean());
         Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(entry)!, "obj")));
         await using var discovered = await service.DiscoverAsync(fixture.Root);
         await using var discoveryStream = await discovered.OpenReadAsync(default);
         using var list = await JsonDocument.ParseAsync(discoveryStream);
         Assert.Single(list.RootElement.EnumerateArray());
+        Assert.True(context.VersionReads >= 2);
+        Assert.Equal(0, context.ForbiddenAccesses);
+        Assert.Equal(originalPin, await File.ReadAllTextAsync(pin));
     }
 
     [Fact]
@@ -998,6 +1006,8 @@ public sealed class BuilderLocalBackendTests
     private sealed class FakeProcess(Fixture fixture) : IBuilderLocalProcessRunner
     {
         internal ConcurrentQueue<BuilderLocalProcessRequest> Requests { get; } = new();
+        internal ConcurrentQueue<BuilderLocalProcessRequest> Evaluations { get; } = new();
+        internal string EvaluationFramework = "net10.0";
         internal ConcurrentDictionary<string, bool> PinSeen { get; } = new();
         internal bool FailRestore;
         internal bool FailBuild;
@@ -1015,6 +1025,12 @@ public sealed class BuilderLocalBackendTests
 
         public async Task<BuilderLocalProcessResult> RunAsync(BuilderLocalProcessRequest request, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
+            if (request.Arguments.Contains("-getProperty:TargetFramework"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Evaluations.Enqueue(request);
+                return new(0, EvaluationFramework + "\n", "");
+            }
             Requests.Enqueue(request); cancellationToken.ThrowIfCancellationRequested();
             var args = request.Arguments.ToArray();
             var npm = args[0] == fixture.Tools.For(BuilderProjectKind.Node).NpmCliPath;
@@ -1069,7 +1085,7 @@ public sealed class BuilderLocalBackendTests
                     Property(args, "SunderPackageComposedOutputRoot"), "sunder-dev");
                 var entry = npm ? Path.Combine(request.WorkingDirectory, "sunder.package.json") : args[1];
                 var project = await new BuilderProjectDiscovery().InspectAsync(entry, cancellationToken);
-                await WriteOutputAsync(output, project.PackageId, InvalidRid, PayloadLayer, WorkerContents);
+                await WriteOutputAsync(output, project.PackageId, InvalidRid, PayloadLayer, WorkerContents, npm ? "node24" : EvaluationFramework);
             }
             else if (args[0] == "msbuild" || npm && args.SequenceEqual(["run", "package"]))
             {
@@ -1077,7 +1093,7 @@ public sealed class BuilderLocalBackendTests
                 var project = await new BuilderProjectDiscovery().InspectAsync(entry, cancellationToken);
                 var archive = npm ? Path.Combine(request.WorkingDirectory, "dist", project.PackageId + ".1.0.0.sunderpkg") : Property(args, "SunderPackageOutputPath");
                 var payload = Path.Combine(request.WorkingDirectory, "obj", "archive-fixture");
-                await WriteOutputAsync(payload, project.PackageId, false, PayloadLayer);
+                await WriteOutputAsync(payload, project.PackageId, false, PayloadLayer, framework: npm ? "node24" : EvaluationFramework);
                 Directory.CreateDirectory(Path.GetDirectoryName(archive)!);
                 using var zip = ZipFile.Open(archive, ZipArchiveMode.Create);
                 foreach (var file in Directory.EnumerateFiles(payload, "*", SearchOption.AllDirectories)) zip.CreateEntryFromFile(file, Path.GetRelativePath(payload, file).Replace('\\', '/'));
@@ -1088,7 +1104,7 @@ public sealed class BuilderLocalBackendTests
 
         private static string Value(string[] args, string name) => args[Array.IndexOf(args, name) + 1];
         private static string Property(string[] args, string name) => Uri.UnescapeDataString(args.Single(argument => argument.StartsWith("-p:" + name + "=", StringComparison.Ordinal))[(name.Length + 4)..]);
-        private static async Task WriteOutputAsync(string root, string id, bool badRid, string layer, string workerContents = "worker")
+        private static async Task WriteOutputAsync(string root, string id, bool badRid, string layer, string workerContents = "worker", string framework = "node24")
         {
             var rid = badRid ? "wrong-x64" : BuilderToolchainPlatform.Current.DotnetRid;
             var prefix = layer switch { "shared" => "payload/shared", "role-shared" or "overlap" => "payload/runtime/shared",
@@ -1106,8 +1122,8 @@ public sealed class BuilderLocalBackendTests
             {
                 archiveFormatVersion = 1, manifestVersion = 1, id, version = "1.0.0", targets = new[]
                 {
-                    new { role = "runtime", rid, kind = "worker", entryPoint = "bin/worker.cjs" },
-                    new { role = "app", rid, kind = "web", entryPoint = "index.html" },
+                    new { role = "runtime", rid, kind = "worker", entryPoint = "bin/worker.cjs", targetFramework = framework },
+                    new { role = "app", rid, kind = "web", entryPoint = "index.html", targetFramework = "web" },
                 },
             }));
             var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories).Where(path => Path.GetFileName(path) != "content-index.json")

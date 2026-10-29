@@ -31,6 +31,15 @@ public sealed partial class MemoryInspectorService
         => Project(() => new(Memories: ListMemories(sessionId, searchText, includeInactive)), token);
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["memory.semantic.operation-failed"])]
+    public ValueTask<SunderContent> GraphAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken token = default)
+        => Project(() =>
+        {
+            var bounded = Math.Clamp(limit, 1, 1000);
+            var records = _store.ListInspectorPage(sessionId, searchText, includeInactive, bounded + 1);
+            return new(Graph: ProjectionContent.BoundGraphPage(records, bounded));
+        }, token);
+
+    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["memory.semantic.operation-failed"])]
     public ValueTask<SunderContent> DetailsAsync(Guid memoryId, CancellationToken token = default)
         => Project(() => new(Evidence: ListEvidence(memoryId), SupersedingMemory: GetSupersedingMemory(memoryId),
             SupersededMemories: ListSupersededMemories(memoryId), CorrectionLineage: ListCorrectionLineage(memoryId)), token);

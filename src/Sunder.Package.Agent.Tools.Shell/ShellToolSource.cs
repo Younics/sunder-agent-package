@@ -28,7 +28,7 @@ public sealed partial class ShellToolSource : IToolSourceService, IPermissionSur
         SourceKind = "workspace", SourceId = "shell", SourceDisplayName = "Workspace Shell",
         Aliases = ["bash"], RuntimeInstructions = ShellInstructions, Priority = AgentToolPriority.Low,
         SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null,
-        SelectionGroupDescription = null, ActivationRequirement = null, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+        SelectionGroupDescription = null, SelectionGroupAllowsBulkSelection = true, ActivationRequirement = null, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
     };
 
     public string SourceId => "workspace-shell";

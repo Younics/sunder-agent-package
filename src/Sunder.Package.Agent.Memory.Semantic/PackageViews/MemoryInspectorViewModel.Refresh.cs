@@ -140,11 +140,8 @@ public sealed partial class MemoryInspectorViewModel
         _suppressSessionSelectionHandlers = true;
         try
         {
-            Sessions.Clear();
-            foreach (var session in sessions)
-            {
-                Sessions.Add(session);
-            }
+            ObservableCollectionReconciler.Apply(Sessions, sessions.Select(session =>
+                Sessions.FirstOrDefault(existing => existing == session) ?? session));
 
             SelectedSession = Sessions.FirstOrDefault(session => session.SessionId == preferredSessionId)
                 ?? Sessions.FirstOrDefault();

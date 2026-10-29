@@ -13,7 +13,7 @@ internal static class BuilderJobValidation
         ArgumentNullException.ThrowIfNull(request);
         BuilderContent.ValidateRequest(request);
         if (request.Kind is not (BuilderProjectKind.Dotnet or BuilderProjectKind.Node)) throw new ArgumentException("Unknown project kind.");
-        if (request.Operation is not ("ensure-sdk" or "create" or "setup" or "build" or "archive" or "save-metadata" or "repair-sdk" or "remove-sdk"))
+        if (request.Operation is not ("ensure-sdk" or "create" or "setup" or "build" or "archive" or "save-metadata" or "upgrade-toolchain" or "repair-sdk" or "remove-sdk"))
             throw new ArgumentException("Unknown Builder job operation.");
         var id = request.Id ?? Guid.NewGuid().ToString("N");
         ValidateId(id);
@@ -34,7 +34,7 @@ internal static class BuilderJobValidation
             BuilderProjectSource.ValidateId(request.PackageId!);
             BuilderProjectSource.ValidateId(request.PackageId + (request.Kind == BuilderProjectKind.Node ? ".messages.provider" : ".sample.provider"));
         }
-        if (request.Operation is "setup" or "build" or "archive" or "save-metadata")
+        if (request.Operation is "setup" or "build" or "archive" or "save-metadata" or "upgrade-toolchain")
         {
             if (entry is null) throw new ArgumentException("Select an explicit project entry point before starting this operation.");
             if (request.Kind == BuilderProjectKind.Node ? Path.GetFileName(entry) != "sunder.package.json" : !entry.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
@@ -49,7 +49,7 @@ internal static class BuilderJobValidation
             BuilderProjectSource.ValidateId(request.PackageId!);
         }
         if (request.Operation is "repair-sdk" or "remove-sdk" && request.Installation is null) throw new ArgumentException("Select the managed toolchain installation.");
-        if (request.Installation is { } installation && (installation.Kind != request.Kind || !BuilderToolchainPolicy.IsSupported(installation.Kind, installation.Version)))
+        if (request.Installation is { } installation && (installation.Kind != request.Kind || !BuilderToolchainPolicy.IsKnownVersion(installation.Kind, installation.Version)))
             throw new ArgumentException("The selected installation does not match the supported project toolchain.");
         return request with { Id = id, ProjectFolder = folder, EntryPoint = entry };
     }

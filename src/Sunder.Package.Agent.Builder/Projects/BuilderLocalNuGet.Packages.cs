@@ -87,8 +87,10 @@ internal static partial class BuilderLocalNuGet
                 Constant(symbols, "coordinatedPackageVersion") != version || !MatchesCoordinate(Constant(symbols, "coordinatedPackageVersionRange"), version))
                 throw new InvalidDataException("Sunder template identity and coordinated SDK version/range must match the local feed.");
             var project = ParseXml(await ReadEntryAsync(Require(TemplateProject + "Sunder.Package.Template.csproj"), token).ConfigureAwait(false));
-            if (!project.Descendants("TargetFramework").Select(element => element.Value).SequenceEqual(["net10.0"]))
-                throw new InvalidDataException("Sunder template must target the supported net10.0 SDK.");
+            var frameworks = project.Descendants("TargetFramework").Select(element => element.Value).ToArray();
+            if (frameworks.Length != 1 || !System.Text.RegularExpressions.Regex.IsMatch(frameworks[0], @"^net[1-9][0-9]\.0$",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
+                throw new InvalidDataException("Sunder template must declare one canonical .NET Worker target framework.");
             RequireReference(project, "Sunder.Sdk.Worker");
             RequireReference(project, "Sunder.Package.Build");
             foreach (var (folder, package) in new[] { ("Views/Avalonia", "Sunder.Sdk.Avalonia"), ("Stacks/Stacks", "Sunder.Sdk.Stacks") })

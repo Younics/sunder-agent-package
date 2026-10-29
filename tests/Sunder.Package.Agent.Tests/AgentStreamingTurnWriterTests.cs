@@ -656,6 +656,9 @@ public sealed partial class AgentStreamingTurnWriterTests
                 now);
         }
 
+        public AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn)
+            => assistantTurn with { IsStreaming = false, ContentRevision = assistantTurn.ContentRevision + 1 };
+
         public ValueTask PublishLifecycleEventAsync(
             AgentLifecycleEventKind kind,
             AgentRunStatus status,

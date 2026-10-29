@@ -13,7 +13,7 @@ internal sealed record BuilderApplySelection(BuilderProjectInspection Project, B
 public sealed partial class BuilderPackageOperations
 {
     internal static IReadOnlyList<string> BuiltOutputs(BuilderProjectInspection project)
-        => new[] { BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug"), BuilderProjectDriverOutputs.DevelopmentFolder(project, "Release") }
+        => BuilderProjectDriverOutputs.BuiltOutputs(project)
             .Distinct(BuilderPathService.PathComparer).Where(folder => File.Exists(Path.Combine(folder, "manifest", "sunder-package.json"))).ToArray();
 
     internal async Task<BuilderApplySelection> SelectApplyAsync(BuilderProjectInspection project, string? folder, CancellationToken token)

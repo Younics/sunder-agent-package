@@ -35,6 +35,8 @@ internal sealed class BuilderDevelopmentCommandHub(TimeProvider? timeProvider = 
     {
         token.ThrowIfCancellationRequested();
         BuilderContent.ValidateRequest(requestJson);
+        if (operation is not ("info" or "logs" or "query" or "view-query" or "screenshot" or "observe" or "apply" or "open-view" or "input-view"))
+            throw new BuilderDevelopmentRequestException(new("maker.invalid-request", "Unknown Maker App operation."));
         Pending pending;
         lock (_sync)
         {
@@ -128,7 +130,7 @@ internal sealed class BuilderDevelopmentCommandHub(TimeProvider? timeProvider = 
         {
             _disposed = true; _queue.Writer.TryComplete();
             foreach (var pending in _pending.Values) pending.Completion.TrySetException(RequestUnavailable("The original Maker Worker activation stopped.",
-                pending.Dispatched && pending.Command.Operation is "build" or "hotreload" or "apply" or "open-view" or "input-view" or "interact-view"));
+                pending.Dispatched && pending.Command.Operation is "apply" or "open-view" or "input-view"));
             _pending.Clear();
         }
     }

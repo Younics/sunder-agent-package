@@ -17,6 +17,64 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class WorkspaceEditorFailureContainmentTests
 {
     [Fact]
+    public async Task BackgroundDiscovery_KeepsUnchangedAndEditedSectionsReadyAndOnlyReplacesChangedContent()
+    {
+        static AgentEditorSection TextSection(string value) => new("edited", "Edited settings", null,
+            [new("text", "Text", AgentEditorFieldKind.Text, Value: value)]);
+        var edited = new ScriptedWorkspaceEditorContributor("local", "edited", "Edited settings");
+        edited.EnqueueDiscovery(_ => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>([TextSection("original")]));
+        var healthy = new ScriptedWorkspaceEditorContributor("local", "healthy", "Healthy settings");
+        var changing = new ScriptedWorkspaceEditorContributor("local", "changing", "Changing settings");
+        using var host = await EditorTestHost.CreateAsync((edited, "edited.package"), (healthy, "healthy.package"), (changing, "changing.package"));
+        var oldSection = host.ViewModel.EditorSections.Single(section => section.SectionId == "edited");
+        var oldHealthy = host.ViewModel.EditorSections.Single(section => section.SectionId == "healthy");
+        var text = Assert.IsType<AgentEditorTextFieldViewModel>(Assert.Single(oldSection.Fields));
+        text.Value = "unsaved";
+        var busy = false;
+        host.ViewModel.PropertyChanged += (_, _) => busy |= host.ViewModel.IsBusy;
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        edited.EnqueueDiscovery(async _ =>
+        {
+            entered.TrySetResult();
+            await release.Task;
+            return [TextSection("upstream change")];
+        });
+        changing.EnqueueDiscovery(_ => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
+            [new("changing", "Updated settings", null, [])]));
+        var previousRefresh = host.ViewModel.CurrentEditorSectionRefresh;
+        try
+        {
+            host.Catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors,
+                new ScriptedWorkspaceEditorContributor("other-target", "irrelevant", "Irrelevant settings"));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitUntilAsync(() => !ReferenceEquals(previousRefresh, host.ViewModel.CurrentEditorSectionRefresh));
+            Assert.False(host.ViewModel.IsBusy);
+            Assert.Equal("Ready", host.ViewModel.DetailPhase.ToString());
+            text.Value = "edited while refreshing";
+            host.ViewModel.IsCompactLayout = true;
+            host.ViewModel.IsCompactLayout = false;
+            release.TrySetResult();
+            await host.ViewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.Same(oldSection, host.ViewModel.EditorSections.Single(section => section.SectionId == "edited"));
+            Assert.Same(oldHealthy, host.ViewModel.EditorSections.Single(section => section.SectionId == "healthy"));
+            Assert.Equal("edited while refreshing", text.Value);
+            Assert.True(host.ViewModel.EditorSections.Any(section => section.Title == "Updated settings"),
+                $"Sections: {string.Join(", ", host.ViewModel.EditorSections.Select(section => section.Title))}; discovery calls: {changing.DiscoveryCount}; phase: {host.ViewModel.DetailPhase}");
+            Assert.False(busy);
+
+            await host.ViewModel.SaveWorkspaceCommand.ExecuteAsync(null);
+            edited.EnqueueDiscovery(_ => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>([TextSection("external change after save")]));
+            host.Catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors,
+                new ScriptedWorkspaceEditorContributor("other-target", "after-save", "Irrelevant settings"));
+            await WaitUntilAsync(() => host.ViewModel.EditorSections.Single(section => section.SectionId == "edited")
+                .Fields.OfType<AgentEditorTextFieldViewModel>().Single().Value == "external change after save");
+        }
+        finally { release.TrySetResult(); }
+    }
+
+    [Fact]
     public async Task DiscoveryRuntimeFailure_KeepsHealthySectionAndLoadedContribution_ThenRetryReplacesError()
     {
         var failing = new ScriptedWorkspaceEditorContributor("local", "local-settings", "Local settings");
@@ -233,6 +291,13 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         Assert.True(result.Success);
         Assert.Equal("leased", Assert.Single(result.Result).SectionId);
+        var retained = new AgentEditorSectionViewModel(provider, context, Assert.Single(result.Result));
+        Assert.True(retained.CanRetain(provider, context, Assert.Single(result.Result)));
+        await catalog.RetireProviderAsync(contributor);
+        var replacement = new ScriptedWorkspaceEditorContributor("local", "leased", "Leased");
+        catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, replacement, "leased.package");
+        var replacementProvider = await catalog.GetRequiredProviderAsync(catalog.WorkspaceEditors);
+        Assert.False(retained.CanRetain(replacementProvider, context, Assert.Single(result.Result)));
     }
 
     public static TheoryData<string> RetrySupersessionKinds => new()

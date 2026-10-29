@@ -1,13 +1,14 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.PackageViews"
               xmlns:m="using:Sunder.Package.Agent.Contracts.Models"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.PackageViews.AgentProfilesView"
              x:DataType="vm:AgentProfilesViewModel"
-             mc:Ignorable="d">
+              mc:Ignorable="d" Classes="agent-page">
 
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
@@ -30,21 +31,22 @@
     </Style>
 
     <Style Selector="Border.profile-pane-header">
-      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.profile-list-body">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
     </Style>
 
     <Style Selector="Border.profile-editor-body">
-      <Setter Property="Padding" Value="28,24" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
+      <Setter Property="MaxWidth" Value="{DynamicResource Sunder.Agent.FormWidth}" />
     </Style>
 
     <Style Selector="Border.profile-actions">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
@@ -54,7 +56,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
 
@@ -70,7 +72,7 @@
 
     <Style Selector="TextBlock.profile-status-message">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -83,32 +85,32 @@
     </Style>
 
     <Style Selector="TextBlock.profile-title">
-      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
     <Style Selector="TextBlock.profile-caption">
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.profile-field-label">
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
       <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style Selector="TextBlock.profile-field-help">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.profile-field-help.warning-text">
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="ListBox.profile-list">
@@ -122,7 +124,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,8" />
     </Style>
 
@@ -141,7 +143,7 @@
       <Setter Property="MinWidth" Value="36" />
       <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -152,7 +154,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Border.profile-editor-empty-state">
@@ -160,7 +162,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Button.profile-field-icon-action">
@@ -173,7 +175,7 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="17" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -185,15 +187,15 @@
     </Style>
 
     <Style Selector="Button.warning-action">
-      <Setter Property="Background" Value="#2B251C" />
-      <Setter Property="BorderBrush" Value="#6F5735" />
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="Button.warning-action:pointerover">
-      <Setter Property="Background" Value="#32291E" />
-      <Setter Property="BorderBrush" Value="#80643D" />
-      <Setter Property="Foreground" Value="#C09A64" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="TextBox.profile-instructions">
@@ -237,10 +239,6 @@
                       Content="+"
                       Command="{Binding CreateProfileCommand}"
                       ToolTip.Tip="New profile" />
-              <TextBlock Grid.Row="1"
-                         Grid.ColumnSpan="2"
-                         Classes="profile-caption"
-                         Text="Compose model choices, instructions, and runtime capabilities." />
             </Grid>
           </Border>
 
@@ -264,7 +262,7 @@
                       <TextBlock Grid.Row="1"
                                  Text="{Binding Description}"
                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                                 FontSize="12"
+                                 FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                  TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
@@ -285,9 +283,7 @@
                   Classes="profile-pane-header">
             <StackPanel Spacing="8">
               <TextBlock Classes="profile-title"
-                         Text="Profile" />
-              <TextBlock Classes="profile-caption"
-                         Text="Configure model selection, instructions, run policy, and capabilities." />
+                          Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
             </StackPanel>
           </Border>
 
@@ -295,10 +291,10 @@
                         HorizontalScrollBarVisibility="Disabled"
                         VerticalScrollBarVisibility="Auto">
             <Border Classes="profile-editor-body">
-              <StackPanel Spacing="18"
+              <StackPanel Spacing="{DynamicResource Sunder.Spacing.Large}"
                           IsEnabled="{Binding IsEditorEnabled}">
                 <Border Classes="profile-card">
-                  <StackPanel Spacing="14">
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
                     <StackPanel Spacing="5">
                       <TextBlock Classes="profile-field-label"
                                  Text="Display name" />
@@ -317,43 +313,18 @@
                 </Border>
 
                 <Border Classes="profile-card">
-                  <StackPanel Spacing="14">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="Behavior"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="profile-caption"
-                                 Text="Choose the runtime loop used for this profile. Default keeps the simple base agent behavior." />
-                    </StackPanel>
-
-                    <StackPanel Spacing="5">
-                      <TextBlock Classes="profile-field-label"
-                                 Text="Behavior loop" />
-                      <shared:SunderComboBox ItemsSource="{Binding BehaviorLoops}"
-                                            SelectedItem="{Binding SelectedBehaviorLoop, Mode=TwoWay}"
-                                            HorizontalAlignment="Stretch">
-                        <shared:SunderComboBox.ItemTemplate>
-                          <DataTemplate x:DataType="vm:BehaviorLoopOption">
-                            <StackPanel Spacing="2">
-                              <TextBlock Text="{Binding Label}" />
-                              <TextBlock Classes="profile-field-help"
-                                         Text="{Binding Description}" />
-                            </StackPanel>
-                          </DataTemplate>
-                        </shared:SunderComboBox.ItemTemplate>
-                      </shared:SunderComboBox>
-                    </StackPanel>
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                    <p:SectionHeader Title="Instructions" HelpText="Instructions used by this agent in its sessions." />
+                    <TextBox Classes="profile-instructions" Text="{Binding Instructions, Mode=TwoWay}"
+                             AcceptsReturn="True" TextWrapping="Wrap" />
                   </StackPanel>
                 </Border>
 
                 <Border Classes="profile-card">
-                  <StackPanel Spacing="14">
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
                     <Grid ColumnDefinitions="*,Auto"
                           ColumnSpacing="12">
-                      <TextBlock Text="Chat Model"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
-                                 VerticalAlignment="Center" />
+                      <p:SectionHeader Title="Chat model" HelpText="Used for this agent's replies and tool calls. Provider availability and model options are shown below." />
                       <Button Grid.Column="1"
                               Classes="profile-field-icon-action"
                               Content="↻"
@@ -364,7 +335,7 @@
                     <Border Classes="profile-editor-empty-state"
                             IsVisible="{Binding HasNoChatProviders}">
                       <TextBlock Classes="profile-field-help"
-                                 Text="No chat providers are installed. Install a chat provider package to choose a chat model." />
+                                 Text="Install a chat provider to choose a model." />
                     </Border>
 
                     <StackPanel Spacing="5"
@@ -445,13 +416,10 @@
 
                 <Border Classes="profile-card"
                         IsVisible="{Binding ShowEmbeddingsSection}">
-                  <StackPanel Spacing="14">
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
                     <Grid ColumnDefinitions="*,Auto"
                           ColumnSpacing="12">
-                      <TextBlock Text="Embeddings"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
-                                 VerticalAlignment="Center" />
+                      <p:SectionHeader Title="Embeddings" HelpText="Used by capabilities that search for related content, such as semantic memory." />
                       <Button Grid.Column="1"
                               Classes="profile-field-icon-action"
                               Content="↻"
@@ -462,7 +430,7 @@
                     <Border Classes="profile-editor-empty-state"
                             IsVisible="{Binding ShowEmbeddingProviderEmptyState}">
                       <TextBlock Classes="profile-field-help"
-                                 Text="No embedding providers are installed. Install an embedding provider package to enable embedding-based features." />
+                                 Text="Install an embedding provider to enable semantic features." />
                     </Border>
 
                     <StackPanel Spacing="5"
@@ -507,27 +475,24 @@
                 </Border>
 
                 <Border Classes="profile-card">
-                  <StackPanel Spacing="5">
-                    <TextBlock Classes="profile-field-label"
-                               Text="Instructions" />
-                    <TextBox Classes="profile-instructions"
-                             Text="{Binding Instructions, Mode=TwoWay}"
-                             PlaceholderText="Instructions"
-                             AcceptsReturn="True"
-                             TextWrapping="Wrap" />
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                    <p:SectionHeader Title="Behavior" HelpText="The behavior loop controls how the agent runs. Default uses the standard agent loop." />
+                    <shared:SunderComboBox ItemsSource="{Binding BehaviorLoops}"
+                                          SelectedItem="{Binding SelectedBehaviorLoop, Mode=TwoWay}"
+                                          HorizontalAlignment="Stretch">
+                      <shared:SunderComboBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:BehaviorLoopOption">
+                          <TextBlock Text="{Binding Label}" ToolTip.Tip="{Binding Description}" />
+                        </DataTemplate>
+                      </shared:SunderComboBox.ItemTemplate>
+                    </shared:SunderComboBox>
                   </StackPanel>
                 </Border>
 
                 <Border Classes="profile-card"
                         IsVisible="{Binding HasToolCallingConfiguration}">
-                  <StackPanel Spacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="Capabilities"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="profile-caption"
-                                 Text="Choose tools, skills, and MCP capabilities available to this profile." />
-                    </StackPanel>
+                  <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+                    <p:SectionHeader Title="Capabilities" HelpText="Selected capabilities are available to this agent. Permissions and workspace access still apply. Changes take effect when you save." />
 
                     <ItemsControl ItemsSource="{Binding CapabilityGroups}"
                                   ItemTemplate="{StaticResource CapabilityGroupTemplate}" />
@@ -553,12 +518,10 @@
                            Text="{Binding StatusText}" />
               </Border>
 
-              <Grid Grid.Row="1"
-                    ColumnDefinitions="Auto,*,Auto,Auto"
-                    ColumnSpacing="12">
+              <p:EditorFooter Grid.Row="1">
                 <Button Grid.Column="0"
                         Classes="secondary-action compact-action danger-action"
-                        Content="Delete Profile"
+                        Content="Delete"
                         Command="{Binding DeleteProfileCommand}" />
                 <TextBlock Grid.Column="1"
                            Text="Unsaved changes"
@@ -566,17 +529,19 @@
                            HorizontalAlignment="Right"
                            VerticalAlignment="Center"
                            Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                           FontSize="12" />
-                <Button Grid.Column="2"
+                           FontSize="{DynamicResource Sunder.FontSize.Caption}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource Sunder.Spacing.Small}">
+                <Button
                         Classes="secondary-action compact-action"
                         Content="Back"
                         Command="{Binding BackToProfileListCommand}"
                         IsVisible="{Binding IsCompactLayout}" />
-                <Button Grid.Column="3"
+                <Button
                         Classes="primary-action"
                         Content="Save"
                         Command="{Binding SaveProfileCommand}" />
-              </Grid>
+                </StackPanel>
+              </p:EditorFooter>
             </Grid>
           </Border>
         </Grid>

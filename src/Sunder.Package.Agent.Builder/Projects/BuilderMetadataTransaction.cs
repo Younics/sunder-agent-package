@@ -64,9 +64,11 @@ internal static class BuilderMetadataTransaction
         foreach (var file in journal.Files)
         {
             var target = Resolve(root, file.Path);
-            if (Path.GetExtension(target) is not (".cs" or ".axaml" or ".ts" or ".tsx" or ".js" or ".jsx" or ".html") && file.Path != "sunder.package.json")
+            if (Path.GetExtension(target) is not (".cs" or ".axaml" or ".ts" or ".tsx" or ".js" or ".jsx" or ".html")
+                && file.Path is not ("sunder.package.json" or "global.json" or "package.json" or ".node-version" or ".nvmrc" or ".tool-versions"))
                 throw new InvalidDataException("Recovery cannot change baselines, locks, or arbitrary files.");
             var before = Convert.FromBase64String(file.BeforeBase64); var after = Convert.FromBase64String(file.AfterBase64);
+            BuilderProjectToolchainUpgrade.ValidatePinChange(file.Path, before, after);
             var current = await File.ReadAllBytesAsync(target, token).ConfigureAwait(false);
             if (current.AsSpan().SequenceEqual(before)) continue;
             if (!current.AsSpan().SequenceEqual(after)) throw new BuilderProjectConflictException($"Recovery preserved external edits to '{file.Path}'. Resolve the journal manually; no files were restored.");

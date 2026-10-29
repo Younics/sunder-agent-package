@@ -7,19 +7,22 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class BuilderDevelopmentServiceTests
+public sealed class BuilderDevelopmentServiceTests : IDisposable
 {
+    private readonly string _root = Directory.CreateTempSubdirectory("maker-admission-tests-").FullName;
+
     [Fact]
-    public async Task AcceptedBuildHasActivationOwnershipNotRpcContextAndDuplicateAdmissionOnlyObserves()
+    public async Task AcceptedApplyHasActivationOwnershipNotRpcContextAndDuplicateAdmissionOnlyObserves()
     {
         await using var fixture = new BuilderUiFixture();
         var project = Project(fixture, "owned-admission");
+        await PrepareBuiltOutputAsync(fixture, project);
         await using var service = new BuilderDevelopmentService(fixture.PackageOperations, fixture.Application, null!);
         var entered = BuilderUiFixture.Signal();
         var resume = BuilderUiFixture.Signal();
         var ambient = new AsyncLocal<string?> { Value = "incoming-rpc-lineage" };
         string? observedAmbient = "not-started";
-        fixture.Backend.BeforeGetBackendId = async token =>
+        fixture.Development.BeforeLoad = async (_, _, token) =>
         {
             observedAmbient = ambient.Value;
             entered.TrySetResult();
@@ -28,7 +31,7 @@ public sealed class BuilderDevelopmentServiceTests
         using var caller = new CancellationTokenSource();
         var operation = Guid.NewGuid().ToString("N");
         var request = Request(project);
-        using var accepted = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(operation, "build", request, caller.Token), default);
+        using var accepted = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(operation, "apply", request, caller.Token), default);
         try
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
@@ -41,12 +44,12 @@ public sealed class BuilderDevelopmentServiceTests
             fixture.Backend.Projects[project.EntryPoint] = project with { SourceRevision = "later-source" };
             var repeated = Enumerable.Range(0, 8).Select(async _ =>
             {
-                using var observed = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(operation, "build", request), default);
+                using var observed = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(operation, "apply", request), default);
                 Assert.Equal("succeeded", observed.RootElement.GetProperty("state").GetString());
             });
             await Task.WhenAll(repeated);
-            Assert.Single(fixture.Backend.Starts);
-            Assert.Empty(fixture.Development.Loads);
+            Assert.Empty(fixture.Backend.Starts);
+            Assert.Single(fixture.Development.Loads);
             Assert.Empty(fixture.Model.Projects);
         }
         finally { resume.TrySetResult(); }
@@ -64,14 +67,15 @@ public sealed class BuilderDevelopmentServiceTests
         var json = boundary switch
         {
             "revision" => Request(project with { SourceRevision = "stale" }),
-            "missing-preflight" => JsonSerializer.Serialize(new { project.EntryPoint, roots = new[] { project.ProjectFolder } }),
-            _ => JsonSerializer.Serialize(new { project.EntryPoint, roots = new[] { Path.Combine(project.ProjectFolder, "unrelated") }, expectedSourceRevision = project.SourceRevision }),
+            "missing-preflight" => JsonSerializer.Serialize(new { project = new { project.EntryPoint, roots = new[] { project.ProjectFolder } } }),
+            _ => JsonSerializer.Serialize(new { project = new { project.EntryPoint, roots = new[] { Path.Combine(project.ProjectFolder, "unrelated") }, expectedSourceRevision = project.SourceRevision } }),
         };
         await Assert.ThrowsAsync<SunderRpcException>(async () =>
         {
-            using var response = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(Guid.NewGuid().ToString("N"), "build", json), default);
+            using var response = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(Guid.NewGuid().ToString("N"), "apply", json), default);
         });
         Assert.Empty(fixture.Backend.Starts);
+        Assert.Empty(fixture.Development.Loads);
     }
 
     [Fact]
@@ -79,35 +83,46 @@ public sealed class BuilderDevelopmentServiceTests
     {
         await using var fixture = new BuilderUiFixture();
         var project = Project(fixture, "receipt-capacity");
+        await PrepareBuiltOutputAsync(fixture, project);
         await using var service = new BuilderDevelopmentService(fixture.PackageOperations, fixture.Application, null!);
         var request = Request(project);
         var first = Guid.NewGuid().ToString("N");
         for (var i = 0; i < 64; i++)
         {
             var id = i == 0 ? first : Guid.NewGuid().ToString("N");
-            using var accepted = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(id, "build", request), default);
+            using var accepted = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(id, "apply", request), default);
             await WaitForOperationAsync(service, id, request, "succeeded");
         }
         await Assert.ThrowsAsync<SunderRpcException>(async () =>
         {
-            using var overflow = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(Guid.NewGuid().ToString("N"), "build", request), default);
+            using var overflow = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(Guid.NewGuid().ToString("N"), "apply", request), default);
         });
-        using var original = await BuilderContent.ReadAsync<JsonDocument>(service.StartOperationAsync(first, "build", request), default);
+        using var original = await BuilderContent.ReadAsync<JsonDocument>(service.StartToolsetOperationAsync(first, "apply", request), default);
         Assert.Equal("succeeded", original.RootElement.GetProperty("state").GetString());
-        Assert.Equal(64, fixture.Backend.Starts.Count);
+        Assert.Empty(fixture.Backend.Starts);
+        Assert.Single(fixture.Development.Loads);
+        Assert.Empty(Assert.Single(fixture.Development.Sessions).Reloads);
     }
 
-    private static BuilderProjectInspection Project(BuilderUiFixture fixture, string name)
+    private BuilderProjectInspection Project(BuilderUiFixture fixture, string name)
     {
         var source = BuilderUiFixture.Project(name);
         var paths = new BuilderPathService();
-        var folder = paths.ResolveContainedHostPath(source.ProjectFolder, Path.GetTempPath());
+        var folder = paths.ResolveContainedHostPath(Path.Combine(_root, name), Path.GetTempPath());
+        Directory.CreateDirectory(folder);
+        File.WriteAllText(Path.Combine(folder, "Package.csproj"), "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>");
         var project = source with { ProjectFolder = folder, EntryPoint = Path.Combine(folder, "Package.csproj") };
         fixture.Backend.Projects[project.EntryPoint] = project;
         return project;
     }
     private static string Request(BuilderProjectInspection project) => JsonSerializer.Serialize(new
-    { entryPoint = project.EntryPoint, roots = new[] { project.ProjectFolder }, expectedSourceRevision = project.SourceRevision });
+    { project = new { entryPoint = project.EntryPoint, roots = new[] { project.ProjectFolder }, expectedSourceRevision = project.SourceRevision } });
+    private static async Task PrepareBuiltOutputAsync(BuilderUiFixture fixture, BuilderProjectInspection project)
+    {
+        var identity = await BuilderTestDevelopmentOutput.WriteAsync(project, BuilderProjectDriverOutputs.DevelopmentFolder(project, "Debug"));
+        fixture.Development.PackageIdResolver = _ => project.PackageId;
+        fixture.Development.AfterLoad = session => session.Status = session.Status with { AppliedRevision = new(Guid.NewGuid(), 1, identity) };
+    }
     private static async Task WaitForOperationAsync(BuilderDevelopmentService service, string id, string request, string state)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -118,4 +133,6 @@ public sealed class BuilderDevelopmentServiceTests
             await Task.Delay(10, timeout.Token);
         }
     }
+
+    public void Dispose() => Directory.Delete(_root, recursive: true);
 }

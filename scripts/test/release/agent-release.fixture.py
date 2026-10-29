@@ -232,7 +232,7 @@ class ReleaseTests(unittest.TestCase):
                 release.package_imports(bad)
         bad = copy.deepcopy(lock)
         del bad["packageImports"]["example.owner"]["consumerRoles"]
-        with self.assertRaisesRegex(release.Invalid, "consumer-roles-migration-required"):
+        with self.assertRaisesRegex(release.Invalid, "consumer-roles-required"):
             release.package_imports(bad)
         bad = copy.deepcopy(lock)
         bad["packageImports"]["example.owner"]["unknown"] = True

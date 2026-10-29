@@ -162,7 +162,7 @@ public sealed partial class BuilderToolchainService
                 {
                     foreach (var sdk in ParseSdks(discovered.StandardOutput).Take(64))
                     {
-                        if (!BuilderToolchainPolicy.IsSupported(kind, sdk.Version)) continue;
+                         if (sdk.Version != versions.DotnetSdkVersion) continue;
                         if (!string.Equals(Path.GetFileName(sdk.SdkPath), "sdk", StringComparison.OrdinalIgnoreCase)) continue;
                         var sdkRoot = Path.GetDirectoryName(sdk.SdkPath)!;
                         var muxer = Path.Combine(sdkRoot, OperatingSystem.IsWindows() ? "dotnet.exe" : "dotnet");
@@ -176,7 +176,7 @@ public sealed partial class BuilderToolchainService
                 else
                 {
                     var version = discovered.StandardOutput.Trim().TrimStart('v');
-                    if (BuilderToolchainPolicy.IsSupported(kind, version))
+                    if (version == versions.NodeVersion)
                     {
                         // Version-manager shims are discovery inputs only; builds use Node's actual executable.
                         var resolved = await RunProbeAsync(candidate, ["--print", "process.execPath"], Path.Combine(root, "probes"), token).ConfigureAwait(false);
@@ -187,7 +187,8 @@ public sealed partial class BuilderToolchainService
                         var actualBin = Path.GetDirectoryName(actual)!;
                         var actualRoot = Path.GetFileName(actualBin) == "bin" ? Path.GetDirectoryName(actualBin)! : actualBin;
                         candidate = candidate with { ExecutablePath = actual, RootPath = actualRoot, NpmCliPath = FindNpm(original, actualRoot) };
-                        result.Add(await VerifyAsync(candidate with { Version = version }, token).ConfigureAwait(false));
+                         var verified = await VerifyAsync(candidate with { Version = version }, token).ConfigureAwait(false);
+                         if (verified.NpmVersion == versions.NpmVersion) result.Add(verified);
                     }
                 }
             }

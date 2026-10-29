@@ -38,6 +38,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord> _listDetail;
     private readonly SerializedRefreshLoop _runtimeRefresh;
+    private readonly SerializedRefreshLoop _extensionRefresh;
     private readonly Dictionary<string, AgentWorkspaceDraftState> _workspaceDrafts =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressDraftTracking;
@@ -94,12 +95,16 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentWorkspaceRecord>(
             Workspaces,
             static workspace => workspace.WorkspaceId,
-            keyComparer: StringComparer.OrdinalIgnoreCase);
+            keyComparer: StringComparer.OrdinalIgnoreCase,
+            itemComparer: new AgentWorkspaceSnapshotComparer());
         _listDetail.SelectionChanging += OnWorkspaceSelectionChanging;
         _listDetail.SelectionChanged += OnWorkspaceSelectionChanged;
         _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _runtimeRefresh = new SerializedRefreshLoop(
             RefreshWorkspaceListAsync,
+            exception => RunOnUiThread(() => ReportPresentationFailure(exception)));
+        _extensionRefresh = new SerializedRefreshLoop(
+            RefreshExtensionCatalogAsync,
             exception => RunOnUiThread(() => ReportPresentationFailure(exception)));
         _operation.PropertyChanged += OnOperationPropertyChanged;
         _runtimeAvailability = workspaceService as IAgentRuntimeAvailability;
@@ -303,6 +308,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _listDetail.SelectionChanging -= OnWorkspaceSelectionChanging;
         _listDetail.SelectionChanged -= OnWorkspaceSelectionChanged;
         _runtimeRefresh.Dispose();
+        _extensionRefresh.Dispose();
         _listDetail.Dispose();
         _requests.Dispose();
         _lifetimeCancellation.Dispose();
@@ -722,7 +728,20 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             {
                 if (_requests.IsCurrent(request))
                 {
+                    var previousWorkspaceId = SelectedWorkspace?.WorkspaceId;
+                    var previousTargetId = SelectedExecutionTarget?.TargetId;
                     _listDetail.Reconcile(workspaces);
+                    // Execution bindings are a separate projection. An unchanged
+                    // workspace record must not hide an authoritative target change.
+                    if (SelectedWorkspace is { } selected
+                        && string.Equals(previousWorkspaceId, selected.WorkspaceId, StringComparison.OrdinalIgnoreCase)
+                        && !IsWorkspaceDraftDirty(selected.WorkspaceId))
+                    {
+                        var target = ResolveTargetOption(ResolveWorkspaceTargetId(selected.WorkspaceId));
+                        if (!string.Equals(previousTargetId, target.TargetId, StringComparison.OrdinalIgnoreCase)
+                            || !Equals(SelectedExecutionTarget, target))
+                            LoadWorkspace(selected, refreshEditorSections: true);
+                    }
                 }
             }).ConfigureAwait(false);
         }

@@ -5,7 +5,9 @@
     <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\PackageViews\SunderComboBox.cs"
              Link="PackageViews\SunderComboBox.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationCancellation.cs"
-             Link="Presentation\PresentationCancellation.cs" />
+              Link="Presentation\PresentationCancellation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\SectionHelpButton.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\SectionHeader.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\ResponsiveGrid.cs"
+             LinkBase="Presentation" />
     <Compile Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\OperationState.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationDispatcher.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationExceptionPolicy.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationTaskScope.cs;$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\TimedStatusController.cs"
              LinkBase="Presentation" />
     <AvaloniaResource Include="$(MSBuildThisFileDirectory)..\Sunder.Package.Agent.Shared\Presentation\PresentationStyles.axaml"

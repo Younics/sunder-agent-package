@@ -21,7 +21,7 @@ public sealed partial class AgentProfilesViewModel
             _tasks.Run(async cancellationToken =>
             {
                 await _runtimeRefresh.MarkDirty().WaitAsync(cancellationToken).ConfigureAwait(false);
-                await RefreshSelectedProfileCapabilitiesOnUiThreadAsync(cancellationToken)
+                await _capabilityRefresh.MarkDirty().WaitAsync(cancellationToken)
                     .ConfigureAwait(false);
             });
         }
@@ -37,7 +37,7 @@ public sealed partial class AgentProfilesViewModel
         {
             if (_isInitialized)
             {
-                _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync());
+                _tasks.Run(token => _capabilityRefresh.MarkDirty().WaitAsync(token));
             }
             else if (!_disposed)
             {

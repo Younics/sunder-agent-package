@@ -10,6 +10,7 @@ public sealed partial class BuilderViewModel
     public Task HotreloadSelectedProjectAsync() => ProjectOperationAsync("hotreload");
     public Task CreatePackageArchiveAsync() => ProjectOperationAsync("archive");
     public Task RetrySelectedSetupAsync() => ProjectOperationAsync("setup");
+    public Task UpgradeSelectedToolchainAsync() => ProjectOperationAsync("upgrade-toolchain");
     public Task SaveSelectedMetadataAsync() => ProjectOperationAsync("save-metadata");
 
     private Task ProjectOperationAsync(string operation)

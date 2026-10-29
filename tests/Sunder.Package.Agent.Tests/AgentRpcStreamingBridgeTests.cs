@@ -400,6 +400,7 @@ public sealed class AgentRpcStreamingBridgeTests
         public AgentRunCheckpointRecord SaveCheckpoint(AgentRunStatus status, string? summary) => throw new NotSupportedException();
         public void LogEvent(PackageLogLevel level, string eventName, string message, long? elapsedMilliseconds = null, IReadOnlyDictionary<string, object?>? attributes = null, Exception? exception = null) { }
         public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content) => throw new NotSupportedException();
+        public AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn) => throw new NotSupportedException();
         public ValueTask PublishLifecycleEventAsync(AgentLifecycleEventKind kind, AgentRunStatus status, AgentTurnRecord? triggerTurn = null, AgentRunCheckpointRecord? checkpoint = null, bool isInterrupted = false, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<AgentToolCallOutcome> InvokeToolAsync(AgentToolCallRequest toolCall, AgentTurnRecord? assistantTurn, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public ValueTask<IReadOnlyList<AgentToolCallOutcome>> InvokeToolsAsync(IReadOnlyList<AgentToolCallRequest> toolCalls, AgentTurnRecord? assistantTurn, CancellationToken cancellationToken = default) => throw new NotSupportedException();

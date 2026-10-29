@@ -3,13 +3,15 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.PackageViews"
+             xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
              x:Class="Sunder.Package.Agent.PackageViews.AgentHistorySearchView"
              x:DataType="vm:AgentHistorySearchViewModel"
              Focusable="True"
              KeyDown="OnViewKeyDown"
-             mc:Ignorable="d">
+             mc:Ignorable="d" Classes="agent-page">
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="Border.history-shell">
       <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Base}" />
       <Setter Property="ClipToBounds" Value="True" />
@@ -32,17 +34,17 @@
       <Setter Property="Padding" Value="30,24,30,36" />
     </Style>
     <Style Selector="TextBlock.history-title">
-      <Setter Property="FontSize" Value="21" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
     <Style Selector="TextBlock.history-caption">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
     <Style Selector="Label.history-label">
-      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="Padding" Value="0" />
@@ -88,7 +90,7 @@
       <Setter Property="MinWidth" Value="0" />
     </Style>
     <Style Selector="TextBlock.history-section-title">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.SectionTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
@@ -172,19 +174,19 @@
       <Setter Property="Padding" Value="8,9" />
     </Style>
     <Style Selector="TextBlock.history-result-header">
-      <Setter Property="FontSize" Value="11" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
     </Style>
     <Style Selector="TextBlock.history-result-metadata-label">
-      <Setter Property="FontSize" Value="10" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
     <Style Selector="TextBlock.history-result-metadata-value">
-      <Setter Property="FontSize" Value="11" />
-      <Setter Property="FontFamily" Value="Menlo,Consolas,monospace" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
+      <Setter Property="FontFamily" Value="{DynamicResource Sunder.Agent.FontFamily.Code}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextTrimming" Value="CharacterEllipsis" />
       <Setter Property="TextWrapping" Value="NoWrap" />
@@ -206,9 +208,7 @@
               HorizontalAlignment="Stretch">
         <StackPanel Spacing="12" MinWidth="0" HorizontalAlignment="Stretch">
           <StackPanel Spacing="2">
-            <TextBlock Classes="history-title" Text="History" />
-             <TextBlock Classes="history-caption"
-                        Text="Local messages, paths, and activity." />
+            <p:SectionHeader Title="History" IsPageTitle="True" HelpText="Search local messages, file paths, and activity. Advanced filters narrow results by workspace, session, agent, or time." />
           </StackPanel>
 
           <Grid x:Name="HistorySearchProgressHost"
@@ -518,7 +518,7 @@
                               HorizontalAlignment="Left"
                               IsVisible="{Binding HasActivityLabel}">
                         <TextBlock Text="{Binding ActivityLabel}"
-                                   FontSize="10"
+                                   FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                    FontWeight="SemiBold"
                                    Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
                       </Border>
@@ -561,7 +561,7 @@
                        Spacing="4"
                        AutomationProperties.LiveSetting="Polite">
             <TextBlock Text="{Binding EmptyTitle}"
-                       FontSize="17"
+                       FontSize="{DynamicResource Sunder.FontSize.SectionTitle}"
                        FontWeight="SemiBold"
                        TextAlignment="Center"
                        TextWrapping="Wrap" />

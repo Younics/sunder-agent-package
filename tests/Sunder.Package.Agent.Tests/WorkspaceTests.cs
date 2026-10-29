@@ -2450,6 +2450,37 @@ public sealed class WorkspaceTests
         Assert.Equal(1, contributor.GetSectionsCallCount);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AgentWorkspacesViewModel_BindingOnlyChangesRefreshCleanSelectionButPreserveDrafts(bool dirty)
+    {
+        using var scope = TestScope.Create();
+        var store = new AgentLocalStore(scope.Context);
+        using var catalog = new TestExtensionCatalog();
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, new CountingExecutionTarget("docker"));
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, new CountingExecutionTarget("local"));
+        catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, new CountingWorkspaceEditorContributor("docker"));
+        catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors, new CountingWorkspaceEditorContributor("local"));
+        var service = new AgentWorkspaceService(store);
+        var workspace = service.CreateWorkspace("Workspace");
+        service.SavePrimaryExecutionBinding(workspace.WorkspaceId, "docker");
+        using var model = new AgentWorkspacesViewModel(AppWorkspace(service),
+            AppExecution(new AgentExecutionTargetService(catalog.ExecutionTargets)), catalog.WorkspaceEditors);
+        await model.InitializeAsync();
+        await model.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+        if (dirty) model.DisplayName = "Unsaved name";
+
+        service.SavePrimaryExecutionBinding(workspace.WorkspaceId, "local");
+        await model.CurrentRuntimeRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+        await model.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(5));
+
+        Assert.Equal(workspace.UpdatedAtUtc, service.GetWorkspace(workspace.WorkspaceId)!.UpdatedAtUtc);
+        Assert.Equal(dirty ? "docker" : "local", model.SelectedExecutionTarget?.TargetId);
+        Assert.Equal(dirty ? "docker" : "local", Assert.Single(model.EditorSections).Context.TargetId);
+        Assert.Equal(dirty ? "Unsaved name" : "Workspace", model.DisplayName);
+    }
+
     [Fact]
     public async Task AgentWorkspacesViewModel_SaveWorkspace_DoesNotRefreshEditorSectionsAndReturnsToList()
     {
@@ -2663,6 +2694,10 @@ public sealed class WorkspaceTests
             viewModel.AddWorkspacePath(secondPath);
             viewModel.AddWorkspaceDocument(secondDocument);
             contributedField.Value = "newer contributed value";
+            var pathRow = viewModel.WorkspacePaths[0];
+            var documentRow = viewModel.WorkspaceDocuments[0];
+            pathRow.BeginEdit();
+            pathRow.EditHostPath = "unfinished inline edit";
             workspaceService.SaveWorkspace(workspace.WorkspaceId, "Runtime refresh value", "Runtime refresh description");
             await viewModel.CurrentRuntimeRefresh.WaitAsync(TimeSpan.FromSeconds(2));
 
@@ -2670,6 +2705,10 @@ public sealed class WorkspaceTests
             Assert.Equal("Newer draft description", viewModel.Description);
             Assert.Equal(2, viewModel.WorkspacePaths.Count);
             Assert.Equal(2, viewModel.WorkspaceDocuments.Count);
+            Assert.Same(pathRow, viewModel.WorkspacePaths[0]);
+            Assert.Same(documentRow, viewModel.WorkspaceDocuments[0]);
+            Assert.True(pathRow.IsEditActive);
+            Assert.Equal("unfinished inline edit", pathRow.EditHostPath);
             Assert.Same(section, Assert.Single(viewModel.EditorSections));
             Assert.Equal("newer contributed value", contributedField.Value);
 
@@ -2684,6 +2723,8 @@ public sealed class WorkspaceTests
             Assert.Equal(2, viewModel.WorkspaceDocuments.Count);
             Assert.True(viewModel.SelectedExecutionTarget?.IsUnconfigured);
             Assert.Contains("remain unsaved", viewModel.StatusText, StringComparison.OrdinalIgnoreCase);
+            Assert.True(section.CanRetain(section.ContributorReference, section.Context,
+                section.Descriptor! with { Title = "External metadata after save" }));
         }
         finally
         {

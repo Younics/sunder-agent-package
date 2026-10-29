@@ -1,10 +1,12 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Sunder.Package.Agent.Execution.Docker"
+             xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              x:Class="Sunder.Package.Agent.Execution.Docker.DockerExecutionSettingsView"
-             x:DataType="vm:DockerExecutionSettingsViewModel">
+             x:DataType="vm:DockerExecutionSettingsViewModel" Classes="agent-page">
+  <UserControl.Styles><StyleInclude Source="/Presentation/PresentationStyles.axaml" /></UserControl.Styles>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Margin="0,0,0,8"
+    <StackPanel Margin="{DynamicResource Sunder.Padding.Panel}"
                  Spacing="16">
       <Border Classes="card-surface"
               IsVisible="{Binding IsLoading}">
@@ -31,15 +33,9 @@
               IsVisible="{Binding IsReady}"
               IsEnabled="{Binding CanMutate}">
         <StackPanel Spacing="12">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Docker Images" />
-            <TextBlock Classes="caption"
-                       Text="Manage images with an explicit tag or sha256 digest. Tagless references are rejected; tagged references are resolved to an immutable local image ID before launch. Containers use bounded resources and no network by default, but writable bind mounts mean Docker execution is not a complete security sandbox."
-                       TextWrapping="Wrap" />
-          </StackPanel>
+          <p:SectionHeader Title="Docker images" HelpText="Use an explicit image tag or sha256 digest. Tagged images resolve to a local image ID before launch. Containers have bounded resources and no network by default. Writable folder mounts mean Docker execution is not a complete security sandbox." />
 
-          <Grid ColumnDefinitions="*,Auto"
+          <p:ResponsiveGrid ColumnDefinitions="*,Auto"
                 ColumnSpacing="10">
             <TextBox Text="{Binding NewImageReference, Mode=TwoWay}"
                      PlaceholderText="repository/image:1.2.3 or repository/image@sha256:..." />
@@ -47,7 +43,7 @@
                     Classes="secondary-action"
                     Content="Add Image"
                     Command="{Binding AddImageCommand}" />
-          </Grid>
+          </p:ResponsiveGrid>
 
           <ListBox ItemsSource="{Binding Images}"
                    SelectedItem="{Binding SelectedImage, Mode=TwoWay}"
@@ -55,7 +51,7 @@
                    IsVisible="{Binding HasImages}">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:DockerImageRowViewModel">
-                <Grid ColumnDefinitions="*,Auto"
+                <p:ResponsiveGrid ColumnDefinitions="*,Auto"
                       RowDefinitions="Auto,Auto,Auto"
                       ColumnSpacing="12"
                       RowSpacing="4"
@@ -65,10 +61,10 @@
                              TextWrapping="Wrap" />
                   <Border Grid.Column="1"
                           Padding="8,3"
-                          CornerRadius="8"
+                          CornerRadius="{DynamicResource Sunder.Radius.Small}"
                           Background="{DynamicResource Sunder.Brush.Info.Soft}">
                     <TextBlock Text="{Binding StatusText}"
-                               FontSize="12"
+                               FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                Foreground="{DynamicResource Sunder.Brush.Accent}" />
                   </Border>
                   <TextBlock Grid.Row="1"
@@ -83,13 +79,13 @@
                              Text="{Binding ErrorMessage}"
                              TextWrapping="Wrap"
                              IsVisible="{Binding HasErrorMessage}" />
-                </Grid>
+                </p:ResponsiveGrid>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
 
           <TextBlock Classes="caption"
-                     Text="No Docker images are configured. Add one above before assigning Docker execution to a workspace."
+                     Text="No images. Add an image reference above."
                      TextWrapping="Wrap"
                      IsVisible="{Binding !HasImages}" />
 
@@ -107,7 +103,7 @@
                     Margin="0,0,8,8"
                     Command="{Binding RefreshAllImagesCommand}" />
             <Button Classes="secondary-action compact-action danger-action"
-                    Content="Delete Selected"
+                    Content="Delete"
                     Margin="0,0,8,8"
                     Command="{Binding DeleteSelectedImageCommand}" />
           </WrapPanel>
@@ -118,20 +114,12 @@
               IsVisible="{Binding IsReady}"
               IsEnabled="{Binding CanMutate}">
         <StackPanel Spacing="12">
-          <StackPanel Spacing="6">
-            <TextBlock Classes="section-title"
-                       Text="Execution" />
-            <TextBlock Classes="caption"
-                       Text="Default timeout used by Docker shell and process commands."
-                       TextWrapping="Wrap" />
-          </StackPanel>
+          <p:SectionHeader Title="Timeout (seconds)" HelpText="Default timeout for Docker shell and process commands when no limit is specified." />
           <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
                     PlaceholderText="300" />
           <StackPanel Spacing="6">
-            <TextBlock Classes="caption"
-                       Text="Optional Docker CLI path. Leave empty to auto-detect Docker Desktop, Homebrew, or system Docker installs."
-                       TextWrapping="Wrap" />
-            <Grid ColumnDefinitions="*,Auto,Auto"
+            <p:SectionHeader Title="Docker executable" HelpText="Leave unset to detect Docker Desktop, Homebrew, or a system installation automatically." />
+            <p:ResponsiveGrid ColumnDefinitions="*,Auto,Auto"
                   ColumnSpacing="8">
               <TextBox Text="{Binding DockerCliPath}"
                        IsReadOnly="True"
@@ -144,7 +132,7 @@
                       Classes="secondary-action compact-action"
                       Content="Auto-detect"
                       Command="{Binding ClearDockerCliPathCommand}" />
-            </Grid>
+            </p:ResponsiveGrid>
           </StackPanel>
           <WrapPanel Orientation="Horizontal">
             <Button Classes="primary-action"

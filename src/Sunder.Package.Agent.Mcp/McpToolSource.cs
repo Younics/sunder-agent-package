@@ -73,7 +73,7 @@ public sealed partial class McpToolSource(
                 Kind = AgentProfileSelectableCapabilityKinds.ToolGroup, CapabilityId = server.ServerId, SourceId = SourceId,
                 DisplayName = server.DisplayName, Description = server.Description, StatusText = server.StatusText,
                 IsSelectable = true, SourceDisplayName = DisplayName, GroupId = SourceId, GroupDisplayName = "MCP Servers",
-                GroupDescription = "Configured Model Context Protocol servers.", GroupSortOrder = 20,
+                GroupDescription = "Configured Model Context Protocol servers.", GroupSortOrder = 20, GroupAllowsBulkSelection = false,
             })
             .ToArray();
     }
@@ -474,7 +474,7 @@ public sealed partial class McpToolSource(
             IsReadOnly = false, RequiresNetwork = server.TransportType == ConfiguredMcpTransportType.HttpSse,
             ArgumentsJsonSchema = augmentedSchema.Schema.GetRawText(), SourceKind = "mcp", SourceId = server.ServerId,
             SourceDisplayName = server.DisplayName, SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = server.ServerId,
-            SelectionGroupDisplayName = server.DisplayName, SelectionGroupDescription = server.Description,
+            SelectionGroupDisplayName = server.DisplayName, SelectionGroupDescription = server.Description, SelectionGroupAllowsBulkSelection = false,
             Aliases = [], RuntimeInstructions = null, ActivationRequirement = null,
             Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
         };

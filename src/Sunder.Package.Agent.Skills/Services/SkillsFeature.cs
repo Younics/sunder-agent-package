@@ -37,7 +37,7 @@ public sealed partial class SkillsFeature(SkillStore store, IServiceProviders<IR
             """,
             SourceKind = "skills", SourceId = SkillConstants.PackageId, SourceDisplayName = "Agent Skills",
             SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = SkillConstants.SkillToolGroupId,
-            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.",
+            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.", SelectionGroupAllowsBulkSelection = false,
             RuntimeInstructions = "Use `skill` only after the current task matches an enabled skill from the Skills prompt block.",
             ActivationRequirement = ActivationRequirement, Aliases = null, Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
         },
@@ -50,7 +50,7 @@ public sealed partial class SkillsFeature(SkillStore store, IServiceProviders<IR
             """,
             SourceKind = "skills", SourceId = SkillConstants.PackageId, SourceDisplayName = "Agent Skills",
             SelectionScope = AgentToolSelectionScope.Group, SelectionGroupId = SkillConstants.SkillToolGroupId,
-            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.",
+            SelectionGroupDisplayName = "Agent Skills", SelectionGroupDescription = "Load enabled Agent Skills and read their bundled resources.", SelectionGroupAllowsBulkSelection = false,
             RuntimeInstructions = "Use `skill_resource` for references/assets after loading a relevant skill. Paths are relative to that skill folder.",
             ActivationRequirement = ActivationRequirement, Aliases = null, Priority = AgentToolPriority.Medium, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
         },
@@ -92,7 +92,7 @@ public sealed partial class SkillsFeature(SkillStore store, IServiceProviders<IR
                 Kind = SkillConstants.CapabilityKind, CapabilityId = skill.SkillId, SourceId = SkillConstants.PackageId,
                 DisplayName = SkillStore.ResolveDisplayName(skill), Description = skill.Description, StatusText = BuildStatusText(skill),
                 IsSelectable = true, SourceDisplayName = DisplayName, GroupId = SkillConstants.SkillToolGroupId,
-                GroupDisplayName = DisplayName, GroupDescription = "Reusable skills exposed to the agent.", GroupSortOrder = 30,
+                GroupDisplayName = DisplayName, GroupDescription = "Reusable skills exposed to the agent.", GroupSortOrder = 30, GroupAllowsBulkSelection = false,
             })
             .ToArray());
     }

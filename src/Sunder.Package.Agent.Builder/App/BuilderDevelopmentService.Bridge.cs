@@ -58,10 +58,8 @@ public sealed partial class BuilderDevelopmentService
                             "query" => QueryPackageAsync(command.RequestJson, token),
                             "view-query" => QueryViewAsync(command.RequestJson, token),
                             "screenshot" => ScreenshotAsync(command.RequestJson, token),
-                            "inspect-view" => InspectViewAsync(command.RequestJson, token),
                             "observe" => GetOperationAsync(command.OperationId, command.RequestJson, token),
                             "apply" or "open-view" or "input-view" => StartToolsetOperationAsync(command.OperationId, command.Operation, command.RequestJson, token),
-                            "build" or "hotreload" or "interact-view" => StartOperationAsync(command.OperationId, command.Operation, command.RequestJson, token),
                             _ => throw new InvalidDataException("Unknown Maker App request."),
                         };
                         using var json = await BuilderContent.ReadAsync<JsonDocument>(result, token).ConfigureAwait(false);
@@ -73,7 +71,7 @@ public sealed partial class BuilderDevelopmentService
                         // An accepted mutation remains observable by its original
                         // operation id even if rendering its acknowledgement failed.
                         bool unknown;
-                        lock (_sync) unknown = _operations.ContainsKey(command.OperationId) || _toolsetOperations.ContainsKey(command.OperationId);
+                        lock (_sync) unknown = _toolsetOperations.ContainsKey(command.OperationId);
                         error = new BuilderDevelopmentFailure(code!, BuilderJobText.Safe(failure.Message, 4096), unknown).Encode();
                     }
                     await worker.Service.CompleteDevelopmentCommandAsync(_appId, command.RequestId, response, error, token).ConfigureAwait(false);

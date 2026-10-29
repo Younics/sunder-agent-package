@@ -49,7 +49,12 @@ public sealed class OwnerRpcFaultMappingTests
         Assert.True(SubagentOwnerJson.ShouldMap(new SubagentOwnerOperationException("expected")));
 
         using var package = RegressionTestPackageScope.Create();
-        await using var builder = new BuilderRuntimeService(package.Context);
+        var builderContext = new Sunder.Package.Agent.TestSupport.TestPackageContext(package.Context.PackageId,
+            package.RootPath, storage: package.Context.Storage)
+        {
+            DevelopmentToolchain = new("10.0.403", "24.22.1", "11.19.1"),
+        };
+        await using var builder = new BuilderRuntimeService(builderContext);
         var builderRegistration = builder.CreateSunderRpcProviderRegistration();
 
         var builderAuthored = await Assert.ThrowsAsync<SunderRpcException>(() => InvokeAsync(

@@ -56,7 +56,7 @@ public sealed class BuilderProjectDriverToolchains(BuilderToolchainService servi
     public async Task<IBuilderProjectDriverSelection> SelectAsync(BuilderProjectKind kind, string? projectDirectory,
         BuilderToolchainInstallation? preferred, IProgress<string>? progress, CancellationToken cancellationToken)
     {
-        if (preferred is not null && (preferred.Kind != kind || !BuilderToolchainPolicy.IsSupported(kind, preferred.Version)))
+        if (preferred is not null && (preferred.Kind != kind || !service.IsCurrent(preferred)))
             throw new InvalidOperationException("The prepared toolchain does not match this project.");
         var selection = preferred is not null && projectDirectory is null
             ? await service.AcquireLeaseAsync(preferred, cancellationToken).ConfigureAwait(false)

@@ -1,10 +1,8 @@
-extern alias BuilderApp;
-
 using System.Text.Json;
+using Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
-using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -17,13 +15,15 @@ public sealed partial class BuilderDevelopmentRelayTests
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
         var (session, snapshot) = await LoadViewAsync(fixture);
-        var request = ViewInspect(fixture);
+        var view = await ViewReferenceAsync(fixture, tools);
+        var request = ViewInspect(view);
         Assert.Null(await tools.ValidateArgumentsAsync(request));
         var inspected = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, request);
         Assert.False(inspected.IsError, inspected.Content);
-        Assert.Contains(snapshot.SnapshotId, inspected.Content, StringComparison.Ordinal);
-        Assert.Contains("untrusted", inspected.Summary, StringComparison.OrdinalIgnoreCase);
-        var input = ViewInput(fixture, snapshot);
+        Assert.DoesNotContain(snapshot.SnapshotId, inspected.Content, StringComparison.Ordinal);
+        Assert.Contains("Untrusted package label", inspected.Content, StringComparison.Ordinal);
+        var element = ElementReference(inspected);
+        var input = ViewInput(element);
         var inputContext = fixture.Context with { ToolCallId = "input-view" };
         Assert.Null(await tools.PreflightAsync(inputContext, input));
         var permission = await tools.PermissionAsync(inputContext, input);
@@ -32,24 +32,23 @@ public sealed partial class BuilderDevelopmentRelayTests
         var accepted = await tools.ExecuteAsync(inputContext, input);
         Assert.False(accepted.IsError, accepted.Content);
         using var acceptance = JsonDocument.Parse(accepted.Content!);
-        var id = acceptance.RootElement.GetProperty("operationId").GetString()!;
-        await fixture.ObserveAsync(tools, id, "dispatched");
+        Assert.Equal("dispatched", acceptance.RootElement.GetProperty("status").GetString());
         var result = await tools.ExecuteAsync(inputContext, input);
         Assert.False(result.IsError, result.Content);
-        Assert.Contains("no input was replayed", result.Summary, StringComparison.Ordinal);
-        Assert.Equal(id, Assert.Single(session.ViewInputs).OperationId);
+        Assert.Equal(accepted.Content, result.Content);
+        Assert.Single(session.ViewInputs);
         Assert.Empty(fixture.Backend.Starts);
         Assert.Equal(0, fixture.PageResolutions);
 
         foreach (var invalid in new[]
         {
-            ViewInput(fixture, snapshot with { SnapshotId = Guid.NewGuid().ToString("N") }),
-            ViewInput(fixture, snapshot with { ViewId = "other.view" }),
-            ViewInput(fixture, snapshot, action: "toggle"),
+            ViewInput("e" + Guid.NewGuid().ToString("N")),
+            ViewInput(view),
+            ViewInput(element, action: "toggle"),
         })
         {
-            var rejected = await tools.PreflightAsync(inputContext with { ToolCallId = Guid.NewGuid().ToString("N") }, invalid);
-            Assert.True(rejected!.IsError);
+            var rejected = await tools.ExecuteAsync(inputContext with { ToolCallId = Guid.NewGuid().ToString("N") }, invalid);
+            Assert.True(rejected.IsError);
         }
         Assert.Single(session.ViewInputs);
     }
@@ -62,10 +61,10 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        var (session, snapshot) = await LoadViewAsync(fixture);
-        await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(fixture));
+        var (session, _) = await LoadViewAsync(fixture);
+        var inspected = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(await ViewReferenceAsync(fixture, tools)));
         var context = fixture.Context with { ToolCallId = "input-view" };
-        var input = ViewInput(fixture, snapshot);
+        var input = ViewInput(ElementReference(inspected));
         Assert.Null(await tools.PreflightAsync(context, input));
         if (boundary == "source") fixture.Backend.Projects[fixture.Project.EntryPoint] = fixture.Project with { SourceRevision = "changed" };
         if (boundary == "configuration") fixture.Target.Configuration = "changed";
@@ -81,16 +80,15 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        var (session, snapshot) = await LoadViewAsync(fixture);
-        await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(fixture));
+        var (session, _) = await LoadViewAsync(fixture);
+        var inspected = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(await ViewReferenceAsync(fixture, tools)));
         var context = fixture.Context with { ToolCallId = "input-view" };
-        var input = ViewInput(fixture, snapshot);
+        var input = ViewInput(ElementReference(inspected));
         Assert.Null(await tools.PreflightAsync(context, input));
         var completing = BuilderUiFixture.Signal(); var release = BuilderUiFixture.Signal();
         fixture.Transport.Before = async (method, response, token) =>
         {
-            if (method != "complete-development-command" || !response.EnumerateObject().Any(property => property.Value.ValueKind == JsonValueKind.String
-                && property.Value.GetString()!.Contains("\"operationId\"", StringComparison.Ordinal))) return;
+            if (method != "complete-development-command" || !ContainsOperationReceipt(response)) return;
             completing.TrySetResult(); await release.Task.WaitAsync(token);
         };
         using var caller = new CancellationTokenSource();
@@ -105,7 +103,7 @@ public sealed partial class BuilderDevelopmentRelayTests
             fixture.Backend.Projects[fixture.Project.EntryPoint] = fixture.Project with { SourceRevision = "later" };
             var recovered = await tools.ExecuteAsync(context, input);
             Assert.False(recovered.IsError, recovered.Content);
-            Assert.Contains("no input was replayed", recovered.Summary, StringComparison.Ordinal);
+            Assert.Equal(recovered.Content, (await tools.ExecuteAsync(context, input)).Content);
             Assert.Single(session.ViewInputs);
         }
         finally { release.TrySetResult(); }
@@ -116,47 +114,49 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        var (session, snapshot) = await LoadViewAsync(fixture);
+        var (session, _) = await LoadViewAsync(fixture);
         session.OnViewInput = (_, _) => throw new IOException("The native input may have dispatched before its reply was lost.");
-        Assert.False((await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(fixture))).IsError);
+        var inspected = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "inspect-view" }, ViewInspect(await ViewReferenceAsync(fixture, tools)));
         var context = fixture.Context with { ToolCallId = "input-view" };
-        var input = ViewInput(fixture, snapshot);
+        var input = ViewInput(ElementReference(inspected));
         Assert.Null(await tools.PreflightAsync(context, input));
         var accepted = await tools.ExecuteAsync(context, input);
+        Assert.True(accepted.IsError);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, accepted.ErrorCode);
         using var acceptance = JsonDocument.Parse(accepted.Content!);
-        var id = acceptance.RootElement.GetProperty("operationId").GetString()!;
-        var observe = new AgentToolRequest("maker_get_package_info", JsonSerializer.Serialize(new { entryPoint = fixture.Project.EntryPoint, operationId = id }));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        while (true)
-        {
-            var result = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "observe-input" }, observe, timeout.Token);
-            using var json = JsonDocument.Parse(result.Content!);
-            if (json.RootElement.GetProperty("state").GetString() == "failed")
-            {
-                Assert.True(result.IsError);
-                Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, result.ErrorCode);
-                Assert.True(json.RootElement.GetProperty("outcomeUnknown").GetBoolean());
-                break;
-            }
-            await Task.Delay(10, timeout.Token);
-        }
-        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, (await tools.ExecuteAsync(context, input)).ErrorCode);
+        Assert.Equal("unknown", acceptance.RootElement.GetProperty("status").GetString());
+        var duplicate = await tools.ExecuteAsync(context, input);
+        Assert.Equal(accepted.Content, duplicate.Content);
+        Assert.Equal(AgentToolResultErrorCodes.ToolOutcomeAmbiguous, duplicate.ErrorCode);
         Assert.Single(session.ViewInputs);
     }
 
-    private static AgentToolRequest ViewInspect(RelayFixture fixture)
-        => new("maker_inspect_package_view", JsonSerializer.Serialize(new { entryPoint = fixture.Project.EntryPoint, viewId = "local.view" }));
-    private static AgentToolRequest ViewInput(RelayFixture fixture, PackageDevelopmentViewSnapshot snapshot, string action = "invoke")
-        => new("maker_interact_package_view", JsonSerializer.Serialize(new { entryPoint = fixture.Project.EntryPoint, viewId = snapshot.ViewId,
-            snapshotId = snapshot.SnapshotId, elementReference = snapshot.Elements[0].Reference, action }));
+    private static AgentToolRequest ViewInspect(string view)
+        => new("maker_view", JsonSerializer.Serialize(new { target = view }));
+    private static AgentToolRequest ViewInput(string element, string action = "invoke")
+        => new("maker_interact", JsonSerializer.Serialize(new { target = element, action }));
+    private static string ElementReference(AgentToolResult result)
+    {
+        Assert.False(result.IsError, result.Content);
+        using var json = JsonDocument.Parse(result.Content!);
+        return json.RootElement.GetProperty("elements")[0].GetProperty("ref").GetString()!;
+    }
+    private static async Task<string> ViewReferenceAsync(RelayFixture fixture, IToolSourceService tools)
+    {
+        var result = await tools.ExecuteAsync(fixture.Context with { ToolCallId = "discover-view" },
+            new("maker_package", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint, query = "views" })));
+        Assert.False(result.IsError, result.Content);
+        using var json = JsonDocument.Parse(result.Content!);
+        return json.RootElement.GetProperty("views")[0].GetProperty("ref").GetString()!;
+    }
     private static async Task<(BuilderUiSession, PackageDevelopmentViewSnapshot)> LoadViewAsync(RelayFixture fixture)
     {
-        fixture.Development.PackageIdResolver = _ => fixture.Project.PackageId;
-        await fixture.Operations.LoadAsync(fixture.Project, Path.Combine(fixture.Project.ProjectFolder, "sunder-dev"), default);
+        await fixture.LoadOutputAsync();
         var session = Assert.Single(fixture.Development.Sessions);
+        session.Views = [new("local.view", "Example", true)];
         var snapshot = new PackageDevelopmentViewSnapshot(Guid.NewGuid().ToString("N"), fixture.Project.PackageId, "local.view",
-            new(Guid.NewGuid(), 1, new('a', 64)), [new(Guid.NewGuid().ToString("N"), "Button", "Untrusted package label", true, ["invoke"])], false);
-        session.OnInspectView = (_, _) => Task.FromResult(snapshot);
+            new(Guid.NewGuid(), 1, fixture.BuiltIdentity!), [new(Guid.NewGuid().ToString("N"), "Button", "Untrusted package label", true, ["invoke"])], false);
+        session.OnQueryView = (_, _, _) => Task.FromResult(new PackageDevelopmentViewPage(snapshot, false, null));
         return (session, snapshot);
     }
 }

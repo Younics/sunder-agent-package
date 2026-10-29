@@ -19,7 +19,7 @@ public abstract class BuilderObservable : INotifyPropertyChanged
     }
 }
 
-public sealed class BuilderProjectViewModel : BuilderObservable
+public sealed partial class BuilderProjectViewModel : BuilderObservable
 {
     public const int MaximumOutputCharacters = 128 * 1024;
     private BuilderProjectRecord _record;
@@ -128,7 +128,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         : HasError ? "Needs attention" : SetupIncomplete ? "Setup required" : "Unloaded";
     public bool IsBuildRunning => IsBusy && _snapshotState == "running"
         && _phase is BuilderJobPhase.Restoring or BuilderJobPhase.Building or BuilderJobPhase.Validating or BuilderJobPhase.Packaging;
-    public string BuildActionText => "Build Package";
+    public string BuildActionText => "Build";
     public string ActivityText => IsBuildRunning ? _phase switch
         {
             BuilderJobPhase.Restoring => "Restoring dependencies…", BuilderJobPhase.Validating => "Validating package output…",
@@ -148,7 +148,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Unavailable ? "Package UI readiness is unavailable. Open package logs for details."
         : HasSession && _developmentStatus?.AppReadiness == PackageDevelopmentAppReadiness.Pending
             ? IsAppActivationDelayed ? "Package UI activation is taking longer than expected. Open package logs for details." : "Activating package UI…"
-        : HasSession ? "Use Build Package to compile, or Hotreload Package to apply a new revision."
+        : HasSession ? "Use Build to compile, or Hotreload Package to apply a new revision."
         : "Load this project to run it in Sunder.";
     public DateTimeOffset? LastSourceChangeAtUtc => _lastSourceChangeAtUtc;
     public DateTimeOffset? LastSuccessfulBuildAtUtc => _lastSuccessfulBuildAtUtc;
@@ -251,6 +251,7 @@ public sealed class BuilderProjectViewModel : BuilderObservable
         _requestedOperation = operation;
         _phase = BuilderJobPhase.Queued;
         _snapshotState = string.Empty;
+        _dismissedAttention = _dismissedStatus = string.Empty;
         _statusText = _output = _error = string.Empty;
         IsOutputExpanded = false;
     }

@@ -86,7 +86,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         await using (var fixture = await CreateExtension(root, loadContext, assembly, "SelectableCapabilityProvider", descriptors["younics.ai.agent.selectable.capability.provider"]))
         {
             fixture.Probe.Replies["ListAsync"] = """
-                [{"capabilityId":"tool.one","displayName":"Tool","description":null,"groupDescription":null,"groupDisplayName":null,"groupId":null,"groupSortOrder":0,"isSelectable":false,"kind":"tool","sourceDisplayName":null,"sourceId":null,"statusText":null}]
+                [{"capabilityId":"tool.one","displayName":"Tool","description":null,"groupAllowsBulkSelection":false,"groupDescription":null,"groupDisplayName":null,"groupId":null,"groupSortOrder":0,"isSelectable":false,"kind":"tool","sourceDisplayName":null,"sourceId":null,"statusText":null}]
                 """;
             var request = JsonSerializer.SerializeToElement(new { profile = new
             {
@@ -95,6 +95,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             } });
             var result = await fixture.Call("ListAsync", request);
             Assert.False(result[0].GetProperty("isSelectable").GetBoolean());
+            Assert.False(result[0].GetProperty("groupAllowsBulkSelection").GetBoolean());
             Assert.False(result[0].TryGetProperty("description", out _));
             Assert.Equal("{broken", fixture.Probe.LastRequest.GetProperty("behaviorLoopSettingsJson").GetString());
             fixture.Probe.Streams["WatchAsync"] = ["{\"revision\":0}", "{\"revision\":1}"];

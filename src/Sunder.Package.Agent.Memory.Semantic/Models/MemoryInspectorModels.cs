@@ -19,7 +19,11 @@ public sealed record MemoryProjection(
     SemanticMemorySessionStateRecord? SemanticState = null,
     SemanticMemoryReindexResult? ReindexResult = null,
     SemanticMemoryWorkerStatusRecord? WorkerStatus = null,
-    SemanticMemoryMetricsSnapshot? Metrics = null);
+    SemanticMemoryMetricsSnapshot? Metrics = null,
+    MemoryGraphPage? Graph = null);
+
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
+public sealed record MemoryGraphPage(IReadOnlyList<StoredMemoryRecord> Memories, bool HasMore);
 
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 public enum MemoryChangeKind

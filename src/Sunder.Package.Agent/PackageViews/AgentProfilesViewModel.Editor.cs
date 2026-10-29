@@ -9,7 +9,8 @@ public sealed partial class AgentProfilesViewModel
 {
     private async Task LoadSelectedProfileAsync(
         AgentProfileRecord profile,
-        AdaptiveDetailTicket<string> ticket)
+        AdaptiveDetailTicket<string> ticket,
+        bool background)
     {
         var cancellationToken = ticket.Request.CancellationToken;
         var startEditRevision = _editRevision;
@@ -41,8 +42,10 @@ public sealed partial class AgentProfilesViewModel
                 cancellationToken);
 
             await Task.WhenAll(
-                    ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
-                    EmbeddingBinding.RefreshAsync(draft.EmbeddingBinding, cancellationToken),
+                    background && ChatBinding.Selection == draft.ChatBinding ? Task.CompletedTask
+                        : ChatBinding.RefreshAsync(draft.ChatBinding, cancellationToken),
+                    background && EmbeddingBinding.Selection == draft.EmbeddingBinding ? Task.CompletedTask
+                        : EmbeddingBinding.RefreshAsync(draft.EmbeddingBinding, cancellationToken),
                     catalogTask)
                 .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
@@ -57,15 +60,16 @@ public sealed partial class AgentProfilesViewModel
                 _suppressDraftTracking = true;
                 try
                 {
+                    var latestDraft = background && _editRevision != startEditRevision ? CaptureDraft() : draft;
                     HasEmbeddingConsumers = catalog.HasEmbeddingConsumers;
                     ApplyBehaviorLoopSelection(
                         catalog.BehaviorLoops,
-                        draft.BehaviorLoopId,
-                        draft.BehaviorLoopSourceId);
+                        latestDraft.BehaviorLoopId,
+                        latestDraft.BehaviorLoopSourceId);
                     ApplyCapabilityOptions(
                         catalog.LocalTools,
                         catalog.PackageCapabilities,
-                        draft.CapabilityAssignments,
+                        latestDraft.CapabilityAssignments,
                         preserveCurrent: false);
                 }
                 finally
@@ -96,7 +100,7 @@ public sealed partial class AgentProfilesViewModel
         {
             await _uiDispatcher.InvokeAsync(() =>
             {
-                if (_listDetail.TrySetDetailError(ticket, ex))
+                if (background ? _listDetail.TrySetDetailReady(ticket) : _listDetail.TrySetDetailError(ticket, ex))
                 {
                     SetStatus(ex.Message, AgentProfileStatusKind.Error);
                 }
@@ -141,7 +145,6 @@ public sealed partial class AgentProfilesViewModel
 
         var intentRevision = IntentRevision;
         var request = _requests.Begin(CapabilitiesChannel, _lifetimeCancellation.Token);
-        var operation = BeginOperation(AgentProfileOperation.RefreshCapabilities);
         try
         {
             var requestProfile = BuildCapabilityRequestProfile(profile, CaptureDraft());
@@ -204,13 +207,6 @@ public sealed partial class AgentProfilesViewModel
         finally
         {
             _requests.Complete(request);
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (!_disposed)
-                {
-                    EndOperation(operation);
-                }
-            }).ConfigureAwait(false);
         }
     }
 

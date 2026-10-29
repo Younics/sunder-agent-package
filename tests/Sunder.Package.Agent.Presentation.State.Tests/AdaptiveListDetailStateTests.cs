@@ -404,6 +404,30 @@ public sealed class AdaptiveListDetailStateTests
         Assert.True(state.TrySetDetailReady(current));
     }
 
+    [Fact]
+    public void BackgroundDetailRefresh_RetainsReadyContentButStillRejectsSupersededResults()
+    {
+        var items = new ObservableCollection<TestRow>();
+        using var state = CreateState(items);
+        state.Reconcile([new("one", "One"), new("two", "Two")]);
+        Assert.True(state.TrySetDetailReady(state.BeginDetailLoad(TestContext.Current.CancellationToken)));
+        var phases = new List<AdaptiveDetailPhase>();
+        state.PropertyChanged += (_, _) => phases.Add(state.DetailPhase);
+
+        var first = state.BeginDetailLoad(TestContext.Current.CancellationToken, retainReady: true);
+        var second = state.BeginDetailLoad(TestContext.Current.CancellationToken, retainReady: true);
+
+        Assert.Equal(AdaptiveDetailPhase.Ready, state.DetailPhase);
+        Assert.Equal("one", state.ReadyKey);
+        Assert.False(state.TrySetDetailReady(first));
+        Assert.DoesNotContain(AdaptiveDetailPhase.Loading, phases);
+        state.ShowExistingDetail("two");
+        Assert.False(state.TrySetDetailReady(second));
+        var third = state.BeginDetailLoad(TestContext.Current.CancellationToken, retainReady: true);
+        Assert.Equal(AdaptiveDetailPhase.Loading, state.DetailPhase);
+        Assert.True(state.TrySetDetailReady(third));
+    }
+
     private static KeyedAdaptiveListDetailState<string, TestRow> CreateState(
         ObservableCollection<TestRow> items)
         => new(

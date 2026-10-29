@@ -110,6 +110,23 @@ native six-RID/security and release gates. The local artifact case is not a subs
 for those scopes. See [native inputs](native-release-inputs.md),
 [cold inputs](cold-release-inputs.md) and [release requirements](RELEASES.md).
 
+## Non-Chat presentation checks
+
+`FamilyUiFoundationTests` exercises keyboard-opened help, theme-resource changes,
+responsive cell restoration, and graph drag/zoom/viewport retention.
+`MemoryInspectorAuthorityRaceTests` owns bounded paging, keyed drafts, expanded
+neighbor selection, and late-save authority. The rendered Memory Inspector check
+in `ViewLifecycleTests.MemoryUi.cs` covers Graph/Data synchronization, editor
+identity/focus/selection, expansion and scrolling through refresh and resize.
+
+Set `SUNDER_UI_CAPTURE_ROOT` to a scratch directory to render optional PNGs during
+the source-App presentation tests. Capture mode uses their optional Skia renderer
+with the headless platform; ordinary NuGet-mode tests do not acquire Skia. It does
+not launch or reload Sunder. Settings, provider and inspector layout tests capture
+their existing synthetic fixtures. These are local rendering checks, not native
+shell or production-provider acceptance. Chat source and appearance are outside
+this refactor.
+
 ## Current expectations and inert history
 
 Current role tests use generated implementations checked against the independent

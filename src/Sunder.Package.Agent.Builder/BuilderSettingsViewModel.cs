@@ -146,8 +146,9 @@ public sealed class BuilderSdkCardViewModel(BuilderProjectKind kind) : BuilderOb
     public bool IsEmpty => _status is not null && Installations.Count == 0;
     public string CurrentVersion => _status is null ? IsRefreshing ? "Checking…" : "Not checked" : string.Join(", ", _status.Installed.Where(item => item.IsHealthy).Select(item => item.Version).Distinct()) is { Length: > 0 } versions ? versions : "Not installed";
     public string RecommendedVersion => _status?.RecommendedVersion ?? (IsRefreshing ? "Checking…" : "Unknown");
-    public string VersionText => $"Current: {CurrentVersion} · Recommended: {RecommendedVersion}";
-    public string PrimaryActionText => IsEmpty ? "Install SDK" : _status?.UpdateAvailable == true ? "Update SDK" : "Install / update SDK";
+    public string VersionText => $"Installed: {CurrentVersion} · Sunder version: {RecommendedVersion}";
+    public string PrimaryActionText => IsEmpty ? "Install SDK" : _status is { UpdateAvailable: true, CatalogError: null } ? "Update SDK" : string.Empty;
+    public bool ShowPrimaryAction => !IsRefreshing && _refreshError.Length == 0 && PrimaryActionText.Length > 0;
     public string Status => IsRefreshing ? "Checking SDKs…" : _status is null ? _refreshError.Length > 0 ? "SDK discovery unavailable" : "Not checked"
         : IsEmpty ? "Not installed" : _status.Installed.Any(item => !item.IsHealthy) ? "One or more SDKs need repair" : UpdateText;
     public string UpdateText => _status?.CatalogError is { } error ? "Update status unknown · " + error

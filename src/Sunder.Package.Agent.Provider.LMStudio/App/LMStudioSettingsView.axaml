@@ -1,16 +1,17 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:Sunder.Package.Agent.Provider.LMStudio"
+              xmlns:vm="using:Sunder.Package.Agent.Provider.LMStudio"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              x:Class="Sunder.Package.Agent.Provider.LMStudio.LMStudioSettingsView"
-             x:DataType="vm:LMStudioSettingsViewModel">
+             x:DataType="vm:LMStudioSettingsViewModel" Classes="agent-page">
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <StyleInclude Source="/Provider.Shared/ProviderSettingsStyles.axaml" />
   </UserControl.Styles>
 
-  <ScrollViewer>
-    <StackPanel Margin="0,0,0,8"
-                Spacing="16">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="{DynamicResource Sunder.Padding.Panel}"
+                Spacing="{DynamicResource Sunder.Spacing.Large}" HorizontalAlignment="Stretch">
       <Border Classes="card-surface"
               IsVisible="{Binding IsLoading}">
         <TextBlock Text="Loading LM Studio settings..."
@@ -32,16 +33,14 @@
         </StackPanel>
       </Border>
 
-      <StackPanel Spacing="16"
+      <StackPanel Spacing="{DynamicResource Sunder.Spacing.Large}"
                   IsVisible="{Binding IsReady}"
                   IsEnabled="{Binding CanMutate}">
         <Border Classes="card-surface">
-          <StackPanel Spacing="14">
-            <Grid ColumnDefinitions="*,Auto"
-                  ColumnSpacing="12">
-              <TextBlock Classes="section-title"
-                         Text="Connection"
-                         VerticalAlignment="Center" />
+          <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+            <p:ResponsiveGrid ColumnDefinitions="*,Auto"
+                  ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
+              <p:SectionHeader Title="Connection" HelpText="Use the base URL of your LM Studio OpenAI-compatible server, including /v1. An API key is optional unless required by that server." />
               <Border Grid.Column="1"
                       Classes="settings-status-pill"
                       Classes.success="{Binding IsConnectionConfigured}"
@@ -50,11 +49,8 @@
                 <TextBlock Classes="settings-status-label"
                            Text="{Binding ConnectionStatusLabel}" />
               </Border>
-            </Grid>
+            </p:ResponsiveGrid>
               <StackPanel Spacing="6">
-                <TextBlock Classes="caption"
-                           Text="Point the provider at an LM Studio OpenAI-compatible endpoint. Endpoint behavior remains local-provider specific."
-                           TextWrapping="Wrap" />
                 <TextBlock Classes="muted"
                            Text="{Binding ConnectionStatusDetail}"
                            TextWrapping="Wrap" />
@@ -77,14 +73,8 @@
                         ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
 
         <Border Classes="card-surface">
-          <StackPanel Spacing="14">
-            <StackPanel Spacing="6">
-              <TextBlock Classes="section-title"
-                         Text="Utility Model" />
-              <TextBlock Classes="caption"
-                         Text="Used for short background tasks. Leave blank to use the first model returned by LM Studio."
-                         TextWrapping="Wrap" />
-            </StackPanel>
+          <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+            <p:SectionHeader Title="Utility model" HelpText="Used for background tasks such as session names. Leave blank to use the first model returned by LM Studio." />
             <TextBox Text="{Binding UtilityModelId, Mode=TwoWay}"
                      PlaceholderText="lmstudio/model-name" />
             <Button Classes="primary-action"

@@ -16,6 +16,132 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class MemoryInspectorAuthorityRaceTests
 {
     [Fact]
+    public async Task RefreshAndTabSwitch_PreserveDraftAndSaveAcceptsOnlySubmittedValues()
+    {
+        var session = Session("Editing");
+        var now = DateTimeOffset.UtcNow;
+        var record = new StoredMemoryRecord(Guid.NewGuid(), session.SessionId, "preference", "Original", null, null,
+            1, 1, false, "Active", null, now, now, null, 0);
+        var gateway = new DeferredMemoryInspectorGateway([session]) { MemoryRecords = [record] };
+        using var model = new MemoryInspectorViewModel(gateway);
+        await model.InitializeAsync();
+        Assert.Equal(0, model.SelectedTab);
+        model.EditContent = "Draft";
+        model.SelectedTab = 1;
+        gateway.MemoryRecords = [record with { Content = "External" }];
+        await model.RefreshCommand.ExecuteAsync(null);
+        model.SelectedTab = 0;
+        Assert.Equal("Draft", model.EditContent);
+        Assert.True(model.IsMemoryDirty);
+        Assert.Equal(record.MemoryId, model.SelectedGraphMemoryId);
+
+        gateway.SaveRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var save = model.SaveMemoryCommand.ExecuteAsync(null);
+        await gateway.SaveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        model.EditContent = "Newer draft";
+        gateway.SaveRelease.TrySetResult();
+        await save;
+        Assert.Equal("Newer draft", model.EditContent);
+        Assert.True(model.IsMemoryDirty);
+        Assert.Equal("Draft", Assert.Single(gateway.MemoryRecords).Content);
+
+        model.EditContent = "Draft";
+        gateway.MemoryRecords = [record with { Content = "External after save" }];
+        await model.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal("External after save", model.EditContent);
+        Assert.False(model.IsMemoryDirty);
+    }
+
+    [Fact]
+    public async Task ExpandedGraphNeighbor_RemainsInDataAndKeepsItsDraftAcrossRefresh()
+    {
+        var session = Session("Corrections");
+        var now = DateTimeOffset.UtcNow;
+        var current = new StoredMemoryRecord(Guid.NewGuid(), session.SessionId, "preference", "Current", null, null,
+            1, 1, false, "Active", null, now, now, null, 0);
+        var old = current with { MemoryId = Guid.NewGuid(), Content = "Original", State = "Superseded", SupersededByMemoryId = current.MemoryId };
+        var gateway = new DeferredMemoryInspectorGateway([session]) { MemoryRecords = [current, old] };
+        using var model = new MemoryInspectorViewModel(gateway);
+        await model.InitializeAsync();
+        Assert.Single(model.Memories);
+        Assert.Contains(model.Graph.Nodes, node => node.MemoryId == old.MemoryId);
+
+        model.SelectedGraphMemoryId = old.MemoryId;
+        Assert.Equal(old.MemoryId, model.SelectedMemory?.MemoryId);
+        Assert.Equal("Original", model.EditContent);
+        Assert.Contains(model.FilteredMemories, memory => memory.MemoryId == old.MemoryId);
+        model.EditContent = "Correction draft";
+        model.SelectedTab = 1;
+        await model.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(old.MemoryId, model.SelectedMemory?.MemoryId);
+        Assert.Contains(model.Graph.Nodes, node => node.MemoryId == old.MemoryId);
+        Assert.Equal("Correction draft", model.EditContent);
+        Assert.True(model.IsMemoryDirty);
+        model.SelectedGraphMemoryId = current.MemoryId;
+        Assert.Equal("Current", model.EditContent);
+        model.SelectedGraphMemoryId = old.MemoryId;
+        Assert.Equal("Correction draft", model.EditContent);
+    }
+
+    [Fact]
+    public async Task SelectionImmediatelyUsesItsOwnDraftAndLateSaveDoesNotRestoreOldSelection()
+    {
+        var session = Session("Selection");
+        var now = DateTimeOffset.UtcNow;
+        var first = new StoredMemoryRecord(Guid.NewGuid(), session.SessionId, "preference", "First", null, null,
+            1, 1, false, "Active", null, now, now, null, 0);
+        var second = first with { MemoryId = Guid.NewGuid(), Content = "Second" };
+        var gateway = new DeferredMemoryInspectorGateway([session]) { MemoryRecords = [first, second] };
+        using var model = new MemoryInspectorViewModel(gateway);
+        await model.InitializeAsync();
+        model.EditContent = "First draft";
+        gateway.SaveRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var save = model.SaveMemoryCommand.ExecuteAsync(null);
+        await gateway.SaveEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        gateway.DetailsRelease = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        model.SelectedMemory = model.Memories.Single(memory => memory.MemoryId == second.MemoryId);
+        Assert.Equal("Second", model.EditContent);
+        model.EditContent = "Second draft";
+        gateway.DetailsRelease.TrySetResult();
+        gateway.SaveRelease.TrySetResult();
+        await save;
+        Assert.Equal(second.MemoryId, model.SelectedMemory?.MemoryId);
+        Assert.Equal("Second draft", model.EditContent);
+        Assert.Equal("First draft", gateway.MemoryRecords.Single(memory => memory.MemoryId == first.MemoryId).Content);
+    }
+
+    [Fact]
+    public async Task GraphAndData_UseBoundedPagesAndSharedFilters()
+    {
+        var session = Session("Graph");
+        var now = DateTimeOffset.UtcNow;
+        var records = Enumerable.Range(0, 220).Select(index => new StoredMemoryRecord(Guid.NewGuid(), session.SessionId,
+            index % 2 == 0 ? "preference" : "project-fact", "Memory " + index, null, null, 1, 1, index == 0,
+            "Active", null, now, now, null, 0)).ToArray();
+        var gateway = new DeferredMemoryInspectorGateway([session]) { MemoryRecords = records };
+        using var model = new MemoryInspectorViewModel(gateway);
+        await model.InitializeAsync();
+        Assert.Equal(200, model.Memories.Count);
+        Assert.True(model.CanLoadMoreMemories);
+        await model.LoadMoreMemoriesCommand.ExecuteAsync(null);
+        Assert.Equal(220, model.Memories.Count);
+        Assert.False(model.CanLoadMoreMemories);
+        var list = model.FilteredMemories;
+        var retained = list.ToArray();
+        var collectionChanges = 0;
+        list.CollectionChanged += (_, _) => collectionChanges++;
+        await model.RefreshCommand.ExecuteAsync(null);
+        Assert.Same(list, model.FilteredMemories);
+        Assert.Equal(0, collectionChanges);
+        Assert.Equal(retained, model.FilteredMemories.ToArray());
+        model.CategoryFilter = "preference";
+        model.OnlyPinned = true;
+        Assert.Single(model.FilteredMemories);
+        Assert.Single(model.Graph.Nodes);
+    }
+
+    [Fact]
     public async Task SessionRefresh_PreservesSelectionChangedAfterCapture()
     {
         var first = Session("First");
@@ -163,6 +289,10 @@ public sealed class MemoryInspectorAuthorityRaceTests
         public int SessionListCallCount => Volatile.Read(ref _sessionListCallCount);
 
         public int WorkerStatusCallCount => Volatile.Read(ref _workerStatusCallCount);
+        public IReadOnlyList<StoredMemoryRecord> MemoryRecords { get; set; } = [];
+        public TaskCompletionSource? SaveRelease { get; set; }
+        public TaskCompletionSource SaveEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource? DetailsRelease { get; set; }
 
         public event Action<Guid>? SessionChanged;
 
@@ -240,35 +370,49 @@ public sealed class MemoryInspectorAuthorityRaceTests
             string? searchText = null,
             bool includeInactive = false,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>([]);
+            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>(MemoryRecords.Where(memory => memory.SessionId == sessionId
+                && (includeInactive || memory.State == "Active")
+                && (string.IsNullOrEmpty(searchText) || memory.Content.Contains(searchText, StringComparison.OrdinalIgnoreCase))).ToArray());
 
-        public Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(
+        public async Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(
             Guid memoryId,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<StoredMemoryEvidenceRecord>>([]);
+        {
+            if (DetailsRelease is not null) await DetailsRelease.Task.WaitAsync(cancellationToken);
+            return [];
+        }
 
         public Task<StoredMemoryRecord?> GetSupersedingMemoryAsync(
             Guid memoryId,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<StoredMemoryRecord?>(null);
+            => Task.FromResult(MemoryRecords.FirstOrDefault(memory => memory.MemoryId ==
+                MemoryRecords.FirstOrDefault(selected => selected.MemoryId == memoryId)?.SupersededByMemoryId));
 
         public Task<IReadOnlyList<StoredMemoryRecord>> ListSupersededMemoriesAsync(
             Guid memoryId,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>([]);
+            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>(MemoryRecords.Where(memory => memory.SupersededByMemoryId == memoryId).ToArray());
 
         public Task<IReadOnlyList<StoredMemoryRecord>> ListCorrectionLineageAsync(
             Guid memoryId,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>([]);
+            => Task.FromResult<IReadOnlyList<StoredMemoryRecord>>(MemoryRecords.Where(memory => memory.MemoryId == memoryId
+                || memory.SupersededByMemoryId == memoryId
+                || memory.MemoryId == MemoryRecords.FirstOrDefault(selected => selected.MemoryId == memoryId)?.SupersededByMemoryId).ToArray());
 
-        public Task<StoredMemoryRecord> UpdateMemoryAsync(
+        public async Task<StoredMemoryRecord> UpdateMemoryAsync(
             Guid memoryId,
             string category,
             string content,
             string? note,
             CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
+        {
+            SaveEntered.TrySetResult();
+            if (SaveRelease is not null) await SaveRelease.Task.WaitAsync(cancellationToken);
+            var record = MemoryRecords.Single(memory => memory.MemoryId == memoryId) with { Category = category, Content = content };
+            MemoryRecords = MemoryRecords.Select(memory => memory.MemoryId == memoryId ? record : memory).ToArray();
+            return record;
+        }
 
         public Task<StoredMemoryRecord> SetPinnedAsync(
             Guid memoryId,

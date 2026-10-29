@@ -1,35 +1,36 @@
 <UserControl xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:vm="using:Sunder.Package.Agent.Builder" x:Class="Sunder.Package.Agent.Builder.BuilderSettingsView"
-             x:DataType="vm:BuilderSettingsViewModel" x:CompileBindings="True">
+             xmlns:vm="using:Sunder.Package.Agent.Builder" xmlns:p="using:Sunder.Package.Agent.Shared.Presentation" x:Class="Sunder.Package.Agent.Builder.BuilderSettingsView"
+             x:DataType="vm:BuilderSettingsViewModel" x:CompileBindings="True" Classes="agent-page">
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="TextBlock"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
     <Style Selector="TextBlock.caption"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" /></Style>
   </UserControl.Styles>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Spacing="16">
-      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
-        <TextBlock Text="Package Maker SDKs" FontSize="24" FontWeight="SemiBold" VerticalAlignment="Center" />
+    <StackPanel Spacing="{DynamicResource Sunder.Spacing.Large}" Margin="{DynamicResource Sunder.Padding.Panel}">
+      <p:ResponsiveGrid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
+        <p:SectionHeader Title="SDKs" HelpText="Package Maker uses isolated, managed SDK installations. Externally installed SDKs are read-only. Installation paths and versions are listed in Details." />
         <Button Grid.Column="1" Content="Check for updates" Classes="secondary-action"
                 Click="OnRefreshClicked" VerticalAlignment="Center" />
-      </Grid>
-      <TextBlock Text="Manage local SDKs used by your package projects. Builder-managed installations are isolated; externally installed SDKs are read-only." Classes="caption" />
+      </p:ResponsiveGrid>
       <ItemsControl ItemsSource="{Binding Cards}">
         <ItemsControl.ItemTemplate>
           <DataTemplate x:DataType="vm:BuilderSdkCardViewModel">
             <Border Classes="card-surface" Margin="0,0,0,12">
               <StackPanel Spacing="12">
-                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
-                  <Border Width="48" Height="48" CornerRadius="8" Background="{DynamicResource Sunder.Brush.Surface.Raised}">
-                    <TextBlock Text="{Binding Glyph}" FontSize="14" FontWeight="SemiBold"
+                <p:ResponsiveGrid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.Medium}" RowSpacing="{DynamicResource Sunder.Spacing.Small}">
+                  <Border Width="48" Height="48" CornerRadius="{DynamicResource Sunder.Radius.Small}" Background="{DynamicResource Sunder.Brush.Surface.Raised}">
+                    <TextBlock Text="{Binding Glyph}" FontSize="{DynamicResource Sunder.FontSize.Body}" FontWeight="SemiBold"
                                HorizontalAlignment="Center" VerticalAlignment="Center" />
                   </Border>
                   <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding Title}" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding Title}" FontSize="{DynamicResource Sunder.FontSize.SectionTitle}" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding Status}" />
                   </StackPanel>
                   <Button Grid.Column="2" Content="{Binding PrimaryActionText}" Classes="primary-action"
-                          Click="OnInstallClicked" IsEnabled="{Binding CanManage}" VerticalAlignment="Center" />
-                </Grid>
+                          Click="OnInstallClicked" IsVisible="{Binding ShowPrimaryAction}"
+                          IsEnabled="{Binding CanManage}" VerticalAlignment="Center" />
+                </p:ResponsiveGrid>
                 <TextBlock Text="{Binding VersionText}" Classes="caption" />
                 <ProgressBar IsVisible="{Binding IsRefreshing}" IsIndeterminate="True" />
                 <ProgressBar IsVisible="{Binding IsBusy}" IsIndeterminate="True" />
@@ -51,7 +52,7 @@
                           <Border BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,1,0,0" Padding="0,12" Margin="0,6,0,0">
                             <StackPanel Spacing="6">
                               <WrapPanel><TextBlock Text="{Binding Version}" FontWeight="SemiBold" Margin="0,0,12,0" /><TextBlock Text="{Binding Origin}" Classes="caption" /></WrapPanel>
-                              <SelectableTextBlock Text="{Binding ExecutablePath}" TextWrapping="Wrap" FontSize="12" />
+                              <SelectableTextBlock Text="{Binding ExecutablePath}" TextWrapping="Wrap" FontSize="{DynamicResource Sunder.FontSize.Caption}" />
                               <TextBlock Text="{Binding NpmText}" Classes="caption" />
                               <TextBlock Text="{Binding HealthText}" />
                               <WrapPanel>
@@ -65,7 +66,7 @@
                     </ItemsControl>
                   </StackPanel>
                 </Expander>
-                <Expander Header="SDK operation output" IsVisible="{Binding HasOutput}" HorizontalAlignment="Stretch"><ScrollViewer MaxHeight="220"><SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontSize="12" /></ScrollViewer></Expander>
+                <Expander Header="SDK operation output" IsVisible="{Binding HasOutput}" HorizontalAlignment="Stretch"><ScrollViewer MaxHeight="220"><SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontSize="{DynamicResource Sunder.FontSize.Caption}" /></ScrollViewer></Expander>
               </StackPanel>
             </Border>
           </DataTemplate>

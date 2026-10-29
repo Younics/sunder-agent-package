@@ -35,11 +35,11 @@ internal sealed partial class SubagentDescriptorSchema(
                     Kind = AgentProfileSelectableCapabilityKinds.Subagent, CapabilityId = agent.SubagentId,
                     SourceId = SubagentConstants.PackageId, DisplayName = agent.DisplayName, Description = agent.Description,
                     StatusText = SubagentService.IsUsable(agent)
-                        ? "Available as a delegated task subagent."
-                        : "Description is required before this subagent can be selected or used.",
+                        ? null
+                        : "Add a description to enable this subagent.",
                     IsSelectable = SubagentService.IsUsable(agent), SourceDisplayName = SourceDisplayName,
                     GroupId = SubagentConstants.PackageId, GroupDisplayName = SourceDisplayName,
-                    GroupDescription = "Delegated specialists available to behavior loops with subagent support.", GroupSortOrder = 40,
+                    GroupDescription = "Subagents available for delegated tasks.", GroupSortOrder = 40, GroupAllowsBulkSelection = false,
                 })
                 .ToArray();
     }
@@ -192,7 +192,7 @@ internal sealed partial class SubagentDescriptorSchema(
         RuntimeInstructions = BuildRuntimeInstructions(), Priority = AgentToolPriority.High,
         ActivationRequirement = new() { CapabilityKind = AgentProfileSelectableCapabilityKinds.Subagent, SourceId = SubagentConstants.PackageId, CapabilityId = null },
         Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null,
-        SelectionGroupDescription = null, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
+        SelectionGroupDescription = null, SelectionGroupAllowsBulkSelection = true, ConcurrencyMode = AgentToolConcurrencyMode.Sequential,
     };
 
     private static string BuildTaskToolDescription(IReadOnlyList<SubagentRecord> agents)

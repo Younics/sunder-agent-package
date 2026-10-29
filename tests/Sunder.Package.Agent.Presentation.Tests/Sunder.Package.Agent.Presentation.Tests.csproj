@@ -94,6 +94,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\src\Sunder.Package.Agent.Tools.Web\WebToolsConfiguration.cs" Link="TestSupport\WebToolsConfiguration.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\OwnerServiceStub.cs"
              Link="TestSupport\OwnerServiceStub.cs" />
     <Compile Include="..\Sunder.Package.Agent.Tests\ProfileServiceFixture.cs"

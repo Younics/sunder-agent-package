@@ -16,10 +16,12 @@ public sealed class BuilderSetupServiceTests
         var settings = new BuilderSettingsViewModel(manager);
         var dotnet = settings.Cards[0];
         var node = settings.Cards[1];
+        Assert.All(settings.Cards, card => Assert.False(card.ShowPrimaryAction));
         Assert.Equal(0, fixture.Backend.ToolchainChecks);
         Assert.True(await settings.PrepareNavigationAsync(Navigation()));
         await settings.RefreshAsync();
         var installed = Assert.Single(dotnet.Installations);
+        Assert.All(settings.Cards, card => Assert.False(card.ShowPrimaryAction));
         fixture.Backend.Toolchains = kind => new(kind, [BuilderUiFixture.Sdk(kind)], null, DateTimeOffset.UtcNow, null, "Offline");
         await settings.RefreshAsync();
         Assert.Same(dotnet, settings.Cards[0]);
@@ -31,6 +33,7 @@ public sealed class BuilderSetupServiceTests
         Assert.Equal(".NET", dotnet.Glyph);
         Assert.Equal("JS", node.Glyph);
         Assert.Contains(dotnet.CurrentVersion, dotnet.VersionText, StringComparison.Ordinal);
+        Assert.All(settings.Cards, card => Assert.False(card.ShowPrimaryAction));
         Assert.Empty(fixture.Backend.Starts);
     }
 
@@ -59,6 +62,7 @@ public sealed class BuilderSetupServiceTests
             Assert.All(settings.Cards, card =>
             {
                 Assert.True(card.IsRefreshing);
+                Assert.False(card.ShowPrimaryAction);
                 Assert.False(card.IsEmpty);
                 Assert.Equal("Checking…", card.CurrentVersion);
                 Assert.Equal("Checking SDKs…", card.Status);
@@ -122,6 +126,7 @@ public sealed class BuilderSetupServiceTests
         Assert.All(manager.Cards, card =>
         {
             Assert.True(card.HasError);
+            Assert.False(card.ShowPrimaryAction);
             Assert.False(card.IsEmpty);
             Assert.Contains("unavailable", card.ErrorMessage, StringComparison.Ordinal);
             Assert.Equal("SDK discovery unavailable", card.Status);
@@ -133,8 +138,51 @@ public sealed class BuilderSetupServiceTests
             Assert.False(card.HasError);
             Assert.True(card.IsEmpty);
             Assert.Equal("Not installed", card.Status);
+            Assert.True(card.ShowPrimaryAction);
             Assert.Equal("Install SDK", card.PrimaryActionText);
         });
+    }
+
+    [Theory]
+    [InlineData(BuilderProjectKind.Dotnet)]
+    [InlineData(BuilderProjectKind.Node)]
+    public async Task SdkPrimaryActionRefreshesAfterInstallationUpdateAndRemoval(BuilderProjectKind kind)
+    {
+        await using var fixture = new BuilderUiFixture();
+        await using var manager = new BuilderSdkManager(fixture.Application, fixture.Ui);
+        var settings = new BuilderSettingsViewModel(manager);
+        var card = settings.Cards.Single(item => item.Kind == kind);
+        var installation = BuilderUiFixture.Sdk(kind);
+        var status = new BuilderToolchainStatus(kind, [], installation.Version, DateTimeOffset.UtcNow, true, null);
+        fixture.Backend.Toolchains = requested => requested == kind ? status
+            : new(requested, [BuilderUiFixture.Sdk(requested)], null, null, false, null);
+        fixture.Backend.OnStart = request => status = status with
+        {
+            Installed = request.Operation == "remove-sdk" ? [] : [installation],
+            UpdateAvailable = request.Operation == "remove-sdk",
+        };
+
+        await settings.RefreshAsync();
+        Assert.True(card.ShowPrimaryAction);
+        Assert.Equal("Install SDK", card.PrimaryActionText);
+
+        await settings.InstallAsync(kind);
+        Assert.False(card.ShowPrimaryAction);
+        Assert.Empty(card.PrimaryActionText);
+
+        status = status with { UpdateAvailable = true };
+        await settings.RefreshAsync();
+        Assert.True(card.ShowPrimaryAction);
+        Assert.Equal("Update SDK", card.PrimaryActionText);
+
+        await settings.InstallAsync(kind);
+        Assert.False(card.ShowPrimaryAction);
+
+        await settings.RemoveAsync(installation);
+        Assert.True(card.ShowPrimaryAction);
+        Assert.Equal("Install SDK", card.PrimaryActionText);
+        Assert.Equal(["ensure-sdk", "ensure-sdk", "remove-sdk"], fixture.Backend.Starts.Select(request => request.Operation).ToArray());
+        Assert.All(fixture.Backend.Starts, request => Assert.Equal(kind, request.Kind));
     }
 
     [Fact]

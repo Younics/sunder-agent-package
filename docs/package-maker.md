@@ -244,25 +244,30 @@ from managed/DOM tests; source availability is not release acceptance.
 ## 4. SDK settings
 
 Open **Manage SDKs** from Projects, or open this package's settings. The stable
-.NET and Node.js cards show detected/current versions, the recommended version,
+.NET and Node.js cards show installed versions, Sunder's exact version,
 update availability, installation origin, health, npm version where applicable,
 and the last check time. Checks happen when navigating to settings or choosing
 **Check for updates**, not merely when a view is constructed.
 
-Package Maker currently supports stable **.NET 10.0 LTS SDKs** (10.0.100 or later)
-and **Node.js 24 LTS** (24.18.1 or later). Recommendations are resolved from the
-official Microsoft and Node.js release catalogs within that supported policy;
-they do not mean the newest preview or unsupported major version. Downloads use
+Package Maker uses the running Host's exact development toolchain: currently
+**.NET SDK 10.0.403** and **Node.js 24.22.1 / npm 11.19.1**. Official release catalogs
+locate those versions, never select a floating latest/LTS alias. Downloads use
 official distribution archives and their checksums.
+
+After a Sunder update, previously installed managed development tools are replaced
+only after the replacement is verified and active builds release the old tools.
+A failed update preserves the previous installation; optional tools are not
+installed for the first time merely by updating Sunder.
 
 .NET templates use a separate, short private CLI home under `~/.sunder/bt`, keyed
 by the owning Builder workspace, template and SDK identity. This keeps the .NET
 template engine's named mutex within its path-length limit even when Sunder's
 runtime storage path is long. SDK installations remain in Builder's SDK storage.
 
-- **Install / update supported SDK** prepares a supported installation.
+- **Install / update supported SDK** prepares Sunder's exact installation.
 - **Repair** and **Remove** apply to Builder-managed installations.
-- External installations are detected and usable but remain read-only here.
+- External installations are usable only when they match Sunder's exact SDK or
+  Node/npm pair, and remain read-only here.
 - An installation in use by a build cannot be removed; stop that work
   first. The backend reports the refusal without deleting the installation.
 - Offline or failed update checks report **Update status unknown**, preserving
@@ -272,7 +277,9 @@ Existing project requirements are respected, including .NET `global.json` SDK
 and roll-forward settings and supported Node.js/npm version constraints and pins.
 Conflicting or unsupported pins produce an explanation instead of being silently
 rewritten. Installing a newer SDK does not automatically retarget existing
-projects. New projects receive pins for the selected SDK.
+projects. **Upgrade project tools** explicitly updates local development pins without
+changing target frameworks, runtime requirements or package dependencies. Shared
+parent pins require manual review. New projects receive Sunder's exact pins.
 
 ### Build SDKs and execution runtimes are different
 
@@ -282,6 +289,9 @@ Package Maker's own .NET worker. A healthy build SDK does not establish runtime
 or App readiness, and an installed execution runtime is not necessarily a build
 SDK. Use Package Maker settings for project SDKs and the Host's runtime settings
 for execution runtimes; build SDKs do not belong in the Host runtime store.
+Execution runtimes may coexist across supported majors when packages require them.
+Their servicing updates stay within each package's compatible major; development-tool
+replacement never removes those execution-runtime roots.
 
 SDK operations use the same backend as the creation wizard. Closing settings does
 not cancel an accepted job; reopen the settings or use background activity to

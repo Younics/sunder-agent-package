@@ -983,7 +983,7 @@ public sealed partial class AgentRunCoordinatorTests
             Assert.False(incompleteOption.CanSelect);
             Assert.False(incompleteOption.IsEnabled);
             Assert.Contains(
-                "Description is required",
+                "Add a description to enable this subagent.",
                 incompleteOption.StatusText,
                 StringComparison.OrdinalIgnoreCase
             );

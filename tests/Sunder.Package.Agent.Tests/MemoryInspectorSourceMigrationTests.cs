@@ -127,6 +127,11 @@ public sealed class MemoryInspectorSourceMigrationTests
         var acceptedProjection = (await ReadAsync(service.MemoriesAsync(sessionId, null, includeInactive: true))).Memories!;
         Assert.True(acceptedProjection.Sum(value => value.Content.Length) >= 2 * 1024 * 1024);
         Assert.Equal(large.Length, acceptedProjection.Single(value => value.MemoryId == largeMemory.MemoryId).Content.Length);
+        var graphPage = (await ReadAsync(service.GraphAsync(sessionId, null, includeInactive: true, limit: 200))).Graph!;
+        Assert.Equal(200, graphPage.Memories.Count);
+        Assert.True(graphPage.HasMore);
+        Assert.All(graphPage.Memories, memory => Assert.Equal(sessionId, memory.SessionId));
+        Assert.Empty((await ReadAsync(service.GraphAsync(Guid.NewGuid(), null, true, 200))).Graph!.Memories);
         for (var index = 512; index < 4_096; index++)
         {
             var content = index.ToString("D5") + ":" + new string('m', 4_090);
@@ -134,6 +139,9 @@ public sealed class MemoryInspectorSourceMigrationTests
         }
         var oversized = await Assert.ThrowsAsync<SunderRpcException>(() => service.MemoriesAsync(sessionId, null, includeInactive: true).AsTask());
         Assert.Equal("memory.semantic.operation-failed", oversized.Error.Code);
+        var boundedGraph = (await ReadAsync(service.GraphAsync(sessionId, null, true, int.MaxValue))).Graph!;
+        Assert.Equal(1000, boundedGraph.Memories.Count);
+        Assert.True(boundedGraph.HasMore);
         var failure = (SunderRpcException)typeof(MemoryInspectorService)
             .GetMethod("Failure", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!
             .Invoke(null, [new MemoryInspectorOperationException(new string('f', 3000))])!;

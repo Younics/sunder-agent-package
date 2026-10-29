@@ -40,6 +40,7 @@ internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropert
     private readonly Func<TItem, TKey> _keySelector;
     private readonly Action<TItem, TItem>? _updateItem;
     private readonly IEqualityComparer<TKey> _keyComparer;
+    private readonly IEqualityComparer<TItem> _itemComparer;
     private readonly LatestRequestCoordinator _detailRequests = new();
     private AdaptiveListDetailRoute _route;
     private AdaptiveListDetailLayout _layout;
@@ -64,12 +65,14 @@ internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropert
         ObservableCollection<TItem> items,
         Func<TItem, TKey> keySelector,
         Action<TItem, TItem>? updateItem = null,
-        IEqualityComparer<TKey>? keyComparer = null)
+        IEqualityComparer<TKey>? keyComparer = null,
+        IEqualityComparer<TItem>? itemComparer = null)
     {
         Items = items ?? throw new ArgumentNullException(nameof(items));
         _keySelector = keySelector ?? throw new ArgumentNullException(nameof(keySelector));
         _updateItem = updateItem;
         _keyComparer = keyComparer ?? EqualityComparer<TKey>.Default;
+        _itemComparer = itemComparer ?? EqualityComparer<TItem>.Default;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -258,7 +261,7 @@ internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropert
         RunTransition(() => SetSelectionAutomatic(false));
     }
 
-    public AdaptiveDetailTicket<TKey> BeginDetailLoad(CancellationToken cancellationToken = default)
+    public AdaptiveDetailTicket<TKey> BeginDetailLoad(CancellationToken cancellationToken = default, bool retainReady = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         cancellationToken.ThrowIfCancellationRequested();
@@ -271,8 +274,11 @@ internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropert
 
         var request = _detailRequests.Begin(DetailRequestChannel, cancellationToken);
         var ticket = new AdaptiveDetailTicket<TKey>(_routeKey, IntentRevision, request);
-        RunTransition(() =>
-            SetDetailState(AdaptiveDetailPhase.Loading, hasReadyKey: false, default!, null));
+        if (!retainReady || DetailPhase != AdaptiveDetailPhase.Ready)
+        {
+            RunTransition(() =>
+                SetDetailState(AdaptiveDetailPhase.Loading, hasReadyKey: false, default!, null));
+        }
         return ticket;
     }
 
@@ -358,7 +364,7 @@ internal sealed class KeyedAdaptiveListDetailState<TKey, TItem> : INotifyPropert
                     {
                         _updateItem(current, incoming);
                     }
-                    else if (!EqualityComparer<TItem>.Default.Equals(current, incoming))
+                    else if (!_itemComparer.Equals(current, incoming))
                     {
                         Items[currentIndex] = incoming;
                         current = incoming;

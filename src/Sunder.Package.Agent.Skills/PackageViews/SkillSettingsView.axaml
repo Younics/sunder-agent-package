@@ -3,18 +3,19 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="using:Sunder.Package.Agent.Skills.PackageViews"
+             xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              x:Class="Sunder.Package.Agent.Skills.PackageViews.SkillSettingsView"
              x:DataType="vm:SkillSettingsViewModel"
-             mc:Ignorable="d">
+             mc:Ignorable="d" Classes="agent-page">
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="Border.skill-list-pane">
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,1,0" />
-      <Setter Property="Padding" Value="0,0,20,0" />
     </Style>
 
     <Style Selector="Border.skill-detail-pane">
-      <Setter Property="Padding" Value="20,0,0,0" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <Style Selector="Border.skill-pane.compact">
@@ -22,46 +23,46 @@
     </Style>
 
     <Style Selector="Border.skill-pane-header">
-      <Setter Property="Padding" Value="0,0,0,16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.skill-list-body">
-      <Setter Property="Padding" Value="0,16,0,0" />
+      <Setter Property="Padding" Value="0" />
     </Style>
 
     <Style Selector="Border.skill-detail-body">
-      <Setter Property="Padding" Value="0,16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
     </Style>
 
     <Style Selector="Border.skill-actions">
-      <Setter Property="Padding" Value="0,16,0,0" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
 
     <Style Selector="TextBlock.skill-title">
-      <Setter Property="FontSize" Value="24" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
     <Style Selector="TextBlock.skill-caption">
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.skill-field-label">
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
       <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style Selector="TextBlock.skill-field-help">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
@@ -93,7 +94,7 @@
 
     <Style Selector="TextBlock.skill-status-message">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -114,7 +115,7 @@
       <Setter Property="MinWidth" Value="36" />
       <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -136,19 +137,12 @@
                   RowDefinitions="Auto,Auto,Auto"
                   ColumnSpacing="12"
                   RowSpacing="8">
-              <TextBlock Grid.Column="0"
-                         Classes="skill-title"
-                         Text="Agent Skills"
-                         VerticalAlignment="Center" />
+              <p:SectionHeader Title="Skills" IsPageTitle="True" HelpText="Import a folder containing SKILL.md, then enable the skill on an agent." />
               <Button Grid.Column="1"
                       Classes="secondary-action compact-action skill-add-action"
                       Content="+"
                       Command="{Binding NewSkillCommand}"
                       ToolTip.Tip="New skill" />
-              <TextBlock Grid.Row="1"
-                         Grid.ColumnSpan="2"
-                         Classes="skill-caption"
-                          Text="Install skill folders, then enable them per Agent." />
               <Button x:Name="ImportCommonFoldersButton" Grid.Row="2" Grid.ColumnSpan="2"
                       Content="Import Common Folders" Classes="secondary-action compact-action"
                       HorizontalAlignment="Left" Command="{Binding ImportCommonSkillFoldersCommand}" />
@@ -159,7 +153,7 @@
                   Classes="skill-list-body">
             <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                           VerticalScrollBarVisibility="Auto">
-              <ListBox Classes="skill-list"
+              <ListBox Classes="skill-list" Margin="{DynamicResource Sunder.Padding.Panel}"
                        ItemsSource="{Binding Skills}"
                        SelectedItem="{Binding SelectedSkill, Mode=TwoWay}">
                 <ListBox.ItemTemplate>
@@ -174,7 +168,7 @@
                       <TextBlock Grid.Row="1"
                                  Text="{Binding Description}"
                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                                 FontSize="12"
+                                 FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                  TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
@@ -197,8 +191,6 @@
             <StackPanel Spacing="8">
               <TextBlock Classes="skill-title"
                           Text="{Binding DetailTitle}" />
-              <TextBlock Classes="skill-caption"
-                          Text="{Binding DetailDescription}" />
             </StackPanel>
           </Border>
 
@@ -215,8 +207,7 @@
                                  IsChecked="{Binding IsLocalSource, Mode=TwoWay}" />
                   </StackPanel>
                   <StackPanel x:Name="GitHubImportForm" Spacing="14" IsVisible="{Binding IsGitHubSource}">
-                    <TextBlock Classes="skill-field-help"
-                               Text="Paste a GitHub tree/blob/raw URL that points at a skill folder or SKILL.md." />
+                    <p:SectionHeader Title="GitHub URL" HelpText="Use a GitHub folder, file, or raw URL pointing to a skill folder or SKILL.md." />
                     <TextBox Text="{Binding GithubUrl, Mode=TwoWay}"
                              PlaceholderText="https://github.com/owner/repo/tree/main/skills/my-skill" />
                       <Button Content="Import GitHub Skill"
@@ -224,7 +215,7 @@
                               Command="{Binding ImportGitHubCommand}" />
                   </StackPanel>
                   <StackPanel x:Name="LocalFolderImportForm" Spacing="10" IsVisible="{Binding IsLocalSource}">
-                    <TextBlock Classes="skill-field-help" Text="Choose a local folder containing SKILL.md." />
+                    <p:SectionHeader Title="Local folder" HelpText="Choose a folder containing SKILL.md." />
                     <Button Content="Import Local Folder"
                             Classes="primary-action" HorizontalAlignment="Left"
                             Click="OnAddLocalFolderClick" />
@@ -233,42 +224,30 @@
 
                   <StackPanel Spacing="14" IsVisible="{Binding HasSelectedSkill}">
                     <StackPanel Spacing="8">
-                      <TextBlock Classes="skill-field-label" Text="Skill id" />
-                      <TextBox Text="{Binding SelectedSkill.SkillId}"
-                               IsReadOnly="True" />
-                      <TextBlock Classes="skill-field-label" Text="Description" />
-                      <TextBox Text="{Binding SelectedSkill.Description}"
-                               IsReadOnly="True"
-                               AcceptsReturn="True"
-                               MinHeight="90"
-                               TextWrapping="Wrap" />
+                      <p:SectionHeader Title="Description" HelpText="The skill's instructions are made available when an agent loads this skill. This description is supplied by the imported skill." />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.Description}" TextWrapping="Wrap" />
                       <TextBlock Classes="skill-field-label" Text="Version" />
-                      <TextBox Text="{Binding SelectedSkill.Version}"
-                               IsReadOnly="True" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.Version}" />
                       <TextBlock Classes="skill-field-label" Text="Author" />
-                      <TextBox Text="{Binding SelectedSkill.Author}"
-                               IsReadOnly="True" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.Author}" TextWrapping="Wrap" />
                       <TextBlock Classes="skill-field-label" Text="Source" />
-                      <TextBox Text="{Binding SelectedSkill.Source}"
-                               IsReadOnly="True" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.Source}" TextWrapping="Wrap" />
+                      <Expander Header="Installation details">
+                      <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                      <TextBlock Classes="skill-field-label" Text="Skill ID" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.SkillId}" TextWrapping="Wrap" />
                       <TextBlock Classes="skill-field-label" Text="Resolved commit" />
-                      <TextBox Text="{Binding SelectedSkill.ResolvedCommitSha}"
-                               IsReadOnly="True" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.ResolvedCommitSha}" TextWrapping="Wrap" />
                       <TextBlock Classes="skill-field-label" Text="Installed folder" />
-                      <TextBox Text="{Binding SelectedSkill.RootPath}"
-                               IsReadOnly="True" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.RootPath}" TextWrapping="Wrap" />
                       <TextBlock Classes="skill-field-label" Text="Metadata" />
-                      <TextBox Text="{Binding SelectedSkill.MetadataText}"
-                               IsReadOnly="True"
-                               AcceptsReturn="True"
-                               MinHeight="80"
-                               TextWrapping="Wrap" />
-                      <TextBlock Classes="skill-field-label" Text="Warnings" />
-                      <TextBox Text="{Binding SelectedSkill.WarningsText}"
-                               IsReadOnly="True"
-                               AcceptsReturn="True"
-                               MinHeight="80"
-                               TextWrapping="Wrap" />
+                      <SelectableTextBlock Text="{Binding SelectedSkill.MetadataText}" TextWrapping="Wrap" />
+                      </StackPanel>
+                      </Expander>
+                      <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}" IsVisible="{Binding SelectedSkill.WarningsText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+                        <TextBlock Classes="skill-field-label" Text="Warnings" />
+                        <SelectableTextBlock Text="{Binding SelectedSkill.WarningsText}" Foreground="{DynamicResource Sunder.Brush.Warning}" TextWrapping="Wrap" />
+                      </StackPanel>
                     </StackPanel>
                   </StackPanel>
               </StackPanel>
@@ -277,25 +256,26 @@
 
           <Border Grid.Row="2"
                   Classes="skill-actions">
-            <Grid ColumnDefinitions="Auto,*,Auto"
-                  ColumnSpacing="12">
+            <p:EditorFooter>
               <Button Grid.Column="0"
                       Classes="secondary-action compact-action danger-action"
-                      Content="Delete Skill"
+                      Content="Delete"
                       Command="{Binding DeleteSelectedSkillCommand}" />
-              <Button Grid.Column="2"
+              <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right">
+              <Button
                       Classes="secondary-action compact-action"
                       Content="Back"
                       Command="{Binding BackToSkillListCommand}"
                       IsVisible="{Binding IsCompactLayout}" />
-            </Grid>
+              </StackPanel>
+            </p:EditorFooter>
           </Border>
         </Grid>
       </Border>
     </Grid>
     <StackPanel Grid.Row="1" Spacing="8">
       <ProgressBar IsVisible="{Binding IsBusy}" IsIndeterminate="True" Height="3" />
-      <TextBlock x:Name="SkillOperationStatus" Classes="skill-status-message"
+      <TextBlock x:Name="SkillOperationStatus" Classes="skill-status-message" Margin="{DynamicResource Sunder.Padding.Panel}"
                  Classes.success="{Binding IsStatusSuccess}" Classes.warning="{Binding IsStatusWarning}"
                  Classes.error="{Binding IsStatusError}" Text="{Binding StatusText}"
                  IsVisible="{Binding HasStatus}" />

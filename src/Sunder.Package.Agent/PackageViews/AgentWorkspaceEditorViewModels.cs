@@ -25,6 +25,8 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
     private readonly AgentEditorRetryState? _retryState;
     private readonly RelayCommand? _retryCommand;
     private bool _isRetrying;
+    private AgentEditorSection? _descriptor;
+    private IReadOnlyDictionary<string, AgentEditorFieldValue> _initialValues = new Dictionary<string, AgentEditorFieldValue>();
 
     internal event Action? Changed;
 
@@ -34,11 +36,13 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
         AgentEditorSection section)
     {
         _contributorReference = contributorReference;
+        _descriptor = section;
         Context = context;
         SectionId = section.SectionId;
         Title = section.Title;
         Description = section.Description ?? string.Empty;
         Fields = new ObservableCollection<AgentEditorFieldViewModel>(section.Fields.Select(CreateField));
+        _initialValues = Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase);
     }
 
     private AgentEditorSectionViewModel(
@@ -71,7 +75,26 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
         Action<AgentEditorSectionViewModel> retry)
         => new(contributorReference, context, failure, retryState, retry);
 
-    internal AgentWorkspaceEditorContext Context { get; }
+    internal AgentWorkspaceEditorContext Context { get; private set; }
+    internal AgentEditorSection? Descriptor => _descriptor;
+
+    internal bool CanRetain(ServiceProvider<AgentServices.IWorkspaceEditorService> contributor,
+        AgentWorkspaceEditorContext context, AgentEditorSection descriptor)
+        => !IsError && _descriptor is not null
+            && !_contributorReference.RetirementToken.IsCancellationRequested
+            && _contributorReference.PackageId == contributor.PackageId
+            && _contributorReference.ProviderId == contributor.ProviderId
+            && _contributorReference.ActivationId == contributor.ActivationId
+            && _contributorReference.ActivationEpoch == contributor.ActivationEpoch
+            && _contributorReference.SessionGeneration == contributor.SessionGeneration
+            && _contributorReference.DescriptorSha256 == contributor.DescriptorSha256
+            && _contributorReference.AbiSha256 == contributor.AbiSha256
+            && Context.Workspace.WorkspaceId == context.Workspace.WorkspaceId
+            && Context.TargetId == context.TargetId && SectionId == descriptor.SectionId
+            && (Fields.Any(field => !AgentEditorSnapshotEquality.ValuesEqual(_initialValues[field.FieldId], field.ToValue()))
+                || AgentEditorSnapshotEquality.SectionsEqual(_descriptor, descriptor));
+
+    internal void UpdateContext(AgentWorkspaceEditorContext context) => Context = context;
 
     internal ServiceProvider<AgentServices.IWorkspaceEditorService> ContributorReference
         => _contributorReference;
@@ -116,15 +139,30 @@ public sealed class AgentEditorSectionViewModel : ObservableObject
 
     internal void SetRetrying(bool value) => IsRetrying = value;
 
-    internal ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> TrySaveAsync(
+    internal async ValueTask<AgentEditorInvocationResult<AgentEditorSaveResult>> TrySaveAsync(
         CancellationToken cancellationToken = default)
-        => AgentWorkspaceEditorInvocation.SaveSectionAsync(
+    {
+        var values = Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase);
+        var result = await AgentWorkspaceEditorInvocation.SaveSectionAsync(
             _contributorReference,
             Context,
-                new AgentEditorSaveRequest(
-                    SectionId,
-                    Fields.ToDictionary(field => field.FieldId, field => field.ToValue(), StringComparer.OrdinalIgnoreCase)),
+            new AgentEditorSaveRequest(SectionId, values),
             cancellationToken);
+        if (result.Success && result.Result.Success && _descriptor is { } descriptor)
+        {
+            // Use the submitted snapshot, never values edited while the save awaited.
+            _initialValues = values;
+            _descriptor = descriptor with
+            {
+                Fields = descriptor.Fields.Select(field => field with
+                {
+                    Value = values[field.FieldId].Value,
+                    Items = values[field.FieldId].Items,
+                }).ToArray(),
+            };
+        }
+        return result;
+    }
 
     internal ValueTask<AgentEditorInvocationResult<IReadOnlyList<AgentEditorSection>>> TryGetApplicableSectionsAsync(
         AgentWorkspaceEditorContext context,

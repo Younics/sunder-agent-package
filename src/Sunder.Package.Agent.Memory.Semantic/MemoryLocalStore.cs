@@ -152,6 +152,9 @@ public sealed partial class MemoryLocalStore : IDisposable, IAsyncDisposable
     public IReadOnlyList<StoredMemoryRecord> ListMemories(Guid sessionId, string? searchText = null, bool includeInactive = false)
         => _memories.List(sessionId, searchText, includeInactive);
 
+    internal IReadOnlyList<StoredMemoryRecord> ListInspectorPage(Guid sessionId, string? searchText, bool includeInactive, int limit)
+        => _memories.List(sessionId, searchText, includeInactive, Math.Clamp(limit, 1, 1001));
+
     public IReadOnlyList<StoredMemorySearchResult> SearchMemories(
         Guid sessionId,
         string searchText,

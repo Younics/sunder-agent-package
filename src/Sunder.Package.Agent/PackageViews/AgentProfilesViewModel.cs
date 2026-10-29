@@ -33,9 +33,11 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     private readonly LatestRequestCoordinator _requests = new();
     private readonly KeyedAdaptiveListDetailState<string, AgentProfileRecord> _listDetail;
     private readonly SerializedRefreshLoop _runtimeRefresh;
+    private readonly SerializedRefreshLoop _capabilityRefresh;
     private readonly Dictionary<string, EditableDocumentState<ProfileEditorDraft>> _drafts =
         new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressDraftTracking;
+    private bool _refreshingSelectedProfile;
     private bool _initializationRefreshPending;
     private bool _initializationCapabilityRefreshPending;
     private bool _isInitialized;
@@ -79,11 +81,15 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         _listDetail = new KeyedAdaptiveListDetailState<string, AgentProfileRecord>(
             Profiles,
             static profile => profile.ProfileId,
-            keyComparer: StringComparer.OrdinalIgnoreCase);
+            keyComparer: StringComparer.OrdinalIgnoreCase,
+            itemComparer: new AgentProfileSnapshotComparer());
         _listDetail.SelectionChanging += OnProfileSelectionChanging;
         _listDetail.PropertyChanged += OnListDetailPropertyChanged;
         _runtimeRefresh = new SerializedRefreshLoop(
             RefreshProfileListAsync,
+            ReportRuntimeRefreshFailure);
+        _capabilityRefresh = new SerializedRefreshLoop(
+            RefreshSelectedProfileCapabilitiesOnUiThreadAsync,
             ReportRuntimeRefreshFailure);
         ChatBinding = new ModelBindingEditorState(
             new ProviderModelLoader(AgentProfileProviderModelCatalog.CreateChat(profileService)),
@@ -126,6 +132,8 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     public ObservableCollection<AgentProfileRecord> Profiles { get; } = [];
 
     internal Task Initialization => InitializeAsync();
+    internal Task CurrentRuntimeRefresh => _runtimeRefresh.WhenIdle;
+    internal Task CurrentCapabilityRefresh => _capabilityRefresh.WhenIdle;
 
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
@@ -431,7 +439,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
         OnEditorChanged();
         if (!_suppressDraftTracking && SelectedProfile is not null)
         {
-            _tasks.Run(_ => RefreshSelectedProfileCapabilitiesAsync());
+            _tasks.Run(token => _capabilityRefresh.MarkDirty().WaitAsync(token));
         }
     }
 
@@ -560,6 +568,9 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
 
     private void OnProfileSelectionChanging(AgentProfileRecord? previous, AgentProfileRecord? current)
     {
+        _refreshingSelectedProfile = _listDetail.DetailPhase == AdaptiveDetailPhase.Ready
+            && previous is not null && current is not null
+            && string.Equals(previous.ProfileId, current.ProfileId, StringComparison.OrdinalIgnoreCase);
         if (!IsHydrating)
         {
             UpdateCurrentDraft();
@@ -579,8 +590,10 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
             OnPropertyChanged(nameof(IsDirty));
             if (_listDetail.IsExistingDetail && SelectedProfile is { } selected)
             {
-                var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
-                _currentDetailLoad = _tasks.Track(_ => LoadSelectedProfileAsync(selected, ticket));
+                var background = _refreshingSelectedProfile;
+                _refreshingSelectedProfile = false;
+                var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token, retainReady: background);
+                _currentDetailLoad = _tasks.Track(_ => LoadSelectedProfileAsync(selected, ticket, background));
             }
             else if (_listDetail.IsList)
             {
@@ -759,13 +772,7 @@ public sealed partial class AgentProfilesViewModel : ObservableObject, IDisposab
     }
 
     private static void Replace<T>(ObservableCollection<T> target, IEnumerable<T> values)
-    {
-        target.Clear();
-        foreach (var value in values)
-        {
-            target.Add(value);
-        }
-    }
+        => ObservableCollectionReconciler.Apply(target, values);
 
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -778,5 +785,4 @@ internal enum AgentProfileOperation
     Save,
     Delete,
     ReloadProviders,
-    RefreshCapabilities,
 }

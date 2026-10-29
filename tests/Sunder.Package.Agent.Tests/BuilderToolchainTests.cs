@@ -8,10 +8,11 @@ using System.Text;
 using System.Text.Json;
 using BuilderWorker::Sunder.Package.Agent.Builder;
 using Xunit;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class BuilderToolchainTests
+public sealed partial class BuilderToolchainTests
 {
     [Theory]
     [InlineData(BuilderProjectKind.Dotnet)]
@@ -71,13 +72,14 @@ public sealed class BuilderToolchainTests
     }
 
     [Fact]
-    public async Task OfficialCatalog_SelectsSdkArchivesAndStableLtsWithBundledNpm()
+    public async Task OfficialCatalogSelectsOnlySundersExactSdkAndNodeVersions()
     {
         var platform = new BuilderToolchainPlatform("linux-x64", "linux-x64");
         var transport = new MetadataTransport();
         object File(string version) => new { name = "dotnet-sdk-linux-x64.tar.gz", rid = "linux-x64",
             url = $"https://builds.dotnet.microsoft.com/dotnet/Sdk/{version}/dotnet-sdk-{version}-linux-x64.tar.gz", hash = new string('a', 128) };
-        transport.Add(BuilderToolchainPolicy.DotnetMetadataUri, new Dictionary<string, object>
+        var versions = new SunderDevelopmentToolchain("10.0.402", "24.22.0", "11.19.1");
+        transport.Add(BuilderToolchainPolicy.DotnetMetadataUri(versions), new Dictionary<string, object>
         {
             ["channel-version"] = "10.0", ["release-type"] = "lts", ["support-phase"] = "active",
             ["releases"] = new[] { new { runtime = new { version = "10.0.999" }, sdks = new[]
@@ -93,12 +95,12 @@ public sealed class BuilderToolchainTests
             Node("26.12.0", "future"), Node("24.18.0", "Krypton"), Node("24.22.0", "Krypton"),
             Node("24.23.0", false), Node("24.24.0", "Krypton", ""), Node("24.18.1", "Krypton"),
         });
-        var catalog = new BuilderOfficialToolchainCatalog(transport, platform);
+        var catalog = new BuilderOfficialToolchainCatalog(transport, platform, versions);
         var dotnet = await catalog.GetReleasesAsync(BuilderProjectKind.Dotnet, default);
-        Assert.Equal(new[] { "10.0.402", "10.0.113" }, dotnet.Select(item => item.Version));
+        Assert.Equal(new[] { "10.0.402" }, dotnet.Select(item => item.Version));
         Assert.All(dotnet, item => Assert.Equal("SHA512", item.HashAlgorithm));
         var node = await catalog.GetReleasesAsync(BuilderProjectKind.Node, default);
-        Assert.Equal(new[] { "24.22.0", "24.18.1" }, node.Select(item => item.Version));
+        Assert.Equal(new[] { "24.22.0" }, node.Select(item => item.Version));
         transport.Bytes["https://nodejs.org/dist/v24.22.0/SHASUMS256.txt"] = Encoding.UTF8.GetBytes(
             new string('b', 64) + "  node-v24.22.0-linux-x64.tar.gz\n" + new string('c', 64) + "  node-v24.22.0.tar.gz\n");
         var archive = await catalog.ResolveArchiveAsync(node[0], default);
@@ -157,7 +159,7 @@ public sealed class BuilderToolchainTests
     }
 
     [Fact]
-    public async Task FullNodeInstallKeepsNpmLinksAndPinsAncestorVersionSideBySide()
+    public async Task FullNodeUpdateReplacesManagedDevelopmentToolsAndPreservesProjectPins()
     {
         using var fixture = new Fixture();
         fixture.AddNode("24.18.1", "11.16.0");
@@ -165,15 +167,20 @@ public sealed class BuilderToolchainTests
         var project = fixture.Project("repo/child");
         await System.IO.File.WriteAllTextAsync(fixture.PathOf("repo/.nvmrc"), "v24.18.1\n");
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, "package.json"), "{\"engines\":{\"node\":\">=24.18.1 <25\",\"npm\":\"^11\"}}");
+        using var previous = fixture.Service(versions: new("10.0.100", "24.18.1", "11.16.0"));
+        var pinned = await previous.EnsureAsync(BuilderProjectKind.Node, project);
         using var service = fixture.Service();
-        var pinned = await service.EnsureAsync(BuilderProjectKind.Node, project);
+        await service.UpgradeManagedAsync(BuilderProjectKind.Node);
         var latest = await service.EnsureAsync(BuilderProjectKind.Node);
         Assert.Equal("24.18.1", pinned.Version);
         Assert.Equal("24.22.0", latest.Version);
         Assert.NotEqual(pinned.RootPath, latest.RootPath);
         Assert.True(latest.IsHealthy);
         Assert.Equal("11.19.1", latest.NpmVersion);
-        Assert.Equal(2, (await service.ListInstalledAsync(BuilderProjectKind.Node)).Count);
+        Assert.Single(await service.ListInstalledAsync(BuilderProjectKind.Node));
+        Assert.False(Directory.Exists(pinned.RootPath));
+        Assert.Equal("v24.18.1\n", await System.IO.File.ReadAllTextAsync(fixture.PathOf("repo/.nvmrc")));
+        await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Node, project));
         if (!OperatingSystem.IsWindows())
         {
             var npmLink = new FileInfo(Path.Combine(latest.RootPath, "bin", "npm"));
@@ -190,7 +197,7 @@ public sealed class BuilderToolchainTests
     }
 
     [Fact]
-    public async Task ExistingGlobalJsonUsesActualProjectSelectedSdkAndNewCreatesLatest()
+    public async Task OldExactProjectPinIsRejectedWithoutChangingItOrSelectingAnotherSdk()
     {
         using var fixture = new Fixture();
         fixture.AddDotnet("10.0.100");
@@ -203,23 +210,22 @@ public sealed class BuilderToolchainTests
         fixture.Process.ProjectDirectory = project;
         fixture.Process.ExternalSelectedVersion[external] = "10.0.402";
         using var service = fixture.Service(_ => [external]);
-        var selected = await service.EnsureAsync(BuilderProjectKind.Dotnet, project);
-        Assert.True(selected.IsManaged);
-        Assert.Equal("10.0.100", selected.Version);
+        var error = await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Dotnet, project));
+        Assert.Contains("development pins", error.Message);
         Assert.Equal(json, await System.IO.File.ReadAllTextAsync(global));
         var latest = await service.EnsureAsync(BuilderProjectKind.Dotnet);
         Assert.Equal("10.0.402", latest.Version);
         Assert.Contains(fixture.Process.Requests, request => request.ExecutablePath == external && request.Arguments.SequenceEqual(["--list-sdks"]));
-        Assert.Contains(fixture.Process.Requests, request => request.ExecutablePath == external && request.WorkingDirectory == project && request.Arguments.SequenceEqual(["--version"]));
+        Assert.DoesNotContain(fixture.Process.Requests, request => request.WorkingDirectory == project);
     }
 
     [Theory]
-    [InlineData("disable", "10.0.100")]
-    [InlineData("patch", "10.0.100")]
-    [InlineData("latestPatch", "10.0.113")]
-    [InlineData("feature", "10.0.113")]
+    [InlineData("disable", null)]
+    [InlineData("patch", null)]
+    [InlineData("latestPatch", null)]
+    [InlineData("feature", "10.0.402")]
     [InlineData("latestFeature", "10.0.402")]
-    public async Task SdkCatalogSelectionRespectsFeatureBandAndRollForward(string policy, string expected)
+    public async Task ProjectRollForwardCanConstrainButCannotReplaceSundersSdk(string policy, string? expected)
     {
         using var fixture = new Fixture();
         foreach (var version in new[] { "10.0.100", "10.0.113", "10.0.402" }) fixture.AddDotnet(version);
@@ -234,7 +240,8 @@ public sealed class BuilderToolchainTests
             fixture.Process.ExternalSelectedVersion[executable] = release.Version;
         }
         using var service = fixture.Service();
-        Assert.Equal(expected, (await service.EnsureAsync(BuilderProjectKind.Dotnet, project)).Version);
+        if (expected is null) await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Dotnet, project));
+        else Assert.Equal(expected, (await service.EnsureAsync(BuilderProjectKind.Dotnet, project)).Version);
     }
 
     [Fact]
@@ -246,7 +253,7 @@ public sealed class BuilderToolchainTests
         var project = fixture.Project("repo/project");
         await System.IO.File.WriteAllTextAsync(fixture.PathOf("repo/.tool-versions"), "nodejs 24.18.1\n");
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, ".tool-versions"), "python 3.14.0\n");
-        using var service = fixture.Service();
+        using var service = fixture.Service(versions: new("10.0.100", "24.18.1", "11.16.0"));
         Assert.Equal("24.18.1", (await service.EnsureAsync(BuilderProjectKind.Node, project)).Version);
     }
 
@@ -257,7 +264,8 @@ public sealed class BuilderToolchainTests
         var project = fixture.Project("project");
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, "global.json"), "{\"sdk\":{\"version\":\"9.0.100\"}}");
         using var service = fixture.Service();
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.EnsureAsync(BuilderProjectKind.Dotnet, project));
+        var error = await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Dotnet, project));
+        Assert.Equal("selection", error.Phase);
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, ".nvmrc"), "node\n");
         await Assert.ThrowsAsync<InvalidDataException>(() => service.EnsureAsync(BuilderProjectKind.Node, project));
         Assert.Equal(0, fixture.CatalogCalls);
@@ -266,12 +274,12 @@ public sealed class BuilderToolchainTests
 
     [Theory]
     [InlineData(">=24.18.1 <25", "24.22.0")]
-    [InlineData("~24.18.1", "24.18.1")]
-    [InlineData("24.18.x", "24.18.1")]
-    [InlineData("24.18.1 - 24.20", "24.18.1")]
+    [InlineData("~24.18.1", null)]
+    [InlineData("24.18.x", null)]
+    [InlineData("24.18.1 - 24.20", null)]
     [InlineData("^22 || ^24.22.0", "24.22.0")]
-    [InlineData("<=24.18.1", "24.18.1")]
-    public async Task NodeEngineRangesAreHonored(string range, string expected)
+    [InlineData("<=24.18.1", null)]
+    public async Task NodeEngineRangesMustAllowSundersExactDevelopmentVersion(string range, string? expected)
     {
         using var fixture = new Fixture();
         fixture.AddNode("24.18.1", "11.16.0");
@@ -279,11 +287,12 @@ public sealed class BuilderToolchainTests
         var project = fixture.Project("project");
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, "package.json"), JsonSerializer.Serialize(new { engines = new { node = range } }));
         using var service = fixture.Service();
-        Assert.Equal(expected, (await service.EnsureAsync(BuilderProjectKind.Node, project)).Version);
+        if (expected is null) await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Node, project));
+        else Assert.Equal(expected, (await service.EnsureAsync(BuilderProjectKind.Node, project)).Version);
     }
 
     [Fact]
-    public async Task ConflictingPinsFailWithoutDownloadAndNpmPinSelectsBundledVersion()
+    public async Task ConflictingPinsFailWithoutDownloadIncludingAnIncorrectNpmVersion()
     {
         using var fixture = new Fixture();
         fixture.AddNode("24.18.1", "11.16.0");
@@ -296,7 +305,10 @@ public sealed class BuilderToolchainTests
         Assert.Equal(0, fixture.Downloads);
         System.IO.File.Delete(Path.Combine(project, ".node-version"));
         await System.IO.File.WriteAllTextAsync(Path.Combine(project, "package.json"), "{\"packageManager\":\"npm@11.16.0\"}");
-        Assert.Equal("24.18.1", (await service.EnsureAsync(BuilderProjectKind.Node, project)).Version);
+        await Assert.ThrowsAsync<BuilderToolchainException>(() => service.EnsureAsync(BuilderProjectKind.Node, project));
+        Assert.Equal(0, fixture.Downloads);
+        await System.IO.File.WriteAllTextAsync(Path.Combine(project, "package.json"), "{\"packageManager\":\"npm@11.19.1\"}");
+        Assert.Equal("24.22.0", (await service.EnsureAsync(BuilderProjectKind.Node, project)).Version);
     }
 
     [Fact]
@@ -433,7 +445,7 @@ public sealed class BuilderToolchainTests
     public async Task ExternalToolchainsAndForgedOwnedPathsAreNeverModified()
     {
         using var fixture = new Fixture();
-        var external = fixture.ExternalDotnet("external", "10.0.100");
+        var external = fixture.ExternalDotnet("external", "10.0.402");
         using var service = fixture.Service(_ => [external]);
         var installation = Assert.Single(await service.ListInstalledAsync(BuilderProjectKind.Dotnet));
         Assert.False(installation.IsManaged);
@@ -519,12 +531,13 @@ public sealed class BuilderToolchainTests
         internal int CatalogCalls;
         internal bool Offline;
         internal bool CorruptDownload;
+        internal bool CorruptNpm;
         internal Func<CancellationToken, Task>? OnDownload;
         internal Fixture() => Directory.CreateDirectory(Root);
         internal string PathOf(string path) => Path.Combine(Root, path);
         internal string Project(string path) { var full = PathOf(path); Directory.CreateDirectory(full); return full; }
-        internal BuilderToolchainService Service(Func<BuilderProjectKind, IReadOnlyList<string>>? candidates = null)
-            => new(ManagedRoot, this, this, Process, candidates ?? (_ => []), platform: Platform);
+        internal BuilderToolchainService Service(Func<BuilderProjectKind, IReadOnlyList<string>>? candidates = null, SunderDevelopmentToolchain? versions = null)
+            => new(ManagedRoot, versions ?? new("10.0.402", "24.22.0", "11.19.1"), this, this, Process, candidates ?? (_ => []), platform: Platform);
 
         internal void AddNode(string version, string npm)
         {
@@ -554,6 +567,17 @@ public sealed class BuilderToolchainTests
             archives.Add(release.DownloadUri.ToString(), bytes);
         }
 
+        internal void AddNpm(string version)
+        {
+            var bytes = Tar([("package/bin/npm-cli.js", version)], []);
+            var uri = $"https://registry.npmjs.org/npm/-/npm-{version}.tgz";
+            archives.Add(uri, bytes);
+            archives.Add($"https://registry.npmjs.org/npm/{version}", JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                name = "npm", version, dist = new { tarball = uri, integrity = "sha512-" + Convert.ToBase64String(SHA512.HashData(bytes)) },
+            }));
+        }
+
         internal string ExternalDotnet(string directory, params string[] versions)
         {
             var root = Project(directory);
@@ -578,7 +602,7 @@ public sealed class BuilderToolchainTests
         {
             Interlocked.Increment(ref Downloads);
             var bytes = archives[uri.ToString()].ToArray();
-            if (CorruptDownload) bytes[0] ^= 0x7F;
+            if (CorruptDownload || CorruptNpm && uri.AbsolutePath.EndsWith(".tgz", StringComparison.Ordinal)) bytes[0] ^= 0x7F;
             await destination.WriteAsync(bytes.AsMemory(0, 1), cancellationToken);
             if (OnDownload is not null) await OnDownload(cancellationToken);
             await destination.WriteAsync(bytes.AsMemory(1), cancellationToken);

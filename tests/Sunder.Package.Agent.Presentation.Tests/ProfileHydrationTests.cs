@@ -1,6 +1,7 @@
 extern alias AgentApp;
 
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -9,6 +10,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using AgentApp::Sunder.Package.Agent.PackageViews;
+using AppPresentation = AgentApp::Sunder.Package.Agent.Shared.Presentation;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
@@ -149,6 +151,71 @@ public sealed class ProfileHydrationTests
         {
             window.Close();
         }
+    }
+
+    [AvaloniaFact]
+    public async Task CapabilityGroupCheckbox_TracksChildrenAndSurvivesEquivalentRefreshWithoutLosingFocus()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        using var extensions = new RegressionTestExtensionCatalog();
+        using var profileService = CreateProfileService(scope, extensions);
+        _ = await profileService.CreateProfileAsync("Profile");
+        using var model = RegressionTestAppViews.Profiles(profileService);
+        await model.InitializeAsync();
+        var groupDefinition = new AppPresentation.CapabilityGroupDefinition("files", "Files", null, 10, AllowsBulkSelection: true);
+        var definitions = new[]
+        {
+            new AppPresentation.CapabilityOptionDefinition("local", "tool", "read", "files", "Read", null, "", true, groupDefinition),
+            new AppPresentation.CapabilityOptionDefinition("local", "tool", "write", "files", "Write", null, "", true, groupDefinition),
+            new AppPresentation.CapabilityOptionDefinition("package", "tool-group", "server", "mcp", "Server", null, "", true,
+                new AppPresentation.CapabilityGroupDefinition("mcp", "MCP servers", null, 20)),
+        };
+        model.Capabilities.Load(definitions, [new("tool", "read", "files")]);
+        foreach (var option in model.Capabilities.Options) model.LocalTools.Add(option);
+        foreach (var group in model.Capabilities.Groups) model.CapabilityGroups.Add(group);
+        using var view = new AgentProfilesView { DataContext = model };
+        var window = new Window { Width = 1100, Height = 900, Content = view };
+        window.Show();
+        try
+        {
+            window.UpdateLayout();
+            var toggle = Assert.Single(view.GetVisualDescendants().OfType<CheckBox>(),
+                checkbox => checkbox.Classes.Contains("capability-group-toggle") && checkbox.IsEffectivelyVisible);
+            Assert.Contains(view.GetVisualDescendants().OfType<CheckBox>(),
+                checkbox => checkbox.Classes.Contains("capability-group-toggle") && !checkbox.IsEffectivelyVisible);
+            var children = view.GetVisualDescendants().OfType<CheckBox>()
+                .Where(checkbox => checkbox.DataContext is AppPresentation.CapabilityOptionState { Kind: "tool" }).ToArray();
+            Assert.Equal(2, children.Length);
+            Assert.Null(toggle.IsChecked);
+
+            toggle.IsChecked = true;
+            Assert.All(children, checkbox => Assert.True(checkbox.IsChecked));
+            Assert.True(model.IsDirty);
+            children[0].IsChecked = false;
+            Assert.Null(toggle.IsChecked);
+            toggle.IsChecked = false;
+            Assert.All(children, checkbox => Assert.False(checkbox.IsChecked));
+
+            var name = view.FindControl<TextBox>("ProfileDisplayNameTextBox")!;
+            Assert.True(name.Focus());
+            name.SelectionStart = 1;
+            name.SelectionEnd = 4;
+            model.Capabilities.Reconcile(definitions.Select(definition => definition with { }));
+            window.UpdateLayout();
+
+            Assert.True(name.IsFocused);
+            Assert.Equal(1, name.SelectionStart);
+            Assert.Equal(4, name.SelectionEnd);
+            Assert.Same(toggle, Assert.Single(view.GetVisualDescendants().OfType<CheckBox>(),
+                checkbox => checkbox.Classes.Contains("capability-group-toggle") && checkbox.IsEffectivelyVisible));
+            Assert.All(children, checkbox => Assert.Contains(checkbox, view.GetVisualDescendants()));
+            UiCapture.Save(window, "agents-capabilities");
+            var editorScroll = view.FindControl<TextBox>("ProfileDisplayNameTextBox")!.GetVisualAncestors().OfType<ScrollViewer>().First();
+            editorScroll.Offset = new Avalonia.Vector(0, editorScroll.Extent.Height);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            UiCapture.Save(window, "agents-capability-groups");
+        }
+        finally { window.Close(); }
     }
 
     private static AgentProfileService CreateProfileService(

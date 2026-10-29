@@ -2,15 +2,15 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Sunder.Package.Agent.Provider.Gemini"
              x:Class="Sunder.Package.Agent.Provider.Gemini.GeminiSettingsView"
-             x:DataType="vm:GeminiSettingsViewModel">
+             x:DataType="vm:GeminiSettingsViewModel" Classes="agent-page">
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <StyleInclude Source="/Provider.Shared/ProviderSettingsStyles.axaml" />
   </UserControl.Styles>
 
-  <ScrollViewer>
-    <StackPanel Margin="0,0,0,8"
-                Spacing="16">
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="{DynamicResource Sunder.Padding.Panel}"
+                Spacing="{DynamicResource Sunder.Spacing.Large}">
       <ContentControl Content="{Binding ApiKeySettings}"
                       ContentTemplate="{StaticResource ProviderApiKeySettingsTemplate}" />
       <ContentControl Content="{Binding UtilityModelSettings}"

@@ -48,6 +48,8 @@ public sealed class TestPackageContext : IPackageContext
 
     public IPackageLogging Logging { get; }
 
+    public SunderDevelopmentToolchain? DevelopmentToolchain { get; init; }
+
     public static TestPackageContext CreateFileBacked(
         string packageId,
         string workspaceRoot,

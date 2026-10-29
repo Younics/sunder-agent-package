@@ -205,13 +205,13 @@ class ColdInputsTests(unittest.TestCase):
         with self.assertRaisesRegex(release.Invalid, "source/locks changed"):
             inputs.execute(self.work / "cold-state.json", ["dotnet", "build", "P1.csproj", "--no-restore"])
 
-    def test_unmigrated_role_intent_is_rejected_before_any_restore(self):
+    def test_missing_role_intent_is_rejected_before_any_restore(self):
         path = self.source / "src/P1/sunder-contracts.lock.json"
         lock = release.load(path)
         del lock["packageImports"]["younics.ai.agent"]["consumerRoles"]
         write(path, lock)
         self.manifest["lockSetSha256"] = release.locks(self.source)
-        with self.assertRaisesRegex(release.Invalid, "consumer-roles-migration-required"):
+        with self.assertRaisesRegex(release.Invalid, "consumer-roles-required"):
             inputs.validate_manifest(self.source, self.manifest, self.source_sha, self.core_sha)
         self.assertFalse(self.calls)
 

@@ -16,7 +16,7 @@ public sealed class BuilderDevelopmentCommandHubTests
         for (var index = 0; index < 40; index++)
         {
             using var cancellation = new CancellationTokenSource();
-            var response = hub.InvokeAsync("build", index.ToString(), "{}", app, cancellation.Token);
+            var response = hub.InvokeAsync("apply", index.ToString(), "{}", app, cancellation.Token);
             var command = (await hub.ReadAsync(app, default))!;
             cancellation.Cancel();
             await Assert.ThrowsAnyAsync<OperationCanceledException>(() => response);
@@ -41,7 +41,7 @@ public sealed class BuilderDevelopmentCommandHubTests
         hub.Connect(first);
         var oldRead = hub.ReadAsync(first, default);
         clock.Advance(TimeSpan.FromSeconds(16)); hub.Connect(second);
-        var response = hub.InvokeAsync("build", "operation", "{}", second, default);
+        var response = hub.InvokeAsync("apply", "operation", "{}", second, default);
         await Assert.ThrowsAsync<SunderRpcException>(() => oldRead);
         var command = Assert.IsType<BuilderDevelopmentCommand>(await hub.ReadAsync(second, default));
         Assert.Equal("operation", command.OperationId);
@@ -55,10 +55,10 @@ public sealed class BuilderDevelopmentCommandHubTests
         var clock = new Clock(); using var hub = new BuilderDevelopmentCommandHub(clock);
         var first = Guid.NewGuid().ToString("N"); var second = Guid.NewGuid().ToString("N");
         hub.Connect(first);
-        var response = hub.InvokeAsync("hotreload", "operation", "{}", first, default);
+        var response = hub.InvokeAsync("apply", "operation", "{}", first, default);
         var command = (await hub.ReadAsync(first, default))!;
         clock.Advance(TimeSpan.FromSeconds(16)); hub.Connect(second);
-        var rejected = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => hub.InvokeAsync("hotreload", "operation", "{}", first, default));
+        var rejected = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => hub.InvokeAsync("apply", "operation", "{}", first, default));
         Assert.False(rejected.Failure.OutcomeUnknown);
         Assert.Throws<SunderRpcException>(() => hub.Complete(second, command.RequestId, "{}", null));
         hub.Complete(first, command.RequestId, "{\"recorded\":true}", null);
@@ -71,13 +71,13 @@ public sealed class BuilderDevelopmentCommandHubTests
         using var hub = new BuilderDevelopmentCommandHub();
         var app = Guid.NewGuid().ToString("N"); hub.Connect(app);
         using var cancellation = new CancellationTokenSource();
-        var request = hub.InvokeAsync("build", "cancelled", "{}", app, cancellation.Token);
+        var request = hub.InvokeAsync("apply", "cancelled", "{}", app, cancellation.Token);
         cancellation.Cancel();
         var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => request);
         Assert.Equal(cancellation.Token, cancelled.CancellationToken);
         Assert.Null(await hub.ReadAsync(app, default));
-        var pending = Enumerable.Range(0, 32).Select(index => hub.InvokeAsync("build", index.ToString(), "{}", app, default)).ToArray();
-        var overflow = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => hub.InvokeAsync("build", "overflow", "{}", app, default));
+        var pending = Enumerable.Range(0, 32).Select(index => hub.InvokeAsync("apply", index.ToString(), "{}", app, default)).ToArray();
+        var overflow = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => hub.InvokeAsync("apply", "overflow", "{}", app, default));
         Assert.False(overflow.Failure.OutcomeUnknown);
         hub.Dispose();
         foreach (var work in pending)
@@ -89,12 +89,26 @@ public sealed class BuilderDevelopmentCommandHubTests
     {
         using var hub = new BuilderDevelopmentCommandHub();
         var app = Guid.NewGuid().ToString("N"); hub.Connect(app);
-        var response = hub.InvokeAsync("hotreload", "original-operation", "{}", app, default);
+        var response = hub.InvokeAsync("apply", "original-operation", "{}", app, default);
         var command = (await hub.ReadAsync(app, default))!;
         Assert.Equal("original-operation", command.OperationId);
         hub.Dispose();
         var error = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => response);
         Assert.True(error.Failure.OutcomeUnknown);
+    }
+
+    [Theory]
+    [InlineData("build")]
+    [InlineData("hotreload")]
+    [InlineData("inspect-view")]
+    [InlineData("interact-view")]
+    public async Task RetiredOperationsAreRejectedBeforeAppAdmission(string operation)
+    {
+        using var hub = new BuilderDevelopmentCommandHub();
+        var error = await Assert.ThrowsAsync<BuilderDevelopmentRequestException>(() => hub.InvokeAsync(operation, "", "{}", null, default));
+        Assert.Equal("maker.invalid-request", error.Failure.Code);
+        Assert.False(error.Failure.OutcomeUnknown);
+        Assert.False(hub.IsConnected);
     }
 
     private sealed class Clock : TimeProvider

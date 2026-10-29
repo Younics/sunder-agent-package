@@ -347,6 +347,7 @@ public sealed class MemorySemanticWorkerTopologyTests
         public virtual ValueTask<SunderContent> SessionCheckpointAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> WorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> MemoriesAsync(Guid sessionId, string? searchText, bool includeInactive, CancellationToken token = default) => Unsupported();
+        public virtual ValueTask<SunderContent> GraphAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> DetailsAsync(Guid memoryId, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> SemanticStateAsync(Guid sessionId, string? profileId, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> IndexStatusAsync(Guid memoryId, AppSemanticEmbeddingContext? context, CancellationToken token = default) => Unsupported();

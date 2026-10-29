@@ -71,6 +71,9 @@ internal sealed partial class MemoryAppRuntimeGateway :
     public async Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default)
         => (await InvokeAsync(token => _service.MemoriesAsync(sessionId, searchText, includeInactive, token), cancellationToken).ConfigureAwait(false)).Memories ?? [];
 
+    public async Task<MemoryGraphPage> GetGraphPageAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken cancellationToken = default)
+        => (await InvokeAsync(token => _service.GraphAsync(sessionId, searchText, includeInactive, limit, token), cancellationToken).ConfigureAwait(false)).Graph ?? new([], false);
+
     public async Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(Guid memoryId, CancellationToken cancellationToken = default)
         => (await DetailsAsync(memoryId, cancellationToken).ConfigureAwait(false)).Evidence ?? [];
 

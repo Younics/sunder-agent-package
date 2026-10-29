@@ -1,31 +1,40 @@
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using Sunder.Sdk.Abstractions;
 
 namespace Sunder.Package.Agent.Builder;
 
 public static class BuilderToolchainPolicy
 {
-    public const string DotnetChannel = "10.0";
-    public const string MinimumDotnetSdkVersion = "10.0.100";
-    public const string MinimumNodeVersion = "24.18.1";
-    public const int NodeMajorVersion = 24;
     public const long MaximumMetadataBytes = 8 * 1024 * 1024;
     public const long MaximumArchiveBytes = 1024L * 1024 * 1024;
     public const long MaximumExpandedBytes = 6L * 1024 * 1024 * 1024;
     public const int MaximumArchiveEntries = 150_000;
     public static TimeSpan CatalogFreshness => TimeSpan.FromHours(24);
-    public static Uri DotnetMetadataUri => new($"https://builds.dotnet.microsoft.com/dotnet/release-metadata/{DotnetChannel}/releases.json");
+    public static Uri DotnetMetadataUri(SunderDevelopmentToolchain versions)
+        => new($"https://builds.dotnet.microsoft.com/dotnet/release-metadata/{Version.Parse(versions.DotnetSdkVersion).Major}.0/releases.json");
     public static Uri NodeMetadataUri => new("https://nodejs.org/dist/index.json");
 
-    public static bool IsSupported(BuilderProjectKind kind, string version)
+    internal static bool IsKnownVersion(BuilderProjectKind kind, string version)
     {
         if (!TryVersion(version, out var parsed)) return false;
         return kind switch
         {
-            BuilderProjectKind.Dotnet => parsed.Major == 10 && parsed.Minor == 0 && parsed >= Version.Parse(MinimumDotnetSdkVersion),
-            BuilderProjectKind.Node => parsed.Major == NodeMajorVersion && parsed >= Version.Parse(MinimumNodeVersion),
+            BuilderProjectKind.Dotnet => parsed.Major >= 10 && parsed.Minor == 0 && parsed.Build >= 100,
+            BuilderProjectKind.Node => parsed.Major >= 24,
             _ => false,
         };
+    }
+
+    internal static bool Matches(SunderDevelopmentToolchain versions, BuilderProjectKind kind, string version, string? npmVersion = null)
+        => kind == BuilderProjectKind.Dotnet ? version == versions.DotnetSdkVersion
+            : kind == BuilderProjectKind.Node && version == versions.NodeVersion && npmVersion == versions.NpmVersion;
+
+    internal static void ValidateVersions(SunderDevelopmentToolchain versions)
+    {
+        if (!IsKnownVersion(BuilderProjectKind.Dotnet, versions.DotnetSdkVersion)
+            || !IsKnownVersion(BuilderProjectKind.Node, versions.NodeVersion) || !TryVersion(versions.NpmVersion, out _))
+            throw new InvalidDataException("Sunder must provide exact stable development-toolchain versions.");
     }
 
     internal static bool TryVersion(string? text, out Version version)
@@ -39,7 +48,7 @@ public static class BuilderToolchainPolicy
     {
         if (release is null || release.DownloadUri is null || string.IsNullOrEmpty(release.Platform))
             throw new InvalidDataException("The toolchain archive identity is incomplete.");
-        if (!IsSupported(release.Kind, release.Version)) throw new InvalidDataException("The archive is outside the supported stable toolchain policy.");
+        if (!IsKnownVersion(release.Kind, release.Version)) throw new InvalidDataException("The archive has an invalid stable toolchain version.");
         BuilderToolchainHttpTransport.ValidateUri(release.DownloadUri);
         var suffix = release.Platform.StartsWith("win-", StringComparison.Ordinal) ? ".zip" : ".tar.gz";
         var expectedName = release.Kind == BuilderProjectKind.Dotnet

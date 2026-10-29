@@ -16,6 +16,12 @@ public interface IMemoryInspectorGateway
     Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default);
+    async Task<MemoryGraphPage> GetGraphPageAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken cancellationToken = default)
+    {
+        var memories = await ListMemoriesAsync(sessionId, searchText, includeInactive, cancellationToken).ConfigureAwait(false);
+        var bounded = Math.Clamp(limit, 1, 1000);
+        return new(memories.Take(bounded).ToArray(), memories.Count > bounded);
+    }
     Task<IReadOnlyList<StoredMemoryEvidenceRecord>> ListEvidenceAsync(Guid memoryId, CancellationToken cancellationToken = default);
     Task<StoredMemoryRecord?> GetSupersedingMemoryAsync(Guid memoryId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StoredMemoryRecord>> ListSupersededMemoriesAsync(Guid memoryId, CancellationToken cancellationToken = default);

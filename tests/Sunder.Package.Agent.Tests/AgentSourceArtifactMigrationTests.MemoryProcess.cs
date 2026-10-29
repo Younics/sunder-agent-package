@@ -102,6 +102,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var target = Assert.Single(manifest.GetProperty("targets").EnumerateArray(), value => value.GetProperty("role").GetString() == "runtime");
             start.ArgumentList.Add(Path.Combine(runtimeRoot, target.GetProperty("entryPoint").GetString()!));
             start.Environment["SUNDER_WORKER_PROTOCOL"] = "sunder.worker.v1";
+            start.Environment["SUNDER_DEVELOPMENT_TOOLCHAIN"] = JsonSerializer.Serialize(ReadDevelopmentToolchain());
             start.Environment["SUNDER_PACKAGE_ID"] = _packageId;
             start.Environment["SUNDER_PACKAGE_VERSION"] = _packageVersion;
             start.Environment["SUNDER_ACTIVATION_ID"] = _activation;

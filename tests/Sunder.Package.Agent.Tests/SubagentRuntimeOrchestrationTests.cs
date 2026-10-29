@@ -483,6 +483,9 @@ public sealed class SubagentRuntimeOrchestrationTests
         public AgentTurnRecord UpsertAssistantTurn(AgentTurnRecord? assistantTurn, string content)
             => throw new NotSupportedException();
 
+        public AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn)
+            => throw new NotSupportedException();
+
         public ValueTask PublishLifecycleEventAsync(
             AgentLifecycleEventKind kind,
             AgentRunStatus status,

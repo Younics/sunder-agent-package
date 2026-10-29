@@ -125,6 +125,7 @@ internal static class CurrentPackagePolicyAssertions
                 Assert.Contains(capability, app.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
                 Assert.DoesNotContain(capability, runtime.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
             }
+            Assert.Contains("development-toolchain.v1", runtime.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
         }
         Assert.Equal(inventory.GetProperty("capabilities").GetProperty(package.PackageId).EnumerateArray().Select(value => value.GetString()).Order(StringComparer.Ordinal),
             targets.SelectMany(value => value.GetProperty("requiredHostCapabilities").EnumerateArray()).Select(value => value.GetString()).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal));

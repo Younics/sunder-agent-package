@@ -9,7 +9,7 @@ concurrency:
   group: sunder-agent-family
   cancel-in-progress: false
 env:
-  DOTNET_VERSION: "10.0.100"
+  DOTNET_VERSION: "10.0.403"
   CORE_SDK_VERSION: "1.1.0"
   NUGET_SOURCE: https://api.nuget.org/v3/index.json
 
@@ -185,7 +185,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: "24.18.1"
+          node-version: "24.22.1"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: sunder-agent-native-*

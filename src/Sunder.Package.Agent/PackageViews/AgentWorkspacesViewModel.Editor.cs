@@ -78,15 +78,11 @@ public sealed partial class AgentWorkspacesViewModel
 
         try
         {
-            ExecutionTargets.Clear();
-            ExecutionTargets.Add(ExecutionTargetOption.Unconfigured);
-            foreach (var target in targets)
-            {
-                ExecutionTargets.Add(new ExecutionTargetOption(
+            ObservableCollectionReconciler.Apply(ExecutionTargets,
+                new[] { ExecutionTargetOption.Unconfigured }.Concat(targets.Select(target => new ExecutionTargetOption(
                     target.TargetId,
                     target.DisplayName,
-                    target.Description ?? target.TargetId));
-            }
+                    target.Description ?? target.TargetId))));
 
             if (restoreSelection)
             {
@@ -124,9 +120,9 @@ public sealed partial class AgentWorkspacesViewModel
             }
 
             var preferredTargetId = SelectedExecutionTarget?.TargetId;
-            if (SelectedExecutionTarget is null && SelectedWorkspace is not null)
+            if (SelectedWorkspace is { } workspace && !IsWorkspaceDraftDirty(workspace.WorkspaceId))
             {
-                preferredTargetId = ResolveWorkspaceTargetId(SelectedWorkspace.WorkspaceId);
+                preferredTargetId = ResolveWorkspaceTargetId(workspace.WorkspaceId);
             }
 
             request = new AgentExecutionTargetRefreshRequest(
@@ -163,7 +159,11 @@ public sealed partial class AgentWorkspacesViewModel
                     return;
                 }
 
+                var previousTargetId = SelectedExecutionTarget?.TargetId;
                 ReloadTargets(targets, preferredTargetId, restoreSelection: true);
+                if (_listDetail.IsExistingDetail && !string.Equals(previousTargetId,
+                        SelectedExecutionTarget?.TargetId, StringComparison.OrdinalIgnoreCase))
+                    StartEditorSectionRefresh();
             }).ConfigureAwait(false);
         }
         catch (OperationCanceledException exception) when (
@@ -209,34 +209,36 @@ public sealed partial class AgentWorkspacesViewModel
 
     private void ApplyExtensionCatalogChanges()
     {
-        if (_disposed)
-        {
-            return;
-        }
-
-        var targetRefresh = StartExecutionTargetRefresh();
-        _tasks.Run(async cancellationToken =>
-        {
-            try
-            {
-                await targetRefresh.WaitAsync(cancellationToken).ConfigureAwait(false);
-            }
-            catch
-            {
-                return;
-            }
-
-            await _uiDispatcher.InvokeAsync(() =>
-            {
-                if (!_disposed && ReferenceEquals(targetRefresh, _currentExecutionTargetRefresh))
-                {
-                    StartEditorSectionRefresh();
-                }
-            }).ConfigureAwait(false);
-        });
+        if (!_disposed) _tasks.Run(token => _extensionRefresh.MarkDirty().WaitAsync(token));
     }
 
-    private void StartEditorSectionRefresh()
+    private async Task RefreshExtensionCatalogAsync(CancellationToken cancellationToken)
+    {
+        Task targetRefresh = Task.CompletedTask;
+        Task previousEditorRefresh = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                previousEditorRefresh = _currentEditorSectionRefresh;
+                targetRefresh = StartExecutionTargetRefresh();
+            }
+        }).ConfigureAwait(false);
+        await targetRefresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+        Task editorRefresh = Task.CompletedTask;
+        await _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed && ReferenceEquals(targetRefresh, _currentExecutionTargetRefresh))
+            {
+                if (ReferenceEquals(previousEditorRefresh, _currentEditorSectionRefresh))
+                    StartEditorSectionRefresh(background: true);
+                editorRefresh = _currentEditorSectionRefresh;
+            }
+        }).ConfigureAwait(false);
+        await editorRefresh.WaitAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private void StartEditorSectionRefresh(bool background = false)
     {
         if (!_listDetail.IsExistingDetail)
         {
@@ -245,11 +247,12 @@ public sealed partial class AgentWorkspacesViewModel
             return;
         }
 
-        var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token);
-        _currentEditorSectionRefresh = _tasks.Track(_ => RefreshEditorSectionsAsync(ticket));
+        var retainReady = background && _listDetail.DetailPhase == AdaptiveDetailPhase.Ready;
+        var ticket = _listDetail.BeginDetailLoad(_lifetimeCancellation.Token, retainReady);
+        _currentEditorSectionRefresh = _tasks.Track(_ => RefreshEditorSectionsAsync(ticket, retainReady));
     }
 
-    private async Task RefreshEditorSectionsAsync(AdaptiveDetailTicket<string> ticket)
+    private async Task RefreshEditorSectionsAsync(AdaptiveDetailTicket<string> ticket, bool background)
     {
         var context = BuildEditorContext();
         if (context is null)
@@ -263,7 +266,7 @@ public sealed partial class AgentWorkspacesViewModel
             return;
         }
 
-        var operation = BeginOperation(AgentWorkspaceOperation.DiscoverEditor);
+        var operation = background ? default : BeginOperation(AgentWorkspaceOperation.DiscoverEditor);
         try
         {
             var editorSections = new List<AgentEditorSectionViewModel>();
@@ -290,14 +293,11 @@ public sealed partial class AgentWorkspacesViewModel
 
                 foreach (var section in result.Result)
                 {
-                    editorSections.Add(new AgentEditorSectionViewModel(
-                        contributorReference,
-                        context,
-                        section));
+                    editorSections.Add(new AgentEditorSectionViewModel(contributorReference, context, section));
                 }
             }
 
-            if (!_operation.IsCurrent(operation) || !_listDetail.IsCurrentDetail(ticket))
+            if ((!background && !_operation.IsCurrent(operation)) || !_listDetail.IsCurrentDetail(ticket))
             {
                 return;
             }
@@ -305,7 +305,11 @@ public sealed partial class AgentWorkspacesViewModel
             _suppressDraftTracking = true;
             try
             {
-                ReplaceEditorSections(editorSections);
+                var desired = editorSections.Select(section => background && section.Descriptor is { } descriptor
+                    ? EditorSections.FirstOrDefault(existing => existing.CanRetain(section.ContributorReference, context, descriptor)) ?? section
+                    : section).ToArray();
+                foreach (var section in desired) section.UpdateContext(context);
+                ReplaceEditorSections(desired);
             }
             finally
             {
@@ -342,14 +346,18 @@ public sealed partial class AgentWorkspacesViewModel
         }
         catch (Exception ex)
         {
-            if (_operation.IsCurrent(operation) && _listDetail.TrySetDetailError(ticket, ex))
+            if (background && _listDetail.TrySetDetailReady(ticket))
+            {
+                SetStatus(ex.Message, AgentWorkspaceStatusKind.Warning);
+            }
+            else if (!background && _operation.IsCurrent(operation) && _listDetail.TrySetDetailError(ticket, ex))
             {
                 SetStatus(ex.Message, AgentWorkspaceStatusKind.Error);
             }
         }
         finally
         {
-            EndOperation(operation);
+            if (!background) EndOperation(operation);
         }
     }
 

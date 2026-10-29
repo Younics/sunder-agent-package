@@ -10,6 +10,50 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderViewModelTests
 {
     [Fact]
+    public async Task PackageLogNavigationUsesInspectedIdentityNotMakerIdOrUnsavedIdentityDraft()
+    {
+        await using var fixture = new BuilderUiFixture();
+        var row = await fixture.OpenAsync("logs");
+        row.EditedPackageId = "local.unsaved";
+        await fixture.Model.OpenPackageLogsAsync();
+        Assert.Equal(new[] { "local.logs" }, fixture.Development.OpenedPackageLogs);
+        var current = row.Inspection! with { PackageId = "local.current", SourceRevision = "external" };
+        row.ApplyInspection(current);
+        await fixture.Model.OpenPackageLogsAsync();
+        Assert.Equal(new[] { "local.logs", "local.current" }, fixture.Development.OpenedPackageLogs);
+        Assert.Equal("local.unsaved", row.EditedPackageId);
+        Assert.Empty(fixture.Backend.Starts);
+    }
+
+    [Fact]
+    public void ProjectNoticesCanBeDismissedWithoutErasingFaultsOrDraftsAndUpgradeRequiresCheckedEvidence()
+    {
+        var project = BuilderUiFixture.Project("notices");
+        var row = new BuilderProjectViewModel(BuilderUiFixture.Record(project));
+        row.ApplyInspection(project);
+        row.EditedDisplayName = "Draft";
+        row.SetError("SDK selection excludes a version; unrelated errors must not fabricate upgrade evidence.");
+        Assert.False(row.ShowUpgradeToolchain);
+        Assert.False(row.HasToolchainNotice);
+        Assert.True(row.ShowAttentionNotice);
+        row.DismissAttentionNotice();
+        Assert.False(row.ShowAttentionNotice);
+        Assert.True(row.HasError);
+        Assert.Equal("Draft", row.EditedDisplayName);
+        row.ApplyInspection(project with { ToolchainAssessment = new(true, true, "Explicit upgrade available") });
+        Assert.True(row.ShowUpgradeToolchain);
+        Assert.True(row.CanUpgradeToolchain);
+        row.ApplyInspection(project with { ToolchainAssessment = new(true, false, "Update inherited pin manually") });
+        Assert.False(row.ShowUpgradeToolchain);
+        Assert.True(row.HasToolchainNotice);
+        row.ApplyInspection(project with { ToolchainAssessment = new(false, false, null) });
+        Assert.False(row.HasToolchainNotice);
+        row.BeginOperation("build");
+        row.SetError("New failure");
+        Assert.True(row.ShowAttentionNotice);
+    }
+
+    [Fact]
     public void AppliedOutputObservationIsIndependentOfBuildSuccessAndUnrelatedGenerationChanges()
     {
         var row = new BuilderProjectViewModel(BuilderUiFixture.Record(BuilderUiFixture.Project("applied")));
@@ -1548,6 +1592,7 @@ internal sealed class BuilderUiDevelopment : IPackageDevelopmentService, IPackag
 {
     public List<(string Folder, bool Watch)> Loads { get; } = [];
     public List<BuilderUiSession> Sessions { get; } = [];
+    public List<string> OpenedPackageLogs { get; } = [];
     public Func<string, bool, CancellationToken, Task>? BeforeLoad { get; set; }
     public Func<string, string>? PackageIdResolver { get; set; }
     public Action<BuilderUiSession>? AfterLoad { get; set; }
@@ -1570,7 +1615,8 @@ internal sealed class BuilderUiDevelopment : IPackageDevelopmentService, IPackag
         AfterLoad?.Invoke(session);
         return session;
     }
-    public Task OpenPackageLogsAsync(string packageId, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public Task OpenPackageLogsAsync(string packageId, CancellationToken cancellationToken = default)
+    { OpenedPackageLogs.Add(packageId); return Task.CompletedTask; }
 }
 
 internal sealed class BuilderUiSession(bool watch, string packageId = "local.test") : IPackageDevelopmentSession

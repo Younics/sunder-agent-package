@@ -144,6 +144,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         => _initialization.RunAsync(InitializeCoreAsync, cancellationToken);
 
     internal Task CurrentSessionRefresh => _currentSessionRefresh;
+    internal bool IsApplyingMemorySnapshot => _suppressMemorySelectionDetails;
 
     partial void OnSelectedSessionChanged(AgentSessionRecord? value)
     {
@@ -174,6 +175,10 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
         _memorySelectionRevision++;
+        ApplyMemoryDraft(value);
+        ClearSelectionRelations();
+        RebuildGraph();
+        OnPropertyChanged(nameof(SelectedGraphMemoryId));
         StartMemoryDetailsLoad(value);
     }
 
@@ -252,8 +257,9 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
-        var content = EditContent.Trim();
-        var category = EditCategory.Trim();
+        var submitted = (Category: EditCategory, Content: EditContent);
+        var content = submitted.Content.Trim();
+        var category = submitted.Category.Trim();
         if (string.IsNullOrWhiteSpace(content) || string.IsNullOrWhiteSpace(category))
         {
             StatusText = "Category and content are required.";
@@ -261,14 +267,18 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         }
 
         var memoryId = SelectedMemory.MemoryId;
+        var selectionRevision = _memorySelectionRevision;
+        var sessionRevision = _sessionSelectionRevision;
         await _memoryInspectorService.UpdateMemoryAsync(
             memoryId,
             category,
             content,
             "Corrected in memory inspector.",
-            cancellationToken);
+             cancellationToken);
+        AcceptSubmittedMemory(memoryId, category, content, submitted);
         StatusText = "Memory saved.";
-        await StartSessionLoadAsync(SelectedSession, memoryId);
+        if (sessionRevision == _sessionSelectionRevision)
+            await StartSessionLoadAsync(SelectedSession, selectionRevision == _memorySelectionRevision ? memoryId : SelectedMemory?.MemoryId);
     }
 
     [RelayCommand]
@@ -286,6 +296,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         }
 
         var memoryId = SelectedMemory.MemoryId;
+        var selection = CaptureMemoryAction();
         var target = !SelectedMemory.IsPinned;
         var intentRevision = Interlocked.Increment(ref _pinIntentRevision);
         await _memoryInspectorService.SetPinnedAsync(memoryId, target, cancellationToken);
@@ -293,7 +304,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         {
             StatusText = target ? "Memory pinned." : "Memory unpinned.";
         }
-        await StartSessionLoadAsync(SelectedSession, memoryId);
+        await RefreshAfterMemoryActionAsync(selection, memoryId);
     }
 
     [RelayCommand]
@@ -311,9 +322,10 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         }
 
         var memoryId = SelectedMemory.MemoryId;
+        var selection = CaptureMemoryAction();
         await _memoryInspectorService.ContestMemoryAsync(memoryId, cancellationToken);
         StatusText = "Memory marked as contested.";
-        await StartSessionLoadAsync(SelectedSession, memoryId);
+        await RefreshAfterMemoryActionAsync(selection, memoryId);
     }
 
     [RelayCommand]
@@ -330,9 +342,10 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
+        var selection = CaptureMemoryAction();
         await _memoryInspectorService.ForgetMemoryAsync(SelectedMemory.MemoryId, cancellationToken);
         StatusText = "Memory forgotten.";
-        await StartSessionLoadAsync(SelectedSession, preferredMemoryId: null);
+        await RefreshAfterMemoryActionAsync(selection, preferredMemoryId: null);
     }
 
     [RelayCommand]
@@ -349,9 +362,10 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
+        var selection = CaptureMemoryAction();
         await _memoryInspectorService.SupersedeMemoryAsync(SelectedMemory.MemoryId, cancellationToken);
         StatusText = "Memory superseded.";
-        await StartSessionLoadAsync(SelectedSession, preferredMemoryId: null);
+        await RefreshAfterMemoryActionAsync(selection, preferredMemoryId: null);
     }
 
     [RelayCommand]
@@ -377,6 +391,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             return;
         }
 
+        var selection = CaptureMemoryAction();
         var result = await _memoryInspectorService.CreateCorrectedMemoryAsync(
             SelectedMemory.MemoryId,
             category,
@@ -385,7 +400,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         StatusText = result.CreatedNewMemory
             ? "Created corrected memory and linked the original as superseded."
             : "Applied correction to the existing memory.";
-        await StartSessionLoadAsync(SelectedSession, result.CorrectedMemory.MemoryId);
+        await RefreshAfterMemoryActionAsync(selection, result.CorrectedMemory.MemoryId);
     }
 
     public void Dispose()
@@ -418,6 +433,8 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         SemanticEmbeddingContext? semanticContext,
         string searchText,
         bool includeInactive,
+        int pageLimit,
+        MemoryListItemViewModel? expandedSelection,
         CancellationToken cancellationToken)
     {
         var checkpointTask = _memoryInspectorService.GetSessionContextCheckpointAsync(
@@ -426,53 +443,54 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         var workingSummaryTask = _memoryInspectorService.GetWorkingSummaryAsync(
             sessionId,
             cancellationToken);
-        var memoriesTask = _memoryInspectorService.ListMemoriesAsync(
+        var memoriesTask = _memoryInspectorService.GetGraphPageAsync(
             sessionId,
             searchText,
             includeInactive,
+            pageLimit,
             cancellationToken);
         await Task.WhenAll(checkpointTask, workingSummaryTask, memoriesTask).ConfigureAwait(false);
         var workingSummary = (await checkpointTask.ConfigureAwait(false))?.SummaryText
             ?? (await workingSummaryTask.ConfigureAwait(false))?.SummaryText
             ?? string.Empty;
-        var memories = await Task.WhenAll((await memoriesTask.ConfigureAwait(false)).Select(async memory =>
+        var page = await memoriesTask.ConfigureAwait(false);
+        var memories = page.Memories.Select(memory =>
             new MemoryListItemViewModel(
                 memory,
-                await _memoryInspectorService.GetSemanticIndexStatusAsync(
-                        memory,
-                        semanticContext,
-                        cancellationToken)
-                    .ConfigureAwait(false))));
+                new MemorySemanticIndexStatusRecord(string.Empty, string.Empty))).ToArray();
         var selectedMemory = memories.FirstOrDefault(memory => memory.MemoryId == preferredMemoryId)
+            ?? (expandedSelection?.MemoryId == preferredMemoryId && expandedSelection?.Record.SessionId == sessionId
+                ? expandedSelection : null)
             ?? memories.FirstOrDefault();
+        var details = await CaptureSelectionDetailsAsync(selectedMemory, semanticContext, cancellationToken).ConfigureAwait(false);
+        if (details.Selection is { } refreshed)
+        {
+            selectedMemory = refreshed;
+            memories = memories.Any(memory => memory.MemoryId == refreshed.MemoryId)
+                ? memories.Select(memory => memory.MemoryId == refreshed.MemoryId ? refreshed : memory).ToArray()
+                : [.. memories, refreshed];
+        }
         return new MemorySessionContent(
             workingSummary,
+            page.HasMore,
             memories,
             selectedMemory?.MemoryId,
-            await CaptureSelectionDetailsAsync(
-                    selectedMemory,
-                    semanticContext,
-                    cancellationToken)
-                .ConfigureAwait(false));
+            details);
     }
 
     private void ApplySessionContent(MemorySessionContent content)
     {
         _memoryDetailsLoadVersion++;
-        EvidenceItems.Clear();
-        EditCategory = string.Empty;
-        EditContent = string.Empty;
+        RememberMemoryDraft();
+        HasMoreMemories = content.HasMore;
         WorkingSummaryText = content.WorkingSummary;
 
         _suppressMemorySelectionDetails = true;
         try
         {
-            Memories.Clear();
-            SelectedMemory = null;
-            foreach (var memory in content.Memories)
-            {
-                Memories.Add(memory);
-            }
+            var desired = content.Memories.Select(memory => Memories.FirstOrDefault(existing => existing.Record == memory.Record) ?? memory).ToArray();
+            ObservableCollectionReconciler.Apply(Memories, desired);
+            RefreshFilteredMemories();
             SelectedMemory = Memories.FirstOrDefault(memory => memory.MemoryId == content.SelectedMemoryId);
         }
         finally
@@ -480,6 +498,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             _suppressMemorySelectionDetails = false;
         }
         ApplySelectionDetails(content.SelectionDetails);
+        NotifyMemoryPage();
 
         if (Memories.Count == 0)
         {
@@ -536,6 +555,13 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             ClearSelectedSession();
             return Task.CompletedTask;
         }
+        if (_contentSessionId != session.SessionId)
+        {
+            ClearSelectedSession();
+            _contentSessionId = session.SessionId;
+            _pageLimit = 200;
+            StatusText = string.Empty;
+        }
 
         var cancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetime.Token,
@@ -552,6 +578,8 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
                 preferredMemoryId,
                 SearchText,
                 IncludeInactive,
+                _pageLimit,
+                _expandedSelection,
                 _memorySelectionRevision,
                 authority),
             cancellation);
@@ -572,6 +600,8 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
                     semanticState.Context,
                     request.SearchText,
                     request.IncludeInactive,
+                    request.PageLimit,
+                    request.ExpandedSelection,
                     cancellation.Token)
                 .ConfigureAwait(false);
 
@@ -651,19 +681,19 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     private void ApplySelectionDetails(MemorySelectionDetails details)
     {
-        EvidenceItems.Clear();
-        SupersededMemoryItems.Clear();
-        SupersedingMemory = null;
-        CorrectionLineageSummaryText = string.Empty;
+        if (details.Selection is null && SelectedMemory is not null) return;
+        if (details.Selection is not null && details.Selection.MemoryId != SelectedMemory?.MemoryId) return;
+        ClearSelectionRelations();
         if (details.Selection is null)
         {
-            EditCategory = string.Empty;
-            EditContent = string.Empty;
+            ApplyMemoryDraft(null);
+            RebuildGraph();
             return;
         }
 
-        EditCategory = details.Selection.Category;
-        EditContent = details.Selection.Content;
+        ApplyMemoryDraft(details.Selection);
+        SelectedMemory?.ApplySemanticStatus(details.Selection.SemanticStatus);
+        OnPropertyChanged(nameof(HasSelectedMemorySemanticStatus));
         foreach (var evidence in details.Evidence)
         {
             EvidenceItems.Add(evidence);
@@ -677,15 +707,20 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
         CorrectionLineageSummaryText = details.LineageCount == 0
             ? string.Empty
-            : $"This memory is part of a correction lineage with {details.LineageCount} related memory item(s).";
+            : $"{details.LineageCount} related memories";
 
         OnPropertyChanged(nameof(HasSupersedingMemory));
         OnPropertyChanged(nameof(HasSupersededMemories));
         OnPropertyChanged(nameof(HasCorrectionLineage));
+        RebuildGraph();
     }
 
     private void ClearSelectedSession()
     {
+        RememberMemoryDraft();
+        _contentSessionId = null;
+        _expandedSelection = null;
+        HasMoreMemories = false;
         _memoryDetailsLoadVersion++;
         _selectedSessionSemanticContext = null;
         WorkingSummaryText = string.Empty;
@@ -702,12 +737,12 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             _suppressMemorySelectionDetails = false;
         }
         SupersedingMemory = null;
-        EditCategory = string.Empty;
-        EditContent = string.Empty;
+        ApplyMemoryDraft(null);
         CorrectionLineageSummaryText = string.Empty;
         SemanticStatusText = string.Empty;
         CanReindexSemanticIndex = false;
-        StatusText = "No agent sessions are available yet.";
+        StatusText = "No sessions.";
+        RebuildGraph();
     }
 
     private void BeginBusy()
@@ -739,11 +774,14 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         Guid? PreferredMemoryId,
         string SearchText,
         bool IncludeInactive,
+        int PageLimit,
+        MemoryListItemViewModel? ExpandedSelection,
         long MemorySelectionRevision,
         LatestRequestTicket? Authority);
 
     private sealed record MemorySessionContent(
         string WorkingSummary,
+        bool HasMore,
         IReadOnlyList<MemoryListItemViewModel> Memories,
         Guid? SelectedMemoryId,
         MemorySelectionDetails SelectionDetails);
@@ -757,43 +795,4 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     {
         public static MemorySelectionDetails Empty { get; } = new(null, [], null, [], 0);
     }
-}
-
-public sealed class MemoryListItemViewModel(StoredMemoryRecord record, MemorySemanticIndexStatusRecord semanticIndexStatus)
-{
-    public Guid MemoryId { get; } = record.MemoryId;
-
-    public string Category { get; } = record.Category;
-
-    public string CategoryLabel { get; } = FormatCategory(record.Category);
-
-    public string Content { get; } = record.Content;
-
-    public string PreviewText { get; } = record.Content.Length <= 140 ? record.Content : record.Content[..137].TrimEnd() + "...";
-
-    public bool IsPinned { get; } = record.IsPinned;
-
-    public string State { get; } = record.State;
-
-    public string StateLabel { get; } = record.State;
-
-    public Guid? SupersededByMemoryId { get; } = record.SupersededByMemoryId;
-
-    public string SemanticIndexBadgeText { get; } = semanticIndexStatus.StatusLabel;
-
-    public string SemanticIndexStatusText { get; } = semanticIndexStatus.StatusText;
-
-    public bool HasSemanticIndexStatus => !string.IsNullOrWhiteSpace(SemanticIndexBadgeText);
-
-    public string UpdatedAtLabel { get; } = record.UpdatedAtUtc.ToLocalTime().ToString("g");
-
-    private static string FormatCategory(string category)
-        => string.Join(' ', category.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(part => char.ToUpperInvariant(part[0]) + part[1..]));
-}
-
-public sealed class MemoryEvidenceItemViewModel(StoredMemoryEvidenceRecord record)
-{
-    public string Text { get; } = string.IsNullOrWhiteSpace(record.EvidenceText) ? "(No evidence text)" : record.EvidenceText;
-    public string TimestampLabel { get; } = record.CreatedAtUtc.ToLocalTime().ToString("g");
 }

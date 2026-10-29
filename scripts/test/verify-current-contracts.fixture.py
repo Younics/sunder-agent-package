@@ -17,12 +17,13 @@ class CurrentContractsTests(unittest.TestCase):
     def setUp(self):
         self.expected, self.inventory = verifier.expected_inventory(ROOT)
         self.contract = next(c for c in self.expected["contracts"] if c["contractId"] == "younics.ai.agent.chat.provider")
-        self.descriptor = dict(descriptorVersion=1, schemaProfile="sunder.rpc.values.v1", contractId=self.contract["contractId"], version="2.0.0",
+        self.version = verifier.contract_version(self.contract, self.expected)
+        self.descriptor = dict(descriptorVersion=1, schemaProfile="sunder.rpc.values.v1", contractId=self.contract["contractId"], version=self.version,
                                services={self.contract["service"]: dict(methods={m: dict(kind="server-stream" if m in self.contract["streams"] else "unary") for m in self.contract["methods"]})})
 
     def snapshot(self):
         raw = json.dumps(self.descriptor, separators=(",", ":"))
-        return dict(contractId=self.contract["contractId"], contractVersion="2.0.0", exposure="public",
+        return dict(contractId=self.contract["contractId"], contractVersion=self.version, exposure="public",
                     canonicalDescriptor=raw, descriptorBytes=len(raw.encode()), descriptorSha256=verifier.release.sha(raw.encode()), abiSha256="a" * 64)
 
     def test_complete_source_review_inventory_is_separate_from_observed_records(self):
@@ -49,7 +50,7 @@ class CurrentContractsTests(unittest.TestCase):
             verifier.contract_record(self.snapshot(), self.contract, self.expected)
 
     def test_identity_exposure_version_and_hash_tampering_fail(self):
-        for field, value in (("contractId", "unknown"), ("exposure", "package"), ("contractVersion", "1.0.0"),
+        for field, value in (("contractId", "unknown"), ("exposure", "package"), ("contractVersion", "99.0.0"),
                              ("descriptorBytes", 0), ("descriptorSha256", "0" * 64)):
             with self.subTest(field=field), self.assertRaises(ValueError):
                 verifier.contract_record(dict(self.snapshot(), **{field: value}), self.contract, self.expected)
@@ -77,12 +78,13 @@ class CurrentContractsTests(unittest.TestCase):
     def test_manifest_authority_actions_imports_and_caps_are_independent_expectations(self):
         package = next(p for p in self.expected["packages"] if p["key"] == "agent-tools-web")
         tool, target = "younics.ai.agent.tool.source", "younics.ai.agent.execution.target"
+        contracts = {contract["contractId"]: contract for contract in self.expected["contracts"]}
         manifest = dict(id=package["packageId"], version="2.0.0",
                         contractBundles=[dict(contractId=cid, authorityId=verifier.AGENT, authorityKind="package", source="imported",
-                                              exposure="public", version="2.0.0", descriptorSha256="a" * 64, abiSha256="b" * 64) for cid in (tool, target)],
-                        provides=[dict(providerId="web.tools", contractId=tool, role="runtime", audience="public", contractVersion="2.0.0",
+                                              exposure="public", version=verifier.contract_version(contracts[cid], self.expected), descriptorSha256="a" * 64, abiSha256="b" * 64) for cid in (tool, target)],
+                        provides=[dict(providerId="web.tools", contractId=tool, role="runtime", audience="public", contractVersion=verifier.contract_version(contracts[tool], self.expected),
                                        descriptorSha256="a" * 64, abiSha256="b" * 64)],
-                        usesContracts=[dict(role="runtime", contractId=target, required=False, actions=["discover"], contractVersion="2.0.0", abiSha256="b" * 64)],
+                        usesContracts=[dict(role="runtime", contractId=target, required=False, actions=["discover"], contractVersion=verifier.contract_version(contracts[target], self.expected), abiSha256="b" * 64)],
                         dependsOn=[dict(packageId=verifier.AGENT, versionRange=">=2.0.0 <3.0.0", presence="required")],
                         providerImports=[dict(packageId=verifier.AGENT, contractId=tool)],
                         targets=[dict(role="runtime", kind="worker", requiredHostCapabilities=self.inventory["capabilities"][package["packageId"]])])

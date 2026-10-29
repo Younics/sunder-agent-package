@@ -20,8 +20,8 @@ on:
 permissions:
   contents: read
 env:
-  DOTNET_VERSION: "10.0.100"
-  NODE_VERSION: "24.18.1"
+  DOTNET_VERSION: "10.0.403"
+  NODE_VERSION: "24.22.1"
   MSBUILDDISABLENODEREUSE: "1"
 
 jobs:

@@ -24,7 +24,7 @@ internal static class FileToolDescriptorRegistry
         RuntimeInstructions = instructions, Priority = AgentToolPriority.Medium,
         ConcurrencyMode = readOnly ? AgentToolConcurrencyMode.ParallelSafe : AgentToolConcurrencyMode.Sequential,
         Aliases = null, SelectionScope = AgentToolSelectionScope.Tool, SelectionGroupId = null, SelectionGroupDisplayName = null,
-        SelectionGroupDescription = null, ActivationRequirement = null,
+        SelectionGroupDescription = null, SelectionGroupAllowsBulkSelection = true, ActivationRequirement = null,
     };
 
     public static bool Contains(string toolId)

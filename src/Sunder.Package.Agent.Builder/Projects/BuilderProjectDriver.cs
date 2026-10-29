@@ -76,6 +76,13 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
                 || project.Kind != expected.Kind || !string.Equals(project.EntryPoint, expected.EntryPoint, BuilderJobValidation.PathComparison)))
             throw new BuilderProjectConflictException("Project identity or source metadata changed after the accepted operation was prepared. Inspect the current project before starting another build.");
         reporter.Update(new() { Project = project, Message = "Project source inspected." });
+        if (request.Operation == "upgrade-toolchain")
+        {
+            await using var tools = await toolchains.SelectAsync(project.Kind, null, null, toolchainProgress, cancellationToken).ConfigureAwait(false);
+            var upgraded = await BuilderProjectToolchainUpgrade.UpgradeAsync(project, tools.Installation, cancellationToken).ConfigureAwait(false);
+            reporter.Update(new() { Project = upgraded, Installation = tools.Installation, Message = "Development pins upgraded. Target frameworks and package dependencies were not changed." });
+            return;
+        }
         if (request.Operation == "save-metadata")
         {
             reporter.Update(new() { Phase = BuilderJobPhase.EditingMetadata });
@@ -102,6 +109,8 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         }
         await using var lease = await toolchains.SelectAsync(project.Kind, project.ProjectFolder, null, toolchainProgress, cancellationToken).ConfigureAwait(false);
         reporter.Update(new() { Installation = lease.Installation });
+        project = await EvaluateTargetAsync(project, lease, reporter, cancellationToken,
+            request.Operation == "archive" ? "Release" : "Debug").ConfigureAwait(false);
         if (request.Operation == "setup")
             await RestoreAsync(project, lease, reporter, cancellationToken).ConfigureAwait(false);
         if (request.Operation == "archive")
@@ -187,7 +196,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
     }
 
     private string[] BuildProperties(BuilderProjectInspection project, string configuration) =>
-        ["-p:TargetFramework=net10.0", "-p:RuntimeIdentifier=" + rid, "-p:UseSharedCompilation=false", "-p:UseRazorBuildServer=false",
+        ["-p:RuntimeIdentifier=" + rid, "-p:UseSharedCompilation=false", "-p:UseRazorBuildServer=false",
          "-p:SunderPackageComposedOutputRoot=" + EscapeProperty(Path.GetDirectoryName(BuilderProjectDriverOutputs.DevelopmentFolder(project, configuration))!),
          .. options.NuGetConfigPath is { } config ? new[] { "-p:RestoreConfigFile=" + EscapeProperty(config) } : []];
 
@@ -197,7 +206,21 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
 
     private string[] RestoreArguments(BuilderProjectInspection project) =>
         ["restore", project.EntryPoint, "--disable-parallel", "--disable-build-servers", "-p:Configuration=Debug", .. BuildProperties(project, "Debug"),
-            .. options.NuGetConfigPath is { } config ? new[] { "--configfile", config } : []];
+             .. options.NuGetConfigPath is { } config ? new[] { "--configfile", config } : []];
+
+    private async Task<BuilderProjectInspection> EvaluateTargetAsync(BuilderProjectInspection project,
+        IBuilderProjectDriverSelection selection, IBuilderJobReporter reporter, CancellationToken token, string configuration = "Debug")
+    {
+        if (project.Kind != BuilderProjectKind.Dotnet) return project;
+        var result = await RunAsync(selection, ["msbuild", project.EntryPoint, "-getProperty:TargetFramework",
+            "-p:Configuration=" + configuration, "-p:RuntimeIdentifier=" + rid, "-nologo"],
+            project.ProjectFolder, reporter, token).ConfigureAwait(false);
+        var framework = result.StandardOutput.Trim();
+        if (!System.Text.RegularExpressions.Regex.IsMatch(framework, @"^net[1-9][0-9]\.0$", System.Text.RegularExpressions.RegexOptions.CultureInvariant,
+                TimeSpan.FromSeconds(1)))
+            throw new InvalidDataException("Select one explicit supported .NET target framework in the project; Package Maker will not retarget it.");
+        return project with { TargetFramework = framework };
+    }
 
     private static string EscapeProperty(string value)
     {

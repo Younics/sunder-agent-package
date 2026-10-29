@@ -1,6 +1,6 @@
 namespace Sunder.Package.Agent.Builder;
 
-public sealed class BuilderProjectDiscovery
+public sealed class BuilderProjectDiscovery(Sunder.Sdk.Abstractions.SunderDevelopmentToolchain? versions = null)
 {
     /// <summary>Searches the root and at most four nested levels; returns every genuine source candidate.</summary>
     public async Task<IReadOnlyList<BuilderProjectInspection>> DiscoverAsync(string folder, CancellationToken cancellationToken = default)
@@ -44,7 +44,11 @@ public sealed class BuilderProjectDiscovery
             : entryPoint.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ? BuilderProjectKind.Dotnet
             : throw new NotSunderProjectException("Select a .csproj or sunder.package.json entry point.");
         var source = await BuilderProjectSource.CaptureAsync(Path.GetDirectoryName(entryPoint)!, cancellationToken).ConfigureAwait(false);
-        return Inspect(source, entryPoint, kind);
+        var project = Inspect(source, entryPoint, kind);
+        return versions is null ? project : project with
+        {
+            ToolchainAssessment = BuilderProjectToolchainUpgrade.Assess(source, kind, versions),
+        };
     }
 
     internal static BuilderProjectInspection Inspect(BuilderProjectSource source, string entryPoint, BuilderProjectKind kind)

@@ -88,14 +88,13 @@ public interface IAgentBehaviorLoopRuntime
 
     /// <summary>Closes a streamed assistant turn and advances its content revision without changing text.</summary>
     /// <remarks>
-    /// Host implementations persist the completion. The default interface implementation returns the supplied
-    /// snapshot unchanged for compatibility, so loops should call this method but must not assume every custom
-    /// runtime changes <see cref="AgentTurnRecord.IsStreaming"/>.
+    /// Implementations persist the completion, clear <see cref="AgentTurnRecord.IsStreaming"/>, and advance
+    /// <see cref="AgentTurnRecord.ContentRevision"/> even when the text is unchanged.
     /// </remarks>
     /// <param name="assistantTurn">The newest snapshot of the open assistant turn.</param>
-    /// <returns>The completed persisted snapshot, or the unchanged argument from the default implementation.</returns>
+    /// <returns>The completed persisted snapshot.</returns>
     /// <exception cref="InvalidOperationException">A host implementation rejects stale run or turn ownership.</exception>
-    AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn) => assistantTurn;
+    AgentTurnRecord CompleteAssistantTurn(AgentTurnRecord assistantTurn);
 
     /// <summary>Publishes a bounded lifecycle snapshot to registered extension observers.</summary>
     /// <param name="kind">The lifecycle event kind.</param>

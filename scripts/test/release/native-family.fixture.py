@@ -413,7 +413,7 @@ class NativeFamilyFixture(unittest.TestCase):
         self.assertFalse(self.log.exists())
         document["contracts"]["api"]["current"]["exposure"] = "package"
         write(baseline, document)
-        with self.assertRaisesRegex(ValueError, "private-baseline-migration-required"):
+        with self.assertRaisesRegex(ValueError, "private-baseline-unsupported"):
             family.frozen_baselines(native, [row], VERSION)
         document["retiredPrivateContracts"] = document["contracts"]
         document["contracts"] = {}

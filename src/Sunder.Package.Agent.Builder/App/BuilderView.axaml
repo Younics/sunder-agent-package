@@ -1,18 +1,20 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:Sunder.Package.Agent.Builder"
+             xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
              x:Class="Sunder.Package.Agent.Builder.BuilderView"
-             x:DataType="vm:BuilderViewModel" x:CompileBindings="True">
+             x:DataType="vm:BuilderViewModel" x:CompileBindings="True" Classes="agent-page">
   <UserControl.Styles>
+    <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
     <Style Selector="TextBlock"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" /></Style>
     <Style Selector="TextBlock.caption"><Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" /><Setter Property="TextWrapping" Value="Wrap" /></Style>
-    <Style Selector="TextBlock.title"><Setter Property="FontSize" Value="24" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
+    <Style Selector="TextBlock.title"><Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
     <Style Selector="TextBlock.label"><Setter Property="FontWeight" Value="SemiBold" /></Style>
-    <Style Selector="Border.card"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="16" /></Style>
-    <Style Selector="Border.warning"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="12" /></Style>
+    <Style Selector="Border.card"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Popover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" /><Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" /></Style>
+    <Style Selector="Border.warning"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" /><Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" /></Style>
     <Style Selector="Button.primary"><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /><Setter Property="FontWeight" Value="SemiBold" /></Style>
     <Style Selector="ListBox.projects"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Transparent}" /><Setter Property="BorderThickness" Value="0" /><Setter Property="Padding" Value="0" /></Style>
-    <Style Selector="ListBox.projects ListBoxItem"><Setter Property="Padding" Value="12,10" /><Setter Property="Margin" Value="0,0,0,6" /><Setter Property="CornerRadius" Value="6" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="BorderThickness" Value="2,0,0,0" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" /></Style>
+    <Style Selector="ListBox.projects ListBoxItem"><Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" /><Setter Property="Margin" Value="0,0,0,6" /><Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" /><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="BorderThickness" Value="2,0,0,0" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Transparent}" /></Style>
     <Style Selector="ListBox.projects ListBoxItem:selected"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /></Style>
     <Style Selector="ListBox.projects ListBoxItem:selected /template/ ContentPresenter#PART_ContentPresenter"><Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" /><Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Accent}" /></Style>
     <Style Selector="Grid.detail-header > WrapPanel.header-actions"><Setter Property="Grid.Column" Value="1" /><Setter Property="HorizontalAlignment" Value="Right" /></Style>
@@ -30,104 +32,131 @@
         <Border x:Name="BuilderListPane" IsVisible="{Binding ShowListPane}" BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,0,1,0">
           <Grid RowDefinitions="Auto,*,Auto" Margin="18">
             <StackPanel Spacing="12" Margin="0,0,0,18">
-              <TextBlock Text="Projects" Classes="title" />
+              <p:SectionHeader Title="Projects" IsPageTitle="True" HelpText="Create or open a local package project. Load and reload are explicit actions; builds do not replace a running package." />
               <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                <Button Content="Create project" Classes="primary" Click="OnCreateProjectClicked" HorizontalAlignment="Stretch" />
-                <Button Grid.Column="1" Content="Open folder…" Click="OnOpenFolderClicked" IsEnabled="{Binding !IsOpening}" HorizontalAlignment="Stretch" />
+                <Button Content="Create project" Classes="primary-action" Click="OnCreateProjectClicked" HorizontalAlignment="Stretch" />
+                <Button Grid.Column="1" Content="Open folder…" Classes="secondary-action" Click="OnOpenFolderClicked" IsEnabled="{Binding !IsOpening}" HorizontalAlignment="Stretch" />
               </Grid>
               <ProgressBar IsVisible="{Binding IsOpening}" IsIndeterminate="True" />
             </StackPanel>
             <Grid Grid.Row="1">
               <StackPanel IsVisible="{Binding IsEmpty}" Spacing="10" Margin="8,24">
-                <TextBlock Text="Your next package starts here" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap" />
-                <TextBlock Text="Create a UI-ready .NET or Node.js package, or open an existing local folder. Projects stay on your computer." Classes="caption" />
+                <TextBlock Text="No projects" Classes="section-title" />
+                <TextBlock Text="Create a project or open a folder." Classes="caption" />
               </StackPanel>
               <ListBox Classes="projects" ItemsSource="{Binding Projects}" SelectedItem="{Binding SelectedProject, Mode=TwoWay}" IsVisible="{Binding !IsEmpty}" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                 <ListBox.ItemTemplate>
                   <DataTemplate x:DataType="vm:BuilderProjectViewModel">
                       <StackPanel Spacing="4" Tapped="OnProjectItemTapped" Background="{DynamicResource Sunder.Brush.Transparent}">
                         <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
-                        <TextBlock Text="{Binding ProjectFolder}" Classes="caption" TextWrapping="NoWrap" TextTrimming="LeadingCharacterEllipsis" FontSize="12" ToolTip.Tip="{Binding ProjectFolder}" />
-                        <TextBlock Text="{Binding StateText}" FontSize="12" />
+                        <TextBlock Text="{Binding ProjectFolder}" Classes="caption" TextWrapping="NoWrap" TextTrimming="LeadingCharacterEllipsis" ToolTip.Tip="{Binding ProjectFolder}" />
+                        <TextBlock Text="{Binding StateText}" Classes="caption" />
                     </StackPanel>
                   </DataTemplate>
                 </ListBox.ItemTemplate>
               </ListBox>
             </Grid>
-            <Button Grid.Row="2" Content="Manage SDKs" Click="OnManageSdksClicked" HorizontalAlignment="Stretch" Margin="0,18,0,0" />
+            <Button Grid.Row="2" Content="Manage SDKs" Classes="secondary-action" Click="OnManageSdksClicked" HorizontalAlignment="Stretch" Margin="0,18,0,0" />
           </Grid>
         </Border>
         <Border x:Name="BuilderEditorPane" Grid.Column="1" IsVisible="{Binding ShowEditorPane}">
-          <Grid RowDefinitions="Auto,*" Margin="20">
-            <Button Content="← Projects" Click="OnBackClicked" IsVisible="{Binding IsCompactLayout}" Margin="0,0,0,16" HorizontalAlignment="Left" />
-            <TextBlock Grid.Row="1" Text="Select a project to build, load, or edit its source metadata." Classes="caption" IsVisible="{Binding !HasSelectedProject}" VerticalAlignment="Center" HorizontalAlignment="Center" />
-            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
-              <ContentControl Content="{Binding SelectedProject}">
+          <Grid>
+            <TextBlock Text="Select a project to build, load, or edit its source metadata." Classes="caption" Margin="{DynamicResource Sunder.Padding.Panel}" IsVisible="{Binding !HasSelectedProject}" VerticalAlignment="Center" HorizontalAlignment="Center" />
+              <ContentControl Content="{Binding SelectedProject}" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
                 <ContentControl.ContentTemplate>
                   <DataTemplate x:DataType="vm:BuilderProjectViewModel">
-                    <StackPanel Spacing="16">
+                    <Grid RowDefinitions="Auto,*,Auto">
                       <Grid Classes="detail-header" Classes.compact="{Binding $parent[UserControl].((vm:BuilderViewModel)DataContext).IsCompactLayout}"
-                            RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                            Margin="{DynamicResource Sunder.Padding.Panel}" RowDefinitions="Auto,Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="12">
                         <TextBlock Text="{Binding DisplayName}" Classes="title" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" VerticalAlignment="Center" />
-                        <WrapPanel Classes="header-actions">
-                          <Button Content="{Binding BuildActionText}" IsEnabled="{Binding CanOperate}" Click="OnBuildClicked" Margin="0,0,8,0" />
-                          <Button Content="Create archive" IsEnabled="{Binding CanOperate}" Click="OnArchiveClicked" />
+                        <WrapPanel Classes="header-actions" ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
+                          <Button Content="Load into Sunder" Classes="primary-action" IsVisible="{Binding !HasSession}" IsEnabled="{Binding CanLoad}" Click="OnLoadClicked" />
+                          <Button Content="Unload" Classes="secondary-action" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanUnload}" Click="OnUnloadClicked" />
+                          <Button Content="{Binding HotreloadActionText}" Classes="secondary-action" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanHotreload}" Click="OnHotreloadClicked" />
                         </WrapPanel>
-                        <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,6,0,0">
-                          <TextBlock Text="{Binding Technology}" Classes="caption" Margin="0,0,12,0" />
-                          <TextBlock Text="{Binding PackageId}" Classes="caption" />
+                        <WrapPanel Grid.Row="1" Grid.ColumnSpan="2" Margin="0,8,0,0" ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="{Binding Technology}" Classes="caption" VerticalAlignment="Center" />
+                          <TextBlock Text="{Binding PackageId}" Classes="caption" VerticalAlignment="Center" TextWrapping="Wrap" />
+                          <Border x:Name="ProjectReadiness" Classes="settings-status-pill" Classes.success="{Binding IsLoaded}" Classes.warning="{Binding IsReadinessWarning}">
+                            <TextBlock Text="{Binding LoadStateText}" Classes="settings-status-label" TextWrapping="Wrap" />
+                          </Border>
                         </WrapPanel>
+                        <SelectableTextBlock x:Name="ProjectPath" Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding ProjectFolder}" TextWrapping="Wrap" Margin="0,12,0,0" FontSize="{DynamicResource Sunder.FontSize.Caption}" Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
                       </Grid>
-                      <SelectableTextBlock Text="{Binding ProjectFolder}" TextWrapping="Wrap" FontSize="12" Foreground="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
+                      <ScrollViewer x:Name="ProjectContentScroll" Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+                      <StackPanel Spacing="{DynamicResource Sunder.Spacing.Large}" Margin="{DynamicResource Sunder.Padding.Panel}">
+                      <StackPanel x:Name="ProjectNotices" Spacing="{DynamicResource Sunder.Spacing.Small}" IsVisible="{Binding HasNotices}">
                       <Border Classes="warning" IsVisible="{Binding IsMissing}">
                         <StackPanel Spacing="10">
                           <TextBlock Text="This bookmark needs a local source folder." TextWrapping="Wrap" />
-                          <Button Content="Locate folder…" Click="OnLocateClicked" HorizontalAlignment="Left" />
+                          <Button Content="Locate folder…" Classes="secondary-action" Click="OnLocateClicked" HorizontalAlignment="Left" />
                         </StackPanel>
                       </Border>
-                      <Border Classes="card" Padding="14">
-                        <StackPanel Spacing="10">
-                          <WrapPanel>
-                            <TextBlock Text="{Binding LoadStateText}" Classes="load-state" Classes.loaded="{Binding IsLoaded}" VerticalAlignment="Center" Margin="0,0,16,6" />
-                            <Button Content="Load into Sunder" Classes="primary" IsVisible="{Binding !HasSession}" IsEnabled="{Binding CanLoad}" Click="OnLoadClicked" Margin="0,0,8,6" />
-                            <Button Content="Unload" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanUnload}" Click="OnUnloadClicked" Margin="0,0,8,6" />
-                            <Button Content="{Binding HotreloadActionText}" IsVisible="{Binding HasSession}" IsEnabled="{Binding CanHotreload}" Click="OnHotreloadClicked" Margin="0,0,8,6" />
-                            <Button Content="Package logs" Click="OnLogsClicked" Margin="0,0,8,6" />
-                            <Button Content="Cancel" IsVisible="{Binding IsBusy}" Click="OnCancelOperationClicked" Margin="0,0,0,6" />
-                          </WrapPanel>
+                      <Border x:Name="ToolchainNotice" Classes="warning" IsVisible="{Binding HasToolchainNotice}">
+                        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="{Binding ToolchainNoticeText}" TextWrapping="Wrap" />
+                          <Button Content="Upgrade project tools" Classes="secondary-action" IsVisible="{Binding ShowUpgradeToolchain}" IsEnabled="{Binding CanUpgradeToolchain}" Click="OnUpgradeToolchainClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="warning" IsVisible="{Binding SetupIncomplete}">
+                        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="Project setup did not finish. Retry when the required tools are available." TextWrapping="Wrap" />
+                          <Button Content="Retry setup" Classes="secondary-action" IsEnabled="{Binding CanOperate}" Click="OnRetrySetupClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="warning" IsVisible="{Binding HasSourceConflict}">
+                        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="Source changed externally. Discard edits to review the current values before saving." TextWrapping="Wrap" />
+                          <Button Content="Discard edits" Classes="secondary-action" Click="OnDiscardClicked" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Border>
+                      <Border Classes="warning" IsVisible="{Binding ShowAttentionNotice}">
+                        <p:ResponsiveGrid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="{Binding AttentionMessage}" TextWrapping="Wrap" />
+                          <Button Grid.Column="1" Content="Dismiss" Classes="secondary-action compact-action" Click="OnDismissAttentionClicked" />
+                        </p:ResponsiveGrid>
+                      </Border>
+                      <Border Classes="card" IsVisible="{Binding ShowStatusNotice}">
+                        <p:ResponsiveGrid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource Sunder.Spacing.Small}">
+                          <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" />
+                          <Button Grid.Column="1" Content="Dismiss" Classes="secondary-action compact-action" Click="OnDismissStatusClicked" />
+                        </p:ResponsiveGrid>
+                      </Border>
+                      <Border Classes="card" IsVisible="{Binding ShowActivityNotice}">
+                        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}">
                           <ProgressBar IsVisible="{Binding IsBuildRunning}" IsIndeterminate="True" Height="3" />
                           <TextBlock Text="{Binding ActivityText}" TextWrapping="Wrap" />
-                          <StackPanel Spacing="3">
-                            <TextBlock Text="{Binding SourceActivityText}" Classes="caption" FontSize="12" />
-                            <TextBlock Text="{Binding BuildActivityText}" Classes="caption" FontSize="12" IsVisible="{Binding HasBuildActivity}" />
-                            <TextBlock Text="{Binding AppliedActivityText}" Classes="caption" FontSize="12" IsVisible="{Binding HasAppliedActivity}" ToolTip.Tip="{Binding LastAppliedRevision.SourceContentIdentity}" />
-                            <TextBlock Text="{Binding ApplicationStatusText}" Classes="caption" FontSize="12" IsVisible="{Binding HasSession}" />
-                          </StackPanel>
-                          <Button Content="Retry setup" IsVisible="{Binding SetupIncomplete}" IsEnabled="{Binding CanOperate}" Click="OnRetrySetupClicked" HorizontalAlignment="Left" />
+                          <Button Content="Cancel" Classes="secondary-action compact-action" IsVisible="{Binding IsBusy}" Click="OnCancelOperationClicked" HorizontalAlignment="Left" />
                         </StackPanel>
                       </Border>
-                      <Border Classes="warning" IsVisible="{Binding HasError}"><TextBlock Text="{Binding ErrorMessage}" TextWrapping="Wrap" /></Border>
-                      <Border Classes="warning" IsVisible="{Binding HasRuntimeError}"><TextBlock Text="{Binding RuntimeError}" TextWrapping="Wrap" /></Border>
+                      </StackPanel>
+                      <WrapPanel x:Name="ProjectBuildActions" ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
+                        <Button Content="{Binding BuildActionText}" Classes="secondary-action" IsEnabled="{Binding CanOperate}" Click="OnBuildClicked" />
+                        <Button Content="Create Bundle" Classes="secondary-action" IsEnabled="{Binding CanOperate}" Click="OnArchiveClicked" />
+                        <Button Content="Package logs" Classes="secondary-action" Click="OnLogsClicked" />
+                        <p:SectionHelpButton HelpText="Build compiles without replacing a running package. Create Bundle produces a .sunderpkg archive; it does not publish it. Package logs opens this project's package ID." />
+                      </WrapPanel>
+                      <Expander Header="Revision details">
+                          <StackPanel Spacing="{DynamicResource Sunder.Spacing.XSmall}">
+                            <TextBlock Text="{Binding SourceActivityText}" Classes="caption" />
+                            <TextBlock Text="{Binding BuildActivityText}" Classes="caption" IsVisible="{Binding HasBuildActivity}" />
+                            <TextBlock Text="{Binding AppliedActivityText}" Classes="caption" IsVisible="{Binding HasAppliedActivity}" ToolTip.Tip="{Binding LastAppliedRevision.SourceContentIdentity}" />
+                            <TextBlock Text="{Binding ApplicationStatusText}" Classes="caption" IsVisible="{Binding HasSession}" />
+                          </StackPanel>
+                          </Expander>
                       <Expander Header="Project settings" HorizontalAlignment="Stretch">
-                        <StackPanel Spacing="8" Margin="0,12,0,0">
-                          <TextBlock Text="Package name" Classes="label" />
+                        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}" Margin="0,12,0,0">
+                          <p:SectionHeader Title="Package name" HelpText="Changes the source metadata. Save applies metadata only; build or reload separately." />
                           <TextBox Text="{Binding EditedDisplayName, Mode=TwoWay}" IsReadOnly="{Binding !CanEditDisplayName}" />
                           <TextBlock Text="{Binding DisplayNameEditReason}" Classes="caption" IsVisible="{Binding HasDisplayNameEditReason}" />
-                          <TextBlock Text="Package ID" Classes="label" />
+                          <p:SectionHeader Title="Package ID" HelpText="The package's stable runtime identity. Published or otherwise protected IDs cannot be changed here." />
                           <TextBox Text="{Binding EditedPackageId, Mode=TwoWay}" IsReadOnly="{Binding !CanEditPackageId}" />
                           <TextBlock Text="{Binding PackageIdEditReason}" Classes="caption" IsVisible="{Binding HasPackageIdEditReason}" />
-                          <TextBlock Text="Source changed externally. Discard edits to review the current values before saving." IsVisible="{Binding HasSourceConflict}" TextWrapping="Wrap" Foreground="{DynamicResource Sunder.Brush.Warning}" />
-                          <WrapPanel>
-                            <Button Content="Save changes" IsEnabled="{Binding CanSave}" Click="OnSaveMetadataClicked" Margin="0,0,8,0" />
-                            <Button Content="Discard" IsEnabled="{Binding IsDirty}" Click="OnDiscardClicked" />
-                          </WrapPanel>
+                          <Button Content="Discard edits" Classes="secondary-action" IsEnabled="{Binding IsDirty}" Click="OnDiscardClicked" HorizontalAlignment="Left" />
                           <TextBlock Text="{Binding SdkText}" Classes="caption" Margin="0,8,0,0" />
                           <TextBlock Text="{Binding RuntimeStatusText}" Classes="caption" />
-                          <TextBlock Text="{Binding EntryPoint}" Classes="caption" FontSize="12" />
-                          <WrapPanel Margin="0,8,0,0">
-                            <Button Content="Open folder" Click="OnRevealClicked" Margin="0,0,8,8" />
-                            <Button Content="Remove from projects" IsEnabled="{Binding !IsBusy}" Click="OnRemoveClicked" Margin="0,0,0,8" />
-                          </WrapPanel>
+                          <TextBlock Text="{Binding EntryPoint}" Classes="caption" />
+                          <Button Content="Open folder" Classes="secondary-action" Click="OnRevealClicked" HorizontalAlignment="Left" />
                         </StackPanel>
                       </Expander>
                       <SelectableTextBlock Text="{Binding ArchivePath}" IsVisible="{Binding HasArchive}" TextWrapping="Wrap" />
@@ -135,37 +164,52 @@
                         <StackPanel Spacing="8" Margin="0,10,0,0">
                           <TextBlock Text="{Binding StatusText}" Classes="caption" />
                           <ScrollViewer MaxHeight="360" HorizontalScrollBarVisibility="Disabled">
-                            <SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontFamily="monospace" FontSize="12" />
+                            <SelectableTextBlock Text="{Binding Output}" TextWrapping="Wrap" FontFamily="{DynamicResource Sunder.Agent.FontFamily.Code}" FontSize="{DynamicResource Sunder.FontSize.Caption}" />
                           </ScrollViewer>
                         </StackPanel>
                       </Expander>
-                    </StackPanel>
+                      </StackPanel>
+                      </ScrollViewer>
+                      <Border Grid.Row="2" BorderBrush="{DynamicResource Sunder.Brush.Border.Subtle}" BorderThickness="0,1,0,0" Padding="{DynamicResource Sunder.Padding.Panel}">
+                        <p:EditorFooter x:Name="ProjectEditorFooter">
+                          <Button Content="Remove" Classes="secondary-action compact-action danger-action" IsEnabled="{Binding !IsBusy}" Click="OnRemoveClicked" ToolTip.Tip="Remove this bookmark; source files are kept." HorizontalAlignment="Left" />
+                          <TextBlock Grid.Column="1" Text="Unsaved changes" Classes="caption" IsVisible="{Binding IsDirty}" VerticalAlignment="Center" TextWrapping="Wrap" />
+                          <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource Sunder.Spacing.Small}">
+                            <Button Content="Back" Classes="secondary-action compact-action" Click="OnBackClicked" />
+                            <Button Content="Save" Classes="primary-action compact-action" IsEnabled="{Binding CanSave}" Click="OnSaveMetadataClicked" />
+                          </StackPanel>
+                        </p:EditorFooter>
+                      </Border>
+                    </Grid>
                   </DataTemplate>
                 </ContentControl.ContentTemplate>
               </ContentControl>
-            </ScrollViewer>
           </Grid>
         </Border>
       </Grid>
     </Grid>
 
-    <Border IsVisible="{Binding ShowCreation}" Background="{DynamicResource Sunder.Brush.Surface.Raised}" Padding="28">
+    <Border IsVisible="{Binding ShowCreation}" Background="{DynamicResource Sunder.Brush.Surface.Raised}">
       <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-        <StackPanel Spacing="20" MaxWidth="700" HorizontalAlignment="Stretch">
+        <StackPanel Spacing="20" MaxWidth="700" HorizontalAlignment="Stretch" Margin="{DynamicResource Sunder.Padding.Panel}">
           <Button Content="← Projects" Click="OnBackClicked" HorizontalAlignment="Left" />
           <TextBlock Text="Create a package" Classes="title" />
-          <TextBlock Text="1  Technology    →    2  SDK setup    →    3  Project" Classes="caption" />
+          <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Medium}">
+            <TextBlock Text="1 · Technology" Classes="caption" FontWeight="SemiBold" IsVisible="{Binding Creation.IsTechnologyStep}" />
+            <TextBlock Text="2 · SDK setup" Classes="caption" FontWeight="SemiBold" IsVisible="{Binding Creation.IsSdkStep}" />
+            <TextBlock Text="3 · Project" Classes="caption" FontWeight="SemiBold" IsVisible="{Binding Creation.IsDetailsStep}" />
+          </WrapPanel>
           <StackPanel IsVisible="{Binding Creation.IsTechnologyStep}" Spacing="16">
-            <TextBlock Text="Choose your technology" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="Technology" Classes="section-title" />
             <Button Click="OnDotnetClicked" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" Padding="22">
-              <StackPanel Spacing="8"><TextBlock Text=".NET" FontSize="22" FontWeight="SemiBold" /><TextBlock Text="C# with an Avalonia App view and a .NET worker." Classes="caption" /></StackPanel>
+              <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}"><TextBlock Text=".NET" Classes="section-title" /><TextBlock Text="C# · Avalonia UI" Classes="caption" /></StackPanel>
             </Button>
             <Button Click="OnNodeClicked" HorizontalContentAlignment="Left" HorizontalAlignment="Stretch" Padding="22">
-              <StackPanel Spacing="8"><TextBlock Text="Node.js" FontSize="22" FontWeight="SemiBold" /><TextBlock Text="TypeScript with a React App view and a Node.js worker." Classes="caption" /></StackPanel>
+              <StackPanel Spacing="{DynamicResource Sunder.Spacing.Small}"><TextBlock Text="Node.js" Classes="section-title" /><TextBlock Text="TypeScript · React UI" Classes="caption" /></StackPanel>
             </Button>
           </StackPanel>
           <StackPanel IsVisible="{Binding Creation.IsSdkStep}" Spacing="12">
-            <TextBlock Text="Preparing the latest supported SDK" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="SDK setup" Classes="section-title" />
             <TextBlock Text="{Binding Creation.Technology}" Classes="caption" />
             <ProgressBar IsIndeterminate="True" IsVisible="{Binding Creation.IsBusy}" />
             <WrapPanel>
@@ -175,7 +219,7 @@
             </WrapPanel>
           </StackPanel>
           <StackPanel IsVisible="{Binding Creation.IsDetailsStep}" Spacing="10">
-            <TextBlock Text="{Binding Creation.Technology}" FontSize="20" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding Creation.Technology}" Classes="section-title" />
             <TextBlock Text="Package name" Classes="label" />
             <TextBox Text="{Binding Creation.DisplayName, Mode=TwoWay}" IsEnabled="{Binding !Creation.IsBusy}" PlaceholderText="My package" />
             <TextBlock Text="Package ID" Classes="label" />
@@ -198,7 +242,7 @@
           <TextBlock Text="{Binding Creation.Message}" IsVisible="{Binding Creation.ShowMessage}" TextWrapping="Wrap" />
           <Border Classes="warning" IsVisible="{Binding Creation.HasError}"><TextBlock Text="{Binding Creation.ErrorMessage}" TextWrapping="Wrap" /></Border>
           <Expander Header="Details" IsVisible="{Binding Creation.HasOutput}" HorizontalAlignment="Stretch">
-            <ScrollViewer MaxHeight="240"><SelectableTextBlock Text="{Binding Creation.Output}" TextWrapping="Wrap" FontSize="12" /></ScrollViewer>
+            <ScrollViewer MaxHeight="240"><SelectableTextBlock Text="{Binding Creation.Output}" TextWrapping="Wrap" FontSize="{DynamicResource Sunder.FontSize.Caption}" /></ScrollViewer>
           </Expander>
         </StackPanel>
       </ScrollViewer>
@@ -206,8 +250,8 @@
 
     <Border Classes="card" IsVisible="{Binding ShowCandidateChooser}" Margin="28" MaxWidth="720" VerticalAlignment="Center" Background="{DynamicResource Sunder.Brush.Surface.Popover}">
       <StackPanel Spacing="16">
-        <TextBlock Text="Choose a project" FontSize="22" FontWeight="SemiBold" />
-        <TextBlock Text="Several package projects were found. Select the source entry point to remember." Classes="caption" />
+        <TextBlock Text="Choose a project" Classes="title" />
+        <p:SectionHeader Title="Project" HelpText="This folder contains several package projects. Select the source project to open." />
         <ListBox ItemsSource="{Binding OpenCandidates}" SelectedItem="{Binding SelectedCandidate, Mode=TwoWay}" MaxHeight="360">
           <ListBox.ItemTemplate><DataTemplate x:DataType="vm:BuilderProjectInspection"><StackPanel Spacing="4"><TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" /><TextBlock Text="{Binding Kind}" /><TextBlock Text="{Binding EntryPoint}" Classes="caption" /></StackPanel></DataTemplate></ListBox.ItemTemplate>
         </ListBox>

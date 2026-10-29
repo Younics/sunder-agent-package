@@ -41,6 +41,10 @@ public sealed partial class BuilderProjectDriver
                 await RunAsync(selection, [creator, "--output", payload, "--template", "react-node", "--language", "ts", "--package-id", request.PackageId!,
                     "--package-name", request.DisplayName!, "--yes"], staging, reporter, token).ConfigureAwait(false);
                 await File.WriteAllTextAsync(Path.Combine(payload, ".node-version"), selection.Installation.Version + "\n", token).ConfigureAwait(false);
+                var manifestPath = Path.Combine(payload, "package.json");
+                var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath, token).ConfigureAwait(false))!.AsObject();
+                manifest["packageManager"] = "npm@" + selection.Installation.NpmVersion;
+                await File.WriteAllTextAsync(manifestPath, manifest.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n", token).ConfigureAwait(false);
                 await ApplyNodeOverridesAsync(payload, token).ConfigureAwait(false);
             }
             var requirements = BuilderToolchainRequirements.Read(request.Kind, payload);
@@ -60,11 +64,12 @@ public sealed partial class BuilderProjectDriver
             Directory.Move(payload, destination);
             var committed = generated[0] with { ProjectFolder = destination, EntryPoint = Path.Combine(destination, relativeEntry) };
             reporter.Update(new() { Project = committed, Message = "Source created. Setup is pending." });
+            committed = await EvaluateTargetAsync(committed, selection, reporter, token).ConfigureAwait(false);
             var development = BuilderProjectDriverOutputs.DevelopmentFolder(committed, "Debug");
             // Publish recoverable state immediately after the atomic source commit, before restore.
             reporter.Update(new() { Project = committed, DevelopmentFolder = development, Message = "Source created. Restoring dependencies and preparing the first development build." });
             token.ThrowIfCancellationRequested();
-            committed = await discovery.InspectAsync(committed.EntryPoint, token).ConfigureAwait(false);
+            committed = (await discovery.InspectAsync(committed.EntryPoint, token).ConfigureAwait(false)) with { TargetFramework = committed.TargetFramework };
             reporter.Update(new() { Project = committed });
             await RestoreAsync(committed, selection, reporter, token).ConfigureAwait(false);
             await BuildAsync(committed, selection, reporter, requireApp: true, token, restore: false).ConfigureAwait(false);

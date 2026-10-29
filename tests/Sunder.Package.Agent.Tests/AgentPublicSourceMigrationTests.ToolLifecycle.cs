@@ -30,10 +30,11 @@ public sealed partial class AgentPublicSourceMigrationTests
             fixture.Probe.Replies["DescribeAsync"] = "{\"displayName\":\"Tools\",\"sourceId\":\"tools\",\"sourceKind\":\"local\"}";
             Assert.Equal("local", (await fixture.Call("DescribeAsync", EmptyRequest())).GetProperty("sourceKind").GetString());
             fixture.Probe.Replies["ListToolsAsync"] = """
-                [{"concurrencyMode":"parallel-safe","description":"Read","displayName":"Read","isReadOnly":true,"priority":"high","requiresNetwork":false,"selectionScope":"group","toolId":"tool.one","argumentsJsonSchema":"{opaque","activationRequirement":null,"aliases":null,"runtimeInstructions":null,"selectionGroupDescription":null,"selectionGroupDisplayName":null,"selectionGroupId":null,"sourceDisplayName":null,"sourceId":null,"sourceKind":null}]
+                [{"concurrencyMode":"parallel-safe","description":"Read","displayName":"Read","isReadOnly":true,"priority":"high","requiresNetwork":false,"selectionGroupAllowsBulkSelection":false,"selectionScope":"group","toolId":"tool.one","argumentsJsonSchema":"{opaque","activationRequirement":null,"aliases":null,"runtimeInstructions":null,"selectionGroupDescription":null,"selectionGroupDisplayName":null,"selectionGroupId":null,"sourceDisplayName":null,"sourceId":null,"sourceKind":null}]
                 """;
             var list = await fixture.Call("ListToolsAsync", JsonSerializer.SerializeToElement(new { context = new { } }));
             Assert.Equal("parallel-safe", list[0].GetProperty("concurrencyMode").GetString());
+            Assert.False(list[0].GetProperty("selectionGroupAllowsBulkSelection").GetBoolean());
             Assert.Equal("{opaque", list[0].GetProperty("argumentsJsonSchema").GetString());
             fixture.Probe.Replies["GetReadinessAsync"] = "null";
             Assert.Equal(JsonValueKind.Null, (await fixture.Call("GetReadinessAsync",

@@ -606,9 +606,11 @@ public sealed partial class BuilderServiceTests
 
     [Theory]
     [InlineData("{broken")]
+    [InlineData("[]")]
+    [InlineData("{\"version\":1,\"projects\":[]}")]
     [InlineData("{\"version\":3,\"projects\":[]}")]
     [InlineData("{\"version\":2,\"projects\":[null]}")]
-    public async Task StoreCorruptionAndFutureDocumentsRemainUntouchedEvenAfterSaveAttempt(string persisted)
+    public async Task StoreCorruptionAndUnsupportedDocumentsRemainUntouchedEvenAfterSaveAttempt(string persisted)
     {
         var context = new BuilderStateContext();
         context.Value = persisted;
@@ -618,25 +620,17 @@ public sealed partial class BuilderServiceTests
         Assert.Equal(persisted, context.Value);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LegacyBookmarksMigrateToV2AndNeverTreatRemoteExecutionPathsAsLocal(bool array)
+    [Fact]
+    public async Task CurrentBookmarksRoundTripWithoutConversion()
     {
         var context = new BuilderStateContext();
-        object[] rows = [new { id = "local", displayName = "Local", packageId = "local.one", projectFolder = Path.GetTempPath(), workspaceId = "obsolete", executionProjectFolder = "/remote/one" },
-            new { id = "unresolved", displayName = "Unresolved", packageId = "local.two", projectFolder = "", workspaceId = "remote", executionProjectFolder = "/remote/two" }];
-        context.Value = array ? JsonSerializer.Serialize(rows) : JsonSerializer.Serialize(new { version = 1, projects = rows });
         var store = new BuilderProjectStore(context);
-        var migrated = await store.LoadAsync();
-        Assert.Equal(Path.GetTempPath(), migrated[0].ProjectFolder);
-        Assert.Empty(migrated[1].ProjectFolder);
-        Assert.Null(migrated[1].EntryPoint);
-        Assert.Null(migrated[1].Kind);
-        await store.SaveAsync(migrated);
+        var records = new[] { Record("local") };
+        Assert.Empty(await store.LoadAsync());
+        await store.SaveAsync(records);
         using var document = JsonDocument.Parse(context.Value!);
         Assert.Equal(2, document.RootElement.GetProperty("version").GetInt32());
-        Assert.Equal(migrated, await store.LoadAsync());
+        Assert.Equal(records, await store.LoadAsync());
         Assert.DoesNotContain("workspaceId", context.Value, StringComparison.Ordinal);
     }
 

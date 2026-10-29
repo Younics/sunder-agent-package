@@ -210,13 +210,13 @@ def locks(source):
 
 
 def package_imports(lock):
-    """Read reviewed role intent, never the legacy missing-field migration shape."""
+    """Read the required current reviewed role intent."""
     imports = lock["packageImports"]
     require(type(imports) is dict, "Invalid packageImports")
     for package_id, entry in imports.items():
         require(type(entry) is dict, "Invalid package API selection")
         require("consumerRoles" in entry,
-                f"{package_id}: package-api.consumer-roles-migration-required; run MigrateSunderPackageApiConsumerRoles explicitly")
+                 f"{package_id}: package-api.consumer-roles-required; select and review dependency consumerRoles with the current contract tooling")
         closed(entry, "localName presence requiredContracts consumerRoles")
         require(entry["consumerRoles"] in (["app"], ["runtime"], ["app", "runtime"]),
                 f"{package_id}: package-api.consumer-roles-invalid")

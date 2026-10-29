@@ -104,53 +104,43 @@ public sealed partial class AgentWorkspacesViewModel
 
     private void ReplaceWorkspacePaths(IEnumerable<AgentWorkspacePathRecord> paths)
     {
-        foreach (var item in WorkspacePaths)
-        {
-            item.PropertyChanged -= OnWorkspacePathPropertyChanged;
-        }
-        WorkspacePaths.Clear();
-        foreach (var path in paths.OrderBy(path => path.SortOrder))
-        {
-            var item = new AgentWorkspacePathItemViewModel(path);
-            item.PropertyChanged += OnWorkspacePathPropertyChanged;
-            WorkspacePaths.Add(item);
-        }
+        var selectedId = SelectedWorkspacePath?.PathId;
+        var desired = paths.OrderBy(path => path.SortOrder).Select(path =>
+            WorkspacePaths.FirstOrDefault(item => item.PathId == path.PathId
+                && item.HostPath == AgentWorkspacePathFormatter.FormatForDisplay(path.HostPath)
+                && item.IsDefault == path.IsDefault) ?? new AgentWorkspacePathItemViewModel(path)).ToArray();
+        foreach (var item in WorkspacePaths.Except(desired)) item.PropertyChanged -= OnWorkspacePathPropertyChanged;
+        foreach (var item in desired.Except(WorkspacePaths)) item.PropertyChanged += OnWorkspacePathPropertyChanged;
+        ObservableCollectionReconciler.Apply(WorkspacePaths, desired);
 
-        SelectedWorkspacePath = WorkspacePaths.FirstOrDefault(path => path.IsDefault)
+        SelectedWorkspacePath = WorkspacePaths.FirstOrDefault(path => path.PathId == selectedId)
+            ?? WorkspacePaths.FirstOrDefault(path => path.IsDefault)
             ?? WorkspacePaths.FirstOrDefault();
         NotifyWorkspacePathCollectionChanged();
     }
 
     private void ReplaceWorkspaceDocuments(IEnumerable<AgentWorkspaceDocumentRecord> documents)
     {
-        foreach (var item in WorkspaceDocuments)
-        {
-            item.PropertyChanged -= OnWorkspaceDocumentPropertyChanged;
-        }
-        WorkspaceDocuments.Clear();
-        foreach (var document in documents.OrderBy(document => document.SortOrder))
-        {
-            var item = new AgentWorkspaceDocumentItemViewModel(document);
-            item.PropertyChanged += OnWorkspaceDocumentPropertyChanged;
-            WorkspaceDocuments.Add(item);
-        }
+        var selectedId = SelectedWorkspaceDocument?.DocumentId;
+        var desired = documents.OrderBy(document => document.SortOrder).Select(document =>
+            WorkspaceDocuments.FirstOrDefault(item => item.DocumentId == document.DocumentId
+                && item.FilePath == AgentWorkspacePathFormatter.FormatForDisplay(document.FilePath))
+            ?? new AgentWorkspaceDocumentItemViewModel(document)).ToArray();
+        foreach (var item in WorkspaceDocuments.Except(desired)) item.PropertyChanged -= OnWorkspaceDocumentPropertyChanged;
+        foreach (var item in desired.Except(WorkspaceDocuments)) item.PropertyChanged += OnWorkspaceDocumentPropertyChanged;
+        ObservableCollectionReconciler.Apply(WorkspaceDocuments, desired);
 
-        SelectedWorkspaceDocument = WorkspaceDocuments.FirstOrDefault();
+        SelectedWorkspaceDocument = WorkspaceDocuments.FirstOrDefault(document => document.DocumentId == selectedId)
+            ?? WorkspaceDocuments.FirstOrDefault();
         NotifyWorkspaceDocumentCollectionChanged();
     }
 
     private void ReplaceEditorSections(IEnumerable<AgentEditorSectionViewModel> sections)
     {
-        foreach (var section in EditorSections)
-        {
-            section.Changed -= OnContributedEditorChanged;
-        }
-        EditorSections.Clear();
-        foreach (var section in sections)
-        {
-            section.Changed += OnContributedEditorChanged;
-            EditorSections.Add(section);
-        }
+        var desired = sections.ToArray();
+        foreach (var section in EditorSections.Except(desired)) section.Changed -= OnContributedEditorChanged;
+        foreach (var section in desired.Except(EditorSections)) section.Changed += OnContributedEditorChanged;
+        ObservableCollectionReconciler.Apply(EditorSections, desired);
     }
 
     private void InsertEditorSection(int index, AgentEditorSectionViewModel section)

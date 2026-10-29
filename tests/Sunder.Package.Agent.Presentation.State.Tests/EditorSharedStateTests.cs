@@ -336,7 +336,7 @@ public sealed partial class EditorSharedStateTests
             Description: null,
             StatusText: string.Empty,
             CanSelect: true,
-            new CapabilityGroupDefinition("tools", "Tools", null, 10));
+            new CapabilityGroupDefinition("tools", "Tools", null, 10, AllowsBulkSelection: true));
 
     private sealed class ControlledCatalog(
         IReadOnlyDictionary<string, Task<ProviderModelCatalogResult>> loads)

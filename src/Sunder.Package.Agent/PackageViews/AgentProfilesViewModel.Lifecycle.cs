@@ -38,6 +38,7 @@ public sealed partial class AgentProfilesViewModel
         _listDetail.SelectionChanging -= OnProfileSelectionChanging;
         _listDetail.PropertyChanged -= OnListDetailPropertyChanged;
         _runtimeRefresh.Dispose();
+        _capabilityRefresh.Dispose();
         _listDetail.Dispose();
         _requests.Dispose();
         ChatBinding.Dispose();

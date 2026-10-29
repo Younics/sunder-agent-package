@@ -1,13 +1,14 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
               xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
               xmlns:vm="using:Sunder.Package.Agent.Subagents.PackageViews"
               xmlns:m="using:Sunder.Package.Agent.Subagents.Models"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.Subagents.PackageViews.SubagentsView"
              x:DataType="vm:SubagentsViewModel"
-             mc:Ignorable="d">
+              mc:Ignorable="d" Classes="agent-page">
 
   <UserControl.Styles>
     <StyleInclude Source="/Presentation/PresentationStyles.axaml" />
@@ -30,21 +31,22 @@
     </Style>
 
     <Style Selector="Border.subagent-pane-header">
-      <Setter Property="Padding" Value="28,24,28,18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,0,0,1" />
     </Style>
 
     <Style Selector="Border.subagent-list-body">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
     </Style>
 
     <Style Selector="Border.subagent-editor-body">
-      <Setter Property="Padding" Value="28,24" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
+      <Setter Property="MaxWidth" Value="{DynamicResource Sunder.Agent.FormWidth}" />
     </Style>
 
     <Style Selector="Border.subagent-actions">
-      <Setter Property="Padding" Value="18" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Panel}" />
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="0,1,0,0" />
     </Style>
@@ -54,7 +56,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Warning}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,12" />
     </Style>
 
@@ -70,7 +72,7 @@
 
     <Style Selector="TextBlock.subagent-status-message">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
@@ -83,32 +85,32 @@
     </Style>
 
     <Style Selector="TextBlock.subagent-title">
-      <Setter Property="FontSize" Value="26" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
     </Style>
 
     <Style Selector="TextBlock.subagent-caption">
-      <Setter Property="FontSize" Value="13" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.subagent-field-label">
-      <Setter Property="FontSize" Value="14" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="FontWeight" Value="SemiBold" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Primary}" />
       <Setter Property="Margin" Value="0,0,0,4" />
     </Style>
 
     <Style Selector="TextBlock.subagent-field-help">
-      <Setter Property="FontSize" Value="12" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Caption}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
     <Style Selector="TextBlock.subagent-field-help.warning-text">
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="ListBox.subagent-list">
@@ -122,7 +124,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="14,12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
       <Setter Property="Margin" Value="0,0,0,8" />
     </Style>
 
@@ -141,7 +143,7 @@
       <Setter Property="MinWidth" Value="36" />
       <Setter Property="Height" Value="34" />
       <Setter Property="Padding" Value="0" />
-      <Setter Property="FontSize" Value="22" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.PageTitle}" />
       <Setter Property="FontWeight" Value="Regular" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
@@ -152,7 +154,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="16" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Border.subagent-editor-empty-state">
@@ -160,7 +162,7 @@
       <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Subtle}" />
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
-      <Setter Property="Padding" Value="12" />
+      <Setter Property="Padding" Value="{DynamicResource Sunder.Padding.Card}" />
     </Style>
 
     <Style Selector="Button.subagent-field-icon-action">
@@ -173,7 +175,7 @@
       <Setter Property="BorderThickness" Value="1" />
       <Setter Property="CornerRadius" Value="{DynamicResource Sunder.Radius.Small}" />
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Secondary}" />
-      <Setter Property="FontSize" Value="17" />
+      <Setter Property="FontSize" Value="{DynamicResource Sunder.FontSize.Body}" />
       <Setter Property="HorizontalContentAlignment" Value="Center" />
       <Setter Property="VerticalContentAlignment" Value="Center" />
     </Style>
@@ -185,15 +187,15 @@
     </Style>
 
     <Style Selector="Button.warning-action">
-      <Setter Property="Background" Value="#2B251C" />
-      <Setter Property="BorderBrush" Value="#6F5735" />
-      <Setter Property="Foreground" Value="#B8925E" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Warning.Soft}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="Button.warning-action:pointerover">
-      <Setter Property="Background" Value="#32291E" />
-      <Setter Property="BorderBrush" Value="#80643D" />
-      <Setter Property="Foreground" Value="#C09A64" />
+      <Setter Property="Background" Value="{DynamicResource Sunder.Brush.Surface.Hover}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Sunder.Brush.Border.Strong}" />
+      <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Warning}" />
     </Style>
 
     <Style Selector="TextBox.subagent-instructions">
@@ -225,10 +227,6 @@
                       Content="+"
                       Command="{Binding CreateSubagentCommand}"
                       ToolTip.Tip="New subagent" />
-              <TextBlock Grid.Row="1"
-                         Grid.ColumnSpan="2"
-                         Classes="subagent-caption"
-                         Text="Create delegated specialists for orchestrated Agents." />
             </Grid>
           </Border>
 
@@ -252,7 +250,7 @@
                       <TextBlock Grid.Row="1"
                                  Text="{Binding DescriptionDisplay}"
                                  Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                                 FontSize="12"
+                                 FontSize="{DynamicResource Sunder.FontSize.Caption}"
                                  TextTrimming="CharacterEllipsis" />
                     </Grid>
                   </DataTemplate>
@@ -272,9 +270,7 @@
                   Classes="subagent-pane-header">
             <StackPanel Spacing="8">
               <TextBlock Classes="subagent-title"
-                         Text="Subagent" />
-               <TextBlock Classes="subagent-caption"
-                          Text="Configure delegated instructions, model overrides, and capabilities." />
+                         Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
             </StackPanel>
           </Border>
 
@@ -296,10 +292,9 @@
                     </StackPanel>
 
                     <StackPanel Spacing="5">
-                      <TextBlock Classes="subagent-field-label"
-                                 Text="Description" />
+                      <p:SectionHeader Title="When to use" HelpText="The parent agent uses this description to decide when to delegate work to this subagent." />
                       <TextBox Text="{Binding Description, Mode=TwoWay}"
-                               PlaceholderText="Required: describe exactly when this subagent should be used" />
+                               PlaceholderText="Describe the work this subagent handles" />
                       <TextBlock Classes="subagent-field-help"
                                  Text="{Binding DescriptionValidationText}"
                                  IsVisible="{Binding IsSelectedSubagentIncomplete}" />
@@ -309,13 +304,7 @@
 
                 <Border Classes="subagent-card">
                   <StackPanel Spacing="14">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="Instructions"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="subagent-caption"
-                                 Text="Define how this specialist should complete delegated work." />
-                    </StackPanel>
+                    <p:SectionHeader Title="Instructions" HelpText="Instructions for completing delegated work. The description above determines when the parent agent chooses this subagent." />
                     <TextBox Classes="subagent-instructions"
                              Text="{Binding Instructions, Mode=TwoWay}"
                              PlaceholderText="Subagent instructions"
@@ -328,10 +317,7 @@
                   <StackPanel Spacing="14">
                     <Grid ColumnDefinitions="*,Auto"
                           ColumnSpacing="12">
-                      <TextBlock Text="Chat Model Override"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}"
-                                 VerticalAlignment="Center" />
+                      <p:SectionHeader Title="Model override" HelpText="Leave the override unset to inherit the parent agent's model. Select a provider and model to use a different one." />
                       <Button Grid.Column="1"
                               Classes="subagent-field-icon-action"
                               Content="↻"
@@ -423,13 +409,7 @@
 
                 <Border Classes="subagent-card">
                   <StackPanel Spacing="12">
-                    <StackPanel Spacing="4">
-                      <TextBlock Text="Capabilities"
-                                 FontWeight="SemiBold"
-                                 Foreground="{DynamicResource Sunder.Brush.Foreground.Primary}" />
-                      <TextBlock Classes="subagent-caption"
-                                 Text="Choose tools, skills, and MCP capabilities available to this subagent." />
-                    </StackPanel>
+                    <p:SectionHeader Title="Capabilities" HelpText="Selected tools, skills, and servers are available to this subagent, subject to permissions and workspace access. Save to apply changes." />
 
                     <ItemsControl ItemsSource="{Binding CapabilityGroups}"
                                   ItemTemplate="{StaticResource CapabilityGroupTemplate}" />
@@ -455,12 +435,10 @@
                            Text="{Binding StatusText}" />
               </Border>
 
-              <Grid Grid.Row="1"
-                    ColumnDefinitions="Auto,*,Auto,Auto"
-                    ColumnSpacing="12">
+              <p:EditorFooter Grid.Row="1">
                 <Button Grid.Column="0"
                         Classes="secondary-action compact-action danger-action"
-                        Content="Delete Subagent"
+                        Content="Delete"
                         Command="{Binding DeleteSubagentCommand}" />
                 <TextBlock Grid.Column="1"
                            Text="Unsaved changes"
@@ -468,17 +446,19 @@
                            HorizontalAlignment="Right"
                            VerticalAlignment="Center"
                            Foreground="{DynamicResource Sunder.Brush.Foreground.Muted}"
-                           FontSize="12" />
-                <Button Grid.Column="2"
+                           FontSize="{DynamicResource Sunder.FontSize.Caption}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="{DynamicResource Sunder.Spacing.Small}">
+                <Button
                         Classes="secondary-action compact-action"
                         Content="Back"
                         Command="{Binding BackToSubagentListCommand}"
                         IsVisible="{Binding IsCompactLayout}" />
-                <Button Grid.Column="3"
+                <Button
                         Classes="primary-action"
                         Content="Save"
                         Command="{Binding SaveSubagentCommand}" />
-              </Grid>
+                </StackPanel>
+              </p:EditorFooter>
             </Grid>
           </Border>
         </Grid>

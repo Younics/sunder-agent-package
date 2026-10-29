@@ -88,4 +88,8 @@ public sealed record AgentProfileSelectableCapabilityDescriptor(
     string? GroupId = null,
     string? GroupDisplayName = null,
     string? GroupDescription = null,
-    int GroupSortOrder = 50);
+    int GroupSortOrder = 50)
+{
+    /// <summary>Whether the owning package offers a check/uncheck-all control for this presentation group. Defaults to individual selection only.</summary>
+    public bool GroupAllowsBulkSelection { get; init; }
+}

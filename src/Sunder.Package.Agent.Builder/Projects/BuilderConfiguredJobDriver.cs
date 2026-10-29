@@ -2,7 +2,7 @@ namespace Sunder.Package.Agent.Builder;
 
 /// <summary>Resolves local developer packages once per accepted job, outside backend construction.</summary>
 internal sealed class BuilderConfiguredJobDriver(IBuilderProjectDriverToolchains toolchains,
-    IBuilderLocalProcessRunner processes, BuilderProjectDriverOptions options) : IBuilderJobDriver
+    IBuilderLocalProcessRunner processes, BuilderProjectDriverOptions options, BuilderProjectDiscovery? discovery = null) : IBuilderJobDriver
 {
     public async Task ExecuteAsync(BuilderJobRequest request, IBuilderJobReporter reporter, CancellationToken cancellationToken)
     {
@@ -14,7 +14,7 @@ internal sealed class BuilderConfiguredJobDriver(IBuilderProjectDriverToolchains
                 : await BuilderLocalNpm.LoadOptionsAsync(options, cancellationToken).ConfigureAwait(false);
         // JobManager executes a job only once (including exact-ID retries). The driver and
         // retained source selection live until the finite operation and its children drain.
-        await new BuilderProjectDriver(toolchains, processes, selected)
+        await new BuilderProjectDriver(toolchains, processes, selected, discovery)
             .ExecuteAsync(request, reporter, cancellationToken).ConfigureAwait(false);
     }
 }

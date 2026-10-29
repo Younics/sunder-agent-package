@@ -26,6 +26,22 @@ internal static class ProjectionContent
         return SunderContent.FromBytes(bytes, "application/json", "memory-projection.json");
     }
 
+    internal static MemoryGraphPage BoundGraphPage(IReadOnlyList<StoredMemoryRecord> records, int limit)
+    {
+        // Account for encoded bytes as well as row count; non-ASCII content can
+        // be much larger on the wire than its character count suggests.
+        var selected = new List<StoredMemoryRecord>();
+        var bytes = 0;
+        foreach (var record in records.Take(limit))
+        {
+            var size = JsonSerializer.SerializeToUtf8Bytes(record, Json).Length;
+            if (bytes + size > MaximumBytes - 64 * 1024) break;
+            selected.Add(record);
+            bytes += size;
+        }
+        return new(selected, records.Count > selected.Count);
+    }
+
     internal static async ValueTask<MemoryProjection> Read(ValueTask<SunderContent> result, CancellationToken token)
     {
         await using var reference = await result.ConfigureAwait(false);

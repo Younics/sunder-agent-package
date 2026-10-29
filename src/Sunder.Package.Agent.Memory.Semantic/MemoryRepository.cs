@@ -60,18 +60,19 @@ internal sealed class MemoryRepository(string databasePath, EvidenceRepository e
                 command.Parameters.AddWithValue("$limit", limit);
             });
 
-    public IReadOnlyList<StoredMemoryRecord> List(Guid sessionId, string? searchText, bool includeInactive)
+    public IReadOnlyList<StoredMemoryRecord> List(Guid sessionId, string? searchText, bool includeInactive, int? limit = null)
     {
         if (!string.IsNullOrWhiteSpace(searchText))
         {
-            return Search(sessionId, searchText, null, includeInactive, 1000).Select(item => item.Memory).ToArray();
+            return Search(sessionId, searchText, null, includeInactive, limit ?? 1000).Select(item => item.Memory).ToArray();
         }
 
         var stateClause = includeInactive ? string.Empty : " AND (State = $active OR State = $contested)";
-        return Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId{stateClause} ORDER BY IsPinned DESC, UpdatedAtUtc DESC, CreatedAtUtc DESC;",
+        return Query($"SELECT {Columns} FROM SessionMemories WHERE SessionId = $sessionId{stateClause} ORDER BY IsPinned DESC, UpdatedAtUtc DESC, CreatedAtUtc DESC, MemoryId LIMIT $limit;",
             command =>
             {
                 command.Parameters.AddWithValue("$sessionId", sessionId.ToString());
+                command.Parameters.AddWithValue("$limit", limit ?? -1);
                 if (!includeInactive)
                 {
                     command.Parameters.AddWithValue("$active", MemoryLocalStore.ActiveState);

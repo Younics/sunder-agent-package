@@ -58,6 +58,19 @@ first-party packages without making it a supported third-party provider
 contract. It is bundled for first-party manifest composition but is excluded
 from the 17 third-party integration contracts.
 
+## Capability group selection
+
+The supplying package owns bulk-selection presentation. Set
+`AgentToolDescriptor.SelectionGroupAllowsBulkSelection` for a tool group or
+`AgentProfileSelectableCapabilityDescriptor.GroupAllowsBulkSelection` for a
+selectable-capability group. Authored properties default to `false`; generated
+DTO initializers explicitly supply the boolean. Groups without opt-in have no
+group checkbox. Conflicting declarations disable bulk selection, and groups are
+scoped to their source rather than merged by display name.
+
+Bulk selection changes only currently selectable members in the editor draft.
+It uses the existing Save flow and grants no permissions or workspace access.
+
 ## Failure Semantics
 
 - Use typed readiness or result failures for expected provider conditions.

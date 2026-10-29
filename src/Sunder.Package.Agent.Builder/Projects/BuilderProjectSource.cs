@@ -80,7 +80,7 @@ internal sealed class BuilderProjectSource
                     }
                     var extension = Path.GetExtension(name);
                     var source = !directory.Output && (extension is ".cs" or ".csproj" or ".props" or ".targets" or ".axaml" or ".ts" or ".tsx" or ".js" or ".jsx" or ".html"
-                        || name.StartsWith("sunder", StringComparison.Ordinal) && extension == ".json" || name is "package.json" or "tsconfig.json" or JournalName);
+                        || name.StartsWith("sunder", StringComparison.Ordinal) && extension == ".json" || name is "package.json" or "tsconfig.json" or "global.json" or ".node-version" or ".nvmrc" or ".tool-versions" or JournalName);
                     if (!source && !IsEvidence(name)) continue;
                     EnsureSafePath(root, path);
                     var info = new FileInfo(path);

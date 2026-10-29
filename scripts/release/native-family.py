@@ -106,7 +106,7 @@ def frozen_baselines(repository, rows, version):
             current = contract.get("current")
             if current is not None:
                 require(has_public_evidence(contract),
-                        "rpc-authoring.private-baseline-migration-required: run MigratePrivateSunderContracts before native Build: " + str(path))
+                         "rpc-authoring.private-baseline-unsupported: private-only contracts are source-derived and cannot have an independent owned baseline: " + str(path))
                 require(current["state"] in ("release-frozen", "published"),
                         "Freeze every public owned baseline for this release before native Build: " + str(path))
 

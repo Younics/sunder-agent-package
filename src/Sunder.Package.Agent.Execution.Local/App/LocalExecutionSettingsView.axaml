@@ -1,17 +1,15 @@
 <UserControl xmlns="https://github.com/avaloniaui"
               xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
               xmlns:vm="using:Sunder.Package.Agent.Execution.Local"
+              xmlns:p="using:Sunder.Package.Agent.Shared.Presentation"
               xmlns:shared="using:Sunder.Package.Agent.Shared.PackageViews"
               x:Class="Sunder.Package.Agent.Execution.Local.LocalExecutionSettingsView"
-              x:DataType="vm:LocalExecutionSettingsViewModel">
+              x:DataType="vm:LocalExecutionSettingsViewModel" Classes="agent-page">
+  <UserControl.Styles><StyleInclude Source="/Presentation/PresentationStyles.axaml" /></UserControl.Styles>
   <ScrollViewer HorizontalScrollBarVisibility="Disabled">
-    <StackPanel Spacing="16">
+    <StackPanel Spacing="{DynamicResource Sunder.Spacing.Large}" Margin="{DynamicResource Sunder.Padding.Panel}">
       <StackPanel Spacing="6">
-        <TextBlock Text="Local Execution Shells"
-                   FontSize="24"
-                   FontWeight="SemiBold" />
-        <TextBlock Text="Manage shells available to local workspaces. Add a shell when you need a non-standard executable."
-                   TextWrapping="Wrap" />
+        <p:SectionHeader Title="Local execution" IsPageTitle="True" HelpText="Detected shells come from this host. Add a custom executable when it is not detected automatically, then select the shell in a workspace." />
       </StackPanel>
 
       <Border Padding="14"
@@ -27,23 +25,21 @@
                      FontWeight="SemiBold" />
           <TextBlock Text="{Binding StatusText}"
                      TextWrapping="Wrap" />
-          <Button Content="Retry"
+          <Button Content="Retry" Classes="secondary-action"
                   HorizontalAlignment="Left"
                   Command="{Binding RetryInitializationCommand}" />
         </StackPanel>
       </Border>
 
-        <StackPanel Spacing="8" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
-          <TextBlock Text="Detected Shells"
-                     FontWeight="SemiBold" />
-          <TextBlock Text="Detected shells are read-only and refreshed from this host."
-                     TextWrapping="Wrap" />
+        <Border Classes="card-surface" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:SectionHeader Title="Detected shells" HelpText="Detected shells are read-only and refreshed from this host." />
           <ListBox ItemsSource="{Binding DetectedShells}"
                    SelectedItem="{Binding SelectedShell, Mode=TwoWay}"
                    MinHeight="80">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:LocalShellRowViewModel">
-                <Grid ColumnDefinitions="2*,3*,Auto"
+                <p:ResponsiveGrid ColumnDefinitions="2*,3*,Auto"
                       ColumnSpacing="10"
                       Margin="0,4">
                   <TextBlock Text="{Binding DisplayName}" />
@@ -52,50 +48,34 @@
                              TextWrapping="Wrap" />
                   <TextBlock Grid.Column="2"
                              Text="{Binding SelectedSyntax.DisplayName}" />
-                </Grid>
+                </p:ResponsiveGrid>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
-          <TextBlock Text="Custom Shells"
-                     FontWeight="SemiBold"
-                     Margin="0,8,0,0" />
-          <Button Content="Add Shell"
+          <p:SectionHeader Title="Custom shells" HelpText="Add a shell executable, choose its syntax, then save. Detected shells above cannot be edited." />
+          <Button Content="Add shell" Classes="secondary-action"
                    HorizontalAlignment="Left"
                    Command="{Binding AddShellCommand}" />
-          <Grid ColumnDefinitions="2*,3*,Auto,Auto"
-                ColumnSpacing="10"
-                Margin="0,4,0,0">
-            <TextBlock Text="Name"
-                       FontWeight="SemiBold" />
-            <TextBlock Grid.Column="1"
-                       Text="Executable Path"
-                       FontWeight="SemiBold" />
-             <TextBlock Grid.Column="2"
-                        Text="Syntax"
-                        FontWeight="SemiBold" />
-            <TextBlock Grid.Column="3"
-                       Text="Path"
-                       FontWeight="SemiBold" />
-          </Grid>
           <ListBox ItemsSource="{Binding CustomShells}"
                    SelectedItem="{Binding SelectedShell, Mode=TwoWay}"
                    MinHeight="160">
             <ListBox.ItemTemplate>
               <DataTemplate x:DataType="vm:LocalShellRowViewModel">
-                <Grid ColumnDefinitions="2*,3*,Auto,Auto"
-                      ColumnSpacing="10"
+                <p:ResponsiveGrid ColumnDefinitions="2*,3*,Auto,Auto"
+                       ColumnSpacing="10"
+                       RowSpacing="{DynamicResource Sunder.Spacing.Small}"
                       Margin="0,4">
                   <TextBox Text="{Binding DisplayName, Mode=TwoWay}"
                            IsReadOnly="{Binding IsDetected}"
-                           PlaceholderText="Display name" />
+                           PlaceholderText="Name" AutomationProperties.Name="Shell name" />
                    <TextBox Grid.Column="1"
                             Text="{Binding ExecutablePath}"
                             IsReadOnly="True"
-                            PlaceholderText="Executable path" />
+                            PlaceholderText="Executable path" AutomationProperties.Name="Shell executable" />
                   <shared:SunderComboBox Grid.Column="2"
                                          ItemsSource="{Binding SyntaxOptions}"
                                          IsEnabled="{Binding CanEdit}"
-                                         SelectedItem="{Binding SelectedSyntax, Mode=TwoWay}">
+                                         SelectedItem="{Binding SelectedSyntax, Mode=TwoWay}" AutomationProperties.Name="Shell syntax">
                     <shared:SunderComboBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:ShellSyntaxOption">
                         <TextBlock Text="{Binding DisplayName}" />
@@ -103,35 +83,34 @@
                     </shared:SunderComboBox.ItemTemplate>
                    </shared:SunderComboBox>
                   <Button Grid.Column="3"
-                          Content="Choose..."
+                           Content="Choose…" Classes="secondary-action"
                           IsVisible="{Binding CanEdit}"
                           Click="OnChooseShellExecutableClicked" />
-                </Grid>
+                </p:ResponsiveGrid>
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
-          <StackPanel Orientation="Horizontal"
-                      Spacing="8">
-            <Button Content="Delete Selected"
+          <WrapPanel ItemSpacing="{DynamicResource Sunder.Spacing.Small}" LineSpacing="{DynamicResource Sunder.Spacing.Small}">
+            <Button Content="Delete" Classes="secondary-action danger-action"
                     Command="{Binding DeleteSelectedShellCommand}" />
-            <Button Content="Save Shells"
+            <Button Content="Save shells" Classes="primary-action"
                     Command="{Binding SaveShellsCommand}" />
-          </StackPanel>
+          </WrapPanel>
           <TextBlock Text="{Binding StatusText}"
                      TextWrapping="Wrap" />
         </StackPanel>
+        </Border>
 
-        <StackPanel Spacing="8" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
-          <TextBlock Text="Execution"
-                     FontWeight="SemiBold" />
-          <TextBlock Text="Default timeout in seconds for local shell commands when a request does not specify one."
-                     TextWrapping="Wrap" />
+        <Border Classes="card-surface" IsVisible="{Binding IsReady}" IsEnabled="{Binding CanMutate}">
+        <StackPanel Spacing="{DynamicResource Sunder.Spacing.Medium}">
+          <p:SectionHeader Title="Timeout (seconds)" HelpText="Default timeout for local shell commands when a request does not specify a limit." />
           <TextBox Text="{Binding TimeoutSeconds, Mode=TwoWay}"
                    PlaceholderText="300" />
-          <Button Content="Save Execution Settings"
+          <Button Content="Save" Classes="primary-action"
                   HorizontalAlignment="Left"
                   Command="{Binding SaveExecutionSettingsCommand}" />
         </StackPanel>
+        </Border>
     </StackPanel>
   </ScrollViewer>
 </UserControl>

@@ -29,10 +29,11 @@ public sealed class BuilderToolchainHttpTransport : IBuilderToolchainTransport, 
         var allowed = uri.Host switch
         {
             "builds.dotnet.microsoft.com" or "dotnetcli.blob.core.windows.net" =>
-                path == $"/dotnet/release-metadata/{BuilderToolchainPolicy.DotnetChannel}/releases.json" ||
-                Match(path, @"^/dotnet/Sdk/10\.0\.[0-9]+/dotnet-sdk-10\.0\.[0-9]+-(win|osx|linux|linux-musl)-(x64|arm64)\.(zip|tar\.gz)$"),
+                Match(path, @"^/dotnet/release-metadata/[1-9][0-9]\.0/releases\.json$") ||
+                Match(path, @"^/dotnet/Sdk/[1-9][0-9]\.0\.[0-9]+/dotnet-sdk-[1-9][0-9]\.0\.[0-9]+-(win|osx|linux|linux-musl)-(x64|arm64)\.(zip|tar\.gz)$"),
             "nodejs.org" => path == "/dist/index.json" ||
-                Match(path, @"^/dist/v24\.[0-9]+\.[0-9]+/(SHASUMS256\.txt|node-v24\.[0-9]+\.[0-9]+-(win|darwin|linux)-(x64|arm64)(-musl)?\.(zip|tar\.gz))$"),
+                Match(path, @"^/dist/v[1-9][0-9]\.[0-9]+\.[0-9]+/(SHASUMS256\.txt|node-v[1-9][0-9]\.[0-9]+\.[0-9]+-(win|darwin|linux)-(x64|arm64)(-musl)?\.(zip|tar\.gz))$"),
+            "registry.npmjs.org" => Match(path, @"^/npm/([0-9]+\.[0-9]+\.[0-9]+|-/npm-[0-9]+\.[0-9]+\.[0-9]+\.tgz)$"),
             _ => false,
         };
         if (!allowed) throw new InvalidDataException("The toolchain download origin or path is not allowlisted.");
