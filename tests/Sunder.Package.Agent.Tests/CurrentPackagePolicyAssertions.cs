@@ -58,6 +58,17 @@ internal static class CurrentPackagePolicyAssertions
             Assert.Equal(contract.AbiSha256, Text(use, "abiSha256"));
             Assert.Equal(expected.Required, use.GetProperty("required").GetBoolean());
             Assert.Equal(expected.Actions, use.GetProperty("actions").EnumerateArray().Select(value => value.GetString()));
+            var imported = Assert.Single(bundles, value => Text(value, "contractId") == expected.ContractId);
+            if (Text(imported, "source") == "imported" && Text(imported, "authorityKind") == "package")
+            {
+                var requirements = use.GetProperty("consumerRequirements");
+                Assert.Equal(expected.ContractId, Text(requirements, "contractId"));
+                Assert.Equal(contract.Version, Text(requirements, "contractVersion"));
+                Assert.Equal(contract.Sha256, Text(requirements, "descriptorSha256"));
+                Assert.Equal(contract.AbiSha256, Text(requirements, "abiSha256"));
+                foreach (var target in manifest.GetProperty("targets").EnumerateArray().Where(target => Text(target, "role") == expected.Role))
+                    Assert.Contains("rpc.consumer-requirements.v1", target.GetProperty("requiredHostCapabilities").EnumerateArray().Select(value => value.GetString()));
+            }
         }
 
         var dependencies = manifest.GetProperty("dependsOn").EnumerateArray().ToArray();
