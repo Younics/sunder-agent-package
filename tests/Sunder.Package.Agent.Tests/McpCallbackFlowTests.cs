@@ -25,7 +25,7 @@ public sealed class McpCallbackFlowTests
         var context = new CallbackPackageContext(scope.Context, callbacks);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.mcp");
-        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(
+        var generated = GeneratedPackageCompositionFixture.CreateGeneratedWorker(
             typeof(McpWorker::Sunder.Package.Agent.Mcp.McpToolSource).Assembly,
             context,
             rpc);

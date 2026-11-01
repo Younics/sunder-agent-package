@@ -931,13 +931,12 @@ public sealed class ScopedInstructionClaimTests
                 "profile",
                 "Test Profile",
                 "Test Session",
-                AgentSessionState.Active,
-                null);
+                AgentSessionState.Active);
             var run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, IsInterrupted: false, now);
             return new AgentPromptContextRequest(
                 session,
                 run,
-                new AgentTurnContextRecord(session, run, "Test", null),
+                new AgentTurnContextRecord(session, run, "Test"),
                 [],
                 [],
                 new AgentPromptContextPlan("general", "Test"))

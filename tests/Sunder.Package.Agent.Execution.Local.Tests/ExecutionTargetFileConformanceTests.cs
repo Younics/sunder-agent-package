@@ -36,7 +36,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
     }
 
     private readonly string _root = Path.Combine(
-        OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-execution-conformance",
         Guid.NewGuid().ToString("N"));
 

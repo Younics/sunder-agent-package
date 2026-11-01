@@ -65,9 +65,6 @@ internal sealed partial class MemoryAppRuntimeGateway :
     public async Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default)
         => (await InvokeAsync(token => _service.SessionCheckpointAsync(sessionId, token), cancellationToken).ConfigureAwait(false)).Checkpoint;
 
-    public async Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default)
-        => (await InvokeAsync(token => _service.WorkingSummaryAsync(sessionId, token), cancellationToken).ConfigureAwait(false)).WorkingSummary;
-
     public async Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default)
         => (await InvokeAsync(token => _service.MemoriesAsync(sessionId, searchText, includeInactive, token), cancellationToken).ConfigureAwait(false)).Memories ?? [];
 

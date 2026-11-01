@@ -19,7 +19,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 {
     private readonly string _root = Path.Combine(
-        OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-local-path-tests",
         Guid.NewGuid().ToString("N"));
 

@@ -13,7 +13,6 @@ public sealed record AgentDurableLifecycleEventPayload(
     AgentSessionContextRecord? Session = null,
     AgentRunContextRecord? Run = null,
     string? UserMessage = null,
-    string? WorkingSummary = null,
     IReadOnlyList<AgentTurnRecord>? Turns = null,
     IReadOnlyList<AgentTurnRecord>? RecentLiveBufferTurns = null,
     AgentTurnRecord? TriggerTurn = null,

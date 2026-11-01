@@ -93,9 +93,9 @@ public sealed class AgentMemoryCoordinator(
         var turns = projectedTurns ?? _sessionService.ListRecentTurns(session.SessionId, MaxPromptContextTurns);
         var recentLiveBufferTurns = BuildRecentLiveBufferTurns(turns);
         var workingSummary = selectedContextCheckpoint?.SummaryText;
-        var sessionContext = CreateSessionContext(session, profile, workingSummary);
+        var sessionContext = CreateSessionContext(session, profile);
         var runContext = new AgentRunContextRecord(runId, runRevision, AgentRunStatus.Running, IsInterrupted: false, runStartedAtUtc);
-        var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage, workingSummary);
+        var turnContext = new AgentTurnContextRecord(sessionContext, runContext, userMessage);
         var recallPlan = BuildRecallPlan(userMessage, workingSummary, recentLiveBufferTurns);
         var promptContextPlan = ToPromptContextPlan(recallPlan);
 
@@ -216,15 +216,13 @@ public sealed class AgentMemoryCoordinator(
 
     private static AgentSessionContextRecord CreateSessionContext(
         AgentSessionRecord session,
-        AgentProfileRecord profile,
-        string? workingSummary)
+        AgentProfileRecord profile)
         => new(
             session.SessionId,
             profile.ProfileId,
             profile.DisplayName,
             session.Title,
-            session.State,
-            workingSummary);
+            session.State);
 
     private async Task<CollectedPromptContext> CollectPromptContextBlocksAsync(
         AgentPromptContextRequest request,
@@ -534,14 +532,14 @@ internal static class AgentPromptContextHostPolicy
 
 public sealed record AgentInstructionContext(
     string? SystemInstructions,
-    string? WorkingSummary,
+    string? ContextSummary,
     AgentMemoryRecallResult? RecallResult,
     AgentMemoryRecallPlan RecallPlan,
     IReadOnlyList<AgentPromptContextBlock>? PromptContextBlocks = null,
     long TranscriptEpoch = 0)
 {
     public bool HasSupplementaryContext
-        => !string.IsNullOrWhiteSpace(WorkingSummary)
+        => !string.IsNullOrWhiteSpace(ContextSummary)
             || (RecallResult?.Entries.Count ?? 0) > 0
             || (PromptContextBlocks?.Count ?? 0) > 0;
 }

@@ -24,6 +24,28 @@ using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Mo
 public sealed class AgentLifecycleOutboxTests
 {
     [Fact]
+    public void RetiredSummaryFields_DoNotRewriteStoredLifecycleBytesOrEnterTheCurrentPayload()
+    {
+        var sessionId = Guid.NewGuid();
+        var storedPayload = $$"""
+            {"session":{"sessionId":"{{sessionId}}","profileId":"profile","profileDisplayName":"Profile","sessionTitle":"Session","sessionState":0,"workingSummary":"old session summary"},"workingSummary":"old turn summary"}
+            """;
+        var record = new AgentLifecycleOutboxRecord(
+            1, "event", "source", AgentLifecycleEventKind.UserTurnAdded, "ordering", null, sessionId,
+            storedPayload, ComputeHash(storedPayload), DateTimeOffset.UnixEpoch, false, null, null, null);
+
+        var envelope = record.ToEnvelope();
+
+        Assert.Equal(storedPayload, envelope.PayloadJson);
+        Assert.Equal(ComputeHash(storedPayload), envelope.PayloadHash);
+        Assert.Equal(sessionId, envelope.Payload.Session?.SessionId);
+        var current = JsonSerializer.SerializeToNode(envelope.Payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        Assert.False(current.AsObject().ContainsKey("workingSummary"));
+        Assert.False(current["session"]!.AsObject().ContainsKey("workingSummary"));
+        Assert.Throws<AgentDurableLifecycleIntegrityException>(() => (record with { PayloadJson = storedPayload + " " }).ToEnvelope());
+    }
+
+    [Fact]
     public void RunStart_OutboxFailure_RollsBackSourceMutation()
     {
         using var scope = RegressionTestPackageScope.Create();
@@ -1423,21 +1445,17 @@ public sealed class AgentLifecycleOutboxTests
             [item],
             now,
             now);
-#pragma warning disable CS0618
         var sessionContext = new AgentSessionContextRecord(
             session.SessionId,
             session.ProfileId ?? "profile.lifecycle",
             Repeat(canaries[0]),
             Repeat(canaries[1]),
-            session.State,
-            Repeat(canaries[2]));
-#pragma warning restore CS0618
+            session.State);
         var payload = new AgentDurableLifecycleEventPayload
         {
             Session = sessionContext,
             Run = new AgentRunContextRecord(Guid.NewGuid(), 1, AgentRunStatus.Running, false, now),
             UserMessage = Repeat(canaries[3]),
-            WorkingSummary = Repeat(canaries[4]),
             Turns = [turn],
             RecentLiveBufferTurns = [turn],
             TriggerTurn = turn,
@@ -1453,7 +1471,12 @@ public sealed class AgentLifecycleOutboxTests
             WorkspaceId = workspace.WorkspaceId,
             WorkspaceIncarnationId = BuildWorkspaceIncarnationId(workspace),
         };
-        var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        // Old stored payloads may contain retired fields. Erasure must remove
+        // those bytes too, without restoring them to the current public model.
+        var storedPayload = JsonSerializer.SerializeToNode(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+        storedPayload["session"]!["workingSummary"] = Repeat(canaries[2]);
+        storedPayload["workingSummary"] = Repeat(canaries[4]);
+        var payloadJson = storedPayload.ToJsonString();
         AssertNoMissingCanaries(payloadJson, canaries);
         var payloadHash = ComputeHash(payloadJson);
         var sourceKey = $"test-sensitive:{prefix}:{token}";

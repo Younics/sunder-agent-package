@@ -11,6 +11,15 @@
                       PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- A canonical package has multiple generated assembly identities. Keep the
+       build dependency, but do not let editors substitute its combined source
+       compilation for either role DLL. ResolveableAssembly also excludes the
+       design-time BuildProjectReferences=true output from project references. -->
+  <ItemGroup>
+    <ProjectReference Update="@(ProjectReference->WithMetadataValue('Targets', 'GetSunderPackageRoleReference'))"
+                      ReferenceOutputAssembly="false" OutputItemType="Reference" ResolveableAssembly="false" />
+  </ItemGroup>
+
   <!-- Exact emitted-binding tests are tooling consumers. No authored package role
        receives a compile/runtime reference to the build implementation. -->
   <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">

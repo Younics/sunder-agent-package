@@ -22,11 +22,6 @@ public sealed partial class MemoryInspectorService
             (catalog, cancellation) => catalog.GetSessionContextCheckpointAsync(sessionId, cancellation), null as AgentSessionContextCheckpointRecord, token).ConfigureAwait(false)), token);
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["memory.semantic.operation-failed"])]
-    public ValueTask<SunderContent> WorkingSummaryAsync(Guid sessionId, CancellationToken token = default)
-        => ProjectAsync(async () => new MemoryProjection(WorkingSummary: await _modelRuntimeResolver.InvokeRuntimeCatalogAsync(
-            (catalog, cancellation) => catalog.GetWorkingSummaryAsync(sessionId, cancellation), null as AgentWorkingSummaryRecord, token).ConfigureAwait(false)), token);
-
-    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent, Errors = ["memory.semantic.operation-failed"])]
     public ValueTask<SunderContent> MemoriesAsync(Guid sessionId, string? searchText, bool includeInactive, CancellationToken token = default)
         => Project(() => new(Memories: ListMemories(sessionId, searchText, includeInactive)), token);
 

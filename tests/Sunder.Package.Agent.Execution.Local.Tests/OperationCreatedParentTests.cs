@@ -8,7 +8,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 public sealed class OperationCreatedParentTests : IDisposable
 {
-    private readonly string _root = Path.Combine(OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath() : Path.GetTempPath(),
+    private readonly string _root = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-operation-parents", Guid.NewGuid().ToString("N"));
 
     [PlatformFact(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]

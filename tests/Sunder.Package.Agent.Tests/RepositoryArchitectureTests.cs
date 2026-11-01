@@ -36,15 +36,15 @@ public sealed partial class RepositoryArchitectureTests
         var testRoot = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "tests",
-            "Sunder.Package.Agent.Tests");
+            "Shared");
         var lineCaps = new Dictionary<string, int>(StringComparer.Ordinal)
         {
-            ["RegressionTestInfrastructure.cs"] = 1080,
-            ["RegressionTestRpcInfrastructure.cs"] = 1080,
-            ["RegressionTestSourceProviders.cs"] = 230,
-            ["RegressionTestRpcState.FailureBoundary.cs"] = 80,
-            ["RegressionTestPackageContext.cs"] = 60,
-            ["RegressionTestPackageScope.cs"] = 40,
+            ["Rpc/RegressionTestInfrastructure.cs"] = 1080,
+            ["Rpc/RegressionTestRpcInfrastructure.cs"] = 1080,
+            ["Rpc/RegressionTestSourceProviders.cs"] = 230,
+            ["Rpc/RegressionTestRpcState.FailureBoundary.cs"] = 80,
+            ["Packages/RegressionTestPackageContext.cs"] = 60,
+            ["Packages/RegressionTestPackageScope.cs"] = 40,
         };
         foreach (var item in lineCaps)
         {
@@ -55,8 +55,8 @@ public sealed partial class RepositoryArchitectureTests
         }
 
         var rpcInfrastructure = string.Join('\n',
-            File.ReadAllText(Path.Combine(testRoot, "RegressionTestInfrastructure.cs")),
-            File.ReadAllText(Path.Combine(testRoot, "RegressionTestRpcInfrastructure.cs")));
+            File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestInfrastructure.cs")),
+            File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestRpcInfrastructure.cs")));
         Assert.DoesNotContain("IPackageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.DoesNotContain("IPackageStorageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.Equal(
@@ -560,7 +560,7 @@ public sealed partial class RepositoryArchitectureTests
             Assert.True(File.Exists(Path.Combine(root, contract.Source)), contract.Source);
         }
         foreach (var name in new[] { "IAgentChatProvider", "IAgentPermissionSurface", "IAgentSystemPromptContributor", "IAgentUtilityModelProvider", "IAgentWorkspaceExecutionResolver" })
-            Assert.True(File.Exists(Path.Combine(root, "tests/Sunder.Package.Agent.Tests/LocalProviderFakes", name + ".cs")));
+            Assert.True(File.Exists(Path.Combine(root, "tests/Shared/Rpc/LocalProviderFakes", name + ".cs")));
 
         var publicNamespaces = typeof(Sunder.Package.Agent.Contracts.Contracts.IAgentChatProvider).Assembly.ExportedTypes
             .Select(static type => type.Namespace)

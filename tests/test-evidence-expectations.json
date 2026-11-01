@@ -3,7 +3,10 @@
   "modes": {
     "source": {
       "projectSuite": [
+        "sunder.package.agent.builder.tests",
         "sunder.package.agent.execution.local.tests",
+        "sunder.package.agent.integration.tests",
+        "sunder.package.agent.mcp.tests",
         "sunder.package.agent.memory.semantic.tests",
         "sunder.package.agent.presentation.state.tests",
         "sunder.package.agent.presentation.tests",

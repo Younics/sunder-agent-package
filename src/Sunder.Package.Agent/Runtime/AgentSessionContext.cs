@@ -23,12 +23,6 @@ public interface IAgentSessionContext
     /// <summary>Gets the projected session lifecycle state at snapshot creation time.</summary>
     AgentSessionState SessionState { get; }
 
-    /// <summary>
-    /// Gets a legacy continuity summary, or <see langword="null"/>. It is derived reference context, not durable
-    /// memory or trusted instructions.
-    /// </summary>
-    [Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
-    string? WorkingSummary { get; }
 }
 
 /// <summary>
@@ -39,12 +33,9 @@ public interface IAgentSessionContext
 /// <param name="ProfileDisplayName">The selected profile's display name at snapshot creation time.</param>
 /// <param name="SessionTitle">The persisted session title at snapshot creation time.</param>
 /// <param name="SessionState">The projected lifecycle state at snapshot creation time.</param>
-/// <param name="WorkingSummary">A legacy, potentially absent continuity summary. It must be treated as untrusted reference data.</param>
 public sealed record AgentSessionContextRecord(
     Guid SessionId,
     string ProfileId,
     string ProfileDisplayName,
     string SessionTitle,
-    AgentSessionState SessionState,
-    [property: Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
-    string? WorkingSummary) : IAgentSessionContext;
+    AgentSessionState SessionState) : IAgentSessionContext;

@@ -303,6 +303,9 @@ public sealed partial class ProviderArchitectureTests
             "Presentation/PresentationCancellation.cs",
             "Presentation/PresentationDispatcher.cs",
             "Presentation/PresentationExceptionPolicy.cs",
+            "Presentation/ResponsiveGrid.cs",
+            "Presentation/SectionHeader.cs",
+            "Presentation/SectionHelpButton.cs",
             "Presentation/TimedStatusController.cs",
         ],
         StringComparer.OrdinalIgnoreCase);

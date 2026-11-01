@@ -7,7 +7,6 @@ namespace Sunder.Package.Agent.Memory.Semantic.Runtime;
 public sealed record MemoryProjection(
     IReadOnlyList<AgentSessionRecord>? Sessions = null,
     AgentSessionContextCheckpointRecord? Checkpoint = null,
-    AgentWorkingSummaryRecord? WorkingSummary = null,
     IReadOnlyList<StoredMemoryRecord>? Memories = null,
     IReadOnlyList<StoredMemoryEvidenceRecord>? Evidence = null,
     StoredMemoryRecord? Memory = null,

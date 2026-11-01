@@ -85,10 +85,14 @@ public sealed partial class AgentWorkspaceStackContributor(
     {
         var actions = new List<StackImportAction>();
         var warnings = new List<string>();
+        var conflicts = new List<StackImportConflict>();
         foreach (var fragment in request.Fragments)
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                conflicts.Add(new StackImportConflict("unsupported:" + fragment.FragmentId,
+                    $"Selected fragment '{fragment.FragmentId}' has an unsupported or invalid workspace schema ({fragment.SchemaId} v{fragment.SchemaVersion}).",
+                    StackImportConflictSeverity.Error, fragment.FragmentId));
                 continue;
             }
 
@@ -101,7 +105,7 @@ public sealed partial class AgentWorkspaceStackContributor(
                 Description: payload.Description));
         }
 
-        return ValueTask.FromResult(new StackImportPreview(actions, [], [], warnings));
+        return ValueTask.FromResult(new StackImportPreview(actions, [], conflicts, warnings));
     }
 
     public ValueTask<StackImportResult> ImportAsync(
@@ -117,6 +121,7 @@ public sealed partial class AgentWorkspaceStackContributor(
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                errors.Add($"Selected fragment '{fragment.FragmentId}' cannot be imported with this workspace schema.");
                 continue;
             }
 

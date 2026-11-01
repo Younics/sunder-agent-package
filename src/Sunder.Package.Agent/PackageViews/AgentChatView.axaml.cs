@@ -481,7 +481,7 @@ public partial class AgentChatView : UserControl,
         }
     }
 
-    private static void OnSessionRenameInputInteraction(object? sender, RoutedEventArgs e)
+    private void OnSessionRenameInputInteraction(object? sender, RoutedEventArgs e)
     {
         // Keep clicks and text selection inside the inline editor from selecting the ComboBox row.
         e.Handled = true;

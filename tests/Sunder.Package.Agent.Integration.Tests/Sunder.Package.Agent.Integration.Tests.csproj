@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkAvaloniaReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkAvaloniaReference>
+    <SunderSdkReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkReference>
+    <SunderSdkStacksReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkStacksReference>
+    <SunderBuildToolingReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderBuildToolingReference>
+    <IsTestProject Condition="'$(SunderUseSourceSdk)' != 'true'">false</IsTestProject>
+    <EnableDefaultCompileItems Condition="'$(SunderUseSourceSdk)' != 'true'">false</EnableDefaultCompileItems>
+    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestCategory>Conformance</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;HTTP;PackageArchive;Process;SQLite;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>false</SunderTestPackageMode>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+    <Compile Include="../Shared/Repository/*.cs;../Shared/Canonical/*.cs;../Shared/Composition/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs;../Shared/Platform/*.cs;../Shared/Execution/*.cs"
+             Link="TestSupport/%(Filename)%(Extension)" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentCore,AgentApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="BuilderWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="BuilderApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="DockerWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Execution.Docker/Sunder.Package.Agent.Execution.Docker.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="DockerApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="LocalWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Execution.Local/Sunder.Package.Agent.Execution.Local.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LocalApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Tools.Files/Sunder.Package.Agent.Tools.Files.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="FilesWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Tools.Shell/Sunder.Package.Agent.Tools.Shell.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="ShellWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="WebWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="MemoryWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Memory.Semantic/Sunder.Package.Agent.Memory.Semantic.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="MemoryApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="McpWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="McpApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SkillsWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Skills/Sunder.Package.Agent.Skills.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SkillsApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SubagentsPackage,SubagentsApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="AnthropicWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.Anthropic/Sunder.Package.Agent.Provider.Anthropic.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AnthropicApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="GeminiWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="GeminiApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="LMStudioWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.LMStudio/Sunder.Package.Agent.Provider.LMStudio.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="LMStudioApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="OpenAiWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.OpenAI/Sunder.Package.Agent.Provider.OpenAI.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="OpenAiApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Anthropic" />
+    <PackageReference Include="Google.GenAI" />
+    <PackageReference Include="OpenAI" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  <Import Project="../PackageContextFixtures.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+</Project>

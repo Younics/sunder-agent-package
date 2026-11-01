@@ -143,14 +143,14 @@
           <Button Grid.Column="2"
                   Classes="session-row-action confirm"
                   Content="✓"
-                  Command="{Binding $parent[UserControl].DataContext.SaveSessionRenameCommand}"
+                  Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).SaveSessionRenameCommand}"
                   CommandParameter="{Binding}"
                   ToolTip.Tip="Save session name"
                   IsVisible="{Binding IsRenameActive}" />
           <Button Grid.Column="3"
                   Classes="session-row-action"
                   Content="×"
-                  Command="{Binding $parent[UserControl].DataContext.CancelSessionRenameCommand}"
+                  Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).CancelSessionRenameCommand}"
                   CommandParameter="{Binding}"
                   ToolTip.Tip="Cancel rename"
                   IsVisible="{Binding IsRenameActive}" />
@@ -661,7 +661,7 @@
       <Setter Property="ScrollViewer.VerticalScrollBarVisibility" Value="Auto" />
     </Style>
 
-    <Style Selector="TextBox.composer-input /template/ TextBlock#PART_Watermark">
+    <Style Selector="TextBox.composer-input /template/ TextBlock#PART_Placeholder">
       <Setter Property="Foreground" Value="{DynamicResource Sunder.Brush.Foreground.Muted}" />
       <Setter Property="Opacity" Value="1" />
     </Style>
@@ -860,7 +860,7 @@
               ColumnSpacing="6">
           <Button Grid.Column="0"
                   Classes="attachment-preview-button"
-                  Command="{Binding $parent[UserControl].DataContext.OpenPendingAttachmentPreviewCommand}"
+                  Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).OpenPendingAttachmentPreviewCommand}"
                   CommandParameter="{Binding}"
                   ToolTip.Tip="{Binding PreviewToolTipText}">
             <Grid ColumnDefinitions="Auto,*"
@@ -885,7 +885,7 @@
           <Button Grid.Column="1"
                   Classes="attachment-remove"
                   Content="x"
-                  Command="{Binding $parent[UserControl].DataContext.RemovePendingAttachmentCommand}"
+                  Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).RemovePendingAttachmentCommand}"
                   CommandParameter="{Binding}"
                   ToolTip.Tip="Remove attachment" />
         </Grid>
@@ -974,7 +974,7 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:AgentTranscriptAttachmentViewModel">
                         <Button Classes="attachment-preview-button"
-                                Command="{Binding $parent[UserControl].DataContext.OpenTranscriptAttachmentPreviewCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).OpenTranscriptAttachmentPreviewCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="{Binding PreviewToolTipText}">
                           <Border Classes="attachment-chip"
@@ -1051,7 +1051,7 @@
                     <ItemsControl.ItemTemplate>
                       <DataTemplate x:DataType="vm:AgentTranscriptAttachmentViewModel">
                         <Button Classes="attachment-preview-button"
-                                Command="{Binding $parent[UserControl].DataContext.OpenTranscriptAttachmentPreviewCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).OpenTranscriptAttachmentPreviewCommand}"
                                 CommandParameter="{Binding}"
                                 ToolTip.Tip="{Binding PreviewToolTipText}">
                           <Border Classes="attachment-chip"
@@ -1090,7 +1090,7 @@
                           Spacing="4">
                 <Button Classes="message-copy-action user"
                         Content="↩"
-                        Command="{Binding $parent[UserControl].DataContext.StartRollbackFromMessageCommand}"
+                        Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).StartRollbackFromMessageCommand}"
                         CommandParameter="{Binding}"
                         ToolTip.Tip="Rollback" />
                 <Button Classes="message-copy-action user"
@@ -1208,7 +1208,7 @@
               <DataTemplate x:DataType="vm:AgentChildSessionLinkViewModel">
                 <Button Classes="secondary-action compact-action"
                         Margin="0,0,8,8"
-                        Command="{Binding $parent[UserControl].DataContext.OpenChildSessionCommand}"
+                        Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).OpenChildSessionCommand}"
                         CommandParameter="{Binding}">
                   <StackPanel Orientation="Horizontal"
                               Spacing="8">
@@ -1542,15 +1542,15 @@
                                   VerticalAlignment="Center">
                         <Button Classes="secondary-action compact-action"
                                 Content="Allow Once"
-                                Command="{Binding $parent[UserControl].DataContext.ApprovePermissionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).ApprovePermissionCommand}"
                                 CommandParameter="{Binding}" />
                         <Button Classes="secondary-action compact-action"
                                 Content="Allow In Session"
-                                Command="{Binding $parent[UserControl].DataContext.ApprovePermissionForSessionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).ApprovePermissionForSessionCommand}"
                                 CommandParameter="{Binding}" />
                         <Button Classes="secondary-action compact-action danger-action"
                                 Content="Deny"
-                                Command="{Binding $parent[UserControl].DataContext.DenyPermissionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).DenyPermissionCommand}"
                                 CommandParameter="{Binding}" />
                       </StackPanel>
                     </Grid>
@@ -1684,15 +1684,15 @@
                                   VerticalAlignment="Center">
                         <Button Classes="secondary-action compact-action"
                                 Content="Allow Once"
-                                Command="{Binding $parent[UserControl].DataContext.ApprovePermissionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).ApprovePermissionCommand}"
                                 CommandParameter="{Binding}" />
                         <Button Classes="secondary-action compact-action"
                                 Content="Allow In Session"
-                                Command="{Binding $parent[UserControl].DataContext.ApprovePermissionForSessionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).ApprovePermissionForSessionCommand}"
                                 CommandParameter="{Binding}" />
                         <Button Classes="secondary-action compact-action danger-action"
                                 Content="Deny"
-                                Command="{Binding $parent[UserControl].DataContext.DenyPermissionCommand}"
+                                Command="{Binding $parent[UserControl].((vm:AgentChatViewModel)DataContext).DenyPermissionCommand}"
                                 CommandParameter="{Binding}" />
                       </StackPanel>
                     </Grid>

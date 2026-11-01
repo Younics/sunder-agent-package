@@ -91,17 +91,6 @@ public sealed partial class AgentSessionService
     internal IReadOnlyList<AgentParentContinuationWorkRecord> ListDispatchableParentContinuationWork()
         => _store.ListDispatchableParentContinuationWork();
 
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
-    {
-        var contextCheckpoint = _store.GetLatestSessionContextCheckpoint(sessionId);
-        return contextCheckpoint is null
-            ? null
-            : new AgentWorkingSummaryRecord(
-                sessionId,
-                contextCheckpoint.SummaryText,
-                contextCheckpoint.CreatedAtUtc);
-    }
-
     public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId)
         => _store.GetLatestSessionContextCheckpoint(sessionId);
 

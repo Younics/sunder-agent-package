@@ -7,7 +7,6 @@ using MemoryApp::Sunder.Package.Agent.Memory.Semantic.Services;
 using AgentSessionContextCheckpointRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionContextCheckpointRecord;
 using AgentSessionRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
 using AgentSessionState = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
-using AgentWorkingSummaryRecord = MemoryApp::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkingSummaryRecord;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -15,6 +14,35 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class MemoryInspectorAuthorityRaceTests
 {
+    [Fact]
+    public async Task SessionContext_UsesOnlyTheCurrentCheckpointAndClearsWhenAbsent()
+    {
+        var session = Session("Continuity");
+        var gateway = new DeferredMemoryInspectorGateway([session])
+        {
+            ContextCheckpoint = new()
+            {
+                ContextCheckpointId = Guid.NewGuid(),
+                SessionId = session.SessionId,
+                FirstOmittedTurnId = null,
+                LastOmittedTurnId = null,
+                OmittedTurnCount = 0,
+                SummaryText = "Current checkpoint context.",
+                DetailsJson = null,
+                CreatedAtUtc = RpcTimestamp(DateTimeOffset.UtcNow),
+            },
+        };
+        using var model = new MemoryInspectorViewModel(gateway);
+        await model.InitializeAsync();
+
+        Assert.Equal("Current checkpoint context.", model.ContextSummaryText);
+        Assert.True(model.HasContextSummary);
+        gateway.ContextCheckpoint = null;
+        await model.RefreshCommand.ExecuteAsync(null);
+        Assert.Empty(model.ContextSummaryText);
+        Assert.False(model.HasContextSummary);
+    }
+
     [Fact]
     public async Task RefreshAndTabSwitch_PreserveDraftAndSaveAcceptsOnlySubmittedValues()
     {
@@ -290,6 +318,7 @@ public sealed class MemoryInspectorAuthorityRaceTests
 
         public int WorkerStatusCallCount => Volatile.Read(ref _workerStatusCallCount);
         public IReadOnlyList<StoredMemoryRecord> MemoryRecords { get; set; } = [];
+        public AgentSessionContextCheckpointRecord? ContextCheckpoint { get; set; }
         public TaskCompletionSource? SaveRelease { get; set; }
         public TaskCompletionSource SaveEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? DetailsRelease { get; set; }
@@ -358,12 +387,7 @@ public sealed class MemoryInspectorAuthorityRaceTests
         public Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(
             Guid sessionId,
             CancellationToken cancellationToken = default)
-            => Task.FromResult<AgentSessionContextCheckpointRecord?>(null);
-
-        public Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(
-            Guid sessionId,
-            CancellationToken cancellationToken = default)
-            => Task.FromResult<AgentWorkingSummaryRecord?>(null);
+            => Task.FromResult(ContextCheckpoint);
 
         public Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(
             Guid sessionId,

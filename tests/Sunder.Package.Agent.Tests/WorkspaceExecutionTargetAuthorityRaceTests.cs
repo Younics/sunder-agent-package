@@ -110,7 +110,7 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
         using var viewModel = new AgentWorkspacesViewModel(workspaceGateway, executionGateway, editors,
             settingsNavigationService: null, uiDispatcher: new InlineWorkspaceDispatcher());
         await viewModel.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
-        var failures = new PresentationTaskScopeTests.FailureRecordingSynchronizationContext();
+        var failures = new Sunder.Package.Agent.TestSupport.FailureRecordingSynchronizationContext();
         var previous = SynchronizationContext.Current;
         try
         {

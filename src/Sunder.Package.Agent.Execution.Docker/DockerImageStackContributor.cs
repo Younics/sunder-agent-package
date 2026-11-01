@@ -87,10 +87,14 @@ internal sealed partial class DockerImageStackContributor(
     {
         var actions = new List<StackImportAction>();
         var warnings = new List<string>();
+        var conflicts = new List<StackImportConflict>();
         foreach (var fragment in request.Fragments)
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                conflicts.Add(new StackImportConflict("unsupported:" + fragment.FragmentId,
+                    $"Selected fragment '{fragment.FragmentId}' has an unsupported or invalid Docker image schema ({fragment.SchemaId} v{fragment.SchemaVersion}).",
+                    StackImportConflictSeverity.Error, fragment.FragmentId));
                 continue;
             }
 
@@ -108,7 +112,7 @@ internal sealed partial class DockerImageStackContributor(
             }
         }
 
-        return new StackImportPreview(actions, [], [], warnings);
+        return new StackImportPreview(actions, [], conflicts, warnings);
     }
 
     public async ValueTask<StackImportResult> ImportAsync(
@@ -123,6 +127,7 @@ internal sealed partial class DockerImageStackContributor(
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                errors.Add($"Selected fragment '{fragment.FragmentId}' cannot be imported with this Docker image schema.");
                 continue;
             }
 

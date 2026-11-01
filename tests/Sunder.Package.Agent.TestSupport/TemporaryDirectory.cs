@@ -13,6 +13,22 @@ public sealed class TemporaryDirectory : IDisposable
 
     public Exception? CleanupFailure { get; private set; }
 
+    public static string GetPhysicalTemporaryRoot()
+        => NormalizeTemporaryRoot(System.IO.Path.GetTempPath(), OperatingSystem.IsMacOS());
+
+    // Canonicalize only macOS's known temporary-root aliases. Already physical
+    // paths must remain unchanged, including when TMPDIR is supplied by a parent.
+    public static string NormalizeTemporaryRoot(string temporaryRoot, bool isMacOS)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(temporaryRoot);
+        var root = System.IO.Path.TrimEndingDirectorySeparator(temporaryRoot);
+        return isMacOS && (root is "/var" or "/tmp"
+                           || root.StartsWith("/var/", StringComparison.Ordinal)
+                           || root.StartsWith("/tmp/", StringComparison.Ordinal))
+            ? "/private" + root
+            : root;
+    }
+
     public static TemporaryDirectory Create(string purpose)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(purpose);
@@ -20,14 +36,7 @@ public sealed class TemporaryDirectory : IDisposable
             char.IsAsciiLetterOrDigit(character) || character is '-' or '_'
                 ? character
                 : '-'));
-        var temporaryRoot = System.IO.Path.GetTempPath()
-            .TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
-        if (OperatingSystem.IsMacOS()
-            && (string.Equals(temporaryRoot, "/var", StringComparison.Ordinal)
-                || temporaryRoot.StartsWith("/var/", StringComparison.Ordinal)))
-        {
-            temporaryRoot = "/private" + temporaryRoot;
-        }
+        var temporaryRoot = GetPhysicalTemporaryRoot();
         var path = System.IO.Path.Combine(
             temporaryRoot,
             safePurpose,

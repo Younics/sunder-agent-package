@@ -1,9 +1,7 @@
 <Project>
   <!-- Descriptor-only helpers also serve suites without an Agent binary reference. -->
   <ItemGroup>
-    <Compile Include="$(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/RegressionTestRpcDescriptors.cs;
-                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/CurrentContractInventory.cs;
-                      $(MSBuildThisFileDirectory)Sunder.Package.Agent.Tests/CurrentContractRecords.cs"
-             Link="TestSupport/%(Filename)%(Extension)" />
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/Contracts/*.cs"
+             Link="TestSupport/Contracts/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

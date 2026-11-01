@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkReference>
+    <SunderSdkAvaloniaReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkAvaloniaReference>
+    <SunderSdkStacksReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkStacksReference>
+    <!-- Source-only implementation probes do not participate in the separately
+         selected locked-package compatibility lane. -->
+    <IsTestProject Condition="'$(SunderUseSourceSdk)' != 'true'">false</IsTestProject>
+    <EnableDefaultCompileItems Condition="'$(SunderUseSourceSdk)' != 'true'">false</EnableDefaultCompileItems>
+    <SunderTestOwner>younics.ai.agent.mcp</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;HTTP;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>false</SunderTestPackageMode>
+    <SunderTestPreparedFixtureClasses>McpRefactorTests;McpServerStackContributorTests</SunderTestPreparedFixtureClasses>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+    <Compile Include="../Shared/Platform/*.cs" Link="TestSupport/Platform/%(Filename)%(Extension)" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="McpWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Mcp/Sunder.Package.Agent.Mcp.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="McpApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="ModelContextProtocol.Core" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <Compile Include="../Shared/Consumers/McpRuntimeCatalogFixture.cs" Link="TestSupport/McpRuntimeCatalogFixture.cs" />
+    <Compile Include="../Shared/Presentation/TranscriptAgentToolFixture.cs" Link="TestSupport/TranscriptAgentToolFixture.cs" />
+  </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  <Import Project="../PackageContextFixtures.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+</Project>

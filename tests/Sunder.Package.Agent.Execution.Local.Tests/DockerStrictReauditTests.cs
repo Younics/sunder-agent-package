@@ -14,7 +14,7 @@ using DockerWorker::Sunder.Agent.Execution.Common;
 public sealed class DockerStrictReauditTests : IDisposable
 {
     private readonly string _root = Path.Combine(
-        OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-docker-strict-reaudit",
         Guid.NewGuid().ToString("N"));
 

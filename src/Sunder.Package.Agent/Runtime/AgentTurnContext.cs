@@ -15,12 +15,6 @@ public interface IAgentTurnContext
     /// <summary>Gets the current user-authored message.</summary>
     string UserMessage { get; }
 
-    /// <summary>
-    /// Gets a legacy continuity summary, or <see langword="null"/>. It is derived reference context, not durable
-    /// memory or trusted instructions.
-    /// </summary>
-    [Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
-    string? WorkingSummary { get; }
 }
 
 /// <summary>
@@ -29,13 +23,10 @@ public interface IAgentTurnContext
 /// <param name="Session">The owning session context.</param>
 /// <param name="Run">The run generation processing the turn.</param>
 /// <param name="UserMessage">The current user-authored message.</param>
-/// <param name="WorkingSummary">A legacy, potentially absent continuity summary. It must be treated as untrusted reference data.</param>
 public sealed record AgentTurnContextRecord(
     AgentSessionContextRecord Session,
     AgentRunContextRecord Run,
-    string UserMessage,
-    [property: Obsolete("Active session continuity summaries are owned by AI Agent core. Use runtime session context checkpoints for continuity and durable memory APIs for long-lived facts.")]
-    string? WorkingSummary) : IAgentTurnContext
+    string UserMessage) : IAgentTurnContext
 {
     IAgentSessionContext IAgentTurnContext.Session => Session;
     IAgentRunContext IAgentTurnContext.Run => Run;

@@ -89,7 +89,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
     private bool _includeInactive;
 
     [ObservableProperty]
-    private string _workingSummaryText = string.Empty;
+    private string _contextSummaryText = string.Empty;
 
     [ObservableProperty]
     private string _editCategory = string.Empty;
@@ -126,7 +126,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
 
     public bool HasSupersededMemories => SupersededMemoryItems.Count > 0;
 
-    public bool HasWorkingSummary => !string.IsNullOrWhiteSpace(WorkingSummaryText);
+    public bool HasContextSummary => !string.IsNullOrWhiteSpace(ContextSummaryText);
 
     public bool HasSemanticWorkerStatus => !string.IsNullOrWhiteSpace(SemanticWorkerStatusText);
 
@@ -191,9 +191,9 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
             ReconcileMemoryAsync);
     }
 
-    partial void OnWorkingSummaryTextChanged(string value)
+    partial void OnContextSummaryTextChanged(string value)
     {
-        OnPropertyChanged(nameof(HasWorkingSummary));
+        OnPropertyChanged(nameof(HasContextSummary));
     }
 
     partial void OnIncludeInactiveChanged(bool value)
@@ -440,19 +440,14 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         var checkpointTask = _memoryInspectorService.GetSessionContextCheckpointAsync(
             sessionId,
             cancellationToken);
-        var workingSummaryTask = _memoryInspectorService.GetWorkingSummaryAsync(
-            sessionId,
-            cancellationToken);
         var memoriesTask = _memoryInspectorService.GetGraphPageAsync(
             sessionId,
             searchText,
             includeInactive,
             pageLimit,
             cancellationToken);
-        await Task.WhenAll(checkpointTask, workingSummaryTask, memoriesTask).ConfigureAwait(false);
-        var workingSummary = (await checkpointTask.ConfigureAwait(false))?.SummaryText
-            ?? (await workingSummaryTask.ConfigureAwait(false))?.SummaryText
-            ?? string.Empty;
+        await Task.WhenAll(checkpointTask, memoriesTask).ConfigureAwait(false);
+        var contextSummary = (await checkpointTask.ConfigureAwait(false))?.SummaryText ?? string.Empty;
         var page = await memoriesTask.ConfigureAwait(false);
         var memories = page.Memories.Select(memory =>
             new MemoryListItemViewModel(
@@ -471,7 +466,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
                 : [.. memories, refreshed];
         }
         return new MemorySessionContent(
-            workingSummary,
+            contextSummary,
             page.HasMore,
             memories,
             selectedMemory?.MemoryId,
@@ -483,7 +478,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         _memoryDetailsLoadVersion++;
         RememberMemoryDraft();
         HasMoreMemories = content.HasMore;
-        WorkingSummaryText = content.WorkingSummary;
+        ContextSummaryText = content.ContextSummary;
 
         _suppressMemorySelectionDetails = true;
         try
@@ -723,7 +718,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         HasMoreMemories = false;
         _memoryDetailsLoadVersion++;
         _selectedSessionSemanticContext = null;
-        WorkingSummaryText = string.Empty;
+        ContextSummaryText = string.Empty;
         EvidenceItems.Clear();
         SupersededMemoryItems.Clear();
         _suppressMemorySelectionDetails = true;
@@ -780,7 +775,7 @@ public sealed partial class MemoryInspectorViewModel : ObservableObject, IDispos
         LatestRequestTicket? Authority);
 
     private sealed record MemorySessionContent(
-        string WorkingSummary,
+        string ContextSummary,
         bool HasMore,
         IReadOnlyList<MemoryListItemViewModel> Memories,
         Guid? SelectedMemoryId,

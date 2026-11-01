@@ -54,7 +54,7 @@ Unhandled loop exceptions are converted by the outer run coordinator into a fail
 
 The base loop performs:
 
-1. Prompt projection and working-summary refresh.
+1. Prompt projection and anchor-validated session-context checkpoints.
 2. Trusted system prompt composition.
 3. Lower-trust context serialization into a user-role message.
 4. Ready/assigned native tool discovery.

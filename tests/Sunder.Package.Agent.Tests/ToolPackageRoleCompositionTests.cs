@@ -116,7 +116,7 @@ public sealed class ToolPackageRoleCompositionTests
     {
         using var packageScope = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState();
-        var graph = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(WebSearchTool).Assembly,
+        var graph = GeneratedPackageCompositionFixture.CreateGeneratedWorker(typeof(WebSearchTool).Assembly,
             packageScope.Context, new RegressionTestRpcClient(state, packageScope.Context.PackageId));
         await using var lifetime = graph.Lifetime;
 

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkReference>
+    <SunderSdkAvaloniaReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkAvaloniaReference>
+    <!-- These source-only implementation tests need the current Core internals.
+         Locked-package compatibility remains in the existing selected suites. -->
+    <IsTestProject Condition="'$(SunderUseSourceSdk)' != 'true'">false</IsTestProject>
+    <EnableDefaultCompileItems Condition="'$(SunderUseSourceSdk)' != 'true'">false</EnableDefaultCompileItems>
+    <SunderTestOwner>younics.sunder.package.maker</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;HTTP;Process;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>false</SunderTestPackageMode>
+    <SunderTestPreparedFixtureClasses>BuilderDevelopmentRelayTests</SunderTestPreparedFixtureClasses>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+    <Compile Include="../Shared/Platform/*.cs" Link="TestSupport/Platform/%(Filename)%(Extension)" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="BuilderWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Builder/Sunder.Package.Agent.Builder.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="BuilderApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  <Import Project="../PackageContextFixtures.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+</Project>

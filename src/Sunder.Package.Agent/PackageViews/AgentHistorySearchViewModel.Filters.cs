@@ -368,7 +368,7 @@ public sealed partial class AgentHistorySearchViewModel
             PastThirtyDaysId => (now.AddDays(-30), now),
             PastYearId => (now.AddYears(-1), now),
             CustomRangeId => ResolveCustomDateRange(),
-            _ => (null, null),
+            _ => default((DateTimeOffset? FromUtc, DateTimeOffset? ToUtc)),
         };
     }
 

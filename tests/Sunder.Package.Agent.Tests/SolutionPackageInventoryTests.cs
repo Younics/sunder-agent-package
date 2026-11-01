@@ -137,7 +137,7 @@ public sealed class SolutionPackageInventoryTests
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        Assert.Equal(11, executableTests.Length);
+        Assert.Equal(14, executableTests.Length);
         foreach (var projectPath in executableTests)
         {
             var project = XDocument.Load(projectPath);
@@ -186,15 +186,16 @@ public sealed class SolutionPackageInventoryTests
     [Fact]
     public void PackageModules_MatchRuntimePackageInventoryAndCompositionCoverage()
     {
+        using var roles = new CanonicalPackageRoles();
         var packages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
         Assert.Equal(12, packages.Count(package => package.HasAppRole));
         foreach (var worker in AgentPackageRepositoryInventory.GetRuntimePackageProjects())
         {
             Assert.True(File.Exists(worker.ProgramPath));
-            Assert.DoesNotContain(System.Reflection.Assembly.Load(worker.Name).GetTypes(), type =>
+            Assert.DoesNotContain(roles.Load(worker, "worker").GetTypes(), type =>
                 typeof(Sunder.Sdk.Abstractions.ISunderAppPackageModule).IsAssignableFrom(type));
             if (worker.HasAppRole)
-                Assert.Single(System.Reflection.Assembly.Load(worker.AppAssemblyName!).GetTypes(), type =>
+                Assert.Single(roles.Load(worker, "app").GetTypes(), type =>
                     !type.IsAbstract && typeof(Sunder.Sdk.Abstractions.ISunderAppPackageModule).IsAssignableFrom(type));
         }
     }
@@ -309,16 +310,17 @@ public sealed class SolutionPackageInventoryTests
     [Fact]
     public void AppAndWorkerProjectReferenceClosures_DoNotCrossRoleBoundary()
     {
+        using var roles = new CanonicalPackageRoles();
         var packages = AgentPackageRepositoryInventory.GetRuntimePackageProjects();
         Assert.Equal(15, packages.Count);
         foreach (var package in packages)
         {
-            foreach (var name in package.HasAppRole ? new[] { package.Name, package.AppAssemblyName! } : [package.Name])
+            foreach (var role in package.HasAppRole ? new[] { "worker", "app" } : ["worker"])
             {
-                var references = System.Reflection.Assembly.Load(name).GetReferencedAssemblies();
+                var references = roles.Load(package, role).GetReferencedAssemblies();
                 Assert.DoesNotContain(references, reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal)
                     || reference.Name == "Sunder.Agent.Execution.Common");
-                if (name.EndsWith(".App", StringComparison.Ordinal))
+                if (role == "app")
                     Assert.DoesNotContain(references, reference => reference.Name == "Sunder.Sdk.Worker");
                 else Assert.DoesNotContain(references, reference => reference.Name!.StartsWith("Avalonia", StringComparison.Ordinal)
                     || reference.Name == "Sunder.Sdk.Avalonia");

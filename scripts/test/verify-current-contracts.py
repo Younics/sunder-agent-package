@@ -194,6 +194,40 @@ def verify_manifest(manifest, package, expected, inventory):
     require(actual_caps == expected_caps, f"Capability inventory differs ({package['packageId']}): missing={sorted(expected_caps - actual_caps)}, extra={sorted(actual_caps - expected_caps)}")
 
 
+def qualified_contract_lock(root, frame, package):
+    path = release.source_file(root / "src", frame["contractLock"])
+    require(release.file_sha(path) == frame["contractLockSha256"], "Qualified contract lock bytes differ")
+    selected = release.load(path)
+    reviewed = release.load(release.source_file(root, str(Path(package["projectPath"]).parent / "sunder-contracts.lock.json")))
+    # Core may select a fresh same-version source artifact in a qualified obj copy.
+    # That changes content identities, never the separately reviewed import intent
+    # or public contract tuples. No authored selection or expectation is rewritten.
+    require(selected.keys() == reviewed.keys()
+            and all(selected[key] == reviewed[key] for key in reviewed if key != "packageArtifacts"),
+            "Qualified contract selection changed reviewed import intent")
+    require(selected["packageArtifacts"].keys() == reviewed["packageArtifacts"].keys(),
+            "Qualified contract selection changed artifact owners")
+    for package_id, original in reviewed["packageArtifacts"].items():
+        actual = selected["packageArtifacts"][package_id]
+        require(actual.keys() == original.keys()
+                and all(actual[key] == original[key] for key in original
+                        if key not in ("selectedPackageContentIdentity", "publicInventorySha256", "contracts")),
+                "Qualified contract selection changed reviewed artifact policy")
+        for key in ("selectedPackageContentIdentity", "publicInventorySha256"):
+            release.digest(actual[key])
+        require(actual["contracts"].keys() == original["contracts"].keys(), "Qualified contract subset differs")
+        for contract_id, contract in original["contracts"].items():
+            resolved = actual["contracts"][contract_id]
+            authority_identity = (actual["selectedPackageContentIdentity"]
+                                  if contract["authorityKind"] == "package" and contract["authorityId"] == package_id
+                                  else contract["selectedAuthorityContentIdentity"])
+            require(resolved.keys() == contract.keys()
+                    and all(resolved[key] == contract[key] for key in contract if key != "selectedAuthorityContentIdentity")
+                    and resolved["selectedAuthorityContentIdentity"] == authority_identity,
+                    "Qualified contract tuple or content authority differs")
+    return selected
+
+
 def propose(root, evidence_path, expected, inventory):
     evidence = release.load(evidence_path)
     require(evidence["schemaVersion"] == 1 and evidence["scope"] == "local-unpublished-current-RID", "Expected current qualified-artifact index")
@@ -261,7 +295,8 @@ def propose(root, evidence_path, expected, inventory):
         manifest, _, _ = release.archive_metadata(archive_path)
         verify_manifest(manifest, package, expected, inventory)
         require({t["rid"] for t in manifest["targets"]} == {evidence["rid"]}, "Qualified artifact RID differs")
-        locked = release.load(root / Path(package["projectPath"]).parent / "sunder-contracts.lock.json")
+        pin(release.source_file(root, str(Path(package["projectPath"]).parent / "sunder-contracts.lock.json")))
+        locked = qualified_contract_lock(root, frame, package)
         release.verify_consumer_projection(locked, manifest, role_uses=source_uses["roleUses"])
         with zipfile.ZipFile(archive_path) as archive:
             qualified_files = index(qualification["files"], "path")

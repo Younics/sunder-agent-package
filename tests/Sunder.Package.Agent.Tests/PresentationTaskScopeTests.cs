@@ -1,5 +1,6 @@
 extern alias AgentCore;
 
+using Sunder.Package.Agent.TestSupport;
 using System.Collections.Concurrent;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -539,34 +540,6 @@ public sealed class PresentationTaskScopeTests
         }
     }
 
-    internal sealed class FailureRecordingSynchronizationContext : SynchronizationContext
-    {
-        private int _postCount;
-
-        public ConcurrentQueue<Exception> Exceptions { get; } = [];
-
-        public TaskCompletionSource<Exception> Failure { get; } =
-            new(TaskCreationOptions.RunContinuationsAsynchronously);
-
-        public int PostCount => Volatile.Read(ref _postCount);
-
-        public override void Post(SendOrPostCallback callback, object? state)
-        {
-            Interlocked.Increment(ref _postCount);
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                try
-                {
-                    callback(state);
-                }
-                catch (Exception exception)
-                {
-                    Exceptions.Enqueue(exception);
-                    Failure.TrySetResult(exception);
-                }
-            });
-        }
-    }
 }
 
 // A paused UI queue: tests choose whether the callback ran or was aborted. No shared UIThread shutdown.

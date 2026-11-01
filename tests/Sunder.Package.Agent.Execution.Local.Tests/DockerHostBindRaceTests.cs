@@ -22,7 +22,7 @@ using DockerWorker::Sunder.Agent.Execution.Common;
 public sealed class DockerHostBindRaceTests : IDisposable
 {
     private readonly string _root = Path.Combine(
-        OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-docker-host-races",
         Guid.NewGuid().ToString("N"));
 

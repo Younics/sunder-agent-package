@@ -18,9 +18,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\AgentPackageRepositoryInventory.cs"
+    <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs"
              Link="TestSupport\AgentPackageRepositoryInventory.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs"
+    <Compile Include="../Shared/Packages/TestPackageStorageFakes.cs"
              Link="TestSupport\TestPackageStorageFakes.cs" />
   </ItemGroup>
 

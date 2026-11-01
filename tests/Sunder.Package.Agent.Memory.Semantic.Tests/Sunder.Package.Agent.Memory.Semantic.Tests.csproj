@@ -22,16 +22,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\MemoryLocalStorePersistenceTests.cs" Link="MemoryLocalStorePersistenceTests.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\AgentPackageRepositoryInventory.cs" Link="AgentPackageRepositoryInventory.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs" Link="RegressionTestPackageContext.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs" Link="RegressionTestPackageScope.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestFamilyConsumers.Memory.cs" Link="RegressionTestFamilyConsumers.Memory.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\SemanticMemoryIndexingReliabilityTests.cs" Link="SemanticMemoryIndexingReliabilityTests.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
+    <Compile Include="../Shared/Repository/*.cs;../Shared/Consumers/RegressionTestFamilyConsumers.Memory.cs"
+             Link="TestSupport/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
@@ -40,4 +36,5 @@
     </PackageReference>
   </ItemGroup>
   <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
 </Project>

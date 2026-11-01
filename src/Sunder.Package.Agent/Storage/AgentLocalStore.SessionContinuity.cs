@@ -532,29 +532,4 @@ public sealed partial class AgentLocalStore
         }
     }
 
-    private static string? ReadLatestWorkingSummary(
-        SqliteConnection connection,
-        SqliteTransaction transaction,
-        Guid sessionId)
-    {
-        if (!TryReadSessionContinuityState(
-                connection,
-                transaction,
-                sessionId,
-                out var transcriptEpoch,
-                out var activeCheckpointId,
-                out var activeGeneration))
-        {
-            return null;
-        }
-
-        return ReadValidActiveSessionContextCheckpoint(
-            connection,
-            transaction,
-            sessionId,
-            transcriptEpoch,
-            activeCheckpointId,
-            activeGeneration,
-            ListTurnHeadersForSession(connection, sessionId, descending: false, transaction))?.Record.SummaryText;
-    }
 }

@@ -382,7 +382,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         }
     }
 
-    private static void OnWorkspaceInlineEditInputInteraction(object? sender, RoutedEventArgs e)
+    private void OnWorkspaceInlineEditInputInteraction(object? sender, RoutedEventArgs e)
         => e.Handled = true;
 
     private void OnWorkspacePathEditTextBoxAttachedToVisualTree(object? sender, VisualTreeAttachmentEventArgs e)
@@ -634,7 +634,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
             .ToArray()
             ?? [];
 
-    private static void OnSetSelectedEditorPathItemAsDefaultClick(object? sender, RoutedEventArgs e)
+    private void OnSetSelectedEditorPathItemAsDefaultClick(object? sender, RoutedEventArgs e)
     {
         if ((sender as Control)?.DataContext is AgentEditorPathListFieldViewModel field)
         {
@@ -642,7 +642,7 @@ public partial class AgentWorkspacesView : UserControl, IDisposable, IPackageVie
         }
     }
 
-    private static void OnDeleteSelectedEditorPathItemClick(object? sender, RoutedEventArgs e)
+    private void OnDeleteSelectedEditorPathItemClick(object? sender, RoutedEventArgs e)
     {
         if ((sender as Control)?.DataContext is AgentEditorPathListFieldViewModel field)
         {

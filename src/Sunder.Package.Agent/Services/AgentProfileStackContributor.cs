@@ -85,6 +85,9 @@ public sealed partial class AgentProfileStackContributor(
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                conflicts.Add(new StackImportConflict("unsupported:" + fragment.FragmentId,
+                    $"Selected fragment '{fragment.FragmentId}' has an unsupported or invalid profile schema ({fragment.SchemaId} v{fragment.SchemaVersion}).",
+                    StackImportConflictSeverity.Error, fragment.FragmentId));
                 continue;
             }
 
@@ -114,6 +117,7 @@ public sealed partial class AgentProfileStackContributor(
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                errors.Add($"Selected fragment '{fragment.FragmentId}' cannot be imported with this profile schema.");
                 continue;
             }
 

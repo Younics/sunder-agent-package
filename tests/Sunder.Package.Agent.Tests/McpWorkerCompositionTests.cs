@@ -23,7 +23,7 @@ public sealed class McpWorkerCompositionTests
     public async Task WorkerAndAppComposition_KeepAuthorityInTheWorker()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var options = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(McpToolSource).Assembly, scope.Context, new IdleRpcClient()).Options;
+        var options = GeneratedPackageCompositionFixture.CreateGeneratedWorker(typeof(McpToolSource).Assembly, scope.Context, new IdleRpcClient()).Options;
         await using var composition = Assert.IsType<SunderWorkerComposition>(options.Composition);
 
         Assert.Equal(

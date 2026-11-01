@@ -68,7 +68,7 @@ class PreparationEvidenceTests(unittest.TestCase):
     def test_source_graph_matches_loader_and_real_fixture_files(self):
         import re
         test_root = Path(__file__).resolve().parents[2] / 'tests/Sunder.Package.Agent.Tests'
-        loader = (test_root / 'RegressionTestGeneratedProviders.cs').read_text()
+        loader = (test_root.parent / 'Shared/Rpc/RegressionTestGeneratedProviders.cs').read_text()
         inventory = re.search(r'FixtureSources\s*=\s*\[(.*?)\];', loader, re.S).group(1)
         self.assertEqual([name for name, _, _ in prepare.FAMILIES], re.findall(r'"([A-Za-z]+)"', inventory))
         self.assertIn('Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32())', loader)
@@ -78,7 +78,7 @@ class PreparationEvidenceTests(unittest.TestCase):
             source = test_root / 'Fixtures' / f'RegressionTestGeneratedProviders.{name}.cs.txt'
             self.assertTrue(source.is_file(), source)
             self.assertIn(f'class {name}Provider', source.read_text())
-        extension_loader = (test_root / 'AgentPublicSourceMigrationTests.ExtensionFixture.cs').read_text()
+        extension_loader = (test_root.parent / 'Sunder.Package.Agent.Integration.Tests/AgentPublicSourceMigrationTests.ExtensionFixture.cs').read_text()
         self.assertIn('RegressionTestGeneratedProviders.CreatePreparedProvider', extension_loader)
         for forbidden in ('PackSunderPackage', 'BuildExtensionProvidersAsync', 'BuilderSourceMigrationTests.Run', 'Process.Start'):
             self.assertNotIn(forbidden, extension_loader)

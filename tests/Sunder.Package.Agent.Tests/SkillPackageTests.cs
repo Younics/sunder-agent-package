@@ -575,13 +575,16 @@ public sealed class SkillPackageTests
                      {
                          importFragment with { OwnerPackageId = "sunder.package.agent.skills" },
                          importFragment with { SchemaId = "sunder.package.agent.skills/github-skill" },
-                         importFragment with { SchemaVersion = 0 },
+                          importFragment with { SchemaVersion = 0 },
+                          importFragment with { SchemaVersion = 2 },
                      })
             {
                 var rejectedPreview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
                 Assert.Empty(rejectedPreview.Actions);
+                Assert.Contains(rejectedPreview.Conflicts, conflict => conflict.Severity == StackImportConflictSeverity.Error && conflict.FragmentId == invalid.FragmentId);
                 var rejected = await targetContributor.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>(), [action.ActionId]));
                 Assert.Empty(rejected.ImportedItems);
+                Assert.Equal(StackImportOutcome.Failed, rejected.Outcome);
                 Assert.NotEmpty(rejected.Warnings);
                 Assert.Empty(targetStore.ListSkills());
             }
@@ -829,7 +832,6 @@ public sealed class SkillPackageTests
 
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
 
-        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
 
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
 

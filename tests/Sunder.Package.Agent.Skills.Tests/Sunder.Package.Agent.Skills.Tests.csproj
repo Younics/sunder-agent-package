@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\AgentPackageRepositoryInventory.cs"
+    <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs"
              Link="TestSupport\AgentPackageRepositoryInventory.cs" />
   </ItemGroup>
 

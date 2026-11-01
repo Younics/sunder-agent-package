@@ -749,8 +749,7 @@ public sealed partial class AgentRunCoordinatorTests
             "profile",
             "Test Profile",
             "Test Session",
-            AgentSessionState.Active,
-            null
+            AgentSessionState.Active
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -762,8 +761,7 @@ public sealed partial class AgentRunCoordinatorTests
         var turnContext = new AgentTurnContextRecord(
             sessionContext,
             runContext,
-            "Please keep this summary concise.",
-            null
+            "Please keep this summary concise."
         );
 
         var recall = await RecallAsync(memoryServices.RecallService,
@@ -838,8 +836,7 @@ public sealed partial class AgentRunCoordinatorTests
                     "profile",
                     "Test Profile",
                     "Test Session",
-                    AgentSessionState.Active,
-                    null
+                    AgentSessionState.Active
                 ),
                 new AgentRunContextRecord(
                     Guid.NewGuid(),
@@ -854,8 +851,7 @@ public sealed partial class AgentRunCoordinatorTests
                         "profile",
                         "Test Profile",
                         "Test Session",
-                        AgentSessionState.Active,
-                        null
+                        AgentSessionState.Active
                     ),
                     new AgentRunContextRecord(
                         Guid.NewGuid(),
@@ -864,8 +860,7 @@ public sealed partial class AgentRunCoordinatorTests
                         IsInterrupted: false,
                         DateTimeOffset.UtcNow
                     ),
-                    "Inspect the project stack.",
-                    null
+                    "Inspect the project stack."
                 ),
                 [toolTurn],
                 [toolTurn],
@@ -959,8 +954,7 @@ public sealed partial class AgentRunCoordinatorTests
             updatedProfile.ProfileId,
             updatedProfile.DisplayName,
             session.Title,
-            session.State,
-            null
+            session.State
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -972,8 +966,7 @@ public sealed partial class AgentRunCoordinatorTests
         var turnContext = new AgentTurnContextRecord(
             sessionContext,
             runContext,
-            "Please keep this brief.",
-            null
+            "Please keep this brief."
         );
         var userTurn = new AgentTurnRecord(
             Guid.NewGuid(),
@@ -1066,8 +1059,7 @@ public sealed partial class AgentRunCoordinatorTests
             "profile",
             "Test Profile",
             "Test Session",
-            AgentSessionState.Active,
-            null
+            AgentSessionState.Active
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -1079,8 +1071,7 @@ public sealed partial class AgentRunCoordinatorTests
         var turnContext = new AgentTurnContextRecord(
             sessionContext,
             runContext,
-            "What response style do I prefer?",
-            null
+            "What response style do I prefer?"
         );
         var userTurn = new AgentTurnRecord(
             Guid.NewGuid(),
@@ -1209,8 +1200,7 @@ public sealed partial class AgentRunCoordinatorTests
             "profile",
             "Test Profile",
             "Test Session",
-            AgentSessionState.Active,
-            null
+            AgentSessionState.Active
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -1222,8 +1212,7 @@ public sealed partial class AgentRunCoordinatorTests
         var turnContext = new AgentTurnContextRecord(
             sessionContext,
             runContext,
-            "What framework does this project use?",
-            null
+            "What framework does this project use?"
         );
         var userTurn = new AgentTurnRecord(
             Guid.NewGuid(),
@@ -1304,8 +1293,7 @@ public sealed partial class AgentRunCoordinatorTests
             "profile",
             "Test Profile",
             "Test Session",
-            AgentSessionState.Active,
-            null
+            AgentSessionState.Active
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -1317,8 +1305,7 @@ public sealed partial class AgentRunCoordinatorTests
         var turnContext = new AgentTurnContextRecord(
             sessionContext,
             runContext,
-            "What response style do I prefer?",
-            null
+            "What response style do I prefer?"
         );
         var userTurn = new AgentTurnRecord(
             Guid.NewGuid(),
@@ -1874,8 +1861,7 @@ public sealed partial class AgentRunCoordinatorTests
             "profile",
             "Test Profile",
             "Test Session",
-            AgentSessionState.Active,
-            null
+            AgentSessionState.Active
         );
         var runContext = new AgentRunContextRecord(
             Guid.NewGuid(),
@@ -1888,7 +1874,7 @@ public sealed partial class AgentRunCoordinatorTests
             AgentLifecycleEventKind.UserTurnAdded,
             sessionContext,
             runContext,
-            new AgentTurnContextRecord(sessionContext, runContext, text, null),
+            new AgentTurnContextRecord(sessionContext, runContext, text),
             [userTurn],
             [userTurn],
             TriggerTurn: userTurn
@@ -1954,8 +1940,7 @@ public sealed partial class AgentRunCoordinatorTests
             request.Profile.ProfileId,
             request.Profile.DisplayName,
             request.Session.Title,
-            request.Session.State,
-            null);
+            request.Session.State);
         var run = new AgentRunContextRecord(
             request.RunId,
             request.RunRevision,
@@ -1965,7 +1950,7 @@ public sealed partial class AgentRunCoordinatorTests
         return new AgentPromptContextRequest(
             session,
             run,
-            new AgentTurnContextRecord(session, run, request.UserMessage, null),
+            new AgentTurnContextRecord(session, run, request.UserMessage),
             request.Turns,
             request.Turns.TakeLast(8).ToArray(),
             new AgentPromptContextPlan("general", request.UserMessage))
@@ -2064,9 +2049,6 @@ public sealed partial class AgentRunCoordinatorTests
                 Session = session,
                 Run = run,
                 UserMessage = request.Turn.UserMessage,
-#pragma warning disable CS0618 // Preserve the compatibility payload field; do not use it as active continuity state.
-                WorkingSummary = request.Turn.WorkingSummary,
-#pragma warning restore CS0618
             },
             Turns = request.Turns.Select(ToMemoryTurn).ToArray(),
         };
@@ -2096,9 +2078,6 @@ public sealed partial class AgentRunCoordinatorTests
             TriggerTurn = lifecycleEvent.TriggerTurn is { } triggerTurn ? ToMemoryTurn(triggerTurn) : null,
             Turns = lifecycleEvent.Turns.Select(ToMemoryTurn).ToArray(),
             UserMessage = lifecycleEvent.Turn.UserMessage,
-#pragma warning disable CS0618 // Preserve the original lifecycle payload, including its compatibility summary.
-            WorkingSummary = lifecycleEvent.Turn.WorkingSummary,
-#pragma warning restore CS0618
             WorkspaceId = "workspace",
         };
         var payloadJson = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
@@ -2125,9 +2104,6 @@ public sealed partial class AgentRunCoordinatorTests
             SessionId = session.SessionId,
             SessionState = Enum.Parse<MemoryModels.AgentSessionState>(session.SessionState.ToString(), ignoreCase: false),
             SessionTitle = session.SessionTitle,
-#pragma warning disable CS0618 // Preserve the compatibility field during the explicit role projection.
-            WorkingSummary = session.WorkingSummary,
-#pragma warning restore CS0618
         };
 
     private static MemoryModels.AgentRunContextRecord ToMemoryRun(AgentRunContextRecord run)

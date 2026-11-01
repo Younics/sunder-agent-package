@@ -1503,7 +1503,6 @@ public sealed partial class AgentRunCoordinatorTests
 
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
 
-        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
 
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
 

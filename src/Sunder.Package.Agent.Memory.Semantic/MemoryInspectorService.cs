@@ -91,11 +91,6 @@ public sealed partial class MemoryInspectorService(
         CancellationToken cancellationToken)
         => FromResult(GetSessionContextCheckpoint(sessionId), cancellationToken);
 
-    Task<AgentWorkingSummaryRecord?> IMemoryInspectorGateway.GetWorkingSummaryAsync(
-        Guid sessionId,
-        CancellationToken cancellationToken)
-        => FromResult(GetWorkingSummary(sessionId), cancellationToken);
-
     Task<IReadOnlyList<StoredMemoryRecord>> IMemoryInspectorGateway.ListMemoriesAsync(
         Guid sessionId,
         string? searchText,
@@ -182,11 +177,6 @@ public sealed partial class MemoryInspectorService(
         => _modelRuntimeResolver.InvokeRuntimeCatalog(
             (catalog, token) => catalog.GetSessionContextCheckpointAsync(sessionId, token),
             fallback: null as AgentSessionContextCheckpointRecord);
-
-    public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId)
-        => _modelRuntimeResolver.InvokeRuntimeCatalog(
-            (catalog, token) => catalog.GetWorkingSummaryAsync(sessionId, token),
-            fallback: null as AgentWorkingSummaryRecord);
 
     public IReadOnlyList<StoredMemoryRecord> ListMemories(
         Guid sessionId,

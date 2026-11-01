@@ -62,13 +62,6 @@ public sealed partial class AgentRuntimeCatalog(
     }
 
     [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
-    public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        return ValueTask.FromResult(sessions.GetWorkingSummary(sessionId));
-    }
-
-    [SunderMethod(Idempotency = SunderServiceIdempotency.Idempotent)]
     public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();

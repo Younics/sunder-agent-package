@@ -41,7 +41,7 @@ public sealed class WorkspacePresentationFailureDispatcherTests
         using var context = new AgentWorkspacesViewContext(dispatcher);
         var publications = 0;
         context.Failed += _ => publications++;
-        var failures = new PresentationTaskScopeTests.FailureRecordingSynchronizationContext();
+        var failures = new Sunder.Package.Agent.TestSupport.FailureRecordingSynchronizationContext();
         var previous = SynchronizationContext.Current;
         try
         {

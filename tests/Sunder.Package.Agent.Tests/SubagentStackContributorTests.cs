@@ -95,13 +95,16 @@ public sealed class SubagentStackContributorTests
                      {
                          importFragment with { OwnerPackageId = "sunder.package.agent.subagents" },
                          importFragment with { SchemaId = "sunder.package.agent.subagents/subagent" },
-                         importFragment with { SchemaVersion = 0 },
+                          importFragment with { SchemaVersion = 0 },
+                          importFragment with { SchemaVersion = 2 },
                      })
             {
                 var rejectedPreview = await targetContributor.PreviewImportAsync(new StackImportPreviewRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>()));
                 Assert.Empty(rejectedPreview.Actions);
+                Assert.Contains(rejectedPreview.Conflicts, conflict => conflict.Severity == StackImportConflictSeverity.Error && conflict.FragmentId == invalid.FragmentId);
                 var rejected = await targetContributor.ImportAsync(new StackImportRequest([invalid], new Dictionary<string, string>(), new Dictionary<string, string>(), [action.ActionId]));
                 Assert.Empty(rejected.ImportedItems);
+                Assert.Equal(StackImportOutcome.Failed, rejected.Outcome);
                 Assert.NotEmpty(rejected.Warnings);
                 Assert.Null(targetService.GetSubagent(subagent.SubagentId));
             }

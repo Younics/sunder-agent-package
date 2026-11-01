@@ -32,7 +32,6 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
     public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(CancellationToken token = default) => _fallback.ListWorkspacesAsync(token);
     public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(string workspaceId, CancellationToken token = default) => _fallback.GetWorkspaceAsync(workspaceId, token);
     public ValueTask<AgentProfileRecord?> GetSessionProfileAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetSessionProfileAsync(sessionId, token);
-    public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetWorkingSummaryAsync(sessionId, token);
     public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetSessionContextCheckpointAsync(sessionId, token);
     public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetLatestCheckpointAsync(sessionId, token);
     public ValueTask<Sunder.Package.Agent.Models.AgentRunActivityUpdate?> GetRunActivityAsync(Guid sessionId, CancellationToken token = default) => _fallback.GetRunActivityAsync(sessionId, token);

@@ -28,7 +28,6 @@ using AgentSessionContextCheckpointRecord = MemoryWorker::Sunder.Generated.Packa
 using AgentSessionRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord;
 using AgentSessionState = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionState;
 using AgentTurnRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentTurnRecord;
-using AgentWorkingSummaryRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkingSummaryRecord;
 using AgentWorkspaceRecord = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentWorkspaceRecord;
 using MemoryModels = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using IEmbeddingProviderService = MemoryWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Embedding_Provider.IEmbeddingProviderService;
@@ -592,7 +591,6 @@ public sealed class MemoryEvaluationTests
         public AgentProfileRecord? GetSessionProfile(Guid requestedSessionId)
             => requestedSessionId == _session.SessionId ? profile : null;
 
-        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
 
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
 
@@ -631,8 +629,6 @@ public sealed class MemoryEvaluationTests
             => ValueTask.FromResult(GetSessionModelBinding(request.SessionId, request.CapabilityKind));
         ValueTask<AgentProfileRecord?> IRuntimeCatalogService.GetSessionProfileAsync(Guid request, CancellationToken token)
             => ValueTask.FromResult(GetSessionProfile(request));
-        ValueTask<AgentWorkingSummaryRecord?> IRuntimeCatalogService.GetWorkingSummaryAsync(Guid request, CancellationToken token)
-            => ValueTask.FromResult(GetWorkingSummary(request));
         ValueTask<AgentWorkspaceRecord?> IRuntimeCatalogService.GetWorkspaceAsync(string request, CancellationToken token)
             => GetWorkspaceAsync(request, token);
         ValueTask<IReadOnlyList<AgentProfileRecord>> IRuntimeCatalogService.ListProfilesAsync(CancellationToken token)

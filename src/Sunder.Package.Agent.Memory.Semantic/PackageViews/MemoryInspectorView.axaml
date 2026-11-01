@@ -140,7 +140,7 @@
                     <TextBlock Text="{Binding MemoryMetricsSummaryText}" />
                   </StackPanel>
                 </Expander>
-                <Expander Header="Session summary" IsVisible="{Binding HasWorkingSummary}"><SelectableTextBlock Text="{Binding WorkingSummaryText}" TextWrapping="Wrap" /></Expander>
+                <Expander Header="Session context" IsVisible="{Binding HasContextSummary}"><SelectableTextBlock Text="{Binding ContextSummaryText}" TextWrapping="Wrap" /></Expander>
               </StackPanel>
             </ScrollViewer>
             </Grid>

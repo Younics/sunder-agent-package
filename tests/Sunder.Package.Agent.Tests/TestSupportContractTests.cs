@@ -13,6 +13,42 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class TestSupportContractTests
 {
     [Fact]
+    public async Task RoleExceptionAdapter_PreservesPresentationPolicyAndUnrecognizedFailures()
+    {
+        using var roles = new CanonicalPackageRoles();
+        var worker = roles.Load("Agent", "worker");
+        var app = roles.Load("Agent", "app");
+        var failureType = worker.GetType("Sunder.Package.Agent.Shared.Presentation.PresentationOperationException", true)!;
+        var policy = app.GetType("Sunder.Package.Agent.Shared.Presentation.PresentationExceptionPolicy", true)!;
+        bool IsExpected(Exception failure) => (bool)policy.GetMethod("IsExpectedOperationFailure")!.Invoke(null, [failure])!;
+        Exception Failure(Exception inner) => (Exception)Activator.CreateInstance(failureType, "The session is no longer available.", inner)!;
+
+        var cause = new InvalidOperationException("The session is no longer available.");
+        var original = Failure(cause);
+        var projected = await Record.ExceptionAsync(() => (Task)AgentRoleExceptionBoundary.Return(
+            Task.FromException<string>(original), typeof(Task<string>), app)!);
+        Assert.NotNull(projected);
+        Assert.NotSame(original, projected);
+        Assert.Same(app, projected.GetType().Assembly);
+        Assert.Equal(original.Message, projected.Message);
+        Assert.Same(cause, projected.InnerException);
+        Assert.True(IsExpected(projected));
+        Assert.Same(projected, AgentRoleExceptionBoundary.Project(projected, app));
+
+        Assert.Same(cause, AgentRoleExceptionBoundary.Project(cause, app));
+        Assert.False(IsExpected(cause));
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancelled = new OperationCanceledException(cancellation.Token);
+        Assert.Same(cancelled, AgentRoleExceptionBoundary.Project(cancelled, app));
+        Assert.Equal(cancellation.Token, cancelled.CancellationToken);
+        var fatal = new OutOfMemoryException("fatal collaborator failure");
+        var projectedFatal = AgentRoleExceptionBoundary.Project(Failure(fatal), app);
+        Assert.Same(fatal, projectedFatal.InnerException);
+        Assert.False(IsExpected(projectedFatal));
+    }
+
+    [Fact]
     public async Task GeneratedAuthorityProjection_PreservesDenialAndRequiresOwningContract()
     {
         using var roles = new CanonicalPackageRoles();

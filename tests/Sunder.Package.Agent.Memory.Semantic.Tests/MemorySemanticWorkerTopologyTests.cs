@@ -65,6 +65,7 @@ public sealed class MemorySemanticWorkerTopologyTests
                 "logging.v1",
                 "packaging.v1",
                 "role-local-workspace.v1",
+                "rpc.consumer-requirements.v1",
                 "rpc.extended-deadline.v1",
                 "rpc.v1",
                 "runtime-generations.v1",
@@ -345,7 +346,6 @@ public sealed class MemorySemanticWorkerTopologyTests
 
         public virtual ValueTask<SunderContent> SessionsAsync(CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> SessionCheckpointAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
-        public virtual ValueTask<SunderContent> WorkingSummaryAsync(Guid sessionId, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> MemoriesAsync(Guid sessionId, string? searchText, bool includeInactive, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> GraphAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken token = default) => Unsupported();
         public virtual ValueTask<SunderContent> DetailsAsync(Guid memoryId, CancellationToken token = default) => Unsupported();

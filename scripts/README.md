@@ -4,7 +4,7 @@
 | --- | --- |
 | `ci/` | Ordinary exact-input hydration, parallel builds and generated provider-fixture preparation. |
 | `release/` | Approved cold inputs; native capture/no-rebuild fan-in; immutable publication, atomic cohort visibility and reviewed reverse. |
-| `dev/refresh-release-locks.sh` | Deliberate source-lock preparation from an exact Core feed. Never part of immutable publication/promotion. |
+| `dev/` | Explicit local contract-cache preparation/checks and deliberate source-lock preparation from an exact Core feed. Never part of immutable publication/promotion. |
 | `test/` | Test inventory, duration/evidence report and analyzer/report fixtures. |
 | `test/release/` | Release tooling mocks, bounded native transport fixtures, and explicit real-input qualification commands. |
 | `compatibility/` | Current dependency/artifact boundary checks; protected history is outside product discovery. |
@@ -19,41 +19,35 @@ and Core platform catalog selected by the current `sunder-contracts.lock.json` f
 Obtain those retained inputs from the matching local qualification or release handoff.
 Core validates their pinned content and projections against each existing lock.
 
-Run this from the Agent repository root with Python 3, supplying both input paths:
+Run this from the Agent repository root with Python 3.9+, supplying both input paths:
 
 ```sh
-python3 -B - "/absolute/path/sunder-platform-contracts.v1.json" "/absolute/path/younics.ai.agent.2.0.0.sunderpkg" <<'PY'
-import json
-from pathlib import Path
-import subprocess
-import sys
+python3 -B scripts/dev/prepare-contracts.py \
+  --candidate "/absolute/path/younics.ai.agent.2.0.0.sunderpkg" \
+  --catalog "/absolute/path/sunder-platform-contracts.v1.json"
 
-catalog, candidate = [str(Path(value).expanduser().resolve(strict=True)) for value in sys.argv[1:]]
-inventory = json.loads(Path("packages.json").read_text(encoding="utf-8"))
-for package in inventory["packages"]:
-    project = Path(package["projectPath"])
-    lock = json.loads(project.with_name("sunder-contracts.lock.json").read_text(encoding="utf-8"))
-    command = [
-        "dotnet", "msbuild", str(project),
-        "-t:RestoreSunderContracts",
-        f"-p:SunderPlatformCatalogPath={catalog}",
-    ]
-    if "younics.ai.agent" in lock["packageArtifacts"]:
-        command.append(f"-p:SunderPackageCandidatePath={candidate}")
-    subprocess.run(command, check=True)
-PY
+# Check the existing cache without restoring contract evidence:
+python3 -B scripts/dev/prepare-contracts.py --check
 ```
 
-This invokes Core's owning restore target for every canonical project in
-`packages.json`, stopping on the first failure. Main selects only the platform
+This validates the complete selected inputs before invoking Core's owning restore
+target for every canonical project in `packages.json`, stopping on the first failure,
+then checks every project's exact cache readiness. Main selects only the platform
 catalog; its candidate is supplied only to projects whose locks import Main.
 With `SunderContractCacheRoot` unset, it hydrates the normal user-profile
 `.sunder/contracts/v1/sha256` cache used by both terminal and IDE builds.
-An explicit `SunderContractCacheRoot` selects a different
+`--cache-root` or an explicit `SunderContractCacheRoot` selects a different
 cache; `SUNDER_HOME` and the Host-managed execution runtime are independent of this
 authoring cache. Restoring these existing selections preserves the contract locks
 and owned baselines. Repeat preparation when selected inputs change or the cache
 is cleared, then use the ordinary solution build.
+The same package version or filename is not enough: the archive's exact content
+identity, inventory and model projection must match the current locks. An older
+qualification or a fresh rebuild may select different bytes. No default Registry,
+lock refresh, baseline acceptance or cache-file copying is part of preparation.
+Ordinary builds never perform implicit contract restore. Core also exposes the
+read-only `dotnet msbuild <canonical-project> -t:CheckSunderContractCache` target;
+its diagnostics report the effective cache root and missing selected input kinds.
 
 ### Local checks
 
@@ -64,6 +58,7 @@ python3 -B scripts/test/release/release-inputs.fixture.py
 python3 -B scripts/test/release/native-family.fixture.py
 python3 -B scripts/test/verify-current-contracts.fixture.py
 python3 -B scripts/test/test_prepare_shared_provider_fixture.py
+python3 -B scripts/test/test_prepare_contracts.py
 python3 -B scripts/test/verify-current-contracts.py --source-only
 python3 -B scripts/test/release/test_agent_ci.py
 python3 -B scripts/test/release/test_agent_pipeline.py

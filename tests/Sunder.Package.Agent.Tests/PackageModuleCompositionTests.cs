@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Extensions.DependencyInjection;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Avalonia;
@@ -78,6 +77,7 @@ public sealed class PackageModuleCompositionTests
     [Trait("Lane", "PackageCompatibility")]
     public async Task AppPackageModule_ConfiguresValidatedServicesAndRegistersContributions(string packageName)
     {
+        using var roles = new CanonicalPackageRoles();
         using var packageScope = RegressionTestPackageScope.Create();
         using var rpcState = new RegressionTestRpcState();
         using var extensionCatalog = new RegressionTestExtensionCatalog();
@@ -94,7 +94,7 @@ public sealed class PackageModuleCompositionTests
         services.AddSingleton<IPackageAppStateUpdates, BuilderUiStateUpdates>();
         services.AddSingleton<IPackageWorkerExecutionObservations, CompositionWorkerExecutionObservations>();
 
-        var appModule = CreateAppPackageModule(packageName);
+        var appModule = CreateAppPackageModule(roles, packageName);
         appModule.ConfigureAppServices(services, packageScope.Context);
 
         await using var serviceProvider = services.BuildServiceProvider(new ServiceProviderOptions
@@ -121,10 +121,11 @@ public sealed class PackageModuleCompositionTests
     [MemberData(nameof(AppPackageNames))]
     public void AppPackageModule_DoesNotRegisterHostOwnedPackageContext(string packageName)
     {
+        using var roles = new CanonicalPackageRoles();
         using var packageScope = RegressionTestPackageScope.Create();
         var services = new ServiceCollection();
 
-        CreateAppPackageModule(packageName).ConfigureAppServices(services, packageScope.Context);
+        CreateAppPackageModule(roles, packageName).ConfigureAppServices(services, packageScope.Context);
 
         Assert.DoesNotContain(
             services,
@@ -141,13 +142,13 @@ public sealed class PackageModuleCompositionTests
             ExpectedRegistrations.Keys.Order(StringComparer.Ordinal));
     }
 
-    private static ISunderAppPackageModule CreateAppPackageModule(string packageName)
+    private static ISunderAppPackageModule CreateAppPackageModule(CanonicalPackageRoles roles, string packageName)
     {
         var package = Assert.Single(
             AgentPackageRepositoryInventory.GetRuntimePackageProjects(),
             package => string.Equals(package.Name, packageName, StringComparison.Ordinal));
         Assert.NotNull(package.AppAssemblyName);
-        var assembly = Assembly.Load(package.AppAssemblyName!);
+        var assembly = roles.Load(package, "app");
         var appTypes = assembly.GetTypes()
             .Where(static type => !type.IsAbstract && typeof(ISunderAppPackageModule).IsAssignableFrom(type))
             .ToArray();

@@ -34,13 +34,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageContext.cs" Link="RegressionTestPackageContext.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\RegressionTestPackageScope.cs" Link="RegressionTestPackageScope.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\GeneratedToolSourceProbe.cs" Link="GeneratedToolSourceProbe.cs" />
-    <Compile Include="..\Sunder.Package.Agent.Tests\TestPackageStorageFakes.cs" Link="TestPackageStorageFakes.cs" />
+    <Compile Include="../Shared/Execution/GeneratedToolSourceProbe.cs" Link="TestSupport/Execution/GeneratedToolSourceProbe.cs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="xunit" />
@@ -50,4 +48,5 @@
     </PackageReference>
   </ItemGroup>
   <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
 </Project>

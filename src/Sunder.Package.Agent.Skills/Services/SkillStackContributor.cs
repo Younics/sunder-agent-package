@@ -93,11 +93,15 @@ internal sealed partial class SkillStackContributor(
     {
         var actions = new List<StackImportAction>();
         var warnings = new List<string>();
+        var conflicts = new List<StackImportConflict>();
         foreach (var fragment in request.Fragments)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                conflicts.Add(new StackImportConflict("unsupported:" + fragment.FragmentId,
+                    $"Selected fragment '{fragment.FragmentId}' has an unsupported or invalid skill schema ({fragment.SchemaId} v{fragment.SchemaVersion}).",
+                    StackImportConflictSeverity.Error, fragment.FragmentId));
                 continue;
             }
 
@@ -114,7 +118,7 @@ internal sealed partial class SkillStackContributor(
                 Description: payload.GitHubUrl));
         }
 
-        return ValueTask.FromResult(new StackImportPreview(actions, [], [], warnings));
+        return ValueTask.FromResult(new StackImportPreview(actions, [], conflicts, warnings));
     }
 
     public async ValueTask<StackImportResult> ImportAsync(
@@ -135,6 +139,7 @@ internal sealed partial class SkillStackContributor(
 
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                errors.Add($"Selected fragment '{fragment.FragmentId}' cannot be imported with this skill schema.");
                 continue;
             }
 

@@ -93,7 +93,6 @@ public sealed class SemanticModelRuntimeResolverTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
-        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
         public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];

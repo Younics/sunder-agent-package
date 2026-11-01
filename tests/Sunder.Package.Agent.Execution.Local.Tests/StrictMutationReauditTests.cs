@@ -17,7 +17,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 public sealed class StrictMutationReauditTests : IDisposable
 {
     private readonly string _root = Path.Combine(
-        OperatingSystem.IsMacOS() ? "/private" + Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar) : Path.GetTempPath(),
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-strict-reaudit",
         Guid.NewGuid().ToString("N"));
 

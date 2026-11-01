@@ -112,10 +112,14 @@ internal sealed partial class McpServerStackContributor(
         var actions = new List<StackImportAction>();
         var requiredInputs = new List<StackRequiredInputDescriptor>();
         var warnings = new List<string>();
+        var conflicts = new List<StackImportConflict>();
         foreach (var fragment in request.Fragments)
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                conflicts.Add(new StackImportConflict("unsupported:" + fragment.FragmentId,
+                    $"Selected fragment '{fragment.FragmentId}' has an unsupported or invalid MCP server schema ({fragment.SchemaId} v{fragment.SchemaVersion}).",
+                    StackImportConflictSeverity.Error, fragment.FragmentId));
                 continue;
             }
 
@@ -134,7 +138,7 @@ internal sealed partial class McpServerStackContributor(
             warnings.Add("MCP Stack exports do not include raw secret values. Missing header and environment values must be supplied locally after import.");
         }
 
-        return new StackImportPreview(actions, requiredInputs, [], warnings);
+        return new StackImportPreview(actions, requiredInputs, conflicts, warnings);
     }
 
     public async ValueTask<StackImportResult> ImportAsync(
@@ -150,6 +154,7 @@ internal sealed partial class McpServerStackContributor(
         {
             if (!TryReadPayload(fragment, warnings, out var payload) || payload is null)
             {
+                errors.Add($"Selected fragment '{fragment.FragmentId}' cannot be imported with this MCP server schema.");
                 continue;
             }
 
@@ -176,7 +181,7 @@ internal sealed partial class McpServerStackContributor(
         {
             errors.Add("MCP Stack import contains duplicate or case-colliding server ids or names; no servers were changed.");
         }
-        else
+        if (errors.Count == 0)
         {
             try
             {

@@ -540,8 +540,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
             profile?.ProfileId ?? "profile",
             profile?.DisplayName ?? "Profile",
             "Session",
-            AgentSessionState.Active,
-            null);
+            AgentSessionState.Active);
         var run = new AgentRunContextRecord(
             Guid.NewGuid(),
             1,
@@ -551,7 +550,7 @@ public sealed class ExecutionTargetDependencyRetirementTests
         return new AgentPromptContextRequest(
             session,
             run,
-            new AgentTurnContextRecord(session, run, "test", null),
+            new AgentTurnContextRecord(session, run, "test"),
             [],
             [],
             new AgentPromptContextPlan("general", "test"))
@@ -850,7 +849,6 @@ public sealed class ExecutionTargetDependencyRetirementTests
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<AgentWorkspaceRecord?>(null);
         public AgentProfileRecord? GetSessionProfile(Guid sessionId) => null;
-        public AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId) => null;
         public AgentSessionContextCheckpointRecord? GetLatestSessionContextCheckpoint(Guid sessionId) => null;
         public AgentRunCheckpointRecord? GetLatestCheckpoint(Guid sessionId) => null;
         public IReadOnlyList<AgentTurnRecord> ListRecentTurns(Guid sessionId, int limit) => [];

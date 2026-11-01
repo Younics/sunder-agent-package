@@ -37,7 +37,7 @@ No new invocation authority or permission to replay mutations is introduced.
 | --- | --- |
 | Canonical project/package pairs | 15, including C# `Sunder.Package.Agent.Builder` → runtime `younics.sunder.package.maker` |
 | Roles | 15 exact-RID framework-dependent Worker V1; 12 App (the three Tools packages have no App) |
-| Public APIs | 18: `runtime-catalog` at `4.0.0`; `chat-provider` / `run-control` at `3.0.0`; `execution-target` / `tool-source` / `durable-lifecycle-observer` / `prompt-context-contributor` / `system-prompt-contributor` at `2.0.0`; ten at `1.0.0`; four concrete owner services, fourteen declaration-only contracts |
+| Public APIs | 18: `runtime-catalog` at `5.0.0`; `prompt-context-contributor` / `run-control` at `4.0.0`; `chat-provider` / `durable-lifecycle-observer` / `system-prompt-contributor` / `tool-source` at `3.0.0`; `execution-target` / `selectable-capability-provider` at `2.0.0`; nine at `1.0.0`; four concrete owner services, fourteen declaration-only contracts |
 | Private APIs | 13 at package `2.0.0`: Agent owner + profile; Maker; Docker/Local presentation; MCP; Memory; four provider management/credential APIs; Skills; Subagents |
 | Providers | 64 Runtime providers; public APIs/Stack use public audience, package-private APIs use owner audience |
 | Agent consumer policy | 15 Runtime uses (behavior loop, run control and runtime catalog required); five App uses (owner/profile required) |
@@ -122,6 +122,20 @@ or pre-V1 source/storage reconstruction participates in current acceptance.
 
 ## Coverage transfer
 
+### Pre-release working-summary retirement
+
+Current session/turn contexts and durable lifecycle payloads no longer carry the
+duplicate `WorkingSummary` field. Runtime Catalog exposes only the existing
+`get-session-context-checkpoint` read; Semantic Memory's inspector uses that
+checkpoint directly and has no `working-summary` method or fallback DTO.
+
+The owning tools advance `durable-lifecycle-observer` to `3.0.0`,
+`prompt-context-contributor` to `4.0.0`, and `runtime-catalog` to `5.0.0`.
+These are independent pre-release contract revisions, not a new Worker or Host
+protocol. Earlier frozen descriptors remain immutable history. Existing stored
+lifecycle JSON and its hash retain their exact identities; retired JSON fields
+are ignored by the current typed projection and remain covered by content erasure.
+
 | Unique invariant previously coupled to history | Current owner |
 | --- | --- |
 | Fifteen exact canonical projects; Library authoring; six RID defaults; no authored split roles, bootstrap targets or nested build overrides | `CurrentCompatibilityTests.CurrentTopology_*` |
@@ -130,7 +144,7 @@ or pre-V1 source/storage reconstruction participates in current acceptance.
 | Independent exact descriptor/ABI bytes; public owned baseline and generated receipt agreement | `CurrentContractRecords`, `CanonicalDescriptorInventory`, `RepositoryArchitectureTests`, `PackageFamilyArchiveContractTests` |
 | Strict value profile, reachable definitions, domain errors, finite semantic bounds, envelope-free bindings | `PackageLocalRpcDescriptorProfileTests`, `RepositoryArchitectureTests`, public/owner/catalog functional suites |
 | Current source-backed secrets, cancellation, failed activation, App/Worker isolation and stack behavior | `CredentialSourceMigrationTests`, `OpenAiManagementSourceTests`, `AgentOwnerSourceMigrationTests` (only historical reads removed) |
-| Workspace-path persistence, atomic aggregate rollback/concurrency and explicit current config | `WorkspaceTests.AgentWorkspaceService_SaveWorkspacePathsAndDocuments_PersistsHydratedWorkspace`, aggregate-stage/concurrency cases, Local/Docker config and editor suites |
+| Workspace-path persistence, atomic aggregate rollback/concurrency and explicit current config | `WorkspacePersistenceTests.AgentWorkspaceService_SaveWorkspacePathsAndDocuments_PersistsHydratedWorkspace`, aggregate-stage/concurrency cases, Local/Docker config and editor suites |
 | Full exact-activation stale-identity matrix, post-invoke invalidation, pre-cancel no-dispatch, receiver retirement/drain and scope disposal | Existing `VerifyAgentExecutionConsumer` and `VerifyAgentWorkspaceEditorConsumer`; migrator-only duplicates removed |
 | Real all-family build/pack/import/activation and behavioral/security probes | `CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload`; all fifteen family calls and required-input flag retained |
 | Exact skip owner/reason/platform/capability and actual test identities | `generate-test-duration-report.py`; current owners only, no reverse mapping or alternate hash acceptance |
@@ -139,7 +153,8 @@ or pre-V1 source/storage reconstruction participates in current acceptance.
 `AgentCompatibilityCandidateTests*` and `AgentSourceMigrationProjectChanges*`
 reconstruction tests/readers are removed. Counts of retired projects, inverses,
 relocations and old descriptors are historical facts, not current invariants.
-Frozen captures and genuine domain source bytes remain intact.
+Frozen captures remain intact. Current domain interfaces change only through the
+explicitly reviewed pre-release retirement above.
 
 ## Current qualified-artifact record proposal
 
@@ -189,6 +204,12 @@ source frame, evaluated compile/resources, owned/lock inputs, embedded Worker
 receipt, exact archive file bytes and descriptor/provider/use closure. Existing
 release tooling validates lock-selected import projection. It does not build or
 contact a Registry. Local evidence does not grant native or publication authority.
+
+Fresh source qualification can select a same-version owner in a Core-generated
+`obj` lock. The verifier uses that exact pinned lock for projection, while requiring
+the authored import intent, version/range policy, contract tuples and transitive
+authorities to remain unchanged. Only the owner's content/inventory identities
+may differ; it never rewrites authored locks or reviewed expectations.
 
 `--propose` prints `schemaVersion`, `inventorySha256`, all 31 canonical descriptor
 records and qualified-input hashes. Review this output against the authored

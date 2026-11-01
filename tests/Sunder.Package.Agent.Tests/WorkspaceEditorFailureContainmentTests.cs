@@ -8,6 +8,8 @@ using AgentAppServiceIdentity = AgentApp::Sunder.Package.Agent.Contracts.Models.
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
+using AppServices = AgentApp::Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -213,7 +215,9 @@ public sealed class WorkspaceEditorFailureContainmentTests
         malformed.EnqueueDiscovery(_ => ValueTask.FromResult(CreateMalformedGraph(failureKind)));
         var healthy = new ScriptedWorkspaceEditorContributor("local", "healthy-settings", "Healthy settings");
 
-        using var host = await EditorTestHost.CreateAsync(
+        // Observe the failed discovery before its fault event starts a second UI
+        // refresh. Retirement and exact-endpoint isolation still happen immediately.
+        using var host = await EditorTestHost.CreateWithPausedCatalogAsync(
             (malformed, "malformed.package"),
             (healthy, "healthy.package"));
 
@@ -229,6 +233,9 @@ public sealed class WorkspaceEditorFailureContainmentTests
         Assert.Equal(
             "healthy.package",
             Assert.Single((await host.Catalog.WorkspaceEditors.ListAsync()).Providers).PackageId);
+        host.ResumeCatalogNotifications();
+        await WaitUntilAsync(() => TrySnapshot(host.ViewModel.EditorSections, out var sections)
+            && sections is [{ IsError: false, Title: "Healthy settings" }]);
     }
 
     [Fact]
@@ -412,13 +419,19 @@ public sealed class WorkspaceEditorFailureContainmentTests
             RegressionTestPackageScope scope,
             RegressionTestExtensionCatalog catalog,
             AgentWorkspacesViewModel viewModel,
-            AgentWorkspaceRecord? secondWorkspace)
+            AgentWorkspaceRecord? secondWorkspace,
+            Action resumeCatalogNotifications)
         {
             _scope = scope;
             Catalog = catalog;
             ViewModel = viewModel;
             SecondWorkspace = secondWorkspace;
+            _resumeCatalogNotifications = resumeCatalogNotifications;
         }
+
+        private readonly Action _resumeCatalogNotifications;
+
+        public void ResumeCatalogNotifications() => _resumeCatalogNotifications();
 
         public RegressionTestExtensionCatalog Catalog { get; }
 
@@ -428,19 +441,24 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         public static Task<EditorTestHost> CreateAsync(
             params (IAgentWorkspaceEditorContributor Contributor, string PackageId)[] contributors)
-            => CreateAsync(waitForEditor: true, createSecondWorkspace: false, contributors);
+            => CreateAsync(waitForEditor: true, createSecondWorkspace: false, pauseCatalogNotifications: false, contributors);
+
+        public static Task<EditorTestHost> CreateWithPausedCatalogAsync(
+            params (IAgentWorkspaceEditorContributor Contributor, string PackageId)[] contributors)
+            => CreateAsync(waitForEditor: true, createSecondWorkspace: false, pauseCatalogNotifications: true, contributors);
 
         public static Task<EditorTestHost> CreateWithSecondWorkspaceAsync(
             params (IAgentWorkspaceEditorContributor Contributor, string PackageId)[] contributors)
-            => CreateAsync(waitForEditor: true, createSecondWorkspace: true, contributors);
+            => CreateAsync(waitForEditor: true, createSecondWorkspace: true, pauseCatalogNotifications: false, contributors);
 
         public static Task<EditorTestHost> CreateWithoutWaitingAsync(
             params (IAgentWorkspaceEditorContributor Contributor, string PackageId)[] contributors)
-            => CreateAsync(waitForEditor: false, createSecondWorkspace: false, contributors);
+            => CreateAsync(waitForEditor: false, createSecondWorkspace: false, pauseCatalogNotifications: false, contributors);
 
         private static async Task<EditorTestHost> CreateAsync(
             bool waitForEditor,
             bool createSecondWorkspace,
+            bool pauseCatalogNotifications,
             params (IAgentWorkspaceEditorContributor Contributor, string PackageId)[] contributors)
         {
             var scope = RegressionTestPackageScope.Create();
@@ -466,16 +484,22 @@ public sealed class WorkspaceEditorFailureContainmentTests
                     ? workspaceService.CreateWorkspace("Second workspace")
                     : null;
                 var targetService = new AgentExecutionTargetService(catalog.ExecutionTargets);
+                var events = new PausedServiceProviderEvents<AppServices.IWorkspaceEditorService>(catalog.WorkspaceEditors);
+                if (!pauseCatalogNotifications) events.Resume();
+                else
+                    foreach (var (contributor, _) in contributors)
+                        if (contributor is ScriptedWorkspaceEditorContributor scripted)
+                            scripted.DiscoveryBarrier = events.Watching;
                 var viewModel = new AgentWorkspacesViewModel(
                     AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentWorkspaceGateway>(workspaceService),
                     AgentRoleBoundary.As<AgentApp::Sunder.Package.Agent.Runtime.IAgentExecutionGateway>(targetService),
-                    catalog.WorkspaceEditors);
+                    events);
                 await viewModel.InitializeAsync();
                 if (waitForEditor)
                 {
                     await viewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
                 }
-                return new EditorTestHost(scope, catalog, viewModel, secondWorkspace);
+                return new EditorTestHost(scope, catalog, viewModel, secondWorkspace, events.Resume);
             }
             catch
             {
@@ -487,6 +511,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
         public void Dispose()
         {
             ViewModel.Dispose();
+            ResumeCatalogNotifications();
             Catalog.Dispose();
             _scope.Dispose();
         }
@@ -512,6 +537,8 @@ public sealed class WorkspaceEditorFailureContainmentTests
 
         public int SaveCount { get; private set; }
 
+        public Task? DiscoveryBarrier { get; set; }
+
         public bool CanEdit(AgentWorkspaceEditorContext context)
             => string.Equals(context.TargetId, targetId, StringComparison.OrdinalIgnoreCase);
 
@@ -528,15 +555,15 @@ public sealed class WorkspaceEditorFailureContainmentTests
         public void EnqueueSave(Func<CancellationToken, ValueTask<AgentEditorSaveResult>> save)
             => _saves.Enqueue(save);
 
-        public ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
+        public async ValueTask<IReadOnlyList<AgentEditorSection>> GetSectionsAsync(
             AgentWorkspaceEditorContext context,
             CancellationToken cancellationToken = default)
         {
+            if (DiscoveryBarrier is not null) await DiscoveryBarrier.WaitAsync(cancellationToken);
             DiscoveryCount++;
             return _discoveries.Count > 0
-                ? _discoveries.Dequeue()(cancellationToken)
-                : ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>(
-                    [new AgentEditorSection(sectionId, title, null, [])]);
+                ? await _discoveries.Dequeue()(cancellationToken)
+                : [new AgentEditorSection(sectionId, title, null, [])];
         }
 
         public ValueTask<AgentEditorSaveResult> SaveSectionAsync(

@@ -1,0 +1,6 @@
+<Project>
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)Shared/Packages/*.cs"
+             Link="TestSupport/Packages/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

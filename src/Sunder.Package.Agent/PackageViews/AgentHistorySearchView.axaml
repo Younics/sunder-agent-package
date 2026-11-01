@@ -267,7 +267,7 @@
             <ItemsControl.ItemTemplate>
               <DataTemplate x:DataType="vm:HistoryActiveFilterChipViewModel">
                 <Button Classes="history-filter-chip"
-                        Command="{Binding $parent[UserControl].DataContext.RemoveFilterCommand}"
+                        Command="{Binding $parent[UserControl].((vm:AgentHistorySearchViewModel)DataContext).RemoveFilterCommand}"
                         CommandParameter="{Binding}"
                         AutomationProperties.Name="{Binding AutomationName}">
                   <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" MinWidth="0">
@@ -492,7 +492,7 @@
               <DataTemplate x:DataType="vm:AgentHistorySearchResultViewModel">
                 <Button Classes="history-result"
                         HorizontalAlignment="Stretch"
-                        Command="{Binding $parent[UserControl].DataContext.OpenResultCommand}"
+                        Command="{Binding $parent[UserControl].((vm:AgentHistorySearchViewModel)DataContext).OpenResultCommand}"
                         CommandParameter="{Binding}"
                         AutomationProperties.Name="{Binding AutomationName}"
                         AutomationProperties.HelpText="{Binding AutomationHelpText}">

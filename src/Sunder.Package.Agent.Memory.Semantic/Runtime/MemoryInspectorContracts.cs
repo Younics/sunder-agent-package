@@ -14,7 +14,6 @@ public interface IMemoryInspectorGateway
     event Action? ResetRequired;
     Task<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken cancellationToken = default);
     Task<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid sessionId, CancellationToken cancellationToken = default);
-    Task<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid sessionId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StoredMemoryRecord>> ListMemoriesAsync(Guid sessionId, string? searchText = null, bool includeInactive = false, CancellationToken cancellationToken = default);
     async Task<MemoryGraphPage> GetGraphPageAsync(Guid sessionId, string? searchText, bool includeInactive, int limit, CancellationToken cancellationToken = default)
     {

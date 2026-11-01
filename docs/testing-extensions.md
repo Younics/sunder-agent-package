@@ -12,7 +12,7 @@ Start with the changed class or method, then the affected owning project:
 
 ```sh
 dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
-  --no-restore --filter FullyQualifiedName~AgentRuntimeCorrectnessTests
+  --no-restore --filter FullyQualifiedName~ChatStartupRecoveryTests
 ```
 
 Replace the selector with the actual behavior. Add coverage for a distinct failure
@@ -24,20 +24,53 @@ canonical role outputs. A filtered test still has its project's build dependenci
 | Changed behavior | Owning selection |
 | --- | --- |
 | Agent persistence, run control, permissions, workspaces, history | Relevant class in `Sunder.Package.Agent.Tests` |
-| Local/Files execution and filesystem boundaries | `Sunder.Package.Agent.Execution.Local.Tests`; Docker integration also has explicit cases in `WorkspaceTests` |
+| Maker toolchains, project operations, development relay and view-model behavior | `Sunder.Package.Agent.Builder.Tests` |
+| MCP configuration, OAuth, connections, tool presentation and stack behavior | `Sunder.Package.Agent.Mcp.Tests` |
+| Local/Files execution and filesystem boundaries | `Sunder.Package.Agent.Execution.Local.Tests`; Docker integration also has explicit cases in `DockerWorkspaceExecutionTests` |
 | Provider translation, credentials, readiness | The provider's own test project; affected consumers for shared provider behavior |
 | Presentation, initialization, dispatch and viewport state | `Sunder.Package.Agent.Presentation.Tests`, `Sunder.Package.Agent.Presentation.State.Tests`, or the owning package view-model class |
 | Memory, Skills or Subagents behavior | Owning package suite and relevant Agent consumers |
 | Generated role composition/private transport | Focused canonical/source class, using matching built Worker/App roles |
+| Cross-family canonical-role and source-artifact qualification | `Sunder.Package.Agent.Integration.Tests`; ordinary Main tests do not compile this probe graph |
 | Shared generator/contracts, package output or integration checkpoint | Required fresh all-family artifact case and affected Core boundary checks |
 
 Run the full affected projects once at a coherent integration checkpoint. Full
 solution, all-family artifact and native runs belong at their shared-boundary or
 release checkpoints, not after each business/view-model edit. Record the actual
 selection, passed/failed/skipped counts and prerequisites. A focused pass is not a
-complete-suite pass. The full Agent solution includes all eleven test projects,
-including `Sunder.Package.Agent.Presentation.State.Tests`; workspace-only restore
-does not establish assets for every child-solution project.
+complete-suite pass. The Agent and workspace solutions include all fourteen Agent
+test owners, including `Sunder.Package.Agent.Presentation.State.Tests`. Restore the
+owning solution/project for the selected source/package mode before using
+`--no-restore`; another mode's assets are not interchangeable.
+
+Maker, MCP and Integration's implementation suites are source-mode owners. Their scenarios
+were not part of the selected NuGet compatibility lane; the existing
+`Lane=PackageCompatibility&Category!=Artifact` checks remain in their owning suites.
+In NuGet mode these source-only projects build empty, non-test libraries rather
+than attempting to consume unpublished Core internals from an older SDK package.
+Generated RPC assertions live under `tests/Shared`, not inside Main's executable
+test directory. Framework-neutral helpers compile in the existing support libraries.
+No executable suite links C# source from another executable suite.
+Main's cross-family inventory and App-contribution assertions load read-only
+canonical roles explicitly; they do not depend on old App copies in its test output.
+Its remaining Worker references still build all fifteen canonical families.
+
+Large component suites use behavior owners such as `WorkspacePersistenceTests`,
+`WorkspaceEditingTests`, `ChatSnapshotHandlerTests`, `RuntimeGatewayReplayTests`,
+`AgentChatNavigationTests` and `SubsessionToolExpansionTests`. Shared storage,
+composition, rendering geometry and package-view collaborators have focused fixture
+owners; keep case-specific doubles local. Do not recreate a single partial test
+class or use inheritance to borrow tests/helpers from an executable suite. The
+workspace and runtime-correctness owners retain their original serialized collection
+boundaries; rendered tests retain their existing assembly-wide serialization.
+
+The ten public-service behavior probes in Integration's
+`AgentPublicSourceMigrationTests.BehaviorCases.cs` have separate test results and
+can be selected independently; the contract/shape check no longer runs them all
+behind one failure. The fresh fifteen-family artifact case remains unchanged.
+Source CI runs ordinary solution tests first with that case excluded, then runs
+the required case in Integration. Both steps feed the same complete TRX audit;
+artifact production must not overlap tests reading canonical role outputs.
 
 ## Behavioral and composition invariants
 
@@ -86,7 +119,7 @@ and the exact local Core catalog selected by the family locks:
 ```sh
 SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION=1 \
 SUNDER_AGENT_SOURCE_PLATFORM_CATALOG=/absolute/path/to/canonical-core-catalog.json \
-dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj \
+dotnet test tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj \
   --no-build --no-restore \
   --filter FullyQualifiedName~AgentSourceArtifactMigrationTests.CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload
 ```
@@ -116,7 +149,7 @@ for those scopes. See [native inputs](native-release-inputs.md),
 responsive cell restoration, and graph drag/zoom/viewport retention.
 `MemoryInspectorAuthorityRaceTests` owns bounded paging, keyed drafts, expanded
 neighbor selection, and late-save authority. The rendered Memory Inspector check
-in `ViewLifecycleTests.MemoryUi.cs` covers Graph/Data synchronization, editor
+in `MemoryRenderedViewTests.cs` covers Graph/Data synchronization, editor
 identity/focus/selection, expansion and scrolling through refresh and resize.
 
 Set `SUNDER_UI_CAPTURE_ROOT` to a scratch directory to render optional PNGs during

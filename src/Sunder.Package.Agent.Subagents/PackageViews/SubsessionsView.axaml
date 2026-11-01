@@ -387,7 +387,7 @@
               <DataTemplate x:DataType="vm:SubsessionChildSessionLinkViewModel">
                 <Button Classes="secondary-action compact-action"
                         Margin="0,0,8,8"
-                        Command="{Binding $parent[UserControl].DataContext.OpenChildSessionCommand}"
+                        Command="{Binding $parent[UserControl].((vm:SubsessionsViewModel)DataContext).OpenChildSessionCommand}"
                         CommandParameter="{Binding}">
                   <StackPanel Orientation="Horizontal"
                               Spacing="8">

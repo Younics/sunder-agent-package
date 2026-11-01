@@ -32,7 +32,7 @@ public sealed class AgentRpcProviderConformanceTests
     {
         using var scope = RegressionTestPackageScope.Create();
         using var rpcCatalog = new RegressionTestExtensionCatalog();
-        var generated = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(typeof(Services.AgentRunControlService).Assembly,
+        var generated = GeneratedPackageCompositionFixture.CreateGeneratedWorker(typeof(Services.AgentRunControlService).Assembly,
             scope.Context, rpcCatalog.RpcForCaller("younics.ai.agent"));
         await using var lifetime = generated.Lifetime;
         var serviceProvider = generated.Services;

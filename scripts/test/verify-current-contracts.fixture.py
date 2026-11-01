@@ -149,6 +149,52 @@ class CurrentContractsTests(unittest.TestCase):
             for name in ("../real", "link"):
                 with self.assertRaises(ValueError): verifier.release.source_file(root, name)
 
+    def test_qualified_source_selection_uses_pinned_lock_without_changing_reviewed_intent(self):
+        package = next(p for p in self.expected["packages"] if p["key"] == "agent-tools-web")
+        reviewed = verifier.release.load(ROOT / Path(package["projectPath"]).parent / "sunder-contracts.lock.json")
+        selected = copy.deepcopy(reviewed)
+        artifact = selected["packageArtifacts"][verifier.AGENT]
+        artifact["selectedPackageContentIdentity"] = "f" * 64
+        artifact["publicInventorySha256"] = "e" * 64
+        for contract in artifact["contracts"].values():
+            if contract["authorityKind"] == "package" and contract["authorityId"] == verifier.AGENT:
+                contract["selectedAuthorityContentIdentity"] = artifact["selectedPackageContentIdentity"]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            authored = root / Path(package["projectPath"]).parent / "sunder-contracts.lock.json"
+            authored.parent.mkdir(parents=True)
+            authored.write_text(json.dumps(reviewed))
+            qualified = authored.parent / "obj/qualified/sunder-contracts.lock.json"
+            qualified.parent.mkdir(parents=True)
+
+            def frame(value):
+                qualified.write_text(json.dumps(value))
+                return dict(contractLock=str(qualified.relative_to(root / "src")),
+                            contractLockSha256=verifier.release.file_sha(qualified))
+
+            evidence = frame(selected)
+            before = authored.read_bytes()
+            self.assertEqual(selected, verifier.qualified_contract_lock(root, evidence, package))
+            with self.assertRaisesRegex(ValueError, "bytes differ"):
+                verifier.qualified_contract_lock(root, dict(evidence, contractLockSha256="0" * 64), package)
+            changes = [
+                lambda value: value["packageImports"].update(unreviewed=dict(consumerRoles=["app"])),
+                lambda value: value["providerImports"].clear(),
+                lambda value: value["platformImports"].update(unreviewed={}),
+                lambda value: value["packageArtifacts"][verifier.AGENT].update(selectedPackageVersion="99.0.0"),
+                lambda value: value["packageArtifacts"][verifier.AGENT].update(registryOrigin="https://unreviewed.invalid/"),
+                lambda value: value["packageArtifacts"][verifier.AGENT]["contracts"].pop("younics.ai.agent.execution.target"),
+                lambda value: value["packageArtifacts"][verifier.AGENT]["contracts"]["younics.ai.agent.execution.target"].update(abiSha256="0" * 64),
+                lambda value: value["packageArtifacts"][verifier.AGENT]["contracts"]["younics.ai.agent.execution.target"].update(selectedAuthorityContentIdentity="0" * 64),
+                lambda value: value["packageArtifacts"][verifier.AGENT]["contracts"]["sunder.stack.contributor"].update(selectedAuthorityContentIdentity="0" * 64),
+            ]
+            for change in changes:
+                bad = copy.deepcopy(selected)
+                change(bad)
+                with self.subTest(change=changes.index(change)), self.assertRaises(ValueError):
+                    verifier.qualified_contract_lock(root, frame(bad), package)
+            self.assertEqual(before, authored.read_bytes())
+
     def test_private_baseline_absence_requires_core_marker_and_rejects_reappearance(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

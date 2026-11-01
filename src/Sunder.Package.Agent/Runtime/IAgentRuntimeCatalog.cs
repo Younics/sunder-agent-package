@@ -64,11 +64,6 @@ public interface IAgentRuntimeCatalog
     /// <returns>The profile snapshot, or <see langword="null"/> when the session, profile reference, or profile is absent.</returns>
     AgentProfileRecord? GetSessionProfile(Guid sessionId);
 
-    /// <summary>Gets the session's legacy working-summary snapshot.</summary>
-    /// <param name="sessionId">The stable session identifier.</param>
-    /// <returns>The summary, or <see langword="null"/> when none is persisted.</returns>
-    AgentWorkingSummaryRecord? GetWorkingSummary(Guid sessionId);
-
     /// <summary>Gets the active, anchor-validated durable context checkpoint for omitted transcript history.</summary>
     /// <param name="sessionId">The stable session identifier.</param>
     /// <returns>The active checkpoint, or <see langword="null"/> when no checkpoint is valid for the current transcript epoch.</returns>

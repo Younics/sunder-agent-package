@@ -11,7 +11,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
     [Fact]
     public void RetiredDeferredHandler_IsNotPartOfTheCurrentProviderComposition()
     {
-        var repository = BuilderSourceMigrationTests.FindRepository();
+        var repository = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
 
         Assert.False(File.Exists(Path.Combine(repository,
             "src/Sunder.Package.Agent/Runtime/DeferredAgentRpcServiceHandler.cs")));

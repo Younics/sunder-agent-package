@@ -8,7 +8,4 @@
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Compile Remove="WorkerBackedSubagentManagementGateway.cs" />
-  </ItemGroup>
 </Project>

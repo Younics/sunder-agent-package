@@ -96,5 +96,29 @@ class AgentCiTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "inputs changed"):
                 ci.execute(state_path, ["dotnet", "build", "Sunder.AgentPackage.slnx", "--no-restore"])
 
+    def test_source_workflow_runs_artifact_producer_after_ordinary_readers_and_keeps_combined_evidence(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
+        ordinary_start = workflow.index("      - name: Complete source behavior without artifact producers\n")
+        artifact_start = workflow.index("      - name: Required all-family source-artifact gate in Integration\n")
+        package_start = workflow.index("      - name: Focused locked-package compatibility\n")
+        self.assertLess(ordinary_start, artifact_start)
+        self.assertLess(artifact_start, package_start)
+        ordinary = workflow[ordinary_start:artifact_start]
+        artifact = workflow[artifact_start:package_start]
+        case = "CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
+        self.assertIn("dotnet test Sunder.AgentPackage.slnx", ordinary)
+        self.assertIn("--filter 'FullyQualifiedName!~" + case + "'", ordinary)
+        self.assertIn("dotnet test tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj", artifact)
+        self.assertIn("--filter FullyQualifiedName~" + case, artifact)
+        for step in (ordinary, artifact):
+            self.assertIn("if: matrix.mode == 'source'", step)
+            self.assertIn('SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"', step)
+            self.assertIn("--no-build --no-restore", step)
+        self.assertIn("artifacts/test-results/full", ordinary)
+        self.assertIn("artifacts/test-results/artifact", artifact)
+        self.assertIn("SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE:", artifact)
+        self.assertIn("SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE:", artifact)
+        self.assertIn("generate-test-duration-report.py artifacts/test-results \"${args[@]}\"", workflow)
+
 
 if __name__ == "__main__": unittest.main()

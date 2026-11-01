@@ -276,15 +276,13 @@ public sealed partial class AgentLocalStore
             connection,
             transaction,
             session.WorkspaceId);
-        var workingSummary = ReadLatestWorkingSummary(connection, transaction, key.SessionId);
         var profileId = string.IsNullOrWhiteSpace(run.ProfileId) ? session.ProfileId ?? string.Empty : run.ProfileId;
         var sessionContext = new AgentSessionContextRecord(
             session.SessionId,
             profileId,
             ReadProfileDisplayName(connection, transaction, profileId),
             session.Title,
-            session.State,
-            workingSummary);
+            session.State);
         var status = run.Status == AgentDurableRunStatus.Preparing
             ? AgentRunStatus.Idle
             : Enum.Parse<AgentRunStatus>(run.Status.ToString(), ignoreCase: false);
@@ -307,7 +305,6 @@ public sealed partial class AgentLocalStore
             Session = sessionContext,
             Run = runContext,
             UserMessage = run.UserMessage,
-            WorkingSummary = workingSummary,
             Turns = turns,
             RecentLiveBufferTurns = turns.TakeLast(MaxLifecycleLiveTurns).ToArray(),
             TriggerTurn = triggerTurn,
@@ -453,7 +450,6 @@ public sealed partial class AgentLocalStore
         throw new InvalidOperationException($"The durable lifecycle payload exceeds {MaxLifecyclePayloadBytes} bytes after bounding.");
     }
 
-#pragma warning disable CS0618
     private static AgentDurableLifecycleEventPayload BoundLifecyclePayload(
         AgentDurableLifecycleEventPayload payload,
         int maxTurns,
@@ -471,10 +467,8 @@ public sealed partial class AgentLocalStore
                 {
                     ProfileDisplayName = BoundLifecycleText(payload.Session.ProfileDisplayName, 512) ?? string.Empty,
                     SessionTitle = BoundLifecycleText(payload.Session.SessionTitle, 1024) ?? string.Empty,
-                    WorkingSummary = BoundLifecycleText(payload.Session.WorkingSummary, maxText),
                 },
             UserMessage = BoundLifecycleText(payload.UserMessage, Math.Max(maxText, 8192)),
-            WorkingSummary = BoundLifecycleText(payload.WorkingSummary, maxText),
             Turns = turns,
             RecentLiveBufferTurns = liveTurns,
             TriggerTurn = payload.TriggerTurn is null
@@ -487,7 +481,6 @@ public sealed partial class AgentLocalStore
             WorkspaceIncarnationId = BoundLifecycleText(payload.WorkspaceIncarnationId, 128),
         };
     }
-#pragma warning restore CS0618
 
     internal static AgentTurnRecord BoundLifecycleTurn(AgentTurnRecord turn, int maxItems, int maxText)
     {

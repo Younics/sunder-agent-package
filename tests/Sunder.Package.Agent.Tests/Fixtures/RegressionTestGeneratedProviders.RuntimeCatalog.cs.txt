@@ -16,7 +16,6 @@ public sealed partial class RuntimeCatalogProvider(Func<string, Type, object?[],
     public ValueTask<IReadOnlyList<AgentWorkspaceRecord>> ListWorkspacesAsync(CancellationToken token = default) => Reply<IReadOnlyList<AgentWorkspaceRecord>>(nameof(ListWorkspacesAsync), [], token);
     public ValueTask<AgentWorkspaceRecord?> GetWorkspaceAsync(string request, CancellationToken token = default) => Reply<AgentWorkspaceRecord?>(nameof(GetWorkspaceAsync), [request], token);
     public ValueTask<AgentProfileRecord?> GetSessionProfileAsync(Guid request, CancellationToken token = default) => Reply<AgentProfileRecord?>(nameof(GetSessionProfileAsync), [request], token);
-    public ValueTask<AgentWorkingSummaryRecord?> GetWorkingSummaryAsync(Guid request, CancellationToken token = default) => Reply<AgentWorkingSummaryRecord?>(nameof(GetWorkingSummaryAsync), [request], token);
     public ValueTask<AgentSessionContextCheckpointRecord?> GetSessionContextCheckpointAsync(Guid request, CancellationToken token = default) => Reply<AgentSessionContextCheckpointRecord?>(nameof(GetSessionContextCheckpointAsync), [request], token);
     public ValueTask<AgentRunCheckpointRecord?> GetLatestCheckpointAsync(Guid request, CancellationToken token = default) => Reply<AgentRunCheckpointRecord?>(nameof(GetLatestCheckpointAsync), [request], token);
     public ValueTask<AgentRunActivityUpdate?> GetRunActivityAsync(Guid request, CancellationToken token = default) => Reply<AgentRunActivityUpdate?>(nameof(GetRunActivityAsync), [request], token);
