@@ -207,7 +207,11 @@ def main():
             subparser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.action == "resolve":
-        inputs.require(bool(args.locator), "SUNDER_AGENT_CI_INPUTS must locate the exact retained CI inputs")
+        inputs.require(bool(args.locator),
+                       "SUNDER_AGENT_CI_INPUTS must locate the exact retained CI inputs. "
+                       "Set the repository variable to the numeric asset locator "
+                       "{repository, releaseId, assetId, name, size, sha256} for the retained CI manifest; "
+                       "see docs/RELEASES.md#ordinary-ci-inputs. No latest-release or rebuilt-archive fallback is allowed.")
         resolve(args.locator, args.output, args.cold, args.core_commit)
     elif args.action == "prepare": prepare(args)
     elif args.action == "fixtures": fixtures(args.state)

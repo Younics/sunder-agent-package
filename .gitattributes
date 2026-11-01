@@ -1,0 +1,5 @@
+# Preserve exact contract, lock and retained evidence bytes on every runner.
+*.json -text
+compatibility/** -text
+tests/Sunder.Package.Agent.Tests/Fixtures/PreCanonicalProjects/** -text
+*.sh text eol=lf

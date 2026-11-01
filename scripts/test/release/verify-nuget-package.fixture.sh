@@ -69,9 +69,12 @@ if MOCK_DOTNET_TRUST_FAILURE=true PATH="$mock_bin:$PATH" \
 fi
 
 printf '<Types changed="true" />\n' > "$fixture_dir/published/[Content_Types].xml"
+# Exercise the same-timestamp case: ZIP update mode must not decide whether
+# the intentionally changed member is included in this security regression.
+touch -r "$fixture_dir/expected/[Content_Types].xml" "$fixture_dir/published/[Content_Types].xml"
 (
   cd "$fixture_dir/published"
-  zip -q -u "$fixture_dir/published.nupkg" '[Content_Types].xml'
+  zip -q "$fixture_dir/published.nupkg" '[Content_Types].xml'
 )
 literal_failure_log="$fixture_dir/literal-member-failure.log"
 if PATH="$mock_bin:$PATH" bash "$verifier" "$fixture_dir/expected.nupkg" "$fixture_dir/published.nupkg" > "$literal_failure_log" 2>&1; then

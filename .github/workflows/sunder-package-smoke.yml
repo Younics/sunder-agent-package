@@ -55,11 +55,14 @@ jobs:
           CORE_COMMIT: ${{ inputs.core_commit }}
         run: |
           set -euo pipefail
-          if [[ -n "$COLD_INPUTS" ]]; then
-            python3 -B scripts/ci/agent_ci.py resolve --locator "$COLD_INPUTS" --cold --core-commit "$CORE_COMMIT" --output "$RUNNER_TEMP/agent-inputs"
-          else
-            python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs"
-          fi
+          mkdir -p artifacts/reports
+          {
+            if [[ -n "$COLD_INPUTS" ]]; then
+              python3 -B scripts/ci/agent_ci.py resolve --locator "$COLD_INPUTS" --cold --core-commit "$CORE_COMMIT" --output "$RUNNER_TEMP/agent-inputs"
+            else
+              python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs"
+            fi
+          } 2>&1 | tee artifacts/reports/input-preparation.log
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: Younics/sunder-core
@@ -111,6 +114,7 @@ jobs:
           TMPDIR: ${{ runner.temp }}
         run: python3 -B scripts/ci/agent_ci.py fixtures --state "$RUNNER_TEMP/agent-ci/ci-state.json"
       - name: Complete source behavior without artifact producers
+        id: source-tests
         if: matrix.mode == 'source'
         env:
           SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
@@ -132,6 +136,7 @@ jobs:
           --filter FullyQualifiedName~CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload
           --logger trx --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/artifact"
       - name: Focused locked-package compatibility
+        id: package-tests
         if: matrix.mode == 'package'
         run: >-
           python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
@@ -164,7 +169,9 @@ jobs:
           done
           python3 scripts/test/generate-test-duration-report.py artifacts/stress --expected-skips 0 > artifacts/reports/stress.json
       - name: Verify complete source test identities and skip reasons
-        if: always()
+        if: >-
+          always() && (steps.source-tests.outcome == 'success' || steps.source-tests.outcome == 'failure' ||
+          steps.package-tests.outcome == 'success' || steps.package-tests.outcome == 'failure')
         env:
           PLATFORM: ${{ matrix.platform }}
           MODE: ${{ matrix.mode }}

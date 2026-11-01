@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import subprocess
 import sys
+import textwrap
 import unittest
 from unittest.mock import patch
 
@@ -18,6 +19,41 @@ fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixt
 
 class AgentCiTests(unittest.TestCase):
     setUp = fixture_setup
+
+    def test_windows_checkout_preserves_reviewed_inventory_and_contract_record_bytes(self):
+        for path in ("compatibility/agent-current-inventory.json", "compatibility/agent-current-contracts.json"):
+            blob = subprocess.check_output(["git", "cat-file", "blob", "HEAD:" + path], cwd=SCRIPTS.parent)
+            checkout = subprocess.check_output(["git", "-c", "core.autocrlf=true", "cat-file", "--filters",
+                                                "--path=" + path, "HEAD:" + path], cwd=SCRIPTS.parent)
+            self.assertTrue(blob == checkout, path + ": checkout must not rewrite reviewed input bytes")
+
+    def test_missing_ci_locator_fails_before_download_or_output_creation_with_configuration_guidance(self):
+        output = self.root / "missing-ci-inputs"
+        with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--output", str(output)]), \
+             patch.dict(os.environ, {"SUNDER_AGENT_CI_INPUTS": ""}), patch.object(ci, "resolve") as resolve:
+            with self.assertRaisesRegex(ValueError, "Set the repository variable.*docs/RELEASES.md#ordinary-ci-inputs"):
+                ci.main()
+        resolve.assert_not_called()
+        self.assertFalse(output.exists())
+
+    def test_workflow_retains_input_failure_without_masking_exit_or_reporting_unstarted_tests(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
+        section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("      - uses:")[0]
+        script = textwrap.dedent(section.split("        run: |\n")[1])
+        stub = self.root / "scripts/ci/agent_ci.py"
+        stub.parent.mkdir(parents=True)
+        stub.write_text('import sys\nprint("fixture: exact CI inputs missing", file=sys.stderr)\nsys.exit(7)\n')
+        result = subprocess.run(["bash", "-c", script], cwd=self.root, text=True, capture_output=True, timeout=10,
+                                env={**os.environ, "COLD_INPUTS": "", "CORE_COMMIT": "", "RUNNER_TEMP": str(self.root)})
+        self.assertEqual(7, result.returncode, result.stdout + result.stderr)
+        self.assertIn("fixture: exact CI inputs missing", (self.root / "artifacts/reports/input-preparation.log").read_text())
+        report = workflow.split("      - name: Verify complete source test identities and skip reasons\n")[1].split("        env:")[0]
+        self.assertIn("always()", report)
+        for identity in ("source-tests", "package-tests"):
+            self.assertIn(f"steps.{identity}.outcome == 'success'", report)
+            self.assertIn(f"steps.{identity}.outcome == 'failure'", report)
+            self.assertIn(f"id: {identity}", workflow)
+        self.assertIn("if-no-files-found: error", workflow)
 
     def prepare(self):
         self.core = self.root / "sunder-core"
