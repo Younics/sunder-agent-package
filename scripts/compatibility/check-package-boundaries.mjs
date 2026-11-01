@@ -48,7 +48,7 @@ async function evaluations() {
   return result;
 }
 
-export async function checkProtocolRetirement({ inventoryText, expectedText, retirementSurfaceTexts,
+export async function checkPackageBoundaries({ inventoryText, expectedText, retirementSurfaceTexts,
   collectProjectEvaluations = evaluations } = {}) {
   const failures = [];
   try {
@@ -90,7 +90,7 @@ export async function checkProtocolRetirement({ inventoryText, expectedText, ret
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  const result = await checkProtocolRetirement();
+  const result = await checkPackageBoundaries();
   if (result.failures.length) {
     for (const failure of result.failures) process.stderr.write(failure + "\n");
     process.exitCode = 1;

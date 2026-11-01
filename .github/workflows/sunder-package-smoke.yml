@@ -76,8 +76,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/reports
-          node --test scripts/compatibility/check-protocol-retirement.test.mjs
-          node scripts/compatibility/check-protocol-retirement.mjs
+          node --test scripts/compatibility/check-package-boundaries.test.mjs
+          node scripts/compatibility/check-package-boundaries.mjs
           python3 -B scripts/test/verify-current-contracts.fixture.py
           python3 -B scripts/test/test_prepare_shared_provider_fixture.py
           python3 -B scripts/test/test_prepare_contracts.py

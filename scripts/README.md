@@ -52,7 +52,7 @@ its diagnostics report the effective cache root and missing selected input kinds
 ### Local checks
 
 ```sh
-node --test scripts/compatibility/check-protocol-retirement.test.mjs
+node --test scripts/compatibility/check-package-boundaries.test.mjs
 python3 -B scripts/test/release/agent-release.fixture.py
 python3 -B scripts/test/release/release-inputs.fixture.py
 python3 -B scripts/test/release/native-family.fixture.py

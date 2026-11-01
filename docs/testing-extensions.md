@@ -3,7 +3,7 @@
 Test the changed behavior at its owning boundary: domain behavior, generated-role
 composition, or fresh artifact/runtime lifecycle. Ordinary-service authoring uses
 `Sunder.Sdk.Services`; advanced wire/content APIs remain in `Sunder.Sdk.Rpc`.
-[Ordinary services](ordinary-service-refactor.md) describes current authoring.
+[Service contracts](service-contracts.md) describes current authoring.
 [Current test baseline](current-test-baseline.md) owns inventory and qualification inputs.
 
 ## Local iteration

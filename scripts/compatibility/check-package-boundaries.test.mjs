@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { checkProtocolRetirement } from "./check-protocol-retirement.mjs";
+import { checkPackageBoundaries } from "./check-package-boundaries.mjs";
 
 const expected = JSON.parse(await readFile(new URL("../../compatibility/agent-current-inventory.json", import.meta.url), "utf8"));
 const inventory = JSON.parse(await readFile(new URL("../../packages.json", import.meta.url), "utf8"));
 const projects = () => expected.packages.map((value) => ({ projectPath: value.projectPath,
   packageId: value.projectPath.split("/").at(-1).slice(0, -7), familyId: value.packageId, isPackable: "false" }));
-const check = (overrides = {}) => checkProtocolRetirement({ inventoryText: JSON.stringify(inventory),
+const check = (overrides = {}) => checkPackageBoundaries({ inventoryText: JSON.stringify(inventory),
   expectedText: JSON.stringify(expected), retirementSurfaceTexts: {}, collectProjectEvaluations: async () => projects(), ...overrides });
 
 test("current inventory has reviewed 15 pairs, 12 App / 15 Worker, 18 public / 13 private and exact providers", async () => {

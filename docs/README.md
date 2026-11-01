@@ -38,7 +38,7 @@ does not. Stack dependencies derive from the actual owning package of each contr
 - `Sunder.Generated.Packages.Younics_Ai_Agent_Services.<ContractSymbol>`:
   imported service interfaces and contract-scoped `IPackageApi`, for example
   `CYounics_Ai_Agent_Chat_Provider.IChatProviderService`. See the
-  [C# name map](ordinary-service-refactor.md#imported-c-name-map).
+  [C# name map](service-contracts.md#imported-c-name-map).
 - `Sunder.Generated.Packages.Younics_Ai_Agent_Services`: Agent's own
   source-shaped service interfaces.
 - `Sunder.Generated.Packages.Younics_Ai_Agent_Models`: imported business values.

@@ -2,7 +2,7 @@
 
 Create one headless package that cleans up its own session notes when Agent deletes
 a session. The example uses the current generated service/model surface; select a
-matching reviewed Agent candidate. See [service contracts](ordinary-service-refactor.md)
+matching reviewed Agent candidate. See [service contracts](service-contracts.md)
 for the current authoring boundary and compatibility policy.
 
 ## 1. Create One Package Project

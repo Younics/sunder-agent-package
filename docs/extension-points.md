@@ -9,7 +9,7 @@ contains 13 provider contracts and four base-Agent APIs;
 `younics.ai.agent.tool.execution.observed` is the reserved first-party bridge.
 Each provider declaration has a stable provider id,
 contract id/version, host-stamped owner and opaque endpoint reference. See the
-[ordinary-service status](ordinary-service-refactor.md).
+[service contracts](service-contracts.md).
 
 ## Contract Rules
 
@@ -85,7 +85,7 @@ The 14 declaration-only contracts live under the owner's `Rpc/Public`; the four
 owned public services declare their APIs on their implementations under `Services`.
 External implementations use contract-scoped generated Services and the shared
 Models namespace. File-local type aliases keep signatures natural; the
-[C# name map](ordinary-service-refactor.md#imported-c-name-map) gives the exact
+[C# name map](service-contracts.md#imported-c-name-map) gives the exact
 contract scopes. Owned/source-shaped interfaces stay in the flat Services namespace.
 A class may bind multiple
 contracts with repeated `SunderServiceProvider` attributes and explicit interface
