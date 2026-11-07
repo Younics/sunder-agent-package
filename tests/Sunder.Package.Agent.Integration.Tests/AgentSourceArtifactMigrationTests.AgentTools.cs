@@ -38,7 +38,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         load.Resolving += (_, name) => AssemblyLoadContext.Default.Assemblies.FirstOrDefault(assembly => AssemblyName.ReferenceMatchesDefinition(assembly.GetName(), name));
         try
         {
-            var module = load.LoadFromAssemblyPath(Path.Combine(fixture, "bin/Debug/net10.0/ScriptedToolProvider.dll"));
+            var module = load.LoadFromAssemblyPath(Path.Combine(fixture, "bin", CanonicalPackageRoles.Configuration, "net10.0/ScriptedToolProvider.dll"));
             var controlled = await BuildControlledProvidersAsync(root, core, driver, archive, cache);
             var controlledModule = load.LoadFromAssemblyPath(controlled);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);

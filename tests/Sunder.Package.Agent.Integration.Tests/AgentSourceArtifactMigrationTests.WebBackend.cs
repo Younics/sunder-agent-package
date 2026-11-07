@@ -25,7 +25,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             .Save(Path.Combine(directory, "Backend.csproj"));
         await Run(directory, "restore", "Backend.csproj", "--disable-parallel");
         await Run(directory, "build", "Backend.csproj", "--no-restore");
-        using var bytes = File.OpenRead(Path.Combine(directory, "bin/Debug/net10.0/Sunder.Package.Agent.Tests.dll"));
+        using var bytes = File.OpenRead(Path.Combine(directory, "bin", CanonicalPackageRoles.Configuration, "net10.0/Sunder.Package.Agent.Tests.dll"));
         var assembly = load.LoadFromStream(bytes);
         var type = assembly.GetType("WebArtifactBackend", true)!;
         var backend = Activator.CreateInstance(type)!;

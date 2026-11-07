@@ -22,8 +22,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         var owned = CanonicalPackageRoles.ReadOwnedBaseline(worker);
         AssertHeadlessRoleOutput(worker);
-        using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(worker, "obj/Debug/net10.0/sunder-analysis",
-            System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier, "sunder-rpc/package-role-plan.v1.json"))))
+        using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(worker), "package-role-plan.v1.json"))))
         {
             var services = plan.RootElement.GetProperty("composition").GetProperty("worker").EnumerateArray().ToArray();
             const string prefix = "global::Sunder.Package.Agent.Tools.Web.";

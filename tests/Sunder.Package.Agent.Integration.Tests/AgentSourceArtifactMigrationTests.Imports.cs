@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(19, artifact.GetProperty("contracts").EnumerateObject().Count());
             Assert.False(artifact.GetProperty("contracts").TryGetProperty("younics.ai.agent.owner.runtime", out _));
             Assert.Equal("platform", artifact.GetProperty("contracts").GetProperty("sunder.stack.contributor").GetProperty("authorityKind").GetString());
-            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
+            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "obj", CanonicalPackageRoles.Configuration, "net10.0/sunder-rpc/authoring-receipt.v1.json")));
             Assert.Equal(isProvider ? 1 : 18, receipt.RootElement.GetProperty("bundles").GetArrayLength());
             Assert.Equal(isProvider ? 1 : 0, receipt.RootElement.GetProperty("providers").GetArrayLength());
             Assert.Equal(isProvider ? 0 : 18, receipt.RootElement.GetProperty("uses").GetArrayLength());
@@ -95,7 +95,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 && contract.GetGenericTypeDefinition() == typeof(IServiceProviders<>)));
             var instance = Activator.CreateInstance(providerAssembly.GetType("ExternalCleaner", true)!)!;
             var registration = Assert.IsType<SunderWorkerProviderRegistration>(instance.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(instance, null));
-            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(provider, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
+            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(provider, "obj", CanonicalPackageRoles.Configuration, "net10.0/sunder-rpc/authoring-receipt.v1.json")));
             var contract = Assert.Single(receipt.RootElement.GetProperty("contracts").EnumerateArray());
             var descriptor = SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!));
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
@@ -138,7 +138,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
             Assembly Load(string directory, string name)
             {
-                using var stream = File.OpenRead(Path.Combine(directory, "bin/Debug/net10.0", name + ".dll"));
+                using var stream = File.OpenRead(Path.Combine(directory, "bin", CanonicalPackageRoles.Configuration, "net10.0", name + ".dll"));
                 return load.LoadFromStream(stream);
             }
         }
@@ -166,7 +166,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 <PropertyGroup><Operation Condition="'$(Operation)' == ''">Generate</Operation><ContractId Condition="'$(Operation)' == 'Implement' and '$(ContractId)' == ''">younics.ai.agent.session.cleaner</ContractId><ProviderKey Condition="'$(ProviderKey)' == ''">cleaner</ProviderKey><Candidate Condition="'$(Candidate)' == ''">{{Escape(archive)}}</Candidate></PropertyGroup>
                 <ItemGroup><_Source Include="@(Compile)" Condition="'%(Compile.AutoGen)' != 'true'" /></ItemGroup>
                 <AgentSourceArtifactTestTask Operation="$(Operation)" ProjectDirectory="$(MSBuildProjectDirectory)"
-                    IntermediateOutputPath="$(IntermediateOutputPath)" AssemblyName="$(AssemblyName)" ProjectIdentity="Imported.csproj" OutputType="Library"
+                    IntermediateOutputPath="$(IntermediateOutputPath)" AssemblyName="$(AssemblyName)" ProjectIdentity="Imported.csproj" OutputType="Library" Configuration="$(Configuration)"
                     PackageId="{{id}}" CacheRoot="{{Escape(cache)}}" Candidate="$(Candidate)" ContractId="$(ContractId)" LocalName="$(ProviderKey)"
                     SourceFiles="@(_Source)" ReferencePaths="@(ReferencePath)">
                   <Output TaskParameter="CompileItems" ItemName="Compile" />

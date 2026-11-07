@@ -13,12 +13,11 @@ namespace Sunder.Package.Agent.Tests;
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     private static string SingleProjectRoleOutput(string root, string role)
-        => Path.Combine(root, "bin/Debug/net10.0/sunder-roles", role, RuntimeInformation.RuntimeIdentifier);
+        => CanonicalPackageRoles.Output(root, role);
 
     private static void AssertHeadlessRoleOutput(string root)
     {
-        using var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "obj/Debug/net10.0/sunder-analysis",
-            RuntimeInformation.RuntimeIdentifier, "sunder-rpc/package-role-plan.v1.json")));
+        using var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(root), "package-role-plan.v1.json")));
         Assert.False(plan.RootElement.GetProperty("hasApp").GetBoolean());
         Assert.Empty(plan.RootElement.GetProperty("appCompile").EnumerateArray());
         Assert.False(Directory.Exists(Path.Combine(SingleProjectRoleOutput(root, "app"), "sunder-dev")));
