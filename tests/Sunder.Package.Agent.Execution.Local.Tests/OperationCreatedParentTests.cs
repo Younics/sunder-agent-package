@@ -63,6 +63,9 @@ public sealed class OperationCreatedParentTests : IDisposable
         var config = new LocalExecutionRuntimeConfig([_root], _root);
         using var references = new LocalResourceReference();
         using var approved = LocalResourceAuthorityTestContext.Approve(config, "new/sub/a.txt", "files.mutate", resourceReferences: references);
+        using var forceNamedCreation = OperatingSystem.IsLinux()
+            ? LocalUnixNative.OverrideAnonymousTemporaryFileOpenError(95)
+            : null;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await LocalFileSystemExecutor.WriteFileAsync(config,
             new LocalModels.AgentFileWriteRequest { Path = "new/sub/a.txt", Content = "canceled", Overwrite = false }, true,
             CancellationToken.None, faultInjector: new CancelAfterWrite(), authorizationContext: approved.Context, resourceReferences: references));

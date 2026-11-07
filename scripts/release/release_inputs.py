@@ -186,8 +186,11 @@ def verify_candidate_file(source, path):
     manifest, public, public_sha = archive_metadata(path)
     key = (manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
     entries = [entry for _, lock in lock_documents(source) for package_id, entry in lock["packageArtifacts"].items() if package_id == manifest["id"]]
-    require(entries and all(key[1:] == (item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"]) for item in entries),
-            "Candidates do not match every exact committed package selection: " + manifest["id"])
+    expected_selections = sorted({(item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"]) for item in entries})
+    require(expected_selections == [key[1:]],
+            "Candidates do not match every exact committed package selection: " + manifest["id"]
+            + "; expected (version, content identity, public inventory)=" + canonical(expected_selections).decode()
+            + "; actual=" + canonical(key[1:]).decode())
     expected = {c["contractId"]: {
         **{k: c[k] for k in ("artifactSource", "authorityKind", "authorityId", "selectedAuthorityRelease", "selectedAuthorityContentIdentity")},
         "resolvedContractVersion": c["contractVersion"], "descriptorBytes": c["descriptorBytes"],

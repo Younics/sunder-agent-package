@@ -76,6 +76,14 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts/reports
           python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output "$RUNNER_TEMP/agent-inputs" 2>&1 | tee artifacts/reports/input-preparation.log
+      - name: Retain rejected dependency bytes for identity diagnostics
+        if: failure() && steps.inputs.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-input-diagnostics-${{ matrix.mode }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agent-inputs/
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build and test selected reference mode
         env:
           MODE: ${{ matrix.mode }}

@@ -114,8 +114,10 @@ class DependencyInputTests(unittest.TestCase):
             entries["manifest/sunder-package.json"] += b"\n"
             with zipfile.ZipFile(destination, "w") as archive:
                 for name, data in entries.items(): archive.writestr(name, data)
-        with patch.object(d, "seed", side_effect=seed) as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection"):
+        with patch.object(d, "seed", side_effect=seed) as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection") as failure:
             self.resolve()
+        self.assertIn("expected (version, content identity, public inventory)=", str(failure.exception))
+        self.assertIn("; actual=", str(failure.exception))
         self.assertEqual(1, build.call_count)
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         self.assertFalse((self.output / "ci-inputs.json").exists())
