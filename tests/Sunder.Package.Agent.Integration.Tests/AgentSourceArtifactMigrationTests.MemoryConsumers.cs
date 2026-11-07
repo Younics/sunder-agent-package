@@ -45,7 +45,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         AddRuntime(runtime);
         AddEmbedding(embedding);
         var client = new MemoryConsumerRpc(new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic"));
-        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"), storage: package.Context.Storage);
         var graph = CreateGeneratedWorker(worker, context, client);
         await using var graphLifetime = graph.Lifetime;
         var resolver = Service("Services.SemanticModelRuntimeResolver");
@@ -100,8 +100,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var returnedSession = InvokeRuntimeCatalog(async (value, token) =>
             await Call(value, "GetSessionAsync", runtime.Session.SessionId, token));
         await using var assertionReceiver = new GeneratedServiceTestScope(client);
-        var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
-            Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, RegressionTestBindings.RuntimeCatalog);
+        var projection = RegressionTestGeneratedProviderProjection.FromBuild(RegressionTestBindings.RuntimeCatalog);
         Assert.Equal(runtime.Session, await projection.ProjectAsync(returnedSession, typeof(AgentSessionRecord), assertionReceiver, default));
         Assert.Null(InvokeRuntimeCatalog(async (value, token) => await Call(value, "GetProfileAsync", "missing", token)));
 

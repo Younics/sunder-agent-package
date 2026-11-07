@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "platforms": [
+    { "rid": "win-x64", "runner": ["windows-2022"], "behavior": true },
+    { "rid": "win-arm64", "runner": ["windows-11-arm"] },
+    { "rid": "linux-x64", "runner": ["ubuntu-24.04"], "behavior": true },
+    { "rid": "linux-arm64", "runner": ["ubuntu-24.04-arm"] },
+    { "rid": "osx-x64", "runner": ["macos-15-intel"] },
+    { "rid": "osx-arm64", "runner": ["macos-15"] }
+  ]
+}

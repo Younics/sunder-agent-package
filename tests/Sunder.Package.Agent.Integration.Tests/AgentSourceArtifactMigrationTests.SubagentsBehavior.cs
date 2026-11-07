@@ -71,11 +71,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256);
                 Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("younics.ai.agent.subagents", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.subagents", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.subagents"));
             }
             var catalogPeers = AddCatalogPeers(state);
             var appRoot = Directory.CreateDirectory(Path.Combine(package.RootPath, "app-workspace")).FullName;
-            var context = new TestPackageContext("younics.ai.agent.subagents", appRoot, storage: new TestPackageStorageContext(package.Context.Storage.Files,
+            var context = new TestPackageContext("younics.ai.agent.subagents", appRoot, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.subagents"), storage: new TestPackageStorageContext(package.Context.Storage.Files,
                 package.Context.Storage.State, new TestPackageRoleLocalWorkspace(appRoot)));
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             // The shared consumer helper may be present, but this family uses its
@@ -205,7 +205,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => Call("ListSubagentsAsync", CancellationToken.None));
             Assert.Equal(SunderRpcErrorKind.NotFound, unavailable.Error.Kind);
             Assert.Equal("rpc.provider-not-found", unavailable.Error.Code);
-            state.Add("younics.ai.agent.subagents", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.subagents.owner"), management.Handler, management.Handler, Noop.Instance, management.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent.subagents", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.subagents.owner"), management.Handler, management.Handler, Noop.Instance, management.ProviderId, context.Version);
             Assert.Empty(((IEnumerable)(await Call("ListSubagentsAsync", CancellationToken.None))!).Cast<object>());
             await ((IAsyncDisposable)gateway).DisposeAsync();
             Assert.True(((Task)gateway.GetType().GetProperty("OwnerObservationTask", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(gateway)!).IsCompleted);
@@ -236,7 +236,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var runControl = AgentRoleBoundary.Create(agentOwner.GetType("Sunder.Package.Agent.Services.AgentRunControlService", true)!, registry.Value);
         var registration = receiver.Register(runControl, RegressionTestBindings.RunControls);
         state.Add("younics.ai.agent", CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RunControls), runControl,
-            registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+            registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         await using var loopReceiver = new GeneratedServiceTestScope(rpc);
         var selected = Assert.Single((await loopReceiver.Providers<AgentServices.IBehaviorLoopService>().ListAsync()).Providers, value => value.ProviderId == loop.ProviderId).Service;
         var runControlReference = Assert.Single((await loopReceiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers,

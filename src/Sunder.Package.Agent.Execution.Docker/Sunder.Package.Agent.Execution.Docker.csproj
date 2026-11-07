@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Version>2.0.0</Version>
     <SunderPackageFamilyId>younics.ai.agent.execution.docker</SunderPackageFamilyId>
     <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
@@ -19,7 +20,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <SunderSdkCapability Include="docker-environment.v1" />
+    <SunderSdkCapability Include="docker-environment.v1" Condition="'$(SunderPackageCompilationRole)' == 'worker'" />
   </ItemGroup>
 
   <Import Project="..\Sunder.Package.Agent.Shared\Sunder.Package.Agent.Shared.props" />

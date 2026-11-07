@@ -46,12 +46,12 @@ internal sealed class TestApplication : Application
         var baseUri = new Uri("avares://Sunder.Package.Agent.Presentation.Tests/");
         Resources.MergedDictionaries.Add(new ResourceInclude(baseUri)
         {
-            Source = new Uri("avares://Sunder.Sdk.Avalonia/Themes/SunderThemeResources.axaml"),
+            Source = new Uri("avares://Sunder.App.Bridge/Themes/SunderThemeResources.axaml"),
         });
         Styles.Add(new FluentTheme());
         Styles.Add(new StyleInclude(baseUri)
         {
-            Source = new Uri("avares://Sunder.Sdk.Avalonia/Themes/SunderPackageStyles.axaml"),
+            Source = new Uri("avares://Sunder.App.Bridge/Themes/SunderPackageStyles.axaml"),
         });
 
         // Source-hosted captures use the real graphite palette, Fluent accent

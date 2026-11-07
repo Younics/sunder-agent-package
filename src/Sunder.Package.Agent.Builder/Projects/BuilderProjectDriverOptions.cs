@@ -1,14 +1,12 @@
-using System.Reflection;
-using System.Text.RegularExpressions;
-using Sunder.Sdk.Abstractions;
-
 namespace Sunder.Package.Agent.Builder;
 
 public sealed record BuilderProjectDriverOptions(string CacheRootPath)
 {
     /// <summary>Stable workspace exclusion, independent of retained feed and template caches.</summary>
     public string ProjectMutationLockRootPath { get; init; } = Path.Combine(CacheRootPath, "project-locks");
-    public string CoordinatedPackageVersion { get; init; } = SdkVersion();
+    public string DotnetTemplateVersion { get; init; } = "1.0.1";
+    public string NodeSdkVersion { get; init; } = "1.0.1";
+    public string NodeCreatorVersion { get; init; } = "1.0.1";
     public string? DotnetTemplatePackagePath { get; init; }
     /// <summary>
     /// Optional short, private base for Builder-owned .NET template CLI homes. Defaults to
@@ -23,12 +21,6 @@ public sealed record BuilderProjectDriverOptions(string CacheRootPath)
     public string? NodeMetadataToolCliPath { get; init; }
     public TimeSpan CommandTimeout { get; init; } = TimeSpan.FromMinutes(15);
 
-    private static string SdkVersion()
-    {
-        var version = typeof(IPackageContext).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion.Split('+')[0];
-        return version is not null && Regex.IsMatch(version, @"^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1))
-            ? version : "1.1.0";
-    }
 }
 
 public interface IBuilderProjectDriverSelection : IAsyncDisposable

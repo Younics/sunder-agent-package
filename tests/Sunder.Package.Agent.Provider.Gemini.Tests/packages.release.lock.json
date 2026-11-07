@@ -2,6 +2,23 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "CommunityToolkit.Mvvm": {
+        "type": "Direct",
+        "requested": "[8.4.2, )",
+        "resolved": "8.4.2",
+        "contentHash": "WadCzGEc2U+3e20avRLng4qNtt4zoOGWrdUISqJWrHe3/FSnrYjuM5Sb4yQb09LhkBXrrI4Zt3dLKgRMbItsrg=="
+      },
+      "Google.GenAI": {
+        "type": "Direct",
+        "requested": "[1.27.0, )",
+        "resolved": "1.27.0",
+        "contentHash": "hIoqvTL8Vf5E+kxGws/PkWlGgUFEZicl3kslIMOHf1u4cQGgbgQLJHvfLK2IqLzy9nAdjrrO4TIgqBTmMQG7qQ==",
+        "dependencies": {
+          "Google.Apis.Auth": "1.69.0",
+          "Microsoft.Extensions.AI.Abstractions": "10.6.0",
+          "MimeTypes": "2.5.2"
+        }
+      },
       "Microsoft.Extensions.AI.Abstractions": {
         "type": "Direct",
         "requested": "[10.11.0, )",
@@ -162,31 +179,18 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
-      "sunder.package.agent.provider.gemini": {
-        "type": "Project",
-        "dependencies": {
-          "Avalonia": "[12.1.4, )",
-          "CommunityToolkit.Mvvm": "[8.4.2, )",
-          "Google.GenAI": "[1.27.0, )",
-          "Microsoft.Extensions.AI.Abstractions": "[10.11.0, )",
-          "Microsoft.Extensions.DependencyInjection": "[10.0.13, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
-        }
-      },
       "sunder.package.agent.provider.testsupport": {
         "type": "Project",
         "dependencies": {
           "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)",
-          "Sunder.Sdk.Worker": "[1.1.0, 1.1.0]"
+          "Sunder.Sdk": "[1.0.1, )",
+          "Sunder.Sdk.Worker": "[1.0.1, )"
         }
       },
       "sunder.package.agent.testsupport": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk": "[1.0.1, )"
         }
       },
       "sunder.package.agent.testsupport.avalonia": {
@@ -194,7 +198,7 @@
         "dependencies": {
           "Avalonia": "[12.1.4, )",
           "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
-          "Sunder.Sdk.Avalonia": "[1.1.0, 1.2.0)"
+          "Sunder.Sdk.Avalonia": "[1.0.1, )"
         }
       },
       "Avalonia": {
@@ -206,23 +210,6 @@
           "Avalonia.BuildServices": "11.3.2",
           "Avalonia.Remote.Protocol": "12.1.4",
           "MicroCom.Runtime": "0.11.6"
-        }
-      },
-      "CommunityToolkit.Mvvm": {
-        "type": "CentralTransitive",
-        "requested": "[8.4.2, )",
-        "resolved": "8.4.2",
-        "contentHash": "WadCzGEc2U+3e20avRLng4qNtt4zoOGWrdUISqJWrHe3/FSnrYjuM5Sb4yQb09LhkBXrrI4Zt3dLKgRMbItsrg=="
-      },
-      "Google.GenAI": {
-        "type": "CentralTransitive",
-        "requested": "[1.27.0, )",
-        "resolved": "1.27.0",
-        "contentHash": "hIoqvTL8Vf5E+kxGws/PkWlGgUFEZicl3kslIMOHf1u4cQGgbgQLJHvfLK2IqLzy9nAdjrrO4TIgqBTmMQG7qQ==",
-        "dependencies": {
-          "Google.Apis.Auth": "1.69.0",
-          "Microsoft.Extensions.AI.Abstractions": "10.6.0",
-          "MimeTypes": "2.5.2"
         }
       },
       "Microsoft.Extensions.DependencyInjection": {
@@ -245,9 +232,9 @@
       },
       "Sunder.Sdk": {
         "type": "CentralTransitive",
-        "requested": "[1.1.0, 1.2.0)",
-        "resolved": "1.1.0",
-        "contentHash": "7l6xqfn7ESsDR71I0nRVmz+cGXgMmD7LKpQ+qewC07qrNcbglFb4X5qjwWdOC4CzEXblciKHJr5VKt35nk+7og==",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
@@ -255,22 +242,23 @@
       },
       "Sunder.Sdk.Avalonia": {
         "type": "CentralTransitive",
-        "requested": "[1.1.0, 1.2.0)",
-        "resolved": "1.1.0",
-        "contentHash": "xumE58uEYezTvc+LqD8RWlyvOULxBYVUXluR+DuXoT3y3gGmtp1RR4pWR4FXpj1dCq3qD0arPKz5ABecMqmNVA==",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "ijltGfwKUuPhoih4NETdFfjUx+2yYBmUoz3k3dDtJ3jFoqVFuL3Ur3dc6ZS3BjlbTr5JgE0o2QKud0v8qGl3FA==",
         "dependencies": {
           "Avalonia": "12.1.4",
-          "Sunder.Sdk": "[1.1.0, 1.2.0)"
+          "Microsoft.Extensions.DependencyInjection": "10.0.13",
+          "Sunder.Sdk": "[1.0.1]"
         }
       },
       "Sunder.Sdk.Worker": {
         "type": "CentralTransitive",
-        "requested": "[1.1.0, 1.1.0]",
-        "resolved": "1.1.0",
-        "contentHash": "JO1ZFLvgrgkQbQsJZKYHGhBlXhg3XJHzhieZe16JKmBDaWLhzLC8AM1afzOoXov7wXsF3i3B/KjOEuSAdLCzRw==",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "T0vBgmEm++/TiDR1WsrLC29G55saJhZtqvxswf5RAQVaT1jGS/uvUgwVl1B/KHReZCnESZkKE6tZ9vHUjvxIDQ==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "10.0.13",
-          "Sunder.Sdk": "[1.1.0]"
+          "Sunder.Sdk": "[1.0.1]"
         }
       }
     }

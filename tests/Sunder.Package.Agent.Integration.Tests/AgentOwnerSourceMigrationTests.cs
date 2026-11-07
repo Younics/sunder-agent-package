@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentOwnerSourceMigrationTests
 {
+    private static string OwnerVersion => CurrentContractInventory.PackageVersionFor(CurrentContractInventory.AgentId);
     [AgentPublicSourceMigrationFact]
     public async Task OwnerSource_MatchesCurrentContractsWithRoleHandoff()
     {
@@ -19,7 +20,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         var owned = document["contracts"]!.AsObject();
         var descriptor = CurrentPrivateRpcDescriptors.Get("younics.ai.agent.owner.runtime");
         CurrentPrivateRpcDescriptors.AssertCurrent(descriptor);
-        Assert.Equal("2.0.0", descriptor.Version);
+        Assert.Equal(OwnerVersion, descriptor.Version);
         var provider = Assert.Single(receipt.RootElement.GetProperty("providers").EnumerateArray(), provider => provider.GetProperty("providerId").GetString() == "agent.owner.runtime");
         Assert.Equal("owner", provider.GetProperty("audience").GetString());
         VerifyOwnedContractsTogether(repository, owned, receipt.RootElement, descriptor);

@@ -292,7 +292,7 @@ public sealed class BuilderProjectMetadataTests : IDisposable
         await WriteAsync(folder + "/sunder-contracts.lock.json", "{\"lockVersion\":1,\"packageArtifacts\":{},\"packageImports\":{},\"providerImports\":{},\"platformImports\":{}}\n");
         await WriteAsync(folder + "/package.json", "{\"name\":\"npm-name-is-unrelated\"}");
         await WriteAsync(folder + "/src/services.ts", """
-            import { defineService, type ServiceContext } from "@sunder/sdk";
+            import { defineService, type ServiceContext } from "@younics/sunder-sdk";
             const packageName = "Old display";
             export const messages = defineService({ async send(message: string, context: ServiceContext): Promise<string> { return `${packageName}: ${message}`; } }, { constraints: { "send.message": { maxLength: 256 } } });
             """);

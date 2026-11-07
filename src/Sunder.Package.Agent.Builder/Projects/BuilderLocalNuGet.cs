@@ -51,21 +51,9 @@ internal static partial class BuilderLocalNuGet
 
     private static async Task<BuilderProjectDriverOptions> RetainAsync(BuilderProjectDriverOptions options, string root, string source, CancellationToken token)
     {
-        var version = options.CoordinatedPackageVersion;
-        if (version.Length > 100 || !System.Text.RegularExpressions.Regex.IsMatch(version,
-            @"\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            throw new InvalidDataException("An exact coordinated Sunder package version is required.");
-        // Only these six flat, exact-coordinate filenames are considered. No recursive search,
-        // newest-version selection, or fallback to another directory/source is permitted.
-        var files = Directory.EnumerateFileSystemEntries(source).Take(4097).ToArray();
-        if (files.Length > 4096) throw new InvalidDataException("Local NuGet feed exceeds 4,096 top-level entries.");
-        var selected = PackageIds.Order(StringComparer.Ordinal).Select(id =>
-        {
-            var name = id + "." + version + ".nupkg";
-            var matches = files.Where(path => string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (matches.Length != 1) throw new InvalidDataException($"Local NuGet feed requires exactly one flat {name} archive (found {matches.Length}).");
-            return (Id: id, Name: name, Path: matches[0]);
-        }).ToArray();
+        var selected = BuilderLocalPackageFeed.Select(source, PackageIds.Order(StringComparer.Ordinal).ToArray(), npm: false);
+        var versions = selected.ToDictionary(item => item.Id, item => item.Version, StringComparer.Ordinal);
+        var template = selected.Single(item => item.Id == "Sunder.Package.Templates");
         var container = Path.Combine(root, "local-nuget");
         CheckPath(container);
         BuilderToolchainFiles.CreatePrivateDirectory(container);
@@ -83,10 +71,10 @@ internal static partial class BuilderLocalNuGet
                 var destination = Path.Combine(stagedFeed, item.Name);
                 var package = await CopyPackageAsync(item.Path, destination, MaximumTotalBytes - total, token).ConfigureAwait(false);
                 if ((total += package.Length) > MaximumTotalBytes) throw new InvalidDataException("The six local NuGet archives exceed 1 GiB.");
-                await ValidatePackageAsync(destination, item.Id, version, token).ConfigureAwait(false);
+                await ValidatePackageAsync(destination, item.Id, item.Version, versions, token).ConfigureAwait(false);
                 packages.Add(package);
             }
-            var identity = JsonSerializer.SerializeToUtf8Bytes(new { policy = SourcePolicy, version, feedPath = source, packages });
+            var identity = JsonSerializer.SerializeToUtf8Bytes(new { policy = SourcePolicy, versions, feedPath = source, packages });
             var fingerprint = Convert.ToHexStringLower(SHA256.HashData(identity));
             var retained = Path.Combine(container, fingerprint);
             var owner = JsonSerializer.SerializeToUtf8Bytes(new { cacheRoot = root, fingerprint, identity = Convert.ToBase64String(identity) });
@@ -103,7 +91,8 @@ internal static partial class BuilderLocalNuGet
             return options with
             {
                 CacheRootPath = tools,
-                DotnetTemplatePackagePath = Path.Combine(retained, "feed", "Sunder.Package.Templates." + version + ".nupkg"),
+                DotnetTemplateVersion = template.Version,
+                DotnetTemplatePackagePath = Path.Combine(retained, "feed", template.Name),
                 NuGetConfigPath = Path.Combine(retained, "NuGet.Config"),
             };
         }

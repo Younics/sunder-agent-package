@@ -18,7 +18,8 @@ public sealed class DockerPresentationSourceMigrationTests
     {
         using var source = PrivateManagementSourceFixture.Load("Execution.Docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("younics.ai.agent.execution.docker", package.RootPath, storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.execution.docker", package.RootPath,
+            version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.execution.docker"), storage: package.Context.Storage);
         var runner = new TestDockerCli(context);
         var catalog = new DockerImageCatalogService(context, runner);
         var service = new DockerExecutionPresentationService(context, runner, catalog);
@@ -28,7 +29,7 @@ public sealed class DockerPresentationSourceMigrationTests
         await using var generated = new GeneratedServiceTestScope(rpc);
         var registration = generated.Register(service, descriptor.ContractId);
         Assert.Equal("docker.presentation", registration.ProviderId);
-        state.Add(context.PackageId, descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add(context.PackageId, descriptor, service, registration.Handler, Noop.Instance, registration.ProviderId, context.Version);
         await using var app = AgentSourceArtifactMigrationTests.CreateGeneratedApp(source.App, context, rpc);
         var client = app.GetRequiredService(source.App.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService", true)!);
         Assert.Same(source.App, client.GetType().Assembly);
@@ -66,13 +67,13 @@ public sealed class DockerPresentationSourceMigrationTests
             $"example.com/source/image:{index}", DockerImageStatus.Ready, DateTimeOffset.UtcNow, new string((char)120, 512))).ToArray();
         await state.RetireAsync(service);
         var catalogState = new CatalogReadStore(SerializeCatalog(images));
-        var contentContext = new TestPackageContext(context.PackageId, package.RootPath,
+        var contentContext = new TestPackageContext(context.PackageId, package.RootPath, version: context.Version,
             storage: new TestPackageStorageContext(context.Storage.Files, catalogState, context.Storage.RoleLocalWorkspace),
             settings: context.Settings, secrets: context.Secrets, callbacks: context.Callbacks, logging: context.Logging);
         var contentCatalog = new DockerImageCatalogService(contentContext, runner);
         var contentService = new DockerExecutionPresentationService(contentContext, runner, contentCatalog);
         var contentRegistration = generated.Register(contentService, descriptor.ContractId);
-        state.Add(context.PackageId, descriptor, contentService, contentRegistration.Handler, Noop.Instance, contentRegistration.ProviderId, "2.0.0");
+        state.Add(context.PackageId, descriptor, contentService, contentRegistration.Handler, Noop.Instance, contentRegistration.ProviderId, contentContext.Version);
         var large = await ReadAsync(AgentRoleBoundary.Call(client, "GetSettingsAsync", CancellationToken.None)!);
         Assert.Equal(images.OrderBy(value => value.ImageReference, StringComparer.OrdinalIgnoreCase), large.Images);
         state.FailNextResponseContentRegistration(new IOException("private docker content failure"));

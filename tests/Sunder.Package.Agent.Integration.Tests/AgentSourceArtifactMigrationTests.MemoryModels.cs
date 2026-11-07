@@ -74,7 +74,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var registration in options.Providers)
             state.Add("younics.ai.agent.memory.semantic",
                 registration.ProviderId == "semantic.memory.inspector" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector") : CurrentPublicRpcDescriptors.Get(registration.ContractId),
-                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
 
         await VerifyAgentMemoryCleanup(agentOwner, store, state);
 
@@ -126,7 +126,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal("semantic-memory.inspector-unavailable", unavailable.Error.Code);
         var reconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         gatewayType.GetEvent("ResetRequired")!.AddEventHandler(gateway, (Action)(() => reconnected.TrySetResult()));
-        state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"), new object(), inspector.Handler, Noop.Instance, inspector.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
         await reconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Single(((IEnumerable)(await Call("ListMemoriesAsync", session, null, false, CancellationToken.None))!).Cast<object>());
         await ((IAsyncDisposable)gateway).DisposeAsync();

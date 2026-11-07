@@ -13,7 +13,6 @@
     <SunderTestSize>Medium</SunderTestSize>
     <SunderTestSourceMode>true</SunderTestSourceMode>
     <SunderTestPackageMode>false</SunderTestPackageMode>
-    <SunderTestPreparedFixtureClasses>BuilderDevelopmentRelayTests</SunderTestPreparedFixtureClasses>
   </PropertyGroup>
   <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
     <Compile Include="../Shared/Platform/*.cs" Link="TestSupport/Platform/%(Filename)%(Extension)" />

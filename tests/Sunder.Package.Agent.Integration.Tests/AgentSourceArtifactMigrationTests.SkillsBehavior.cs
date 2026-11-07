@@ -73,7 +73,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 ISunderRpcServiceHandler handler = provider.ProviderId == "skills.selectable.capabilities"
                     ? selectableProbe = new(provider.Handler) : provider.Handler;
-                state.Add("younics.ai.agent.skills", descriptor, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.skills", descriptor, handler, handler, Noop.Instance, provider.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.skills"));
             }
             var agentRpc = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var agentReceiver = new GeneratedServiceTestScope(agentRpc);
@@ -85,7 +85,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await selectableProbe!.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Empty(await ListAgentCapabilities());
             var appRoot = Directory.CreateDirectory(Path.Combine(package.RootPath, "app-workspace")).FullName;
-            var context = new TestPackageContext("younics.ai.agent.skills", appRoot, storage: new TestPackageStorageContext(package.Context.Storage.Files,
+            var context = new TestPackageContext("younics.ai.agent.skills", appRoot, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.skills"), storage: new TestPackageStorageContext(package.Context.Storage.Files,
                 package.Context.Storage.State, new TestPackageRoleLocalWorkspace(appRoot)));
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var gateway = appServices.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway", true)!);

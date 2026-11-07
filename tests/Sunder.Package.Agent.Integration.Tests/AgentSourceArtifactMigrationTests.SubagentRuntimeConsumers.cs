@@ -178,7 +178,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var descriptor = CurrentPublicRpcDescriptors.Get(contractId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, new GeneratedPeerLifetime(receiver), registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, new GeneratedPeerLifetime(receiver), registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
     }
     private sealed class SubagentTranscriptRuntime : MemoryConsumerRuntime, IAgentTranscriptCatalog
     {

@@ -121,6 +121,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var dev = Path.Combine(repository, "src/Sunder.Package.Agent.Skills/bin", configuration, "net10.0/sunder-dev");
         using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(dev, "manifest/sunder-package.json")));
         var payload = Path.Combine(root, "payload");
+        CopyDirectory(Path.Combine(dev, "payload/shared"), payload);
         CopyDirectory(Path.Combine(dev, "payload/runtime/shared"), payload);
         CopyDirectory(Path.Combine(dev, "payload/runtime", RuntimeInformation.RuntimeIdentifier), payload);
         Assert.Equal(SHA256.HashData(File.ReadAllBytes(typeof(SkillRuntimeHandler).Assembly.Location)),

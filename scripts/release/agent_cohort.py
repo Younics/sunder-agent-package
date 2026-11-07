@@ -162,11 +162,17 @@ def http(registry, route, payload=None, token=None):
                "--max-redirs", "0", "--max-time", "60", "--max-filesize", "1048576", "--write-out", "\n%{http_code}"]
     if payload is not None:
         command += ["--request", "POST", "--header", "Content-Type: application/json", "--data-binary", "@-"]
-    if token is not None:
-        command += ["--header", "Authorization: Bearer " + token]
     command.append(registry + route)
     clean = {k: v for k, v in os.environ.items() if k not in ("SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN")}
-    response = subprocess.run(command, input=payload, stdout=subprocess.PIPE, env=clean, check=False)
+    # curl supports a header file; credentials must never become process arguments.
+    with tempfile.TemporaryDirectory(prefix="sunder-registry-headers-") as directory:
+        if token is not None:
+            require(re.fullmatch(r"sunder_(?:cli_|pub_v1_)[A-Za-z0-9_-]{43}", token), "Invalid Registry credential")
+            headers = Path(directory) / "authorization.headers"
+            headers.touch(mode=0o600)
+            headers.write_text("Authorization: Bearer " + token + "\n", encoding="ascii")
+            command += ["--header", "@" + str(headers)]
+        response = subprocess.run(command, input=payload, stdout=subprocess.PIPE, env=clean, check=False)
     body, separator, status = response.stdout.rpartition(b"\n")
     require(separator and re.fullmatch(b"[0-9]{3}", status), "Registry response has no HTTP status; retain the same request")
     return int(status), body, response.returncode
@@ -220,8 +226,7 @@ def confirm(registry, request_path, result_path, archives):
     proposed = request(load(request_path))
     committed = result(load(result_path), proposed)
     verify_current(registry, proposed, committed)
-    token = os.environ.get("SUNDER_REGISTRY_CLI_TOKEN", "")
-    require(re.fullmatch(r"sunder_cli_[A-Za-z0-9_-]{43}", token), "Owner credential required to confirm the retained cohort")
+    token = mutation_credential(proposed)
     nonce = secrets.token_hex(16)
     minimum = committed["packagePolicy"]
     platforms = {}
@@ -268,14 +273,27 @@ def guard():
     subprocess.run(value, env=clean, check=True)
 
 
+def mutation_credential(proposed):
+    source = os.environ.get("SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE", "cli")
+    require(source in ("cli", "api-key"), "Unknown cohort credential source")
+    if source == "api-key":
+        require(all(v["expectedAvailability"] == "Yanked" and v["availability"] == "Listed" for v in proposed["versions"]),
+                "API keys permit only forward releases")
+        token = os.environ.get("SUNDER_REGISTRY_PUBLISH_TOKEN", "")
+        require(re.fullmatch(r"sunder_pub_v1_[A-Za-z0-9_-]{43}", token), "Scoped release API key required; no CLI credential fallback")
+    else:
+        token = os.environ.get("SUNDER_REGISTRY_CLI_TOKEN", "")
+        require(re.fullmatch(r"sunder_cli_[A-Za-z0-9_-]{43}", token), "Interactive owner credential required")
+    return token
+
+
 def apply(registry, request_path, result_path):
     proposed = request(load(request_path))
     body = request_bytes(proposed)
     if Path(result_path).exists() or Path(result_path).is_symlink():
         verify_current(registry, proposed, load(result_path))
         return
-    token = os.environ.get("SUNDER_REGISTRY_CLI_TOKEN", "")
-    require(re.fullmatch(r"sunder_cli_[A-Za-z0-9_-]{43}", token), "Interactive owner credential required")
+    token = mutation_credential(proposed)
     for attempt in range(2):
         observed = current_tags(registry, {v["package"]["packageId"] for v in proposed["versions"]})
         if all(v["availability"] == "Listed" for v in proposed["versions"]):

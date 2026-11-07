@@ -11,6 +11,8 @@
   <!-- Role-specific assertions compile against each suite's generated type identities
        and xUnit version. Framework-neutral helpers belong in TestSupport instead. -->
   <ItemGroup>
+    <ProjectReference Include="$(MSBuildThisFileDirectory)Sunder.Package.Agent.TestProviders/Sunder.Package.Agent.TestProviders.csproj"
+                      Aliases="AgentTestProviders" />
     <Compile Include="$(MSBuildThisFileDirectory)Shared/Rpc/**/*.cs"
              Link="TestSupport/Rpc/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>

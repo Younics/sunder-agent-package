@@ -131,7 +131,7 @@ Then build normally:
 dotnet build Sunder.AgentPackage.slnx --no-restore
 ```
 
-Workspace builds use sibling Core source; standalone clones use coordinated NuGet
+Workspace builds use sibling Core source; standalone clones use independently versioned NuGet
 packages. Build emits each current-RID `bin/<configuration>/<tfm>/sunder-dev`.
 Invoke `PackSunderPackage` on the same canonical project for all declared RIDs.
 For automatic development builds, run `dotnet watch build` from the package directory
@@ -149,13 +149,15 @@ dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agen
 The all-family artifact/native lanes belong at their integration/release boundaries;
 missing required inputs fail those lanes. See [testing](docs/testing-extensions.md).
 
-## Release Tags
+## Releases
 
-`agent/vX.Y.Z` releases the exact 15-archive family. Release CI requires immutable
-Core SDK source/provenance and matching package locks; mutable `main` is only a smoke
-input. Qualified schema-3 native inputs preserve tested role bytes through no-rebuild
-fan-in. Publication starts Yanked and promotion uses one retained atomic cohort
-transition after acceptance. [Releases](docs/RELEASES.md) owns the full operator sequence.
+Each canonical project owns its `<Version>`. Protected-main/manual release CI selects
+only versions newer than their published GitHub releases and creates package-key tags
+automatically, such as `agent-provider-openai/v2.1.0`. No newer version means no release.
+Unchanged archives are reused exactly; all fifteen Workers still run on all six RIDs.
+Release CI requires immutable Core SDK provenance, exact dependency locks and qualified
+schema-4 native inputs for no-rebuild fan-in. Selected versions publish Yanked, then
+become Listed in one retained atomic cohort. [Releases](docs/RELEASES.md) owns the full sequence.
 
 ## Contributing And License
 

@@ -31,7 +31,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var local = load.LoadFromStream(localBytes);
             using var package = RegressionTestPackageScope.Create();
             var root = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var localContext = new TestPackageContext("younics.ai.agent.execution.local", root, version: "2.0.0", storage: package.Context.Storage);
+            var localContext = new TestPackageContext("younics.ai.agent.execution.local", root, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.execution.local"), storage: package.Context.Storage);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var (localOptions, localLifetime, _) = CreateGeneratedWorker(local, localContext, new RegressionTestRpcClient(state, localContext.PackageId));
             await using var ownedLocal = localLifetime;
@@ -42,7 +42,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var contract = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 var handler = provider.ProviderId == "local.execution.target" ? (ISunderRpcServiceHandler)target : provider.Handler;
-                state.Add(localContext.PackageId, contract, handler, handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add(localContext.PackageId, contract, handler, handler, Noop.Instance, provider.ProviderId, localContext.Version);
             }
             var localRpc = new RegressionTestRpcClient(state, localContext.PackageId);
             await using var targetReceiver = new GeneratedServiceTestScope(localRpc);
@@ -78,7 +78,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var observer = new FilesRpcObserver(new RegressionTestRpcClient(state, "younics.ai.agent.tools.shell"), "execute-shell");
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Shell.ShellWorkerComposition"));
             Assert.Null(runtime.GetType("Sunder.Package.Agent.Tools.Shell.ShellWorkerBindings"));
-            var context = new TestPackageContext("younics.ai.agent.tools.shell", root, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.tools.shell", root, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.tools.shell"), storage: package.Context.Storage);
             var (options, lifetime, services) = CreateGeneratedWorker(runtime, context, observer);
             await using var owned = lifetime;
             Assert.Null(options.Composition);
@@ -90,7 +90,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var expected = CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
-                state.Add("younics.ai.agent.tools.shell", expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.tools.shell", expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             var host = new RegressionTestRpcClient(state, "younics.ai.agent");
             await using var toolReceiver = new GeneratedServiceTestScope(host);
@@ -179,7 +179,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 {
                     await state.RetireAsync(target).WaitAsync(TimeSpan.FromSeconds(10));
                     target = new FilesTargetProbe(targetRegistration.Handler);
-                    state.Add(localContext.PackageId, descriptor, target, target, Noop.Instance, targetRegistration.ProviderId, "2.0.0");
+                    state.Add(localContext.PackageId, descriptor, target, target, Noop.Instance, targetRegistration.ProviderId, localContext.Version);
                     Assert.Equal("failed", (await Ready()).GetProperty("status").GetString());
                     targetReference = Assert.Single((await targetReceiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers,
                         provider => provider.ProviderId == "local.execution.target").Reference;

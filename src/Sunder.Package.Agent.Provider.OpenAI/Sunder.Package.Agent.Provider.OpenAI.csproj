@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Version>2.0.0</Version>
     <AssemblyName>Sunder.Package.Agent.Provider.OpenAI</AssemblyName>
     <RootNamespace>Sunder.Package.Agent.Provider.OpenAI</RootNamespace>
     <SunderPackageFamilyId>younics.ai.agent.provider.openai</SunderPackageFamilyId>

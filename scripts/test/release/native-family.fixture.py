@@ -19,6 +19,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
@@ -70,14 +71,15 @@ def create_producer(root):
             directory = repository / Path(project).parent
             has_app = name == "P0"
             target = {"role": "runtime", "rid": rid, "kind": "worker", "entryPoint": "lib/" + name + ".dll",
+                      "sdkVersion": "1.2.3", "requiredHostCapabilities": ["execution-runtime.v1", "rpc.v1", "worker-protocol.v1"],
                       "targetFramework": "net10.0", "executionRuntime": {"id": "sunder.runtime.dotnet",
                       "versionRange": ">=10.0.0 <11.0.0", "moduleAbi": "sunder.dotnet-worker-module.v1"}}
-            manifest = {"id": package_id, "version": VERSION, "targets": [target]}
+            manifest = {"archiveFormatVersion": 1, "manifestVersion": 1, "id": package_id, "version": VERSION, "targets": [target]}
             base = "payload/runtime/" + rid + "/lib/" + name
             config_base = ("payload/runtime/shared/lib/" if has_app else "payload/shared/lib/") + name
             common = "payload/runtime/shared/lib/Common.dll" if has_app else "payload/shared/lib/Common.dll"
             files = {base + ".dll": b"retained managed Worker bytes " + rid.encode(),
-                     config_base + ".runtimeconfig.json": b'{"runtimeOptions":{"tfm":"net10.0"}}',
+                     config_base + ".runtimeconfig.json": b'{"runtimeOptions":{"tfm":"net10.0","framework":{"name":"Microsoft.NETCore.App","version":"10.0.0"}}}',
                      config_base + ".deps.json": inputs.compact({"rid": rid}), common: b"shared exact bytes"}
             # Force the bounded POSIX path-extension round trip, not just short tar names.
             files["payload/runtime/" + rid + "/" + "/".join(["long-segment" * 3] * 5) + "/asset.bin"] = b"long path bytes"
@@ -146,6 +148,7 @@ def mock_dotnet(args):
     source = Path(props["SunderPackageRoleInputSourceRoot"])
     files, targets = {}, []
     package_id = None
+    package_version = None
     for selected in selection["inputs"]:
         assert list(selected) == ["runtimeIdentifier", "path", "sha256"]
         evidence_path = selection_path.parent / selected["path"]
@@ -153,6 +156,7 @@ def mock_dotnet(args):
         assert inputs.digest(data) == selected["sha256"]
         evidence = json.loads(data)
         package_id = evidence["inputs"]["packageId"]
+        package_version = evidence["inputs"]["packageVersion"]
         # An explicit mock of Core's current-source refusal, not a production bypass.
         for record in evidence["inputs"]["sources"]:
             if inputs.digest((source / record["path"]).read_bytes()) != record["sha256"]:
@@ -173,7 +177,8 @@ def mock_dotnet(args):
             data = (leaf / record["path"]).read_bytes()
             assert name not in files or files[name] == data
             files[name] = data
-    files["manifest/sunder-package.json"] = inputs.compact({"id": package_id, "version": VERSION, "targets": targets})
+    files["manifest/sunder-package.json"] = inputs.compact({"archiveFormatVersion": 1, "manifestVersion": 1,
+        "id": package_id, "version": package_version, "targets": targets})
     files["manifest/content-index.json"] = inputs.compact({"schemaVersion": 1, "files": [
         {"path": f["path"], "sha256": f["sha256"], "size": f["bytes"]} for f in file_list(files)]})
     zip_bytes(Path(props["SunderPackageOutputPath"]), files)
@@ -257,6 +262,123 @@ class NativeFamilyFixture(unittest.TestCase):
         after = {path.relative_to(self.handoff): inputs.digest(path.read_bytes()) for path in self.handoff.rglob("*") if path.is_file()}
         self.assertEqual(before, after)
         self.assertFalse(list(self.repository.rglob("bin")))
+        # Run the actual audit over the transport fixture: framework/runtimeconfig,
+        # changed SDK versions and installed metrics must survive extracted tooling.
+        audit = self.work / "package-output-audit.json"
+        result = subprocess.run(["bash", str(SCRIPT / "generate-package-output-audit.sh"), str(self.output),
+            str(self.output / "native-test-evidence.json"), str(self.repository), str(audit)], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        report = json.loads(audit.read_bytes())
+        self.assertEqual(set(family.FAMILY_PACKAGE_IDS), {row["packageId"] for row in report["packages"]})
+        self.assertTrue(all({row["rid"] for row in package["rids"]} == set(inputs.RIDS) for package in report["packages"]))
+        self.assertTrue(all(row["installedProjection"]["bytes"] == 150000 and row["meetsInstalledProjectionGate"]
+            for row in report["family"]["rids"]))
+
+    def test_selective_mixed_version_fanin_packs_two_but_tests_and_retains_all_fifteen(self):
+        self.assemble()
+        old_evidence = self.output / "native-test-evidence.json"
+        old_bytes = {path.name: path.read_bytes() for path in self.output.glob("*.sunderpkg")}
+        rows = family.inventory(self.repository)
+        selected_ids = {rows[0]["packageId"], rows[1]["packageId"]}
+        plan_rows = []
+        for row in rows:
+            version = "2.1.0" if row == rows[0] else VERSION
+            project = self.repository / row["projectPath"]
+            project.write_text(f'<Project><PropertyGroup><Version>{version}</Version></PropertyGroup></Project>')
+            selected = row["packageId"] in selected_ids
+            name = row["packageId"] + "." + version + ".sunderpkg"
+            def locator(path, name, identifier):
+                return dict(repository="Younics/sunder-agent-package", releaseId=42, assetId=identifier,
+                    name=name, size=path.stat().st_size, sha256=inputs.digest(path.read_bytes()))
+            plan_rows.append({key: row[key] for key in ("key", "packageId", "projectPath")} | dict(version=version,
+                tag=row["key"] + "/v" + version, selected=selected,
+                retainedArchive=None if selected else locator(self.output / name, name, 100 + rows.index(row)),
+                retainedEvidence=None if selected else locator(old_evidence, "native-test-evidence.json", 999)))
+        inventory = json.loads((self.repository / "packages.json").read_bytes())
+        inventory["releaseVersion"] = VERSION
+        write(self.repository / "packages.json", inventory)
+        import agent_selection as selection
+        import agent_release as release
+        plan = dict(schemaVersion=2, repository=selection.REPOSITORY, artifactSourceCommit="a" * 40,
+            lockSetSha256=release.locks(self.repository), registryOrigin="https://registry.test",
+            packages=sorted(plan_rows, key=lambda row: row["packageId"]))
+        plan_path = self.work / "release-plan.json"
+        write(plan_path, plan)
+        selection.validate(plan, self.repository)
+        reference = next(row["retainedEvidence"] for row in plan_rows if not row["selected"])
+        shutil.copyfile(old_evidence, self.output / selection.evidence_name(reference))
+        env = dict(self.env, SUNDER_AGENT_RETAINED_ARCHIVE_DIR=str(self.output))
+        handoff = self.work / "selective-handoff"
+        for rid in inputs.RIDS:
+            archives = self.work / "smoke archives" / rid
+            metrics = self.work / "metrics" / rid
+            for row in plan_rows:
+                package_id, version = row["packageId"], row["version"]
+                archive_path = archives / (package_id + "." + version + ".sunderpkg")
+                if row["selected"]:
+                    relative = Path(row["projectPath"]).parent / "bin/Release/net10.0/sunder-targets" / rid
+                    root = self.repository / relative
+                    shutil.copytree(self.template / "native checkout" / relative, root)
+                    leaf = root / "sunder-dev"
+                    manifest = json.loads((leaf / "manifest/sunder-package.json").read_bytes())
+                    manifest["version"] = version
+                    write(leaf / "manifest/sunder-package.json", manifest)
+                    files = {str(path.relative_to(leaf)).replace(os.sep, "/"): path.read_bytes()
+                        for path in leaf.rglob("*") if path.is_file() and path.name != "content-index.json"}
+                    write(leaf / "manifest/content-index.json", dict(schemaVersion=1, files=[
+                        dict(path=item["path"], size=item["bytes"], sha256=item["sha256"]) for item in file_list(files)]))
+                    files["manifest/content-index.json"] = (leaf / "manifest/content-index.json").read_bytes()
+                    q = json.loads((root / inputs.ROLE_INPUTS).read_bytes())
+                    q["inputs"]["packageVersion"] = version
+                    for role in q["rolePlan"]["roles"]:
+                        receipt = json.loads(role["receipt"]); receipt["packageVersion"] = version
+                        role["receipt"] = inputs.compact(receipt).decode()
+                    q["files"] = file_list(files)
+                    data = inputs.compact(q)
+                    write(root / inputs.ROLE_INPUTS, data)
+                    write(root / (inputs.ROLE_INPUTS + ".sha256"), (inputs.digest(data) + "\n").encode())
+                    zip_bytes(archive_path, files)
+                    if version != VERSION:
+                        (archives / (package_id + "." + VERSION + ".sunderpkg")).unlink()
+                else:
+                    shutil.copyfile(self.output / archive_path.name, archive_path)
+                metric_path = metrics / (package_id + "." + rid + ".json")
+                metric = json.loads(metric_path.read_bytes())
+                metric["measurement"].update(archive=archive_path.name, archiveBytes=archive_path.stat().st_size)
+                write(metric_path, metric)
+            result = subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "record", rid, str(plan_path), *VERSIONS[1:],
+                str(archives), str(metrics), str(handoff), str(self.repository)], env=env, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        output = self.work / "selective-family"
+        self.log.write_text("")
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "assemble", str(handoff), str(output),
+            str(plan_path), *VERSIONS[1:], str(self.repository)], env=env, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(2, len(self.log.read_text().splitlines()))
+        evidence = json.loads((output / "native-test-evidence.json").read_bytes())
+        self.assertEqual(4, evidence["schemaVersion"])
+        self.assertEqual(15, len(evidence["finalArtifacts"]))
+        self.assertTrue(all(len(run["packages"]) == 2 and len(run["familyTests"]) == 15 for run in evidence["nativeRuns"]))
+        for row in plan_rows:
+            if not row["selected"]:
+                name = selection.archive_name(row)
+                self.assertEqual(old_bytes[name], (output / name).read_bytes())
+        # Removing a supposedly unchanged Worker test must fail even with a valid
+        # selected leaf/qualification set. This is not subset integration coverage.
+        with patch.dict(os.environ, env):
+            expected = family.identity(str(plan_path), *VERSIONS[1:])
+        bad = copy.deepcopy(evidence)
+        bad["nativeRuns"][0]["familyTests"].pop()
+        with self.assertRaisesRegex(ValueError, "all fifteen Worker tests"):
+            family.verify_document(bad, output, family.release_rows(self.repository, str(plan_path)), expected)
+        unchanged = next(row for row in plan_rows if not row["selected"])
+        path = self.output / selection.archive_name(unchanged)
+        path.write_bytes(path.read_bytes() + b"changed retained archive")
+        result = subprocess.run([sys.executable, "-B", str(SCRIPT / "native-family.py"), "assemble", str(handoff), str(output),
+            str(plan_path), *VERSIONS[1:], str(self.repository)], env=env, capture_output=True, text=True)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Retained archive differs from the release plan", result.stderr)
+        self.assertEqual(2, len(self.log.read_text().splitlines()), "Pack ran after retained-byte substitution")
 
     def test_source_use_projection_cannot_be_changed_apart_from_qualified_receipt(self):
         path = self.handoff / ("native-leaf-evidence-" + inputs.RIDS[0] + ".json")
@@ -439,6 +561,8 @@ class NativeFamilyFixture(unittest.TestCase):
         frame["ownedBaselineSha256"] = inputs.digest(b"")
         version = "2.0.0-beta.1+Build.7"
         self.assertEqual(version, family.identity(version, VERSIONS[1], VERSIONS[2], VERSIONS[3], VERSIONS[4])["version"])
+        for text in ("2.0.0-rc.json", "2.0.0+build.json"):
+            self.assertEqual(text, family.identity(text, *VERSIONS[1:])["version"])
         for invalid in ("2.0.0-01", "2.0.0+", "2.0.0+" + "x" * 251):
             with self.assertRaisesRegex(ValueError, "explicit release version"):
                 family.release_version(invalid)

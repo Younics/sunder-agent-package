@@ -5,9 +5,8 @@ loads **local package projects**. Choose .NET with an Avalonia UI, or Node.js wi
 a React/TypeScript UI. Each starter includes the matching package worker.
 
 > **Source channel:** This guide describes the current source. Creation uses the
-> coordinated Sunder template and npm creator version associated with the installed
-> SDK. Source qualification uses freshly packed matching Core artifacts; a standalone
-> release requires those coordinated artifacts and its reviewed NuGet lock pins.
+> independently pinned Sunder template, npm creator and SDK packages. Source qualification
+> uses compatible Core artifacts; a standalone release retains its reviewed NuGet locks.
 
 Projects live in folders you choose on the computer running Sunder. Package Maker
 works without Agent. Its optional Agent tools accept only physically contained
@@ -300,7 +299,7 @@ discard an existing healthy installation.
 
 ### Optional local NuGet source packs
 
-Until the coordinated .NET developer packages are published, an instance can use
+For unpublished .NET developer packages, an instance can use
 source-packed packages by placing `local-nuget.json` under its role-local workspace
 at `development-toolchains/project-tools/local-nuget.json`:
 
@@ -311,8 +310,9 @@ at `development-toolchains/project-tools/local-nuget.json`:
 These are the only two accepted fields. The folder must contain one
 `<PackageId>.<version>.nupkg` for each of `Sunder.Sdk`, `Sunder.Sdk.Avalonia`,
 `Sunder.Sdk.Stacks`, `Sunder.Sdk.Worker`, `Sunder.Package.Build`, and
-`Sunder.Package.Templates`, all at the Builder SDK's coordinated version
-(currently `1.1.0`). Only flat folder feeds are supported; nested feeds are not
+`Sunder.Package.Templates`. Versions may differ; package dependencies and template
+ranges must admit the actual selected archives. Multiple versions of one identity
+are rejected as ambiguous, not resolved by guessing the newest. Only flat feeds are supported; nested feeds are not
 searched. Paths and selected archives must be regular, unlinked local paths.
 The pointer is limited to 16 KiB, the folder to 4,096 top-level entries, each
 archive to 512 MiB, and the selected archives together to 1 GiB.
@@ -330,7 +330,7 @@ the same accepted job ID keeps its original selection and result.
 Builder checks package identities, SDK dependency constraints, and required .NET
 10 template/build artifacts, then atomically retains the six verified archives
 under `project-tools/local-nuget/<content-hash>/feed`. The hash includes all six
-archives, the version, feed path, and source policy. A private `NuGet.Config` maps
+archives, their independent versions, feed path, and source policy. A private `NuGet.Config` maps
 `Sunder.*` exclusively to that retained feed and other dependencies to NuGet.org.
 The selection uses its own `tools/nuget-packages`, HTTP, plugin, and scratch caches,
 so changed same-version source packs receive a fresh cache and template home. Source feeds, existing
@@ -349,9 +349,10 @@ document:
 { "schemaVersion": 1, "feedPath": "/absolute/path/to/a/flat/npm/feed" }
 ```
 
-The folder must contain `sunder-sdk-1.1.0.tgz`, `sunder-package-tool-1.1.0.tgz`, and
-`create-sunder-package-1.1.0.tgz` (substitute the coordinated SDK version when it
-changes). Builder validates all three package identities, required artifacts and
+The folder must contain exactly one archive for each of `@younics/sunder-sdk`,
+`@younics/sunder-package-tool` and `@younics/create-sunder-package`, using their ordinary npm tarball
+filenames. Their versions may differ; the tool/creator dependency constraints must
+admit the selected SDK. Builder validates all three identities, required artifacts and
 archive paths, then retains their exact bytes under
 `project-tools/local-npm/<content-hash>`. Linked paths, partial sets, malformed
 archives and changed retained caches fail closed; existing caches are not repaired.

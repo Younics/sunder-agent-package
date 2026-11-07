@@ -122,7 +122,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var memoryRegistration = Assert.IsType<SunderWorkerProviderRegistration>(cleaner.GetType().GetMethod("CreateSunderRpcProviderRegistration")!.Invoke(cleaner, null));
             Assert.Equal("semantic.memory.session.cleaner", memoryRegistration.ProviderId);
             using var memoryState = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-            memoryState.Add("younics.ai.agent.memory.semantic", descriptor, cleaner, memoryRegistration.Handler, Noop.Instance, memoryRegistration.ProviderId, "2.0.0");
+            memoryState.Add("younics.ai.agent.memory.semantic", descriptor, cleaner, memoryRegistration.Handler, Noop.Instance, memoryRegistration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
             var memoryRpc = new RegressionTestRpcClient(memoryState, "example.agent.consumer");
             var targetSession = Guid.NewGuid();
             var retainedSession = Guid.NewGuid();

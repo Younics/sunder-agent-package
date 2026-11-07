@@ -3,8 +3,6 @@ name: AI Agent CI
 on:
   pull_request:
   merge_group:
-  push:
-    branches: [main]
   schedule:
     - cron: "23 4 * * *"
   workflow_dispatch:
@@ -13,30 +11,47 @@ on:
       core_commit:
         type: string
         default: ""
-      cold_inputs:
-        type: string
-        default: ""
+      package-tests:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 env:
-  DOTNET_VERSION: "10.0.403"
-  NODE_VERSION: "24.22.1"
   MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.behavior }}
+      core_commit: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve Core source from the declared build-tool dependency
+        id: core
+        if: inputs.core_commit == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/agent_ci.py coordinates
+      - id: matrix
+        env:
+          PACKAGE_TESTS: ${{ inputs.package-tests }}
+        run: |
+          args=()
+          [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
+          python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
+
   source:
-    name: ${{ matrix.mode }} behavior (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.mode }} behavior (${{ matrix.rid }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
       fail-fast: false
-      matrix:
-        mode: ${{ inputs.cold_inputs != '' && fromJSON('["source","package"]') || fromJSON('["source"]') }}
-        os: [ubuntu-24.04, windows-2022]
-        include:
-          - {os: ubuntu-24.04, platform: linux}
-          - {os: windows-2022, platform: windows}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -46,148 +61,40 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
       - name: Resolve exact selected archives, catalog and Core source
         id: inputs
         env:
           GH_TOKEN: ${{ github.token }}
-          SUNDER_AGENT_CI_INPUTS: ${{ vars.SUNDER_AGENT_CI_INPUTS }}
-          COLD_INPUTS: ${{ inputs.cold_inputs }}
-          CORE_COMMIT: ${{ inputs.core_commit }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/reports
-          {
-            if [[ -n "$COLD_INPUTS" ]]; then
-              python3 -B scripts/ci/agent_ci.py resolve --locator "$COLD_INPUTS" --cold --core-commit "$CORE_COMMIT" --output "$RUNNER_TEMP/agent-inputs"
-            else
-              python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs"
-            fi
-          } 2>&1 | tee artifacts/reports/input-preparation.log
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ steps.inputs.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Check scripts, taxonomy and current package contracts
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/reports
-          node --test scripts/compatibility/check-package-boundaries.test.mjs
-          node scripts/compatibility/check-package-boundaries.mjs
-          python3 -B scripts/test/verify-current-contracts.fixture.py
-          python3 -B scripts/test/test_prepare_shared_provider_fixture.py
-          python3 -B scripts/test/test_prepare_contracts.py
-          python3 -B scripts/test/verify-current-contracts.py --source-only
-          bash scripts/test/generate-test-inventory.sh > artifacts/reports/test-inventory.json
-          bash scripts/test/test-silent-return-analyzer.fixture.sh
-          bash scripts/test/generate-test-duration-report.fixture.sh
-          bash scripts/test/release/verify-agent-release-version.fixture.sh
-          python3 -B scripts/test/release/release-inputs.fixture.py
-          python3 -B scripts/test/release/test_agent_ci.py
-      - name: Release transport, native fan-in and Registry publication regressions
-        if: runner.os == 'Linux' && matrix.mode == 'source'
-        run: |
-          set -euo pipefail
-          python3 -B scripts/test/release/agent-release.fixture.py
-          python3 -B scripts/test/release/test_agent_pipeline.py
-          bash scripts/test/release/native-release.fixture.sh
-          bash scripts/test/release/publish-registry-package.fixture.sh
-          bash scripts/test/release/verify-core-sdk-release.fixture.sh
-          bash scripts/test/release/verify-nuget-package.fixture.sh
-      - name: Restore and hydrate the exact committed package selections
-        run: >-
-          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core
-          --inputs "$RUNNER_TEMP/agent-inputs" --work "$RUNNER_TEMP/agent-ci" --mode "${{ matrix.mode }}"
-      - name: Normal parallel source build
-        run: >-
-          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
-          dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
-      - name: Prepare the generated provider fixture after the build
+          python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output "$RUNNER_TEMP/agent-inputs" 2>&1 | tee artifacts/reports/input-preparation.log
+      - name: Build and test selected reference mode
         env:
-          TMPDIR: ${{ runner.temp }}
-        run: python3 -B scripts/ci/agent_ci.py fixtures --state "$RUNNER_TEMP/agent-ci/ci-state.json"
-      - name: Complete source behavior without artifact producers
-        id: source-tests
-        if: matrix.mode == 'source'
-        env:
-          SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
-        run: >-
-          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
-          --filter 'FullyQualifiedName!~CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload'
-          --logger trx --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/full"
-      - name: Required all-family source-artifact gate in Integration
-        if: matrix.mode == 'source'
-        env:
-          SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
-          SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE: ${{ github.workspace }}/sunder-agent-package/artifacts/source-family
-          SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE: ${{ github.workspace }}/sunder-agent-package/artifacts/source-commands
-        run: >-
-          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
-          dotnet test tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj
-          -c Release --no-build --no-restore
-          --filter FullyQualifiedName~CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload
-          --logger trx --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/artifact"
-      - name: Focused locked-package compatibility
-        id: package-tests
-        if: matrix.mode == 'package'
-        run: >-
-          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" --
-          dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
-          --filter "Lane=PackageCompatibility&Category!=Artifact" --logger trx
-          --results-directory "${{ github.workspace }}/sunder-agent-package/artifacts/test-results/full"
-      - name: Required Linux and real-Docker cases
-        if: runner.os == 'Linux' && matrix.mode == 'source'
-        env:
-          SUNDER_DOCKER_INTEGRATION: "1"
-          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
-        run: |
-          set -euo pipefail
-          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" -- dotnet test Sunder.AgentPackage.slnx \
-            -c Release --no-build --no-restore --logger trx --results-directory "$PWD/artifacts/test-results/required" \
-            --filter 'FullyQualifiedName~ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation'
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results/required --expected-skips 0 > artifacts/reports/required.json
-          jq -e '.summary.total == 2 and .summary.passed == 2 and .evidenceViolations == []' artifacts/reports/required.json
-      - name: Repeat Linux race and Docker checks on scheduled and manual runs
-        if: runner.os == 'Linux' && matrix.mode == 'source' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        env:
-          SUNDER_DOCKER_INTEGRATION: "1"
-          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
-        run: |
-          set -euo pipefail
-          filter='(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsFinalMutationHandles_BlockInPlaceEntryReplacement&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation'
-          for attempt in 1 2 3; do
-            python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/agent-ci/ci-state.json" -- dotnet test Sunder.AgentPackage.slnx \
-              -c Release --no-build --no-restore --filter "$filter" --logger trx --results-directory "$PWD/artifacts/stress/$attempt"
-          done
-          python3 scripts/test/generate-test-duration-report.py artifacts/stress --expected-skips 0 > artifacts/reports/stress.json
-      - name: Verify complete source test identities and skip reasons
-        if: >-
-          always() && (steps.source-tests.outcome == 'success' || steps.source-tests.outcome == 'failure' ||
-          steps.package-tests.outcome == 'success' || steps.package-tests.outcome == 'failure')
-        env:
-          PLATFORM: ${{ matrix.platform }}
           MODE: ${{ matrix.mode }}
+          STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          args=(--inventory artifacts/reports/test-inventory.json --mode "$MODE" --platform "$PLATFORM" --expectations tests/test-evidence-expectations.json)
-          [[ "$MODE" != package ]] || args+=(--lane PackageCompatibility --exclude-category Artifact)
-          python3 scripts/test/generate-test-duration-report.py artifacts/test-results "${args[@]}" > artifacts/reports/results.json
+          args=()
+          [[ "$STRESS" != true ]] || args+=(--stress)
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
+            --inputs "$RUNNER_TEMP/agent-inputs" --mode "$MODE" "${args[@]}"
       - name: Retain the tested package-mode archive verifier for fan-in
         if: matrix.mode == 'package' && matrix.platform == 'linux'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-package-test-binaries
-          path: sunder-agent-package/tests/Sunder.Package.Agent.Tests/bin/Release/net10.0/
+          path: sunder-agent-package/artifacts/package-test-binaries/
           if-no-files-found: error
           retention-days: 90
-      - if: always()
+      - name: Retain CI reports
+        if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-${{ matrix.mode }}-${{ matrix.platform }}-${{ github.run_attempt }}
@@ -198,3 +105,4 @@ jobs:
             sunder-agent-package/artifacts/source-family
             sunder-agent-package/artifacts/source-commands
           if-no-files-found: error
+          retention-days: 14

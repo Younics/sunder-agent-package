@@ -11,15 +11,19 @@ allowed_os='["Any","Linux","macOS","Windows"]'
 allowed_sizes='["Small","Medium","Large"]'
 package_ids="$(jq -c '[.packages[] | select(.artifactType == "sunderpkg") | .packageId]' packages.json)"
 projects='[]'
+project_list="$(dotnet sln Sunder.AgentPackage.slnx list)"
 
 while IFS= read -r project_path; do
+  project_path="${project_path%$'\r'}"
+  project_path="${project_path//\\//}"
   case "$project_path" in
     tests/*.Tests/*.csproj) ;;
     *) continue ;;
   esac
 
   metadata="$(dotnet msbuild "$project_path" -nologo \
-    -getProperty:IsTestProject,SunderTestOwner,SunderTestCategory,SunderTestCapabilities,SunderTestOS,SunderTestSize,SunderTestSourceMode,SunderTestPackageMode,SunderTestLanes,SunderTestSourceOnlyTests)"
+    -getProperty:MSBuildProjectDirectory,IsTestProject,SunderTestOwner,SunderTestCategory,SunderTestCapabilities,SunderTestOS,SunderTestSize,SunderTestSourceMode,SunderTestPackageMode,SunderTestLanes,SunderTestSourceOnlyTests \
+    -getItem:Compile)"
   is_test_project="$(jq -er '.Properties.IsTestProject' <<< "$metadata")"
   owner="$(jq -er '.Properties.SunderTestOwner | select(length > 0)' <<< "$metadata")"
   category="$(jq -er '.Properties.SunderTestCategory | select(length > 0)' <<< "$metadata")"
@@ -30,6 +34,10 @@ while IFS= read -r project_path; do
   package_mode="$(jq -er '.Properties.SunderTestPackageMode' <<< "$metadata")"
   lanes_value="$(jq -er '.Properties.SunderTestLanes' <<< "$metadata")"
   source_only_value="$(jq -er '.Properties.SunderTestSourceOnlyTests' <<< "$metadata")"
+  # MSBuild supplies native Windows paths even when this script runs in Git Bash.
+  sources="$(jq -ce --arg directory "${project_path%/*}" '
+    (.Properties.MSBuildProjectDirectory | gsub("\\\\"; "/") | rtrimstr("/" + $directory) + "/") as $root |
+    [.Items.Compile[].FullPath | gsub("\\\\"; "/") | select(startswith($root)) | ltrimstr($root)] | unique' <<< "$metadata")"
 
   [[ "$is_test_project" == "true" ]]
   jq -en --arg owner "$owner" --argjson package_ids "$package_ids" \
@@ -69,9 +77,10 @@ while IFS= read -r project_path; do
     --arg size "$size" \
     --argjson modes "$modes" \
     --argjson sourceOnlyTests "$source_only_tests" \
-    '{path: $path, owner: $owner, category: $category, capabilities: $capabilities, operatingSystems: $operatingSystems, size: $size, modes: $modes, lanes: $lanes, sourceOnlyTests: $sourceOnlyTests}')"
+    --argjson sources "$sources" \
+    '{path: $path, owner: $owner, category: $category, capabilities: $capabilities, operatingSystems: $operatingSystems, size: $size, modes: $modes, lanes: $lanes, sourceOnlyTests: $sourceOnlyTests, sources: $sources}')"
   projects="$(jq -cn --argjson projects "$projects" --argjson entry "$entry" '$projects + [$entry]')"
-done < <(dotnet sln Sunder.AgentPackage.slnx list)
+done <<< "$project_list"
 
 jq -n \
   --argjson schemaVersion 2 \

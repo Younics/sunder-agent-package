@@ -13,7 +13,7 @@ dotnet restore Acme.SessionNotes/Acme.SessionNotes.csproj
 ```
 
 The template creates one authored Library project with `SunderPackageProject=true`.
-Keep its coordinated SDK references and package metadata. Sunder generates the
+Keep its authored SDK dependency constraints and package metadata. Sunder generates the
 Worker and any App role from this source. New owned services are private by default.
 
 ## 2. Select The Extension Contract

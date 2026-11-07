@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var home = Directory.CreateDirectory(Path.Combine(package.RootPath, "home")).FullName;
         var project = Directory.CreateDirectory(Path.Combine(package.RootPath, "project")).FullName;
         var retiredProject = Directory.CreateDirectory(Path.Combine(package.RootPath, "retired-project")).FullName;
-        var context = new TestPackageContext("younics.ai.agent.mcp", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.mcp", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.mcp"), storage: package.Context.Storage);
         var catalogType = worker.GetType("Sunder.Package.Agent.Mcp.Services.McpServerCatalogService", true)!;
         var catalog = Activator.CreateInstance(catalogType, context)!;
         var importer = Activator.CreateInstance(worker.GetType("Sunder.Package.Agent.Mcp.Services.McpEcosystemConfigurationImporter", true)!, catalog)!;

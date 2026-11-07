@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.LMStudio.Protocol");
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.LMStudio" or "Sunder.Sdk.Worker" or "OpenAI");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("younics.ai.agent.provider.lmstudio", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.lmstudio", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.provider.lmstudio"), storage: package.Context.Storage);
             await context.Settings.SetValueAsync("connection.baseUrl", "http://127.0.0.1:43123/api/v1/");
             using var handler = new LMStudioArtifactHttp();
             var clock = new LMStudioArtifactClock();
@@ -58,7 +58,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var descriptor = provider.ProviderId == "lmstudio.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Lmstudio_Services.ICredentialSettingsService", true)!);
@@ -172,7 +172,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var credentialRegistration = registrations["lmstudio.credentials"];
             await state.RetireAsync(credentialRegistration.Handler).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
-            state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, "2.0.0");
+            state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, context.Version);
             Assert.NotEqual(oldCredentials, Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             await VerifyProviderStreamLifecycle(runtime, "LMStudio", agentOwner, probes);

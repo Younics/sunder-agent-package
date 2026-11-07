@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         using var package = RegressionTestPackageScope.Create();
         var physical = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-        var context = new TestPackageContext("younics.sunder.package.maker", physical, version: "2.0.0")
+        var context = new TestPackageContext("younics.sunder.package.maker", physical, version: CurrentContractInventory.PackageVersionFor("younics.sunder.package.maker"))
             { DevelopmentToolchain = ReadDevelopmentToolchain() };
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var client = new RegressionTestRpcClient(state, context.PackageId);
@@ -61,7 +61,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(service.Methods.Count, registration.DeclaredErrors[service.ServiceId].Count);
         foreach (var method in service.Methods)
             Assert.Equal(method.Errors, registration.DeclaredErrors[service.ServiceId][method.MethodId]);
-        state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, context.Version);
         await ActivateGeneratedComposition(composition.Options);
         Assert.Equal(0, state.DiscoveryCount);
         await BuilderSourceMigrationTests.VerifyAppAsync(worker, runtime, presentation, context, descriptor, registration, lifetime, state, client);

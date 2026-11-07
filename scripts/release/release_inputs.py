@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Approved durable inputs -> exact cold Core restore -> network-denied builds.
+"""Authored dependencies -> exact cold Core restore -> network-denied acceptance.
 
 This is release orchestration, not another Core cache/qualification writer. Only
 RestoreSunderContracts creates cache evidence. No selection or baseline command is
@@ -20,7 +20,7 @@ from agent_release import (Invalid, archive_metadata, authoring_origin, canonica
                            decode, digest, file_sha, inventory, load, locks, positive,
                            package_imports, regular, require, safe_relative, sha, source_file, version)
 
-RIDS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")
+from ci_platforms import RIDS
 MANIFEST = "cold-inputs.json"
 MAX_MANIFEST = 262144
 TOOL_FILES = ("Sunder.Package.Build.dll", "Sunder.Package.Build.Editor.dll", "Sunder.Package.Format.dll", "Sunder.Sdk.dll",
@@ -108,11 +108,13 @@ def catalog_requirements(lock):
 
 def validate_manifest(source, value, source_sha, core_sha):
     closed(value, "schemaVersion artifactSourceCommit lockSetSha256 core candidates platformCatalog")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1, "Unknown cold-input manifest schema")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (1, 2), "Unknown cold-input manifest schema")
     require(value["artifactSourceCommit"] == digest(source_sha, 40)
             and value["lockSetSha256"] == locks(source), "Cold inputs do not bind the exact source/production locks")
-    closed(value["core"], "artifactSourceCommit sdkVersion")
-    require(value["core"] == {"artifactSourceCommit": digest(core_sha, 40), "sdkVersion": "1.1.0"}, "Cold Core material differs")
+    version_field = "sdkVersion" if value["schemaVersion"] == 1 else "buildToolVersion"
+    closed(value["core"], "artifactSourceCommit " + version_field)
+    require(value["core"]["artifactSourceCommit"] == digest(core_sha, 40), "Cold Core source differs")
+    version(value["core"][version_field])
     require(type(value["candidates"]) is list and 0 < len(value["candidates"]) <= 128, "Invalid candidate inventory")
     selected = {}
     platforms = set()
@@ -133,9 +135,9 @@ def validate_manifest(source, value, source_sha, core_sha):
         version(item["version"])
         digest(item["packageContentIdentity"])
         digest(item["publicInventorySha256"])
-        locator(item["asset"])
-        require(item["asset"]["repository"] == "Younics/sunder-agent-package"
-                and item["asset"]["name"].endswith(".sunderpkg"), "Candidate must be an approved Agent archive asset")
+        input_asset(item["asset"], value["schemaVersion"])
+        require((value["schemaVersion"] == 2 or item["asset"]["repository"] == "Younics/sunder-agent-package")
+                and item["asset"]["name"].endswith(".sunderpkg"), "Candidate must be an Agent archive")
         actual.append(tuple(item[k] for k in ("packageId", "version", "packageContentIdentity", "publicInventorySha256")))
     require(actual == sorted(selected), "Missing/extra/duplicate or differently selected cold candidates")
     require(len({key[0] for key in actual}) == len(actual), "Initial family profile requires one exact candidate per package ID")
@@ -145,11 +147,21 @@ def validate_manifest(source, value, source_sha, core_sha):
             "Cold catalog must cover every direct and inventory-only platform constraint")
     digest(catalog["catalogSha256"])
     version(catalog["releaseVersion"])
-    locator(catalog["asset"], 67108864)
-    require(catalog["asset"]["repository"] == "Younics/sunder-core" and catalog["asset"]["sha256"] == catalog["catalogSha256"],
+    input_asset(catalog["asset"], value["schemaVersion"], 67108864)
+    require((value["schemaVersion"] == 2 or catalog["asset"]["repository"] == "Younics/sunder-core") and catalog["asset"]["sha256"] == catalog["catalogSha256"],
             "Core catalog asset/content identity differs")
     names = [i["asset"]["name"] for i in [*value["candidates"], catalog]]
     require(len(names) == len({n.casefold() for n in names}) and MANIFEST not in names, "Cold input filename collision")
+    return value
+
+
+def input_asset(value, schema, maximum=268435456):
+    if schema == 1:
+        return locator(value, maximum)
+    closed(value, "name size sha256")
+    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,159}", value["name"]), "Unsafe dependency filename")
+    require(positive(value["size"]) <= maximum, "Dependency exceeds its byte bound")
+    digest(value["sha256"])
     return value
 
 
@@ -167,6 +179,25 @@ def verify(source, bundle, approved_sha, source_sha, core_sha):
     return value
 
 
+def verify_candidate_file(source, path):
+    """Admit one exact dependency before any downstream build may consume it."""
+    path = regular(path).resolve()
+    require(path.stat().st_size <= 268435456, "Candidate exceeds the archive bound")
+    manifest, public, public_sha = archive_metadata(path)
+    key = (manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
+    entries = [entry for _, lock in lock_documents(source) for package_id, entry in lock["packageArtifacts"].items() if package_id == manifest["id"]]
+    require(entries and all(key[1:] == (item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"]) for item in entries),
+            "Candidates do not match every exact committed package selection: " + manifest["id"])
+    expected = {c["contractId"]: {
+        **{k: c[k] for k in ("artifactSource", "authorityKind", "authorityId", "selectedAuthorityRelease", "selectedAuthorityContentIdentity")},
+        "resolvedContractVersion": c["contractVersion"], "descriptorBytes": c["descriptorBytes"],
+        "descriptorSha256": c["descriptorSha256"], "abiSha256": c["abiSha256"], "etag": '"' + c["descriptorSha256"] + '"'
+    } for c in public["contracts"]}
+    require(len(expected) == public["publicContractCount"] and all(item["publicContractCount"] == len(expected)
+            and canonical(item["contracts"]) == canonical(expected) for item in entries), "Candidate does not reproduce the complete committed lock entry")
+    return key, path
+
+
 def verify_selected_files(source, candidates, catalog_path):
     """Shared local/CI/release admission against complete committed lock selections.
 
@@ -176,16 +207,12 @@ def verify_selected_files(source, candidates, catalog_path):
     documents = lock_documents(source)
     expected = {(package_id, item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"])
                 for _, lock in documents for package_id, item in lock["packageArtifacts"].items()}
-    candidate_metadata, paths, actual = {}, {}, set()
+    paths, actual = {}, set()
     for path in candidates:
-        path = regular(path).resolve()
-        require(path.stat().st_size <= 268435456, "Candidate exceeds the archive bound")
-        manifest, public, public_sha = archive_metadata(path)
-        key = (manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
-        require(manifest["id"] not in candidate_metadata, "Duplicate selected candidate")
+        key, path = verify_candidate_file(source, path)
+        require(key[0] not in paths, "Duplicate selected candidate")
         actual.add(key)
-        candidate_metadata[manifest["id"]] = public
-        paths[manifest["id"]] = path
+        paths[key[0]] = path
     require(actual == expected, "Candidates do not match every exact committed package selection")
     catalog_path = regular(catalog_path).resolve()
     catalog = load(catalog_path)
@@ -198,14 +225,6 @@ def verify_selected_files(source, candidates, catalog_path):
     catalog_records = {c["contractId"]: c for c in catalog["contracts"]}
     require(len(catalog_records) == len(catalog["contracts"]), "Duplicate catalog contract")
     for _, lock in documents:
-        for package_id, entry in lock["packageArtifacts"].items():
-            public = candidate_metadata[package_id]
-            expected = {c["contractId"]: {
-                **{k: c[k] for k in ("artifactSource", "authorityKind", "authorityId", "selectedAuthorityRelease", "selectedAuthorityContentIdentity")},
-                "resolvedContractVersion": c["contractVersion"], "descriptorBytes": c["descriptorBytes"],
-                "descriptorSha256": c["descriptorSha256"], "abiSha256": c["abiSha256"], "etag": '"' + c["descriptorSha256"] + '"'
-            } for c in public["contracts"]}
-            require(entry["publicContractCount"] == len(expected) and canonical(entry["contracts"]) == canonical(expected), "Candidate does not reproduce the complete committed lock entry")
         for item in catalog_requirements(lock):
             contract = catalog_records[item["contractId"]]
             require(all(contract[k] == item[k] for k in ("descriptorBytes", "descriptorSha256", "abiSha256"))
@@ -215,7 +234,31 @@ def verify_selected_files(source, candidates, catalog_path):
 
 
 def fetch(source, destination, source_sha, core_sha, selected=None):
-    selected = locator(selected if selected is not None else decode(os.environ["SUNDER_AGENT_COLD_INPUT_MANIFEST"].encode()), MAX_MANIFEST)
+    if selected is None:
+        # Dependencies and hashes are discovered/generated, not operator approvals.
+        import dependency_inputs
+        source, destination = Path(source).resolve(), Path(destination).resolve()
+        core = source.parent / "sunder-core"
+        require(subprocess.check_output(["git", "-C", str(core), "rev-parse", "HEAD"], text=True).strip() == core_sha, "Core checkout differs")
+        resolved = dependency_inputs.resolve(source, core, destination)
+        versions = {release for name, release in dependency_inputs.core_packages(source) if name == "Sunder.Package.Build"}
+        require(len(versions) == 1, "Expected one declared Build tool version")
+        candidates = []
+        for asset in resolved["candidates"]:
+            manifest, public, public_sha = archive_metadata(destination / asset["name"])
+            candidates.append(dict(packageId=manifest["id"], version=manifest["version"], packageContentIdentity=public["packageContentIdentity"],
+                publicInventorySha256=public_sha, asset=asset))
+        catalog = load(destination / resolved["platformCatalog"]["name"])
+        value = dict(schemaVersion=2, artifactSourceCommit=source_sha, lockSetSha256=locks(source),
+            core=dict(artifactSourceCommit=core_sha, buildToolVersion=next(iter(versions))), candidates=sorted(candidates, key=lambda item: item["packageId"]),
+            platformCatalog=dict(authorityId=catalog["authorityId"], releaseVersion=catalog["releaseVersion"],
+                catalogSha256=resolved["platformCatalog"]["sha256"], asset=resolved["platformCatalog"]))
+        (destination / "ci-inputs.json").unlink()  # Replace our transient CI index, not a source file.
+        (destination / MANIFEST).write_bytes(canonical(value) + b"\n")
+        verify(source, destination, file_sha(destination / MANIFEST), source_sha, core_sha)
+        print("Resolved authored dependencies and generated the input inventory automatically.")
+        return value
+    selected = locator(selected, MAX_MANIFEST)
     destination = Path(destination).absolute()
     require(not destination.exists() and not destination.is_symlink(), "Cold input destination must be new")
     destination.mkdir()
@@ -232,7 +275,9 @@ def fetch(source, destination, source_sha, core_sha, selected=None):
 
 def source_snapshot(source):
     names = {"packages.json"}
+    names.update(name for name in ("Directory.Build.props", "Directory.Build.targets") if (Path(source) / name).exists())
     for package in inventory(source)["packages"]:
+        names.add(package["projectPath"])
         parent = PurePosixPath(package["projectPath"]).parent
         names.update(str(parent / name) for name in ("sunder-contracts.lock.json", "sunder-contracts.owned.json", "packages.release.lock.json"))
     result = {}
@@ -247,13 +292,14 @@ def source_snapshot(source):
 def clean_source(source, source_sha):
     require(subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() == source_sha,
             "Cold source checkout is not the approved artifact source")
-    require(subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--", "packages.json", "src"], check=False).returncode == 0,
+    require(subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--", "packages.json", "src",
+                            "Directory.Build.props", "Directory.Build.targets"], check=False).returncode == 0,
             "Cold source/lock/baseline checkout has local changes")
 
 
 def properties(source, mode):
     require(mode in ("source", "package"), "Unknown source/dependency mode")
-    result = ["-p:Configuration=Release", "-p:SunderAgentVersion=" + inventory(source)["releaseVersion"],
+    result = ["-p:Configuration=Release",
               "-p:ContinuousIntegrationBuild=true", "-p:SunderUseSourceSdk=" + ("true" if mode == "source" else "false"),
               "-p:UseSharedCompilation=false", "-p:NuGetAudit=false"]
     if mode == "package":
@@ -345,7 +391,9 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
             project = source.parent / "sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/Sunder.Package.Build.csproj"
             require(run(["dotnet", "build", str(project), "-c", "Release", "--no-restore", "-p:ContinuousIntegrationBuild=true", "-p:UseSharedCompilation=false"], env, source).returncode == 0,
                     "Core tool preparation failed")
-            shutil.copytree(project.parent / "bin/Release/net10.0", work / "tools")
+            evaluated = run(["dotnet", "msbuild", str(project), "-p:Configuration=Release", "-p:ContinuousIntegrationBuild=true", "-getProperty:TargetDir"], env, source, capture=True)
+            require(evaluated.returncode == 0, "Could not resolve prepared Core tool output")
+            shutil.copytree(evaluated.stdout.strip(), work / "tools")
             tool = str(work / "tools/Sunder.Package.Build.dll")
         if tool:
             for name in TOOL_FILES:
@@ -356,7 +404,7 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
                              "-getProperty:Configuration,Version,ContinuousIntegrationBuild,RuntimeIdentifiers,SunderPackageRuntimeIdentifiers,ProjectAssetsFile"], env, source, True)
             require(evaluated.returncode == 0, "Could not verify restored project context")
             props = decode(evaluated.stdout.encode())["Properties"]
-            require(props["Configuration"] == "Release" and props["Version"] == inventory(source)["releaseVersion"]
+            require(props["Configuration"] == "Release" and props["Version"] == package["version"]
                     and props["ContinuousIntegrationBuild"].lower() == "true"
                     and set(props["RuntimeIdentifiers"].split(";")) == set(RIDS)
                     and (not props["SunderPackageRuntimeIdentifiers"] or set(props["SunderPackageRuntimeIdentifiers"].split(";")) == set(RIDS)),

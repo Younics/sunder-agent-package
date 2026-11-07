@@ -1,0 +1,114 @@
+<Project>
+  <PropertyGroup>
+    <_ProviderCandidate>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)agent.sunderpkg', '$(MSBuildProjectDirectory)'))</_ProviderCandidate>
+    <_ProviderTaskAssembly>$(SunderPackageBuildTaskAssembly)</_ProviderTaskAssembly>
+    <_ProviderTaskAssembly Condition="'$(_ProviderTaskAssembly)' == '' and '$(SunderUseSourceSdk)' == 'true'">$([System.IO.Path]::GetDirectoryName('$(SunderBuildToolingProject)'))/bin/$(Configuration)/net10.0/Sunder.Package.Build.dll</_ProviderTaskAssembly>
+    <_ProviderTaskAssembly Condition="'$(_ProviderTaskAssembly)' == ''">$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll</_ProviderTaskAssembly>
+    <_ProviderPackTaskAssembly>$(SunderPackageBuildTaskAssembly)</_ProviderPackTaskAssembly>
+    <_ProviderPackTaskAssembly Condition="'$(_ProviderPackTaskAssembly)' == '' and '$(SunderUseSourceSdk)' == 'true'">$([System.IO.Path]::GetDirectoryName('$(SunderBuildToolingProject)'))/bin/$(Configuration)-sunder-bootstrap/net10.0/Sunder.Package.Build.dll</_ProviderPackTaskAssembly>
+    <_ProviderPackTaskAssembly Condition="'$(_ProviderPackTaskAssembly)' == ''">$(_ProviderTaskAssembly)</_ProviderPackTaskAssembly>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Share the normal solution build before packing its qualified native output.
+         A separate Pack reference would race Build for the same package lease. -->
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      ReferenceOutputAssembly="false" Private="false" Targets="GetSunderPackageRoleInputs"
+                      OutputItemType="_ProviderAgentInput" AdditionalProperties="SunderPackageReferenceRole=worker" />
+  </ItemGroup>
+  <UsingTask TaskName="Sunder.Package.Build.Tasks.ManageSunderPackageApiTask" AssemblyFile="$(_ProviderTaskAssembly)" />
+  <UsingTask TaskName="Sunder.Package.Build.Tasks.GenerateSunderRpcBindingsTask" AssemblyFile="$(_ProviderTaskAssembly)" />
+  <UsingTask TaskName="WriteTestProviderSelection" TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)/Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <DestinationFile ParameterType="System.String" Required="true" />
+      <Content ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        // The product's selection format requires compact UTF-8, with no newline.
+        if (!System.IO.File.Exists(DestinationFile) || System.IO.File.ReadAllText(DestinationFile) != Content)
+          System.IO.File.WriteAllText(DestinationFile, Content, new System.Text.UTF8Encoding(false));
+      ]]></Code>
+    </Task>
+  </UsingTask>
+
+  <Target Name="_PackTestProviderDependency" DependsOnTargets="ResolveReferences"
+          Condition="'$(BuildProjectReferences)' != 'false' and '$(DesignTimeBuild)' != 'true'">
+    <PropertyGroup>
+      <_ProviderRolePath>@(_ProviderAgentInput->'%(RoleInputsPath)')</_ProviderRolePath>
+      <_ProviderRoleHash>@(_ProviderAgentInput->'%(RoleInputsSha256)')</_ProviderRoleHash>
+      <!-- The qualified input hash includes the complete toolset. A rebuilt tool
+           dependency must get a new immutable path, including across build runs. -->
+      <_ProviderInputs>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)provider-inputs/$(_ProviderRoleHash)', '$(MSBuildProjectDirectory)'))</_ProviderInputs>
+    </PropertyGroup>
+    <Error Condition="'@(_ProviderAgentInput->Count())' != '1' or '$(_ProviderRolePath)' == '' or '$(_ProviderRoleHash)' == ''" Text="The Agent build must return one qualified native role input for test providers." />
+    <MakeDir Directories="$(_ProviderInputs)/tools" />
+    <ItemGroup>
+      <_ProviderPackTool Include="$([System.IO.Path]::GetDirectoryName('$(_ProviderPackTaskAssembly)'))/**/*" />
+      <_ProviderNativeInput Include="$([System.IO.Path]::GetDirectoryName('$(_ProviderRolePath)'))/**/*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_ProviderPackTool)" DestinationFiles="@(_ProviderPackTool->'$(_ProviderInputs)/tools/%(RecursiveDir)%(Filename)%(Extension)')"
+          Condition="!Exists('$(_ProviderInputs)/tools/%(_ProviderPackTool.RecursiveDir)%(_ProviderPackTool.Filename)%(_ProviderPackTool.Extension)')" />
+    <Copy SourceFiles="@(_ProviderNativeInput)" DestinationFiles="@(_ProviderNativeInput->'$(_ProviderInputs)/native/%(RecursiveDir)%(Filename)%(Extension)')"
+          Condition="!Exists('$(_ProviderInputs)/native/%(_ProviderNativeInput.RecursiveDir)%(_ProviderNativeInput.Filename)%(_ProviderNativeInput.Extension)')" />
+    <WriteTestProviderSelection DestinationFile="$(_ProviderInputs)/selection.json"
+                                Content="{&quot;schemaVersion&quot;:1,&quot;inputs&quot;:[{&quot;runtimeIdentifier&quot;:&quot;%(_ProviderAgentInput.RuntimeIdentifier)&quot;,&quot;path&quot;:&quot;native/role-inputs.v1.json&quot;,&quot;sha256&quot;:&quot;%(_ProviderAgentInput.RoleInputsSha256)&quot;}]}" />
+    <MSBuild Projects="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" Targets="PackSunderPackage"
+             Properties="Configuration=$(Configuration);TargetFramework=$(TargetFramework);RuntimeIdentifier=%(_ProviderAgentInput.RuntimeIdentifier);BuildProjectReferences=false;SunderPackageUsePrebuiltLeaves=true;SunderPackageBuildTaskSourceIsImmutable=true;SunderPackageBuildTaskAssembly=$(_ProviderInputs)/tools/Sunder.Package.Build.dll;SunderPackagePrebuiltRoleInputsFile=$(_ProviderInputs)/selection.json;SunderPackageOutputPath=$(_ProviderCandidate)" />
+    <ItemGroup><FileWrites Include="$(_ProviderInputs)/**/*;$(_ProviderCandidate)" /></ItemGroup>
+  </Target>
+
+  <Target Name="_ProviderBuildInputs" DependsOnTargets="_PackTestProviderDependency;ResolveReferences;GenerateGlobalUsings">
+    <PropertyGroup>
+      <_ProviderRoot>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)providers', '$(MSBuildProjectDirectory)'))</_ProviderRoot>
+      <_ProviderCatalog>$(SunderPlatformCatalogPath)</_ProviderCatalog>
+      <_ProviderCatalog Condition="'$(_ProviderCatalog)' == ''">$(SUNDER_AGENT_SOURCE_PLATFORM_CATALOG)</_ProviderCatalog>
+    </PropertyGroup>
+    <ItemGroup>
+      <_ProviderSource Include="@(Compile)" Condition="'%(Compile.AutoGen)' != 'true'" />
+    </ItemGroup>
+  </Target>
+
+  <!-- Only the intermediate directory is mutable. Import selection and generation
+       are product tasks; compiler inputs, errors and rebuilds belong to MSBuild. -->
+  <Target Name="_GenerateTestProviders" DependsOnTargets="_ProviderBuildInputs"
+          Inputs="@(_ProviderSource);@(ReferencePath);$(_ProviderCandidate);$(_ProviderTaskAssembly);$(MSBuildAllProjects);$(MSBuildProjectFullPath);$(MSBuildProjectDirectory)/sunder-contracts.lock.json"
+          Outputs="$(_ProviderRoot)/complete">
+    <RemoveDir Directories="$(_ProviderRoot)" />
+    <MakeDir Directories="$(_ProviderRoot)" />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/sunder-contracts.lock.json" DestinationFolder="$(_ProviderRoot)" />
+    <ManageSunderPackageApiTask Operation="Add" ProjectDirectory="$(_ProviderRoot)"
+                              PackageId="younics.ai.agent" VersionRange="&gt;=2.0.0 &lt;3.0.0" Presence="required" LocalName="agent"
+                              Candidate="$(_ProviderCandidate)" PlatformCatalogPath="$(_ProviderCatalog)"
+                              ContractCacheRoot="$(SunderContractCacheRoot)" PackageVersion="$(Version)"
+                              AssemblyName="$(AssemblyName)" ProjectIdentity="$(MSBuildProjectName)"
+                              Configuration="$(Configuration)" TargetFramework="$(TargetFramework)" OutputType="Library"
+                              IntermediateOutputPath="obj" />
+    <ManageSunderPackageApiTask Operation="Implement" ProjectDirectory="$(_ProviderRoot)"
+                              PackageId="younics.ai.agent" ContractId="younics.ai.agent.%(ProviderContract.Identity)"
+                              LocalName="%(ProviderContract.LocalName)" ContractCacheRoot="$(SunderContractCacheRoot)"
+                              PackageVersion="$(Version)" AssemblyName="$(AssemblyName)" ProjectIdentity="$(MSBuildProjectName)"
+                              Configuration="$(Configuration)" TargetFramework="$(TargetFramework)" OutputType="Library"
+                              IntermediateOutputPath="obj" />
+    <GenerateSunderRpcBindingsTask ProjectDirectory="$(_ProviderRoot)" IntermediateOutputPath="obj"
+                                  PackageId="example.agent.regression.providers" PackageVersion="$(Version)"
+                                  AssemblyName="$(AssemblyName)" ProjectIdentity="$(MSBuildProjectName)"
+                                  Configuration="$(Configuration)" TargetFramework="$(TargetFramework)" OutputType="Library"
+                                  SourceFiles="@(_ProviderSource)" ReferencePaths="@(ReferencePath)"
+                                  ContractCacheRoot="$(SunderContractCacheRoot)" />
+    <Touch Files="$(_ProviderRoot)/complete" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="IncludeTestProviders" BeforeTargets="AssignTargetPaths;CoreCompile"
+          DependsOnTargets="_GenerateTestProviders" Condition="'$(DesignTimeBuild)' != 'true'">
+    <ItemGroup>
+      <Compile Include="$(_ProviderRoot)/obj/sunder-rpc/**/*.cs" />
+      <EmbeddedResource Include="$(_ProviderRoot)/obj/sunder-rpc/contracts/rpc-model-projection.v1.json"
+                        LogicalName="Contracts.Projection.json" />
+      <_ProviderDescriptor Include="$(_ProviderRoot)/obj/sunder-rpc/.snapshots/*.rpc.json" />
+      <EmbeddedResource Include="@(_ProviderDescriptor)"
+                        LogicalName="Contracts.%(_ProviderDescriptor.Filename)%(_ProviderDescriptor.Extension)" />
+      <FileWrites Include="$(_ProviderRoot)/**/*;$(_ProviderCandidate)" />
+    </ItemGroup>
+  </Target>
+</Project>

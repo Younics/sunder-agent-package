@@ -128,7 +128,7 @@ public sealed partial class BuilderSourceMigrationTests
         Assert.Contains("changed", stale.GetProperty("error").GetString(), StringComparison.OrdinalIgnoreCase);
 
         var alternate = new object();
-        state.Add(context.PackageId, descriptor, alternate, registration.Handler, NoopDisposable.Instance, "builder.alternate", "2.0.0");
+        state.Add(context.PackageId, descriptor, alternate, registration.Handler, NoopDisposable.Instance, "builder.alternate", context.Version);
         var ambiguous = await Assert.ThrowsAsync<SunderRpcException>(() => Invoke(gateway, "InspectAsync", entry, CancellationToken.None));
         Assert.Equal("rpc.provider-ambiguous", ambiguous.Error.Code);
         await state.RetireAsync(alternate);

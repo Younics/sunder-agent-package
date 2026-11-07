@@ -95,7 +95,7 @@ public sealed class MemoryAppSourceMigrationTests
             state.Add("other.memory", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
                 foreign.Handler, foreign.Handler, Noop.Instance, foreign.ProviderId, "2.0.0");
             state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
-                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
             await using var store = new MemoryLocalStore(package.Context);
             var sessionId = Guid.NewGuid();
             var memory = store.UpsertMemory(new(sessionId, "fact", "Original memory", "original memory", "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
@@ -153,7 +153,7 @@ public sealed class MemoryAppSourceMigrationTests
             var reconnected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             gateway.ResetRequired += () => reconnected.TrySetResult();
             state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
-                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
             await reconnected.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal(acceptedProjection.Count, (await gateway.ListMemoriesAsync(sessionId, includeInactive: true)).Count);
             await ((IAsyncDisposable)gateway).DisposeAsync();

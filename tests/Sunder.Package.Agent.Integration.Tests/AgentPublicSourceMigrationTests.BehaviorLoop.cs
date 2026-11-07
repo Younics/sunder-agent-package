@@ -212,7 +212,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 var differentControl = new AgentRunControlService((AgentActiveRunRegistry)fixture.Registry.Value);
                 var differentRegistration = fixture.OwnerReceiver.Register(differentControl, controlDescriptor.ContractId);
                 fixture.State.Add("younics.ai.agent", controlDescriptor, differentControl, differentRegistration.Handler,
-                    EmptyDisposable.Instance, "different.run.control", "2.0.0");
+                    EmptyDisposable.Instance, "different.run.control", CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
                 var calls = loop.Calls;
                 var peerCalls = fixture.State.InvocationAttemptCount;
                 var unavailable = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Bridge.RunAsync(host.Context, host).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
@@ -222,7 +222,7 @@ public sealed partial class AgentPublicSourceMigrationTests
                 Assert.Equal(calls, loop.Calls);
 
                 var registration = fixture.OwnerReceiver.Register(fixture.Control, controlDescriptor.ContractId);
-                fixture.State.Add("younics.ai.agent", controlDescriptor, fixture.Control, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+                fixture.State.Add("younics.ai.agent", controlDescriptor, fixture.Control, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
                 using var invocation = fixture.Registry.Open(host, fixture.LoopPackage, out var id);
                 var retained = fixture.Owner.LastRun! with { InvocationId = id };
                 var stale = await Assert.ThrowsAsync<SunderRpcException>(() => fixture.Client.RunAsync(retained.Context, retained.InvocationId, fixture.ControlReference).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));

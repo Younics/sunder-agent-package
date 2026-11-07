@@ -1,19 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Reviewed Agent cold release inputs V1",
+  "title": "Automatically resolved Agent cold acceptance inputs V2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "artifactSourceCommit", "lockSetSha256", "core", "candidates", "platformCatalog"],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "artifactSourceCommit": { "$ref": "#/$defs/commit" },
     "lockSetSha256": { "$ref": "#/$defs/sha256" },
     "core": {
       "type": "object", "additionalProperties": false,
-      "required": ["artifactSourceCommit", "sdkVersion"],
+      "required": ["artifactSourceCommit", "buildToolVersion"],
       "properties": {
         "artifactSourceCommit": { "$ref": "#/$defs/commit" },
-        "sdkVersion": { "const": "1.1.0" }
+        "buildToolVersion": { "$ref": "#/$defs/version" }
       }
     },
     "candidates": {
@@ -47,11 +47,8 @@
     "version": { "type": "string", "minLength": 5, "maxLength": 256 },
     "asset": {
       "type": "object", "additionalProperties": false,
-      "required": ["repository", "releaseId", "assetId", "name", "size", "sha256"],
+      "required": ["name", "size", "sha256"],
       "properties": {
-        "repository": { "enum": ["Younics/sunder-agent-package", "Younics/sunder-core"] },
-        "releaseId": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
-        "assetId": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
         "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,159}$" },
         "size": { "type": "integer", "minimum": 1, "maximum": 268435456 },
         "sha256": { "$ref": "#/$defs/sha256" }

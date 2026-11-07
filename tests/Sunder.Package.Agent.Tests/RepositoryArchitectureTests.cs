@@ -6,6 +6,7 @@ using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Compatibility;
+using Sunder.Sdk.Packaging;
 using Sunder.Sdk.Rpc;
 using Sunder.Package.Build.Rpc.Generation;
 using Xunit;
@@ -371,7 +372,7 @@ public sealed partial class RepositoryArchitectureTests
         {
             var ownerRoot = ownerDescriptor.RootElement;
             Assert.Equal("sunder.rpc.values.v1", ownerRoot.GetProperty("schemaProfile").GetString());
-            Assert.Equal("2.0.0", ownerRoot.GetProperty("version").GetString());
+            Assert.Equal(CurrentContractInventory.PackageVersionFor(CurrentContractInventory.AgentId), ownerRoot.GetProperty("version").GetString());
             var ownerDefinitions = ownerRoot.GetProperty("$defs");
             var date = Assert.Single(ownerDefinitions.GetProperty("AgentModelDescriptor").GetProperty("properties")
                 .GetProperty("releaseDate").GetProperty("oneOf").EnumerateArray(), value => value.GetProperty("type").GetString() != "null");
@@ -615,10 +616,17 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Equal("true", GetSingleProperty(buildProperties, "Deterministic"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "EnableNETAnalyzers"));
         Assert.Equal("2.0.0", GetSingleProperty(buildProperties, "VersionPrefix"));
-        Assert.Equal("$(VersionPrefix)", GetSingleProperty(buildProperties, "SunderAgentVersion"));
-        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "Version"));
-        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "PackageVersion"));
-        Assert.Equal("$(SunderAgentVersion)", GetSingleProperty(buildProperties, "InformationalVersion"));
+        Assert.Empty(buildProperties.Descendants("SunderAgentVersion"));
+        Assert.Equal("$(VersionPrefix)", GetSingleProperty(buildProperties, "Version"));
+        var buildTargets = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Build.targets"));
+        Assert.Equal("$(Version)", GetSingleProperty(buildTargets, "PackageVersion"));
+        Assert.Equal("$(Version)", GetSingleProperty(buildTargets, "InformationalVersion"));
+        using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repositoryRoot, "packages.json")));
+        foreach (var package in inventory.RootElement.GetProperty("packages").EnumerateArray())
+        {
+            var project = XDocument.Load(Path.Combine(repositoryRoot, package.GetProperty("projectPath").GetString()!));
+            Assert.True(SemanticVersion.TryParse(GetSingleProperty(project, "Version"), out _));
+        }
         Assert.Equal("GPL-3.0-only", GetSingleProperty(buildProperties, "PackageLicenseExpression"));
 
         var packageProperties = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Packages.props"));
@@ -628,14 +636,9 @@ public sealed partial class RepositoryArchitectureTests
             .Where(reference => reference.Attribute("Include")?.Value.StartsWith("Sunder.", StringComparison.Ordinal) == true)
             .ToArray();
         Assert.Equal(5, sunderPackageVersions.Length);
-        Assert.Equal(
-            "[1.1.0]",
-            Assert.Single(sunderPackageVersions, static reference =>
-                reference.Attribute("Include")?.Value == "Sunder.Sdk.Worker").Attribute("Version")?.Value);
-        Assert.All(
-            sunderPackageVersions.Where(static reference =>
-                reference.Attribute("Include")?.Value != "Sunder.Sdk.Worker"),
-            reference => Assert.Equal("[1.1.0,1.2.0)", reference.Attribute("Version")?.Value));
+        Assert.All(sunderPackageVersions, reference => Assert.True(
+            SemanticVersion.TryParse(reference.Attribute("Version")?.Value, out _),
+            $"{reference.Attribute("Include")?.Value} must declare its own ordinary NuGet version."));
         var avaloniaVersions = packageProperties.Descendants("PackageVersion")
             .Where(static reference => reference.Attribute("Include")?.Value == "Avalonia")
             .ToArray();
@@ -655,7 +658,6 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Equal("younics.ai.agent", GetSingleProperty(presentationTestProject, "SunderPackageFamilyId"));
         Assert.Equal("test", GetSingleProperty(presentationTestProject, "SunderPackageRole"));
 
-        var buildTargets = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Build.targets"));
         var storageKeyItem = Assert.Single(buildTargets.Descendants("Compile"), static item =>
             item.Attribute("Include")?.Value.EndsWith(
                 "src/Sunder.Package.Agent.Shared/Storage/CurrentPackageStorageKey.cs",
@@ -771,7 +773,8 @@ public sealed partial class RepositoryArchitectureTests
                 source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/build-native-family.ps1"));
                 source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/native-family.py"));
             }
-            Assert.Contains("SunderAgentVersion", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("-p:SunderAgentVersion=", source, StringComparison.Ordinal);
+            Assert.DoesNotContain("\"SunderAgentVersion\":", source, StringComparison.Ordinal);
             Assert.DoesNotContain("-p:Version=", source, StringComparison.Ordinal);
             Assert.DoesNotContain("-p:PackageVersion=", source, StringComparison.Ordinal);
             Assert.DoesNotContain("-p:InformationalVersion=", source, StringComparison.Ordinal);

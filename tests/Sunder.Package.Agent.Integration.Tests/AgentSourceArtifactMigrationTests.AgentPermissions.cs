@@ -38,12 +38,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(AgentPermissionDecision.Deny, (await EvaluateAsync("", "")).Decision);
         Assert.Equal(AgentPermissionDecisionSource.UnknownBoundary, (await EvaluateAsync("files.read", AgentPermissionBoundaryIds.ConfiguredScope)).Source);
 
-        var filesContext = new TestPackageContext("younics.ai.agent.tools.files", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var filesContext = new TestPackageContext("younics.ai.agent.tools.files", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.tools.files"), storage: package.Context.Storage);
         var (filesOptions, filesLifetime, _) = CreateGeneratedWorker(files, filesContext, rpc);
         await using var ownedFiles = filesLifetime;
         var filesRegistration = Assert.Single(filesOptions.Providers, value => value.ProviderId == "files.permissions");
         var filesHandler = AddSurfaceProvider(state, filesContext.PackageId, filesRegistration);
-        var shellContext = new TestPackageContext("younics.ai.agent.tools.shell", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var shellContext = new TestPackageContext("younics.ai.agent.tools.shell", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.tools.shell"), storage: package.Context.Storage);
         var (shellOptions, shellLifetime, _) = CreateGeneratedWorker(shell, shellContext, rpc);
         await using var ownedShell = shellLifetime;
         var shellRegistration = Assert.Single(shellOptions.Providers, value => value.ProviderId == "shell.permissions");

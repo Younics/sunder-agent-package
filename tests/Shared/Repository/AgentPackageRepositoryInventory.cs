@@ -21,6 +21,7 @@ internal sealed record RuntimePackageProject(
         "sunder-rpc", "roles", "worker", "worker-entry.g.cs");
 
     public string? FamilyId => GetProperty("SunderPackageFamilyId");
+    public string Version => GetProperty("Version") ?? throw new InvalidDataException("Canonical package needs its own Version.");
 
     public string? Role => GetProperty("SunderPackageRole");
 

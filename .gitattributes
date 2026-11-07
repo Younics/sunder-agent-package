@@ -1,3 +1,5 @@
+# Native qualification compares source bytes across runner operating systems.
+* text=auto eol=lf
 # Preserve exact contract, lock and retained evidence bytes on every runner.
 *.json -text
 compatibility/** -text

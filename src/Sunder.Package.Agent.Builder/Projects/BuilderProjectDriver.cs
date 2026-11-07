@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using Sunder.Sdk.Packaging;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -25,14 +26,14 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         };
         this.discovery = discovery ?? new();
         this.saveMetadata = saveMetadata;
-        if (!Regex.IsMatch(options.CoordinatedPackageVersion, @"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$", RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            throw new ArgumentException("An exact coordinated Sunder developer package version is required.");
+        foreach (var version in new[] { options.DotnetTemplateVersion, options.NodeSdkVersion, options.NodeCreatorVersion })
+            if (!SemanticVersion.TryParse(version, out _)) throw new ArgumentException("An exact Sunder package version is required.");
         if (options.CommandTimeout <= TimeSpan.Zero || options.CommandTimeout > TimeSpan.FromMinutes(30)) throw new ArgumentException("Invalid command deadline.");
         foreach (var path in new[] { options.DotnetTemplatePackagePath, options.NuGetConfigPath, options.NodeCreatorPackagePath, options.NodeMetadataToolCliPath }.Where(path => path is not null))
             _ = BuilderJobValidation.Absolute(path!, "Local tooling override");
         foreach (var (name, path) in options.NodePackageOverrides)
         {
-            if (name is not ("@sunder/sdk" or "@sunder/package-tool")) throw new ArgumentException("Only coordinated Sunder SDK/tool packages can be overridden.");
+            if (name is not ("@younics/sunder-sdk" or "@younics/sunder-package-tool")) throw new ArgumentException("Only Sunder SDK/tool packages can be overridden.");
             _ = BuilderJobValidation.Absolute(path, "Local Node package override");
         }
         if (options.NodeRegistryUri is { } registry && (!Uri.TryCreate(registry, UriKind.Absolute, out var uri) ||

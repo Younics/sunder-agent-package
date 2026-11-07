@@ -53,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 or "ModelContextProtocol" or "ModelContextProtocol.Core");
             using var workspace = RegressionTestPackageScope.Create();
             var callbacks = new AppCallbackProbe("younics.ai.agent.mcp", "mcp.oauth.v1", new Dictionary<string, string> { ["serverId"] = "artifact-mcp" });
-            var context = new TestPackageContext("younics.ai.agent.mcp", workspace.RootPath, version: "2.0.0", storage: workspace.Context.Storage, callbacks: callbacks);
+            var context = new TestPackageContext("younics.ai.agent.mcp", workspace.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.mcp"), storage: workspace.Context.Storage, callbacks: callbacks);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.mcp");
             var syncType = runtime.GetType("Sunder.Package.Agent.Mcp.Services.McpSunderConfigurationSyncService", true)!;
@@ -76,7 +76,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                         "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("younics.ai.agent.mcp", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.mcp", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appProvider = CreateGeneratedApp(presentation, context, rpc);
             var gateway = appProvider.GetRequiredService(presentation.GetType("Sunder.Package.Agent.Mcp.Runtime.McpAppRuntimeGateway", true)!);

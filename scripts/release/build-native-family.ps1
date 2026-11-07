@@ -1,6 +1,5 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")]
     [string] $Rid,
 
     [Parameter(Mandatory = $true)]
@@ -10,16 +9,7 @@ param(
     [string] $OutputDirectory,
 
     [Parameter(Mandatory = $true)]
-    [string] $ColdInputsDirectory,
-
-    [Parameter(Mandatory = $true)]
-    [string] $ColdManifestSha256,
-
-    [Parameter(Mandatory = $true)]
-    [string] $ArtifactSourceCommit,
-
-    [Parameter(Mandatory = $true)]
-    [string] $CoreCommit
+    [string] $InputsDirectory
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,10 +27,20 @@ if ($nativeRid -cne $Rid) {
 }
 
 $inventory = Get-Content -LiteralPath $inventoryPath -Raw | ConvertFrom-Json
+$policy = & python3 -B (Join-Path $PSScriptRoot "family_policy.py") | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0 -or $Rid -cnotin $policy.rids) { throw "Invalid native family policy/platform." }
+$familyCount = @($policy.packageIds).Count
 $packages = @($inventory.packages | Where-Object { $_.artifactType -ceq "sunderpkg" } | Sort-Object key)
-if ($packages.Count -ne 15 -or @($inventory.packages).Count -ne 15 -or
-    @($packages.packageId | Sort-Object -Unique).Count -ne 15) {
-    throw "Expected exactly 15 unique canonical package archives."
+if ($packages.Count -ne $familyCount -or @($inventory.packages).Count -ne $familyCount -or
+    @($packages.packageId | Sort-Object -Unique).Count -ne $familyCount) {
+    throw "Expected the complete reviewed family of $familyCount unique canonical package archives."
+}
+$selective = $Version.EndsWith(".json", [StringComparison]::Ordinal) -and (Test-Path -LiteralPath $Version -PathType Leaf)
+if ($selective) {
+    $Version = [System.IO.Path]::GetFullPath($Version)
+    $selectedJson = & python3 -B (Join-Path $PSScriptRoot "agent_selection.py") rows --source $repositoryRoot --plan $Version
+    if ($LASTEXITCODE -ne 0) { throw "Invalid package release selection." }
+    $packages = @($selectedJson | ConvertFrom-Json)
 }
 
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -48,7 +48,7 @@ $archiveDirectory = Join-Path $OutputDirectory "current-rid-archives"
 New-Item -ItemType Directory -Path $archiveDirectory -Force | Out-Null
 
 function Invoke-DotNet([string[]] $Arguments) {
-    & python3 -B $releaseInputHelper exec $coldState -- dotnet @Arguments
+    & python3 -B $ciHelper run --state $ciState -- dotnet @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
     }
@@ -61,7 +61,6 @@ function Resolve-ProjectPath([string] $Path) {
 $commonProperties = @(
     "-p:SunderUseSourceSdk=$($env:SUNDER_NATIVE_USE_SOURCE_SDK -ceq 'true' ? 'true' : 'false')",
     "-p:Configuration=Release",
-    "-p:SunderAgentVersion=$Version",
     "-p:ContinuousIntegrationBuild=true",
     "-p:SunderPackageRoleInputSourceRoot=$repositoryRoot"
 )
@@ -80,6 +79,7 @@ if ($env:SUNDER_NATIVE_TASK_ASSEMBLY) {
 # changing them between families invalidates earlier qualifications of the tree.
 $nativeHelper = Join-Path $PSScriptRoot "native-family.py"
 $releaseInputHelper = Join-Path $PSScriptRoot "release_inputs.py"
+$ciHelper = Join-Path $PSScriptRoot "../ci/agent_ci.py"
 & python3 -B $releaseInputHelper check-python
 if ($LASTEXITCODE -ne 0) { throw "Python 3.9 or newer is required." }
 & python3 -B $nativeHelper producer-preflight $repositoryRoot $Version
@@ -87,20 +87,22 @@ if ($LASTEXITCODE -ne 0) { throw "Native producer prerequisites failed." }
 
 $coldWork = Join-Path ([System.IO.Path]::GetTempPath()) ("sunder-agent-cold-" + $Rid + "-" + [guid]::NewGuid().ToString("N"))
 $mode = $env:SUNDER_NATIVE_USE_SOURCE_SDK -ceq 'true' ? 'source' : 'package'
-& python3 -B $releaseInputHelper prepare $repositoryRoot $ColdInputsDirectory $coldWork $mode $ArtifactSourceCommit $CoreCommit $ColdManifestSha256
-if ($LASTEXITCODE -ne 0) { throw "Reviewed cold input delivery/hydration failed; no build fallback is allowed." }
-$coldState = Join-Path $coldWork "cold-state.json"
+& python3 -B $ciHelper prepare --source $repositoryRoot --core (Join-Path $repositoryRoot "../sunder-core") --inputs $InputsDirectory --work $coldWork --mode $mode
+if ($LASTEXITCODE -ne 0) { throw "Declared dependency preparation failed." }
+$ciState = Join-Path $coldWork "ci-state.json"
 
 foreach ($package in $packages) {
+    $packageVersion = $selective ? $package.version : $Version
     $project = Resolve-ProjectPath $package.projectPath
-    # Shared preparation restored the full six-RID graph with these same Release,
-    # version and CI properties, proved the cold diagnostic, and hydrated exact locks.
-    # Build and prebuilt Pack now run in the checked network-denied process tree.
+    # Shared preparation restored the full six-RID graph with the same Release/CI
+    # properties and hydrated exact locks. Build/prebuilt Pack use that prepared
+    # state; denied-network diagnostics belong to explicit cold acceptance only.
     Invoke-DotNet (@("build", $project, "-c", "Release", "-r", $Rid, "--no-restore") + $commonProperties)
 
-    $projectDirectory = Split-Path -Parent $project
     # The canonical build emits generated Worker/App roles and one combined RID leaf.
-    $leafPath = Join-Path $projectDirectory "bin/Release/net10.0/sunder-targets/$Rid/sunder-dev"
+    $nativeRoot = & python3 -B $nativeHelper native-root $repositoryRoot $package.packageId $Rid
+    if ($LASTEXITCODE -ne 0) { throw "Missing/ambiguous native output for '$($package.packageId)'." }
+    $leafPath = Join-Path $nativeRoot "sunder-dev"
     $manifestPath = Join-Path $leafPath "manifest/sunder-package.json"
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "Worker leaf was not emitted for '$($package.packageId)': $leafPath"
@@ -121,10 +123,10 @@ foreach ($package in $packages) {
     # The selection helper resolves .runtimeconfig.json/.deps.json and rejects
     # obsolete apphosts across Core's shared/role-shared/exact-RID projection.
 
-    $archivePath = Join-Path $archiveDirectory "$($package.packageId).$Version.sunderpkg"
+    $archivePath = Join-Path $archiveDirectory "$($package.packageId).$packageVersion.sunderpkg"
     # Retain the whole Core bundle. This command writes only a compact selection;
     # GetSunderPackageRoleInputs is deliberately avoided because it depends on Build.
-    $selectionPath = & python3 -B $nativeHelper select-native $repositoryRoot $package.packageId $Rid $Version
+    $selectionPath = & python3 -B $nativeHelper select-native $repositoryRoot $package.packageId $Rid $packageVersion
     if ($LASTEXITCODE -ne 0) { throw "Native qualification selection failed for '$($package.packageId)'." }
     Invoke-DotNet (@(
         "msbuild", $project,
@@ -138,8 +140,19 @@ foreach ($package in $packages) {
     ) + $commonProperties)
 }
 
-$archives = @(Get-ChildItem -LiteralPath $archiveDirectory -Filter "*.sunderpkg" -File)
-if ($archives.Count -ne 15) {
-    throw "Expected exactly 15 current-RID archives, found $($archives.Count)."
+if ($selective) {
+    $plan = Get-Content -LiteralPath $Version -Raw | ConvertFrom-Json
+    foreach ($package in @($plan.packages | Where-Object { -not $_.selected })) {
+        $retained = Join-Path $env:SUNDER_AGENT_RETAINED_ARCHIVE_DIR $package.retainedArchive.name
+        if ((Get-FileHash -LiteralPath $retained -Algorithm SHA256).Hash.ToLowerInvariant() -cne $package.retainedArchive.sha256) {
+            throw "Retained archive changed for '$($package.packageId)'."
+        }
+        Copy-Item -LiteralPath $retained -Destination (Join-Path $archiveDirectory $package.retainedArchive.name)
+    }
 }
-Write-Host "Built exactly 15 native $Rid framework-dependent Worker leaves and composed current-RID smoke archives without rebuilding them."
+
+$archives = @(Get-ChildItem -LiteralPath $archiveDirectory -Filter "*.sunderpkg" -File)
+if ($archives.Count -ne $familyCount) {
+    throw "Expected $familyCount current-RID family archives, found $($archives.Count)."
+}
+Write-Host "Built $($packages.Count) selected native $Rid leaves; all $familyCount family archives are required for native smoke tests."

@@ -4,11 +4,12 @@ export LC_ALL=C
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  printf 'Usage: publish-registry-package.sh [--verify-only] [--initial-yanked <expected-publication.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
+  printf 'Usage: publish-registry-package.sh [--verify-only] [--initial-yanked <expected-publication.json>] [--publication-output <new-evidence.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
 }
 
 verify_only=false
 expected_publication_input=''
+publication_output=''
 current_availability=Yanked
 current_availability_supplied=false
 expected_published_at=''
@@ -30,6 +31,11 @@ while [[ $# -gt 0 ]]; do
       current_availability_supplied=true
       shift 2
       ;;
+    --publication-output)
+      [[ $# -ge 2 && -n "$2" && -z "$publication_output" ]] || { usage; exit 2; }
+      publication_output="$2"
+      shift 2
+      ;;
     --published-at-utc)
       [[ $# -ge 2 && -n "$2" && -z "$expected_published_at" ]] || { usage; exit 2; }
       expected_published_at="$2"
@@ -39,6 +45,11 @@ while [[ $# -gt 0 ]]; do
     *) break ;;
   esac
 done
+
+if [[ -n "$publication_output" ]]; then
+  [[ -n "$expected_publication_input" && ! -e "$publication_output" && ! -L "$publication_output" ]] \
+    || { printf 'Publication output requires initial-Yanked verification and a new evidence path.\n' >&2; exit 2; }
+fi
 
 if [[ -n "$expected_published_at" ]]; then
   [[ "$verify_only" == true && -n "$expected_publication_input" ]] || { usage; exit 2; }
@@ -210,8 +221,8 @@ if [[ -n "$expected_publication_input" ]]; then
     || { printf 'Expected publication evidence must be a regular non-link JSON file.\n' >&2; exit 1; }
   command -v python3 >/dev/null 2>&1 \
     || { printf 'python3 is required to validate initial-Yanked publication evidence.\n' >&2; exit 127; }
-  # Snapshot the existing RegistryPackagePublicationEvidence DTO, not a new receipt.
-  # The release coordinator supplies its approved owner/content/inventory identities.
+  # First publication expects only artifact-derived fields. Retained Registry
+  # evidence also pins the server-returned owner for exact retry/readback checks.
   python3 - "$expected_publication_input" "$expected_publication_path" <<'PY'
 import json
 import sys
@@ -234,9 +245,12 @@ with open(sys.argv[2], "w", encoding="utf-8") as stream:
 PY
   jq -e --arg package_id "$package_id" --arg version "$version" '
     type == "object"
-    and keys == ["initialAvailability","ownerPrincipalId","package","publicInventorySha256"]
+    and (keys == ["initialAvailability","package","publicInventorySha256"]
+      or keys == ["initialAvailability","ownerPrincipalId","package","publicInventorySha256"])
     and .initialAvailability == "Yanked"
-    and (.ownerPrincipalId | type == "string" and test("^[0-9a-f]{32}$") and . != "00000000000000000000000000000000")
+    and (if has("ownerPrincipalId") then
+      (.ownerPrincipalId | type == "string" and test("^[0-9a-f]{32}$") and . != "00000000000000000000000000000000")
+      else true end)
     and (.publicInventorySha256 | type == "string" and test("^[0-9a-f]{64}$"))
     and (.package | type == "object" and keys == ["packageContentIdentity","packageId","version"])
     and .package.packageId == $package_id and .package.version == $version
@@ -595,7 +609,10 @@ PY
     jq -e --arg availability "$current_availability" --slurpfile expected "$expected_publication_path" '
       (.isYanked | type == "boolean")
       and (if $availability == "Either" then true else .isYanked == ($availability == "Yanked") end)
-      and .publication == $expected[0]
+      and (.publication | type == "object" and keys == ["initialAvailability","ownerPrincipalId","package","publicInventorySha256"])
+      and (.publication.ownerPrincipalId | type == "string" and test("^[0-9a-f]{32}$") and . != "00000000000000000000000000000000")
+      and ((.publication | del(.ownerPrincipalId)) == ($expected[0] | del(.ownerPrincipalId)))
+      and (if $expected[0] | has("ownerPrincipalId") then .publication.ownerPrincipalId == $expected[0].ownerPrincipalId else true end)
     ' "$details_path" >/dev/null || {
       printf "Registry publication owner/content/inventory/initial availability or current Yanked state differs for package '%s' %s.\n" \
         "$package_id" "$version" >&2
@@ -693,10 +710,18 @@ PY
   done
 }
 
+retain_publication() {
+  if [[ -n "$publication_output" ]]; then
+    # Emit only after canonical bytes and every projection have been verified.
+    (set -o noclobber; jq -cS '.publication' "$details_path" > "$publication_output")
+  fi
+}
+
 fetch_version_details
 case "$details_status" in
   200)
     verify_version_details
+    retain_publication
     if [[ "$verify_only" == true ]]; then
       printf "Verified immutable Registry package '%s' %s canonical archive and projections.\n" \
         "$package_id" "$version"
@@ -725,8 +750,13 @@ if [[ -n "$expected_publication_input" ]]; then
 fi
 
 publish_confirmed=false
+# The private temporary directory is removed by the existing exit trap. Keep the
+# bearer value out of argv, even on runners where process arguments are observable.
+authorization_file="$temp_dir/authorization.headers"
+(umask 077; printf 'Authorization: Bearer %s\n' "$SUNDER_REGISTRY_PUBLISH_TOKEN" > "$authorization_file")
+unset SUNDER_REGISTRY_PUBLISH_TOKEN
 if publish_response="$(curl --fail-with-body -sS \
-  -H "Authorization: Bearer $SUNDER_REGISTRY_PUBLISH_TOKEN" \
+  -H "@$authorization_file" \
   -H "X-Sunder-Expected-Resource-Id: $package_id" \
   -H 'X-Sunder-Set-Latest: false' \
   -F "package=@$archive" \
@@ -750,6 +780,7 @@ fetch_version_details
   exit 1
 }
 verify_version_details
+retain_publication
 if [[ "$publish_confirmed" != true ]]; then
   printf "Recovered exact initial-Yanked publication for package '%s' %s after an ambiguous response.\n" \
     "$package_id" "$version"

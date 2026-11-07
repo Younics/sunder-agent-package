@@ -3,13 +3,42 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 from urllib.parse import quote
 
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
-from agent_release import Invalid, decode, digest, git, inventory, load, origin, require
+from agent_release import Invalid, decode, digest, git, inventory, load, origin, require, sha
+
+
+def resolve(release_id, output):
+    """Resolve redundant source/tag/receipt inputs from one unannounced release."""
+    repository = "Younics/sunder-agent-package"
+    require(os.environ.get("GITHUB_REPOSITORY") == repository
+            and os.environ.get("GITHUB_REF") == "refs/heads/main"
+            and os.environ.get("GITHUB_REF_PROTECTED") == "true"
+            and os.environ.get("GITHUB_WORKFLOW_SHA") == os.environ.get("GITHUB_SHA")
+            and os.environ.get("GITHUB_WORKFLOW_REF") == repository + "/.github/workflows/sunder-agent-cohort-rollback.yml@refs/heads/main",
+            "Rollback requires the exact protected-main policy")
+    require(os.environ.get("CONFIRMATION") == "reverse-unannounced-cohort", "Explicit rollback confirmation is required")
+    require(re.fullmatch(r"[1-9][0-9]*", release_id) and re.fullmatch(r"[1-9][0-9]*", os.environ.get("EXPECTED_REVISION", ""))
+            and re.fullmatch(r"[A-Za-z0-9._-]{1,128}", os.environ.get("IDEMPOTENCY_KEY", "")), "Invalid rollback operation coordinates")
+    value = decode(receipts.gh(f"repos/{repository}/releases/{release_id}"))
+    require(value["id"] == int(release_id) and value["draft"] is True, "Select one unannounced draft")
+    tag = value["tag_name"]
+    from agent_publication import GitHubRelease
+    GitHubRelease(repository, tag)
+    source = digest(value["target_commitish"], 40)
+    names = [item["name"] for item in value["assets"] if re.fullmatch(r"agent-family-cohort-[0-9a-f]{64}\.json", item["name"])]
+    require(len(names) == 1, "Missing/ambiguous forward cohort receipt")
+    request_sha = names[0][len("agent-family-cohort-"):-len(".json")]
+    forward = receipts.download_bytes(repository, release_id, tag, request_sha)
+    require(forward["artifactSourceCommit"] == source, "Forward receipt source differs")
+    cohort.store(output, forward)
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+        stream.write(f"source_sha={source}\ntag={tag}\n")
 
 
 def guard(repository, release_id, tag, source, source_sha, forward_path, request_path):
@@ -18,10 +47,26 @@ def guard(repository, release_id, tag, source, source_sha, forward_path, request
             and git(policy, "rev-parse", "HEAD").decode().strip() == os.environ["GITHUB_SHA"], "Rollback policy must be exact protected main")
     require(git(source, "rev-parse", "HEAD").decode().strip() == source_sha, "Rollback source checkout differs")
     digest(source_sha, 40)
-    require(tag == "agent/v" + inventory(source)["releaseVersion"], "Rollback tag/version differs")
     info = receipts.release_info(repository, release_id, tag)
     require(info["draft"] is True and info["target_commitish"] == source_sha,
-            "Non-security reverse requires the exact unannounced draft")
+             "Non-security reverse requires the exact unannounced draft")
+    rows = inventory(source)["packages"]
+    plans = [asset for asset in info.get("assets", []) if asset["name"] == "release-plan.json"]
+    if plans:
+        import agent_selection as selection
+        require(len(plans) == 1 and 0 < plans[0]["size"] <= 262144, "Invalid retained rollback plan")
+        asset = plans[0]
+        data = subprocess.check_output(["gh", "api", "-H", "Accept: application/octet-stream",
+            f"repos/{repository}/releases/assets/{asset['id']}"])
+        require(len(data) == asset["size"] and asset["digest"] == "sha256:" + sha(data), "Retained rollback plan bytes differ")
+        plan = selection.validate(decode(data), source, source_sha)
+        rows = selection.selected(plan)
+        require(rows and rows[0]["tag"] == tag, "Rollback must select the original coordinator release")
+        by_tag = {release["tag_name"]: release for release in selection.releases()}
+        require(all(row["tag"] in by_tag and by_tag[row["tag"]]["draft"] is True
+            and by_tag[row["tag"]]["target_commitish"] == source_sha for row in rows), "A selected package was already announced; reverse is forbidden")
+    else:
+        require(tag == "agent/v" + inventory(source)["releaseVersion"], "Rollback tag/version differs")
     ref = decode(receipts.gh(f"repos/{repository}/git/ref/tags/{quote(tag, safe='')}"))
     require(ref["ref"] == "refs/tags/" + tag, "Rollback tag ref differs")
     target = ref["object"]
@@ -37,9 +82,9 @@ def guard(repository, release_id, tag, source, source_sha, forward_path, request
     require(forward["registryOrigin"] == origin(os.environ["REGISTRY_API_URL"].rstrip("/")), "Rollback Registry differs from protected configuration")
     request_sha = receipts.check(forward)
     require(receipts.download_bytes(repository, release_id, tag, request_sha) == forward, "Retained forward cohort changed")
-    rows = inventory(source)["packages"]
     require(sorted(v["package"]["packageId"] for v in forward["request"]["versions"]) == sorted(p["packageId"] for p in rows)
-            and all(v["package"]["version"] == inventory(source)["releaseVersion"] for v in forward["request"]["versions"]),
+            and all(v["package"]["version"] == next(p["version"] for p in rows if p["packageId"] == v["package"]["packageId"])
+                    for v in forward["request"]["versions"]),
             "Forward cohort does not identify this exact family")
     proposed = cohort.request(load(request_path))
     require(proposed == cohort.reverse(forward["request"], forward["result"], proposed["idempotencyKey"],
@@ -72,7 +117,9 @@ def run(repository, release_id, tag, source, source_sha, forward_path, key, revi
 if __name__ == "__main__":
     try:
         command, *args = sys.argv[1:]
-        if command == "guard":
+        if command == "resolve":
+            resolve(*args)
+        elif command == "guard":
             guard(*args)
         elif command == "apply":
             run(*args)

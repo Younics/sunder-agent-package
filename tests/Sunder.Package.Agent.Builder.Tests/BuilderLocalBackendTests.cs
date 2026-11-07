@@ -852,16 +852,16 @@ public sealed partial class BuilderLocalBackendTests
         foreach (var path in new[] { creator, sdk, tool }) await File.WriteAllTextAsync(path, "fixture package bytes");
         var options = new BuilderProjectDriverOptions(fixture.PathOf("cache"))
         {
-            CoordinatedPackageVersion = "1.1.0", NodeCreatorPackagePath = creator,
-            NodePackageOverrides = new Dictionary<string, string> { ["@sunder/sdk"] = sdk, ["@sunder/package-tool"] = tool },
+            NodeCreatorVersion = "1.1.0", NodeSdkVersion = "1.1.0", NodeCreatorPackagePath = creator,
+            NodePackageOverrides = new Dictionary<string, string> { ["@younics/sunder-sdk"] = sdk, ["@younics/sunder-package-tool"] = tool },
         };
         await using var jobs = new BuilderJobManager(new BuilderProjectDriver(fixture.Tools, fixture.Process, options));
         var destination = fixture.PathOf("created");
         var result = await TerminalAsync(jobs, jobs.Start(Request("create") with { ProjectFolder = destination, DisplayName = "Hello", PackageId = "sample.hello" }));
         Assert.True(result.State == "succeeded", result.Error);
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(destination, "package.json")));
-        Assert.Equal("file:" + sdk.Replace('\\', '/'), json.RootElement.GetProperty("dependencies").GetProperty("@sunder/sdk").GetString());
-        Assert.Equal("file:" + tool.Replace('\\', '/'), json.RootElement.GetProperty("devDependencies").GetProperty("@sunder/package-tool").GetString());
+        Assert.Equal("file:" + sdk.Replace('\\', '/'), json.RootElement.GetProperty("dependencies").GetProperty("@younics/sunder-sdk").GetString());
+        Assert.Equal("file:" + tool.Replace('\\', '/'), json.RootElement.GetProperty("devDependencies").GetProperty("@younics/sunder-package-tool").GetString());
         Assert.Contains(fixture.Process.Requests, command => command.WorkingDirectory.StartsWith(options.CacheRootPath, StringComparison.Ordinal) && command.Arguments.Contains("--ignore-scripts"));
     }
 
@@ -970,7 +970,7 @@ public sealed partial class BuilderLocalBackendTests
         internal BuilderJobManager Jobs(Action<BuilderJobUpdate>? observe = null)
         {
             var driver = new BuilderProjectDriver(Tools, Process,
-                new(PathOf("cache")) { CoordinatedPackageVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("templates") });
+                new(PathOf("cache")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("templates") });
             return observe is null ? new(driver) : new(new DelegateDriver((request, reporter, token) =>
                 driver.ExecuteAsync(request, new ObservingReporter(reporter, observe), token)));
         }
@@ -993,10 +993,10 @@ public sealed partial class BuilderLocalBackendTests
             {
                 name = id.Replace('.', '-'), version = "1.0.0", engines = new { node = ">=24.18.1 <25.0.0" },
                 scripts = new Dictionary<string, string> { ["sunder:dev:once"] = "sunder-package dev", ["sunder:dev"] = "sunder-package dev --watch", ["contracts:check"] = "sunder-package contracts check", ["contracts:freeze"] = "sunder-package contracts freeze", ["package"] = "sunder-package package" },
-                dependencies = new Dictionary<string, string> { ["@sunder/sdk"] = "1.1.0" }, devDependencies = new Dictionary<string, string> { ["@sunder/package-tool"] = "1.1.0" },
+                dependencies = new Dictionary<string, string> { ["@younics/sunder-sdk"] = "1.1.0" }, devDependencies = new Dictionary<string, string> { ["@younics/sunder-package-tool"] = "1.1.0" },
             }));
             File.WriteAllText(Path.Combine(folder, "sunder-contracts.lock.json"), "{\"lockVersion\":1,\"packageArtifacts\":{},\"packageImports\":{},\"providerImports\":{},\"platformImports\":{}}\n");
-            File.WriteAllText(Path.Combine(folder, "src", "services.ts"), "import { defineService, type ServiceContext } from \"@sunder/sdk\";\nconst packageName = " + JsonSerializer.Serialize(name) + ";\n" +
+            File.WriteAllText(Path.Combine(folder, "src", "services.ts"), "import { defineService, type ServiceContext } from \"@younics/sunder-sdk\";\nconst packageName = " + JsonSerializer.Serialize(name) + ";\n" +
                 "export const messages = defineService({ async send(message: string, context: ServiceContext): Promise<string> { return `${packageName}: ${message}`; } }, { constraints: { \"send.message\": { maxLength: 256 } } });\n");
             return Path.Combine(folder, "sunder.package.json");
         }
@@ -1057,10 +1057,13 @@ public sealed partial class BuilderLocalBackendTests
             }
             else if (npm && args[0] == "install" && request.WorkingDirectory.Contains("node-creators", StringComparison.Ordinal))
             {
-                foreach (var package in new[] { "create-sunder-package", "@sunder/sdk" })
+                using var manifest = JsonDocument.Parse(File.ReadAllText(Path.Combine(request.WorkingDirectory, "package.json")));
+                foreach (var package in new[] { "@younics/create-sunder-package", "@younics/sunder-sdk" })
                 {
+                    var selected = manifest.RootElement.GetProperty("dependencies").GetProperty(package).GetString()!;
+                    var version = selected.StartsWith("file:", StringComparison.Ordinal) ? "1.1.0" : selected;
                     var directory = Path.Combine(request.WorkingDirectory, "node_modules", package, "dist"); Directory.CreateDirectory(directory);
-                    File.WriteAllText(Path.Combine(directory, "..", "package.json"), JsonSerializer.Serialize(new { name = package, version = "1.1.0" }));
+                    File.WriteAllText(Path.Combine(directory, "..", "package.json"), JsonSerializer.Serialize(new { name = package, version }));
                     File.WriteAllText(Path.Combine(directory, "cli.js"), "creator");
                 }
             }

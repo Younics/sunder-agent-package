@@ -4,7 +4,7 @@ using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 using Xunit;
-using App = BuilderApp::Sunder.Package.Agent.Builder;
+using MakerApp = BuilderApp::Sunder.Package.Agent.Builder;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -23,7 +23,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         Assert.DoesNotContain("sourceRevision", info.Content);
         Assert.DoesNotContain(fixture.Project.ProjectFolder, info.Content);
         Assert.InRange(info.Content!.Length, 1, 400);
-        var folder = App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug");
+        var folder = MakerApp.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug");
         var identity = await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, folder);
         fixture.Development.PackageIdResolver = _ => fixture.Project.PackageId;
         fixture.Development.AfterLoad = session => session.Status = session.Status with { AppliedRevision = new(Guid.NewGuid(), 1, identity) };
@@ -73,7 +73,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         var rejected = await tools.ExecuteAsync(fixture.Context, request);
         using var first = JsonDocument.Parse(rejected.Content!);
         Assert.Equal("rejected", first.RootElement.GetProperty("status").GetString());
-        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
+        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, MakerApp.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
         var duplicate = await tools.ExecuteAsync(fixture.Context, request);
         Assert.Equal(rejected.Content, duplicate.Content);
         Assert.Empty(fixture.Development.Loads);
@@ -87,7 +87,7 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
+        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, MakerApp.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
         var request = new AgentToolRequest("maker_apply", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint }));
         Assert.Null(await tools.PreflightAsync(fixture.Context, request));
         var changed = difference == "profile" ? fixture.Context with { ProfileId = "different-profile" }
@@ -109,7 +109,7 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
+        await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, MakerApp.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
         fixture.Development.BeforeLoad = (_, _, _) => throw new IOException("Initial load reply lost after dispatch.");
         var request = new AgentToolRequest("maker_apply", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint }));
         var unknown = await tools.ExecuteAsync(fixture.Context, request);
@@ -132,7 +132,7 @@ public sealed partial class BuilderDevelopmentRelayTests
     {
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
-        var identity = await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, App.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
+        var identity = await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, MakerApp.BuilderProjectDriverOutputs.DevelopmentFolder(fixture.Project, "Debug"));
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         fixture.Development.BeforeLoad = (_, _, token) => { entered.TrySetResult(); return release.Task.WaitAsync(token); };

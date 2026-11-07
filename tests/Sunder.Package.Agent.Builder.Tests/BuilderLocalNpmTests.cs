@@ -57,8 +57,8 @@ public sealed class BuilderLocalNpmTests
     public async Task InvalidFeedFailsBeforeToolchainSelectionOrNpm(string failure)
     {
         using var fixture = new Fixture(); fixture.Feed();
-        if (failure == "missing") File.Delete(fixture.Archive("@sunder/sdk"));
-        else fixture.Package("create-sunder-package", failure);
+        if (failure == "missing") File.Delete(fixture.Archive("@younics/sunder-sdk"));
+        else fixture.Package("@younics/create-sunder-package", failure);
         await using var jobs = fixture.Jobs();
         var result = await TerminalAsync(jobs, jobs.Start(fixture.Request()));
         Assert.Equal("failed", result.State);
@@ -76,7 +76,7 @@ public sealed class BuilderLocalNpmTests
             using var fixture = new Fixture(); fixture.Feed();
             if (mode is "pointer" or "archive")
             {
-                var path = mode == "pointer" ? fixture.PointerPath : fixture.Archive("@sunder/sdk");
+                var path = mode == "pointer" ? fixture.PointerPath : fixture.Archive("@younics/sunder-sdk");
                 File.Move(path, fixture.PathOf("target")); File.CreateSymbolicLink(path, fixture.PathOf("target"));
             }
             else
@@ -113,12 +113,37 @@ public sealed class BuilderLocalNpmTests
     }
 
     [Fact]
+    public async Task IndependentSdkToolAndCreatorVersionsUseTheExactLocalSelection()
+    {
+        using var fixture = new Fixture();
+        fixture.Versions["@younics/sunder-sdk"] = "1.1.3";
+        fixture.Versions["@younics/sunder-package-tool"] = "2.0.0";
+        fixture.Versions["@younics/create-sunder-package"] = "3.0.0";
+        fixture.Feed();
+        var selected = await BuilderLocalNpm.LoadOptionsAsync(fixture.Options);
+        Assert.Equal("1.1.3", selected.NodeSdkVersion);
+        Assert.Equal("3.0.0", selected.NodeCreatorVersion);
+        Assert.EndsWith("younics-create-sunder-package-3.0.0.tgz", selected.NodeCreatorPackagePath);
+        Assert.EndsWith("younics-sunder-package-tool-2.0.0.tgz", selected.NodePackageOverrides["@younics/sunder-package-tool"]);
+        Assert.Equal(File.ReadAllBytes(fixture.Archive("@younics/sunder-sdk")), File.ReadAllBytes(selected.NodePackageOverrides["@younics/sunder-sdk"]));
+    }
+
+    [Fact]
+    public async Task MultipleVersionsOfOneLocalIdentityNeverGuessTheNewest()
+    {
+        using var fixture = new Fixture(); fixture.Feed();
+        File.Copy(fixture.Archive("@younics/sunder-sdk"), Path.Combine(fixture.FeedPath, "younics-sunder-sdk-1.1.1.tgz"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => BuilderLocalNpm.LoadOptionsAsync(fixture.Options));
+        Assert.False(Directory.Exists(fixture.Retained));
+    }
+
+    [Fact]
     public async Task SameVersionReplacementRetainsOldSelectionAndDetectsTamperingWithoutRepair()
     {
         using var fixture = new Fixture(); fixture.Feed();
         var first = await BuilderLocalNpm.LoadOptionsAsync(fixture.Options);
         var original = File.ReadAllBytes(first.NodeCreatorPackagePath!);
-        fixture.Package("create-sunder-package", marker: "same-version hotfix");
+        fixture.Package("@younics/create-sunder-package", marker: "same-version hotfix");
         var second = await BuilderLocalNpm.LoadOptionsAsync(fixture.Options);
         Assert.NotEqual(first.NodeCreatorPackagePath, second.NodeCreatorPackagePath);
         Assert.Equal(original, File.ReadAllBytes(first.NodeCreatorPackagePath!));
@@ -140,7 +165,7 @@ public sealed class BuilderLocalNpmTests
         var request = fixture.Request(); var id = jobs.Start(request);
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
         var retained = Assert.Single(Directory.GetDirectories(fixture.Retained));
-        fixture.Package("create-sunder-package", marker: "replacement creator");
+        fixture.Package("@younics/create-sunder-package", marker: "replacement creator");
         Assert.Equal(id, jobs.Start(request));
         release.SetResult();
         await TerminalAsync(jobs, id);
@@ -177,20 +202,21 @@ public sealed class BuilderLocalNpmTests
     {
         internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-local-npm-" + Guid.NewGuid().ToString("N"));
         internal BuilderProjectDriverOptions Options { get; }
+        internal Dictionary<string, string> Versions { get; } = new(StringComparer.Ordinal);
         internal FakeTools Tools { get; } = new();
         internal FakeProcess Process { get; } = new();
         internal string FeedPath => PathOf("source feed");
         internal string Retained => Path.Combine(Options.CacheRootPath, "local-npm");
         internal string PointerPath => Path.Combine(Options.CacheRootPath, "local-npm.json");
         internal string Destination => PathOf("created");
-        internal Fixture() { Directory.CreateDirectory(Root); Options = new(PathOf("tools")) { CoordinatedPackageVersion = "1.1.0" }; }
+        internal Fixture() { Directory.CreateDirectory(Root); Options = new(PathOf("tools")); }
         internal string PathOf(string relative) => Path.Combine(Root, relative);
-        internal string Archive(string id) => Path.Combine(FeedPath, id.TrimStart('@').Replace('/', '-') + "-1.1.0.tgz");
+        internal string Archive(string id) => Path.Combine(FeedPath, id.TrimStart('@').Replace('/', '-') + "-" + Versions.GetValueOrDefault(id, "1.1.0") + ".tgz");
         internal void Pointer(string json) { Directory.CreateDirectory(Options.CacheRootPath); File.WriteAllText(PointerPath, json); }
         internal void Feed()
         {
             Directory.CreateDirectory(FeedPath);
-            foreach (var id in new[] { "@sunder/sdk", "@sunder/package-tool", "create-sunder-package" }) Package(id);
+            foreach (var id in new[] { "@younics/sunder-sdk", "@younics/sunder-package-tool", "@younics/create-sunder-package" }) Package(id);
             Pointer(JsonSerializer.Serialize(new { schemaVersion = 1, feedPath = FeedPath }));
         }
         internal void Package(string id, string? failure = null, string marker = "fixture")
@@ -202,8 +228,8 @@ public sealed class BuilderLocalNpmTests
                 { DataStream = new MemoryStream(Encoding.UTF8.GetBytes(text)) });
             Entry("package/package.json", JsonSerializer.Serialize(new
             {
-                name = failure == "wrong-name" ? "unexpected" : id, version = failure == "wrong-version" ? "9.9.9" : "1.1.0",
-                dependencies = new Dictionary<string, string> { ["@sunder/sdk"] = failure == "sdk-range" ? "*" : ">=1.1.0 <1.2.0" }, marker,
+                name = failure == "wrong-name" ? "unexpected" : id, version = failure == "wrong-version" ? "9.9.9" : Versions.GetValueOrDefault(id, "1.1.0"),
+                dependencies = new Dictionary<string, string> { ["@younics/sunder-sdk"] = failure == "sdk-range" ? "*" : ">=1.1.0 <1.2.0" }, marker,
             }));
             foreach (var name in new[] { "dist/index.js", "dist/index.d.ts", "dist/generated.js", "dist/browser.js", "dist/react.js", "template/package.json", "template-react-node/package.json" }) Entry("package/" + name, "{}");
             if (failure != "missing-cli") Entry("package/dist/cli.js", "// fixture");
@@ -248,7 +274,7 @@ public sealed class BuilderLocalNpmTests
             Requests.Enqueue(request);
             using var json = JsonDocument.Parse(File.ReadAllText(Path.Combine(request.WorkingDirectory, "package.json")));
             var dependencies = json.RootElement.GetProperty("dependencies");
-            Inputs.Enqueue((dependencies.GetProperty("create-sunder-package").GetString()!, dependencies.GetProperty("@sunder/sdk").GetString()!));
+            Inputs.Enqueue((dependencies.GetProperty("@younics/create-sunder-package").GetString()!, dependencies.GetProperty("@younics/sunder-sdk").GetString()!));
             return Task.FromResult(new BuilderLocalProcessResult(1, "", "stop before fixture installation"));
         }
     }

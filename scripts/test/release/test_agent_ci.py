@@ -1,6 +1,7 @@
 """Ordinary CI uses exact inputs without production approval or cache synthesis."""
 import argparse
 import io
+import json
 import os
 from pathlib import Path
 import runpy
@@ -13,12 +14,19 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SCRIPTS / "ci"))
 import agent_ci as ci
+import test_lanes
+import ci_platforms
 
 fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].setUp
 
 
 class AgentCiTests(unittest.TestCase):
     setUp = fixture_setup
+
+    def write_test_inventory(self):
+        path = self.source / "artifacts/reports/test-inventory.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"projects": [{"path": "tests/Fixture.Tests/Fixture.Tests.csproj", "modes": ["source"]}]}))
 
     def test_windows_checkout_preserves_reviewed_inventory_and_contract_record_bytes(self):
         for path in ("compatibility/agent-current-inventory.json", "compatibility/agent-current-contracts.json"):
@@ -27,18 +35,17 @@ class AgentCiTests(unittest.TestCase):
                                                 "--path=" + path, "HEAD:" + path], cwd=SCRIPTS.parent)
             self.assertTrue(blob == checkout, path + ": checkout must not rewrite reviewed input bytes")
 
-    def test_missing_ci_locator_fails_before_download_or_output_creation_with_configuration_guidance(self):
+    def test_ci_resolves_dependencies_without_an_operator_locator(self):
         output = self.root / "missing-ci-inputs"
-        with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--output", str(output)]), \
-             patch.dict(os.environ, {"SUNDER_AGENT_CI_INPUTS": ""}), patch.object(ci, "resolve") as resolve:
-            with self.assertRaisesRegex(ValueError, "Set the repository variable.*docs/RELEASES.md#ordinary-ci-inputs"):
-                ci.main()
-        resolve.assert_not_called()
+        with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--source", str(self.source), "--core", "../sunder-core", "--output", str(output)]), \
+             patch.dict(os.environ, {}, clear=True), patch.object(ci, "resolve") as resolve:
+            ci.main()
+        resolve.assert_called_once_with(str(self.source), "../sunder-core", str(output))
         self.assertFalse(output.exists())
 
     def test_workflow_retains_input_failure_without_masking_exit_or_reporting_unstarted_tests(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
-        section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("      - uses:")[0]
+        section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("\n      - ")[0]
         script = textwrap.dedent(section.split("        run: |\n")[1])
         stub = self.root / "scripts/ci/agent_ci.py"
         stub.parent.mkdir(parents=True)
@@ -47,13 +54,32 @@ class AgentCiTests(unittest.TestCase):
                                 env={**os.environ, "COLD_INPUTS": "", "CORE_COMMIT": "", "RUNNER_TEMP": str(self.root)})
         self.assertEqual(7, result.returncode, result.stdout + result.stderr)
         self.assertIn("fixture: exact CI inputs missing", (self.root / "artifacts/reports/input-preparation.log").read_text())
-        report = workflow.split("      - name: Verify complete source test identities and skip reasons\n")[1].split("        env:")[0]
-        self.assertIn("always()", report)
-        for identity in ("source-tests", "package-tests"):
-            self.assertIn(f"steps.{identity}.outcome == 'success'", report)
-            self.assertIn(f"steps.{identity}.outcome == 'failure'", report)
-            self.assertIn(f"id: {identity}", workflow)
+        self.assertIn("agent_ci.py validate", workflow)
         self.assertIn("if-no-files-found: error", workflow)
+        upload = workflow.split("      - name: Retain CI reports\n")[1]
+        self.assertIn("steps.inputs.outcome != 'skipped'", upload)
+        self.assertIn("steps.inputs.outcome != ''", upload)
+
+    def test_preparation_failure_cleans_temporary_state_and_does_not_report_unstarted_tests(self):
+        work = []
+        def fail(args):
+            work.append(args.work.parent)
+            raise ValueError("preparation failed")
+        args = argparse.Namespace(source=self.source, core=self.root / "sunder-core", mode="source", inputs=self.root, candidate=None)
+        with patch.object(ci.subprocess, "run"), patch.object(ci, "prepare", side_effect=fail), \
+                patch.object(test_lanes, "validate") as tests:
+            with self.assertRaisesRegex(ValueError, "preparation failed"): ci.validate(args)
+            tests.assert_not_called()
+        self.assertFalse(work[0].exists())
+
+    def test_family_results_are_uploaded_only_after_archive_tests_were_attempted(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
+        upload = workflow.split("      - name: Retain family test results\n")[1].split("\n  publish:")[0]
+        self.assertIn("id: archive_tests", workflow)
+        for outcome in ("success", "failure", "cancelled"):
+            self.assertIn(f"steps.archive_tests.outcome == '{outcome}'", upload)
+        self.assertNotIn("steps.archive_tests.outcome == 'skipped'", upload)
+        self.assertIn("if-no-files-found: error", upload)
 
     def prepare(self):
         self.core = self.root / "sunder-core"
@@ -67,13 +93,13 @@ class AgentCiTests(unittest.TestCase):
             self.assertNotIn("-m:1", command)
             self.assertNotIn("--force-evaluate", command)
             if command[:2] == ["dotnet", "build"]:
-                output = Path(command[2]).parent / "bin/Release/net10.0"
+                output = Path(command[2]).parent / "bin/Release/custom-framework"
                 output.mkdir(parents=True)
                 for name in (*ci.inputs.TOOL_FILES, "Sunder.Package.Build.Tests.dll"):
                     (output / name).write_bytes(b"built tool " + name.encode())
             if "-t:RestoreSunderContracts" in command:
                 Path(kwargs["env"]["SunderContractCacheRoot"]).mkdir(parents=True, exist_ok=True)
-            return subprocess.CompletedProcess(command, 0)
+            return subprocess.CompletedProcess(command, 0, str(Path(command[2]).parent / "bin/Release/custom-framework") if "-getProperty:TargetDir" in command else "")
         args = argparse.Namespace(source=self.source, core=self.core, work=self.work,
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="source")
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
@@ -132,29 +158,80 @@ class AgentCiTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "inputs changed"):
                 ci.execute(state_path, ["dotnet", "build", "Sunder.AgentPackage.slnx", "--no-restore"])
 
-    def test_source_workflow_runs_artifact_producer_after_ordinary_readers_and_keeps_combined_evidence(self):
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
-        ordinary_start = workflow.index("      - name: Complete source behavior without artifact producers\n")
-        artifact_start = workflow.index("      - name: Required all-family source-artifact gate in Integration\n")
-        package_start = workflow.index("      - name: Focused locked-package compatibility\n")
-        self.assertLess(ordinary_start, artifact_start)
-        self.assertLess(artifact_start, package_start)
-        ordinary = workflow[ordinary_start:artifact_start]
-        artifact = workflow[artifact_start:package_start]
-        case = "CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
-        self.assertIn("dotnet test Sunder.AgentPackage.slnx", ordinary)
-        self.assertIn("--filter 'FullyQualifiedName!~" + case + "'", ordinary)
-        self.assertIn("dotnet test tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj", artifact)
-        self.assertIn("--filter FullyQualifiedName~" + case, artifact)
-        for step in (ordinary, artifact):
-            self.assertIn("if: matrix.mode == 'source'", step)
-            self.assertIn('SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"', step)
-            self.assertIn("--no-build --no-restore", step)
-        self.assertIn("artifacts/test-results/full", ordinary)
-        self.assertIn("artifacts/test-results/artifact", artifact)
-        self.assertIn("SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE:", artifact)
-        self.assertIn("SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE:", artifact)
-        self.assertIn("generate-test-duration-report.py artifacts/test-results \"${args[@]}\"", workflow)
+    def test_source_runner_orders_readers_artifact_producer_and_required_cases_with_combined_evidence(self):
+        lanes = []
+        def run(state, lane):
+            lanes.append(lane)
+            self.assertEqual("1", os.environ["SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION"])
+            if lane == "required-linux":
+                self.assertEqual("1", os.environ["SUNDER_REQUIRE_TEST_PREREQUISITES"])
+                raise ValueError("required case failed")
+        with patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), \
+                patch.object(sys, "platform", "linux"), patch.object(test_lanes, "tests", side_effect=run), \
+                patch.object(test_lanes, "report") as report:
+            with self.assertRaisesRegex(ValueError, "required case failed"): test_lanes.validate("state", "source")
+            self.assertEqual(["source", "artifact", "required-linux"], lanes)
+            report.assert_called_once_with("source", "linux")
+        self.write_test_inventory()
+        with patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), patch.object(test_lanes, "run_project", return_value=1) as execute:
+            test_lanes.tests("state", "source")
+            test_lanes.tests("state", "artifact")
+        commands = [call.args[3] for call in execute.call_args_list]
+        case = test_lanes.POLICY["artifactProducer"]
+        self.assertIn("FullyQualifiedName!~" + case, execute.call_args_list[0].args[4])
+        self.assertIn("FullyQualifiedName~" + case, execute.call_args_list[1].args[4])
+        self.assertIn("Fixture.Tests", execute.call_args_list[0].args[2])
+        self.assertIn("Integration.Tests", execute.call_args_list[1].args[2])
+        for command in commands:
+            self.assertIn("--no-build", command)
+            self.assertIn("--no-restore", command)
+
+    def test_platform_matrices_preserve_native_coverage_and_validate_runner_overrides(self):
+        value = ci_platforms.matrices(True, {"SUNDER_AGENT_RUNNER_LINUX_ARM64": '["self-hosted","linux","ARM64"]'})
+        self.assertEqual(set(ci_platforms.RIDS), {row["rid"] for row in value["native"]["include"]})
+        self.assertEqual(4, len(value["behavior"]["include"]))
+        self.assertEqual(["self-hosted", "linux", "ARM64"], next(row["runner"] for row in value["native"]["include"] if row["rid"] == "linux-arm64"))
+        for labels in ('[]', '"ubuntu-latest"', '["linux\\noutput=changed"]'):
+            with self.assertRaises(ValueError): ci_platforms.matrices(variables={"SUNDER_AGENT_RUNNER_LINUX_ARM64": labels})
+
+    def test_required_linux_lane_rejects_missing_test_identity_even_with_successful_command(self):
+        self.write_test_inventory()
+        results = self.source / "artifacts/test-results/required"
+        def execute(*args):
+            (results / "fixture.trx").write_text('<TestRun><TestDefinitions><UnitTest id="1"><TestMethod name="AnotherPassingTest" /></UnitTest></TestDefinitions><Results><UnitTestResult testId="1" outcome="Passed" /></Results></TestRun>')
+            return 1
+        with patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), \
+             patch.object(test_lanes, "run_project", side_effect=execute), patch.object(test_lanes, "run"):
+            with self.assertRaisesRegex(ValueError, "identity missing"): test_lanes.tests("state", "required-linux")
+
+    def test_adapter_selection_is_saved_before_execution_and_empty_selection_does_not_run(self):
+        output = self.root / "reports"
+        output.mkdir()
+        common = ["dotnet", "test", "solution", "--no-restore", "--no-build"]
+        cases = ["Fixture.Tests.Theory(value: 1)"]
+        def execute(state, command, log):
+            log.write_text("The following Tests are available:\n" + "".join("    " + case + "\n" for case in cases)
+                           if "--list-tests" in command else "passed\n")
+            return 0
+        with patch.object(ci, "execute", side_effect=execute) as run, \
+             patch.object(ci, "context", return_value=({}, {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"})):
+            self.assertEqual(1, test_lanes.run_project("state", self.source, "Fixture.Tests.csproj", common, "Lane=Test", output))
+            self.assertIn("--blame-hang", run.call_args.args[1])
+            self.assertIn("--diag", run.call_args.args[1])
+            record = json.loads((output / "Fixture.Tests.discovery.json").read_text())
+            self.assertEqual(cases, record["tests"])
+            self.assertEqual("Lane=Test", record["filter"])
+            self.assertEqual("1", record["prerequisites"]["SUNDER_REQUIRE_TEST_PREREQUISITES"])
+            cases.clear()
+            run.reset_mock()
+            self.assertEqual(0, test_lanes.run_project("state", self.source, "Fixture.Tests.csproj", common, "Lane=Empty", output))
+            self.assertEqual(1, run.call_count)
+            cases.append("Fixture.Tests." + test_lanes.POLICY["artifactProducer"])
+            test_lanes.run_project("state", self.source, "Fixture.Tests.csproj", common, "Lane=Artifact", output)
+            self.assertIn("--blame", run.call_args.args[1])
+            self.assertNotIn("--blame-hang", run.call_args.args[1])
+        with self.assertRaisesRegex(ValueError, "no discovery header"):
+            test_lanes.discovered_tests("adapter crashed")
 
 
 if __name__ == "__main__": unittest.main()

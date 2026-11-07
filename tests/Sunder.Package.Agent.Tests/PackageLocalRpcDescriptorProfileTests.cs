@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -21,7 +22,7 @@ public sealed class PackageLocalRpcDescriptorProfileTests
         var root = document.RootElement;
 
         Assert.Equal(SunderRpcProtocol.ValueSchemaProfile, descriptor.SchemaProfile);
-        Assert.Equal("2.0.0", descriptor.Version);
+        Assert.Equal(CurrentContractInventory.Find(contractId).Version, descriptor.Version);
         Assert.Equal(SunderRpcProtocol.ValueSchemaProfile, root.GetProperty("schemaProfile").GetString());
 
         var definitions = root.GetProperty("$defs");
@@ -35,10 +36,25 @@ public sealed class PackageLocalRpcDescriptorProfileTests
             definitions.EnumerateObject().Select(static definition => definition.Name).Order().ToArray(),
             ReachableDefinitions(root).Order().ToArray());
 
+        var reviewed = CurrentContractRecords.Get(contractId);
+        var projected = CurrentContractRecords.ProjectPrivateVersion(reviewed, "2.3.1-rc.2+Build.7");
+        Assert.Equal("2.3.1-rc.2+Build.7", projected.Version);
+        Assert.Equal(reviewed.AbiSha256, projected.AbiSha256);
+        var restored = JsonNode.Parse(projected.GetCanonicalUtf8())!;
+        restored["version"] = reviewed.Version;
+        Assert.Equal(reviewed.GetCanonicalUtf8(), SunderRpcContractDescriptor.Parse(JsonSerializer.SerializeToUtf8Bytes(restored)).GetCanonicalUtf8());
+
         if (relativePath.Contains("Mcp", StringComparison.Ordinal))
         {
             Assert.DoesNotContain("\"chunks\"", document.RootElement.GetRawText(), StringComparison.Ordinal);
         }
+    }
+
+    [Fact]
+    public void PublicDescriptorVersionCannotFollowAnAutomaticPackageVersionProjection()
+    {
+        var id = CurrentContractInventory.Contracts.First(contract => contract.Exposure == "public").ContractId;
+        Assert.ThrowsAny<Xunit.Sdk.XunitException>(() => CurrentContractRecords.ProjectPrivateVersion(CurrentContractRecords.Get(id), "99.0.0"));
     }
 
     [Fact]

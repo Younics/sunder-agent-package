@@ -1,5 +1,4 @@
 using System.Collections;
-using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -8,7 +7,7 @@ using Sunder.Sdk.Services;
 
 namespace Sunder.Package.Agent.Tests;
 
-// This is deliberately narrower than AgentRoleBoundary: the candidate explicitly
+// This is deliberately narrower than AgentRoleBoundary: generated metadata explicitly
 // admits every model identity per contract, and no same-short-name fallback exists.
 internal sealed class RegressionTestGeneratedProviderProjection
 {
@@ -26,25 +25,32 @@ internal sealed class RegressionTestGeneratedProviderProjection
     private RegressionTestGeneratedProviderProjection(HashSet<string> models, IReadOnlyDictionary<string, HashSet<long>> numericEnums)
         => (_models, _numericEnums) = (models, numericEnums);
 
-    internal static RegressionTestGeneratedProviderProjection FromCandidate(string candidate, string contractId)
+    internal static RegressionTestGeneratedProviderProjection FromBuild(string contractId)
     {
-        using var archive = ZipFile.OpenRead(candidate);
-        var entry = archive.GetEntry("payload/shared/contracts/rpc-model-projection.v1.json")
-            ?? throw new InvalidDataException("The qualified candidate has no RPC model-projection manifest.");
-        using var document = JsonDocument.Parse(entry.Open());
+        var assembly = RegressionTestGeneratedProviders.FixtureAssembly;
+        Stream Open(string name) => assembly.GetManifestResourceStream(name)
+            ?? throw new InvalidDataException($"The built provider fixture has no resource '{name}'.");
+        using var projection = Open("Contracts.Projection.json");
+        return Read(projection, assembly.GetManifestResourceNames().Where(name => name.StartsWith("Contracts.", StringComparison.Ordinal)
+            && name.EndsWith(".rpc.json", StringComparison.Ordinal)).Select(name => (Func<Stream>)(() => Open(name))), contractId);
+    }
+
+    private static RegressionTestGeneratedProviderProjection Read(Stream projection, IEnumerable<Func<Stream>> descriptors, string contractId)
+    {
+        using var document = JsonDocument.Parse(projection);
         var contract = document.RootElement.GetProperty("contracts").EnumerateArray().Single(value =>
             value.GetProperty("contractId").GetString() == contractId);
         var models = contract.GetProperty("modelProjection").GetProperty("models").EnumerateObject()
             .Select(value => value.Name).ToHashSet(StringComparer.Ordinal);
-        return new(models, ReadNumericEnums(archive, contractId));
+        return new(models, ReadNumericEnums(descriptors, contractId));
     }
 
-    private static IReadOnlyDictionary<string, HashSet<long>> ReadNumericEnums(ZipArchive archive, string contractId)
+    private static IReadOnlyDictionary<string, HashSet<long>> ReadNumericEnums(IEnumerable<Func<Stream>> descriptors, string contractId)
     {
-        foreach (var entry in archive.Entries.Where(entry => entry.FullName.StartsWith("payload/shared/contracts/", StringComparison.Ordinal)
-                     && entry.FullName.EndsWith(".rpc.json", StringComparison.Ordinal)))
+        foreach (var open in descriptors)
         {
-            using var descriptor = JsonDocument.Parse(entry.Open());
+            using var stream = open();
+            using var descriptor = JsonDocument.Parse(stream);
             if (descriptor.RootElement.GetProperty("contractId").GetString() != contractId) continue;
             return descriptor.RootElement.GetProperty("$defs").EnumerateObject()
                 .Where(definition => definition.Value.TryGetProperty("type", out var type) && type.GetString() == "integer"
@@ -52,7 +58,7 @@ internal sealed class RegressionTestGeneratedProviderProjection
                 .ToDictionary(definition => definition.Name,
                     definition => definition.Value.GetProperty("enum").EnumerateArray().Select(value => value.GetInt64()).ToHashSet(), StringComparer.Ordinal);
         }
-        throw new InvalidDataException("The qualified candidate has no matching RPC descriptor.");
+        throw new InvalidDataException($"The generated contract metadata has no RPC descriptor for '{contractId}'.");
     }
 
     internal async ValueTask<object?> ProjectAsync(object? value, Type target, GeneratedServiceTestScope receiver,

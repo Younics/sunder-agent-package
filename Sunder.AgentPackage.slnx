@@ -23,6 +23,7 @@
     <Project Path="tests/Sunder.Package.Agent.Mcp.Tests/Sunder.Package.Agent.Mcp.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj" />
     <Project Path="tests/Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.TestProviders/Sunder.Package.Agent.TestProviders.csproj" />
     <Project Path="tests/Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Presentation.State.Tests/Sunder.Package.Agent.Presentation.State.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Presentation.Tests/Sunder.Package.Agent.Presentation.Tests.csproj" />

@@ -66,7 +66,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 pair => Assert.Equal(new[] { "stack.method.unsupported" }, pair.Value));
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, "sunder.core");
-            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, providerId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, providerId, OwnerVersion);
             var sourceEndpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
 
             var metadata = await Call(sourceEndpoint, "metadata", new { });
@@ -103,7 +103,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 fragment.GetProperty("schemaId").GetString()!, fragment.GetProperty("schemaVersion").GetInt32(), fragment.GetProperty("displayName").GetString()!,
                 fragment.GetProperty("jsonPayload").GetString()!);
             await state.RetireAsync(implementation);
-            state.Add("younics.ai.agent", descriptor, targetImplementation, targetRegistration.Handler, Noop.Instance, providerId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, targetImplementation, targetRegistration.Handler, Noop.Instance, providerId, OwnerVersion);
             var targetEndpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
             Assert.NotEqual(sourceEndpoint, targetEndpoint);
             var stale = await Assert.ThrowsAsync<SunderRpcException>(() => Call(sourceEndpoint, "metadata", new { }));

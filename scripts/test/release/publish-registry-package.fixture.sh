@@ -101,8 +101,8 @@ jq -cn '
       kind: "worker",
       entryPoint: "lib/worker.dll",
       targetFramework: "net10.0",
-      sdkVersion: "1.1.0",
-      requiredHostCapabilities: ["execution-runtime.v1", "rpc.v1", "sdk-baseline-1-1.v1", "worker-protocol.v1"],
+      sdkVersion: "1.0.0",
+      requiredHostCapabilities: ["execution-runtime.v1", "rpc.v1", "worker-protocol.v1"],
       executionRuntime: {
         id: "sunder.runtime.dotnet",
         versionRange: ">=10.0.0 <11.0.0",
@@ -347,7 +347,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     -H)
       case "$2" in
-        Authorization:\ Bearer\ *) authorization="${2#Authorization: Bearer }" ;;
+        @*)
+          header="$(cat "${2#@}")"
+          [[ "$header" == Authorization:\ Bearer\ * ]]
+          authorization="${header#Authorization: Bearer }"
+          ;;
+        Authorization:\ Bearer\ *) printf 'Credential leaked into argv.\n' >&2; exit 2 ;;
         X-Sunder-Expected-Resource-Id:\ *) expected_resource="${2#X-Sunder-Expected-Resource-Id: }" ;;
         X-Sunder-Set-Latest:\ *) set_latest_header="${2#X-Sunder-Set-Latest: }" ;;
       esac
@@ -457,6 +462,13 @@ reset_fixture() {
   export MOCK_SHARED_PROJECTION="$projection_shared"
   export MOCK_RUNTIME_PROJECTION="$projection_runtime"
   write_details
+}
+
+assert_no_publication() {
+  if grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"; then
+    printf 'Registry verification unexpectedly published a package.\n' >&2
+    exit 1
+  fi
 }
 
 run_publisher() {
@@ -670,7 +682,7 @@ run_yanked_publisher > "$fixture_dir/initial-yanked.log"
 reset_fixture published
 write_yanked_details
 run_yanked_verifier > "$fixture_dir/initial-yanked-verify.log"
-! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+assert_no_publication
 
 for outcome in fail-after-commit malformed-after-commit; do
   reset_fixture absent
@@ -682,7 +694,7 @@ for outcome in fail-after-commit malformed-after-commit; do
   [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
   : > "$MOCK_REGISTRY_CALLS"
   run_yanked_publisher > "$fixture_dir/$outcome-retry.log"
-  ! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+  assert_no_publication
 done
 
 for outcome in fail-before-commit conflict-after-commit; do
@@ -717,7 +729,7 @@ for mutation in missing-publication owner content inventory initial-state curren
   fi
   grep -Fq 'publication owner/content/inventory/initial availability or current Yanked state differs' \
     "$fixture_dir/yanked-$mutation.log"
-  ! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+  assert_no_publication
 done
 
 reset_fixture absent
@@ -750,7 +762,7 @@ mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
 PATH="$mock_bin:$PATH" env -u SUNDER_REGISTRY_PUBLISH_TOKEN \
   bash "$publisher" --verify-only --initial-yanked "$expected_publication" --current-availability Listed \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/listed-readback.log"
-! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+assert_no_publication
 
 reset_fixture published
 write_yanked_details
@@ -764,7 +776,7 @@ if run_yanked_verifier > "$fixture_dir/duplicate-readback.log" 2>&1; then
   printf 'Publication readback accepted duplicate state fields.\n' >&2
   exit 1
 fi
-! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+assert_no_publication
 
 reset_fixture published
 write_yanked_details
@@ -779,6 +791,80 @@ if env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher"
   printf 'Publication readback accepted a forged evidence-commit timestamp.\n' >&2
   exit 1
 fi
-! grep -q '^PUBLISH$' "$MOCK_REGISTRY_CALLS"
+assert_no_publication
 
-printf 'Registry publication fixture passed: original canonical/projection/security cases plus exact initial-Yanked identity, read-only checks, lost-response recovery, idempotent retry and mismatch rejection; no implicit promotion.\n'
+# A fresh publication supplies only archive-derived expectations. The Registry
+# owns the owner field; capture it after verification and pin it on later reads.
+artifact_expectation="$fixture_dir/artifact-publication.json"
+jq 'del(.ownerPrincipalId)' "$expected_publication" > "$artifact_expectation"
+for outcome in success fail-after-commit; do
+  reset_fixture absent
+  write_yanked_details
+  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
+  observed="$fixture_dir/observed-$outcome.json"
+  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/ownerless-$outcome.log" 2>&1
+  jq -e --slurpfile expected "$expected_publication" '. == $expected[0]' "$observed" >/dev/null
+  [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
+  : > "$MOCK_REGISTRY_CALLS"
+  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/observed-$outcome-retry.log"
+  assert_no_publication
+done
+
+# An existing package owner need not be the user behind the publishing key.
+reset_fixture published
+write_yanked_details
+jq '.publication.ownerPrincipalId = ("4" * 32)' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+observed="$fixture_dir/existing-owner.json"
+PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+  https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/existing-owner.log"
+jq -e '.ownerPrincipalId == ("4" * 32)' "$observed" >/dev/null
+assert_no_publication
+
+write_yanked_details
+before="$(hash_file "$observed")"
+if env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+  --publication-output "$fixture_dir/changed-owner.json" https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
+  > "$fixture_dir/changed-owner.log" 2>&1; then
+  printf 'Readback accepted a different owner after retaining Registry publication evidence.\n' >&2
+  exit 1
+fi
+grep -Fq 'publication owner/content/inventory/initial availability' "$fixture_dir/changed-owner.log"
+[[ ! -e "$fixture_dir/changed-owner.json" && "$before" == "$(hash_file "$observed")" ]]
+assert_no_publication
+
+for mutation in missing-owner invalid-owner zero-owner extra-member content inventory; do
+  reset_fixture published
+  write_yanked_details
+  case "$mutation" in
+    missing-owner) filter='del(.publication.ownerPrincipalId)' ;;
+    invalid-owner) filter='.publication.ownerPrincipalId = null' ;;
+    zero-owner) filter='.publication.ownerPrincipalId = ("0" * 32)' ;;
+    extra-member) filter='.publication.extra = true' ;;
+    content) filter='.publication.package.packageContentIdentity = ("4" * 64)' ;;
+    inventory) filter='.publication.publicInventorySha256 = ("4" * 64)' ;;
+  esac
+  jq "$filter" "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+  mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
+  output="$fixture_dir/rejected-$mutation.json"
+  if PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$output" \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/ownerless-$mutation.log" 2>&1; then
+    printf 'Artifact-only expectation accepted invalid Registry publication evidence: %s.\n' "$mutation" >&2
+    exit 1
+  fi
+  [[ ! -e "$output" ]]
+  assert_no_publication
+done
+
+reset_fixture published
+write_yanked_details
+if PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+  https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/overwrite-evidence.log" 2>&1; then
+  printf 'Publication overwrote retained evidence.\n' >&2
+  exit 1
+fi
+[[ ! -s "$MOCK_REGISTRY_CALLS" && "$before" == "$(hash_file "$observed")" ]]
+
+printf 'Registry publication fixture passed: canonical/projection/security checks, artifact-only first publication, Registry-derived ownership, retained-owner drift rejection, lost-response recovery and immutable retries; no implicit promotion.\n'

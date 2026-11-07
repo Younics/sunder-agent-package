@@ -28,7 +28,7 @@ public sealed class BuilderLocalNuGetTests
     [Theory]
     [InlineData("[1.1.0,1.2.0)")]
     [InlineData("[1.1.0, 1.2.0)")]
-    public async Task CoordinatedNuSpecRangesAcceptTemplateAndNuGetPackFormatting(string range)
+    public async Task SelectedNuSpecRangesAcceptTemplateAndNuGetPackFormatting(string range)
     {
         using var fixture = new Fixture();
         fixture.CreateFeed();
@@ -37,6 +37,30 @@ public sealed class BuilderLocalNuGetTests
         var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
         Assert.NotNull(options.DotnetTemplatePackagePath);
         Assert.NotNull(options.NuGetConfigPath);
+    }
+
+    [Fact]
+    public async Task IndependentArchiveAndTemplateDependencyVersionsAreRetainedWithoutRewritingThem()
+    {
+        using var fixture = new Fixture();
+        foreach (var (id, version) in new[] { ("Sunder.Sdk", "1.1.3"), ("Sunder.Sdk.Worker", "2.0.0"),
+            ("Sunder.Sdk.Avalonia", "3.0.0"), ("Sunder.Sdk.Stacks", "4.0.0"), ("Sunder.Package.Build", "5.0.0"), ("Sunder.Package.Templates", "6.0.0") })
+            fixture.Versions[id] = version;
+        fixture.CreateFeed();
+        var original = File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates"));
+        var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
+        Assert.Equal("6.0.0", options.DotnetTemplateVersion);
+        Assert.EndsWith("Sunder.Package.Templates.6.0.0.nupkg", options.DotnetTemplatePackagePath);
+        Assert.Equal(original, File.ReadAllBytes(options.DotnetTemplatePackagePath!));
+    }
+
+    [Fact]
+    public async Task MultipleVersionsOfOneLocalIdentityAreAmbiguousNotNewestSelection()
+    {
+        using var fixture = new Fixture(); fixture.CreateFeed();
+        File.Copy(fixture.Archive("Sunder.Sdk"), Path.Combine(fixture.Feed, "Sunder.Sdk.1.1.1.nupkg"));
+        await Assert.ThrowsAsync<InvalidDataException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options));
+        Assert.False(Directory.Exists(fixture.Snapshots));
     }
 
     [Theory]
@@ -96,7 +120,7 @@ public sealed class BuilderLocalNuGetTests
     [InlineData("wrong-version")]
     [InlineData("sdk-constraint")]
     [InlineData("required-artifact")]
-    [InlineData("template-version")]
+    [InlineData("template-dependency")]
     [InlineData("template-framework")]
     [InlineData("duplicate-entry")]
     [InlineData("traversal-entry")]
@@ -459,16 +483,17 @@ public sealed class BuilderLocalNuGetTests
         internal string PointerPath => Path.Combine(Options.CacheRootPath, "local-nuget.json");
         internal string Snapshots => Path.Combine(Options.CacheRootPath, "local-nuget");
         internal BuilderProjectDriverOptions Options { get; }
+        internal Dictionary<string, string> Versions { get; } = new(StringComparer.Ordinal);
         internal Tools Tools { get; }
         internal Processes Process { get; } = new();
         internal Fixture()
         {
             Directory.CreateDirectory(Root);
-            Options = new(PathOf("development-toolchains/project-tools")) { CoordinatedPackageVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
+            Options = new(PathOf("development-toolchains/project-tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
             Tools = new(Root);
         }
         internal string PathOf(string name) => Path.Combine(Root, name);
-        internal string Archive(string id) => Path.Combine(Feed, id + ".1.1.0.nupkg");
+        internal string Archive(string id) => Path.Combine(Feed, id + "." + Versions.GetValueOrDefault(id, "1.1.0") + ".nupkg");
         internal void Pointer(string json) { Directory.CreateDirectory(Options.CacheRootPath); File.WriteAllText(PointerPath, json); }
         internal void CreateFeed()
         {
@@ -508,10 +533,10 @@ public sealed class BuilderLocalNuGetTests
             {
                 using var writer = new StreamWriter(zip.CreateEntry(path).Open(), new UTF8Encoding(false)); writer.Write(text);
             }
-            var sdkRange = failure == "sdk-constraint" ? "[2.0.0]" : dependencyVersion ?? (id == "Sunder.Sdk.Worker" ? "[1.1.0]" : "[1.1.0, 1.2.0)");
+            var sdkRange = failure == "sdk-constraint" ? "[2.0.0]" : dependencyVersion ?? "[" + Versions.GetValueOrDefault("Sunder.Sdk", "1.1.0") + "]";
             var dependency = id.StartsWith("Sunder.Sdk.", StringComparison.Ordinal)
                 ? $"<dependencies><group targetFramework=\"net10.0\"><dependency id=\"Sunder.Sdk\" version=\"{sdkRange}\" /></group></dependencies>" : "";
-            Add(id + ".nuspec", $"<package><metadata><id>{(failure == "wrong-id" ? "Wrong.Id" : id)}</id><version>{(failure == "wrong-version" ? "1.1.1" : "1.1.0")}</version>{dependency}" +
+            Add(id + ".nuspec", $"<package><metadata><id>{(failure == "wrong-id" ? "Wrong.Id" : id)}</id><version>{(failure == "wrong-version" ? "9.9.9" : Versions.GetValueOrDefault(id, "1.1.0"))}</version>{dependency}" +
                 (id == "Sunder.Package.Templates" ? "<packageTypes><packageType name=\"Template\" /></packageTypes>" : "") + "</metadata></package>");
             if (id.StartsWith("Sunder.Sdk", StringComparison.Ordinal))
             {
@@ -527,12 +552,8 @@ public sealed class BuilderLocalNuGetTests
             else
             {
                 const string root = "content/sunder-package/"; const string project = root + "Sunder.Package.Template/";
-                Add(root + ".template.config/template.json", JsonSerializer.Serialize(new { identity = "Sunder.Package", shortName = "sunder-package", symbols = new
-                {
-                    coordinatedPackageVersion = new { type = "generated", generator = "constant", parameters = new { value = failure == "template-version" ? "1.1.1" : "1.1.0" } },
-                    coordinatedPackageVersionRange = new { type = "generated", generator = "constant", parameters = new { value = "[1.1.0,1.2.0)" } },
-                } }));
-                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"SUNDER_TEMPLATE_PACKAGE_VERSION_RANGE\" />";
+                Add(root + ".template.config/template.json", JsonSerializer.Serialize(new { identity = "Sunder.Package", shortName = "sunder-package", symbols = new { } }));
+                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"[{(failure == "template-dependency" ? "99.0.0" : Versions.GetValueOrDefault(package, "1.1.0"))}]\" />";
                 Add(project + "Sunder.Package.Template.csproj", "<Project><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + Reference("Sunder.Package.Build") + "</ItemGroup></Project>");
                 Add(project + "Views/Avalonia.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Avalonia") + "</ItemGroup></Project>");
                 Add(project + "Stacks/Stacks.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Stacks") + "</ItemGroup></Project>");

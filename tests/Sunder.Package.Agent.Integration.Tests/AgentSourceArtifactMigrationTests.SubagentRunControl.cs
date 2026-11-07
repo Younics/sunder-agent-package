@@ -22,7 +22,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await using var receiver = new GeneratedServiceTestScope(transport);
         var registration = receiver.Register(implementation, RegressionTestBindings.RunControls);
         var descriptor = CurrentPublicRpcDescriptors.Get(RegressionTestBindings.RunControls);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var client = Assert.Single((await receiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var host = new AgentPublicSourceMigrationTests.FullRunControlProbe();
         using var lease = registry.Open(host, "younics.ai.agent.subagents", out var invocationId);

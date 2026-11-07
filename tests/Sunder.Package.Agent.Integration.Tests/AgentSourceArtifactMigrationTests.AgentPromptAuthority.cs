@@ -74,7 +74,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.Equal(1, peer.Acknowledgments);
                 await host.Build("hello"); await host.Acknowledge(receipt); Assert.Equal(2, peer.Acknowledgments);
                 var duplicate = new SurfaceHandler(registration.Handler);
-                state.Add(packageId, CurrentPublicRpcDescriptors.Get(registration.ContractId), duplicate, duplicate, Noop.Instance, "fixture.prompt.duplicate", "2.0.0");
+                state.Add(packageId, CurrentPublicRpcDescriptors.Get(registration.ContractId), duplicate, duplicate, Noop.Instance, "fixture.prompt.duplicate", CurrentContractInventory.PackageVersionFor(packageId));
                 Assert.Equal(2, (await host.Build("hello")).Blocks.Count);
                 await Assert.ThrowsAsync<InvalidOperationException>(() => host.Acknowledge(receipt)); Assert.Equal(2, peer.Acknowledgments);
                 await state.RetireAsync(duplicate);

@@ -4,9 +4,9 @@
     "net10.0": {
       "Sunder.Sdk": {
         "type": "Direct",
-        "requested": "[1.1.0, 1.2.0)",
-        "resolved": "1.1.0",
-        "contentHash": "7l6xqfn7ESsDR71I0nRVmz+cGXgMmD7LKpQ+qewC07qrNcbglFb4X5qjwWdOC4CzEXblciKHJr5VKt35nk+7og==",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"

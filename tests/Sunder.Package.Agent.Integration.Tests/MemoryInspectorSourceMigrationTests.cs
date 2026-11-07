@@ -34,7 +34,7 @@ public sealed class MemoryInspectorSourceMigrationTests
         await AgentSourceArtifactMigrationTests.ActivateGeneratedComposition(options);
         var registration = Assert.Single(options.Providers, value => value.ProviderId == "semantic.memory.inspector");
         state.Add("younics.ai.agent.memory.semantic", source.Descriptor, registration.Handler, registration.Handler,
-            Noop.Instance, registration.ProviderId, "2.0.0");
+            Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
         await using var receiver = new GeneratedServiceTestScope(rpc);
         var entry = Assert.Single((await receiver.Providers<MemoryServices.IMemoryInspectorService>().ListAsync()).Providers);
         var service = entry.Service;

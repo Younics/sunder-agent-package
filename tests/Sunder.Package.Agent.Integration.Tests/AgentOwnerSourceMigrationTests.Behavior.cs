@@ -34,7 +34,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, "younics.ai.agent");
-        state.Add("younics.ai.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, OwnerVersion);
         Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers);
         await using var app = new AppClient(appAssembly, rpc);
         var negotiated = await app.Invoke("transport-profile", new { });
@@ -212,13 +212,13 @@ public sealed partial class AgentOwnerSourceMigrationTests
         await state.RetireAsync(implementation).WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Equal(SunderRpcErrorKind.StaleEndpoint, (await Assert.ThrowsAsync<SunderRpcException>(() => retiring.WaitAsync(TimeSpan.FromSeconds(5)))).Error.Kind);
         probe.Block = false;
-        state.Add("unrelated.package", descriptor, new object(), probe, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("unrelated.package", descriptor, new object(), probe, Noop.Instance, registration.ProviderId, OwnerVersion);
         Assert.Equal(SunderRpcErrorKind.Unavailable, (await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()))).Error.Kind);
-        state.Add("younics.ai.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, probe, Noop.Instance, registration.ProviderId, OwnerVersion);
         var negotiations = probe.Requests.Count(value => value.Route == "transport-profile");
         await app.Invoke("dashboard", new AgentDashboardRequest());
         Assert.Equal(negotiations + 1, probe.Requests.Count(value => value.Route == "transport-profile"));
-        state.Add("younics.ai.agent", descriptor, new object(), probe, Noop.Instance, "alternate.owner", "2.0.0");
+        state.Add("younics.ai.agent", descriptor, new object(), probe, Noop.Instance, "alternate.owner", OwnerVersion);
         Assert.Equal("rpc.provider-ambiguous", (await Assert.ThrowsAsync<SunderRpcException>(() => app.Invoke("dashboard", new AgentDashboardRequest()))).Error.Code);
     }
 

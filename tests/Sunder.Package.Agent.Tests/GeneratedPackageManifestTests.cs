@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using Sunder.Sdk.Compatibility;
 using Xunit;
 
@@ -19,7 +20,6 @@ public sealed class GeneratedPackageManifestTests
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "packages.json")));
         var expectedCapabilities = inventoryDocument.RootElement.GetProperty("capabilities");
-        var releaseVersion = inventoryDocument.RootElement.GetProperty("releaseVersion").GetString();
         var releaseTitles = inventoryDocument.RootElement.GetProperty("packages")
             .EnumerateArray()
             .Where(static package => package.GetProperty("artifactType").GetString() == "sunderpkg")
@@ -52,7 +52,7 @@ public sealed class GeneratedPackageManifestTests
             Assert.Equal(1, root.GetProperty("manifestVersion").GetInt32());
             var packageId = root.GetProperty("id").GetString()!;
             Assert.Equal(package.FamilyId, packageId);
-            Assert.Equal(releaseVersion, root.GetProperty("version").GetString());
+            Assert.Equal(package.Version, root.GetProperty("version").GetString());
             Assert.Equal(releaseTitles[packageId], root.GetProperty("name").GetString());
             Assert.False(string.IsNullOrWhiteSpace(root.GetProperty("summary").GetString()));
             Assert.Equal("assets/icon.png", root.GetProperty("icon").GetString());
@@ -148,7 +148,10 @@ public sealed class GeneratedPackageManifestTests
             Assert.Equal("sunder.dotnet-worker-module.v1", executionRuntime.GetProperty("moduleAbi").GetString());
             foreach (var target in targets)
             {
-                Assert.StartsWith("1.1.", target.GetProperty("sdkVersion").GetString(), StringComparison.Ordinal);
+                // NuGet references report the package version; source references can
+                // include informational build metadata. Release/prerelease must match.
+                Assert.Equal(typeof(SunderSdkCapabilities).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion.Split('+')[0],
+                    target.GetProperty("sdkVersion").GetString()!.Split('+')[0]);
                 var capabilities = target.GetProperty("requiredHostCapabilities")
                     .EnumerateArray()
                     .Select(static capability => capability.GetString()!)
@@ -157,9 +160,11 @@ public sealed class GeneratedPackageManifestTests
                 Assert.Contains(SunderSdkCapabilities.RpcV1, capabilities, StringComparer.Ordinal);
                 Assert.Contains("core.v1", capabilities, StringComparer.Ordinal);
                 Assert.Contains("packaging.v1", capabilities, StringComparer.Ordinal);
-                Assert.Contains("sdk-baseline-1-1.v1", capabilities, StringComparer.Ordinal);
+                Assert.DoesNotContain(capabilities, capability => capability.StartsWith("sdk-baseline-", StringComparison.Ordinal));
                 if (target.GetProperty("role").GetString() == "runtime")
                 {
+                    Assert.Equal(packageId == "younics.ai.agent.execution.docker",
+                        capabilities.Contains(SunderSdkCapabilities.DockerEnvironmentV1, StringComparer.Ordinal));
                     Assert.Contains("worker-protocol.v1", capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain("runtime-operations.v1", capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain("runtime-invocation-errors.v1", capabilities, StringComparer.Ordinal);
@@ -168,6 +173,9 @@ public sealed class GeneratedPackageManifestTests
                 }
                 else
                 {
+                    Assert.DoesNotContain(SunderSdkCapabilities.DockerEnvironmentV1, capabilities, StringComparer.Ordinal);
+                    Assert.Contains("app-bridge.v1", capabilities, StringComparer.Ordinal);
+                    Assert.Equal("12.1.4", target.GetProperty("avaloniaVersion").GetString()!.Split('+')[0]);
                     Assert.Contains(SunderSdkCapabilities.ThemingV1, capabilities, StringComparer.Ordinal);
                     Assert.DoesNotContain("worker-protocol.v1", capabilities, StringComparer.Ordinal);
                     Assert.Equal(packageId == "younics.sunder.package.maker",

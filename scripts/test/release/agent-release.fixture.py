@@ -125,7 +125,7 @@ class ReleaseTests(unittest.TestCase):
             pack(self.assets / f"{package}.2.0.0.sunderpkg", manifest)
 
     def plan(self):
-        return release.family_plan(self.source, self.assets, "https://registry.test", "1" * 32)
+        return release.family_plan(self.source, self.assets, "https://registry.test")
 
     def test_owner_first_and_complete_ordinary_dependency_order(self):
         self.manifests[self.ids[1]]["dependsOn"].append({"packageId": self.ids[-1], "versionRange": "=2.0.0"})
@@ -184,6 +184,46 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(release.Invalid):
                     self.plan()
         lock.write_bytes(before)
+        # A first-release seed can have the same version/public descriptors but
+        # different final native content. It must not satisfy that authored lock.
+        self.manifests[self.ids[0]]["summary"] = "Different final native artifact"
+        self.repack()
+        _, final_public, _ = release.archive_metadata(self.assets / f"{self.ids[0]}.2.0.0.sunderpkg")
+        self.assertEqual(public["contracts"], final_public["contracts"])
+        with self.assertRaisesRegex(release.Invalid, "Complete selected artifact identity differs"):
+            self.plan()
+        self.assertEqual(before, lock.read_bytes())
+
+    def test_retained_plan_is_validated_before_it_can_bypass_current_source_lock_checks(self):
+        import agent_selection as selection
+        source = release.load(self.source / "packages.json")
+        keys = {row["packageId"]: row["key"] for row in release.inventory(Path(__file__).resolve().parents[3])["packages"]}
+        for row in source["packages"]: row["key"] = keys[row["packageId"]]
+        write(self.source / "packages.json", source)
+        rows = []
+        for row in sorted(release.inventory(self.source)["packages"], key=lambda row: row["packageId"]):
+            rows.append({key: row[key] for key in ("key", "packageId", "projectPath", "version")} | dict(
+                tag=row["key"] + "/v2.0.0", selected=True, retainedArchive=None, retainedEvidence=None))
+        row = next(row for row in rows if row["packageId"] == self.ids[1])
+        archive = self.assets / selection.archive_name(row)
+        row.update(selected=False, retainedArchive=dict(repository=selection.REPOSITORY, releaseId=42, assetId=101,
+            name=archive.name, size=archive.stat().st_size, sha256=release.file_sha(archive)),
+            retainedEvidence=dict(repository=selection.REPOSITORY, releaseId=42, assetId=102,
+                name="native-test-evidence.json", size=1, sha256="a" * 64))
+        plan = dict(schemaVersion=2, repository=selection.REPOSITORY, artifactSourceCommit="a" * 40,
+            lockSetSha256=release.locks(self.source), registryOrigin="https://registry.test", packages=rows)
+        path = self.assets / selection.PLAN
+        write(path, plan)
+        self.assertEqual(15, len(release.artifact_records(self.source, self.assets)))
+        for mutate in (lambda value: value.update(lockSetSha256="f" * 64),
+                       lambda value: value["packages"][0].update(unknown=True),
+                       lambda value: next(item for item in value["packages"] if not item["selected"]).update(retainedArchive=None)):
+            bad = copy.deepcopy(plan); mutate(bad); write(path, bad)
+            with self.assertRaises(release.Invalid): release.verify_family(self.source, self.assets)
+        write(path, plan)
+        archive.write_bytes(archive.read_bytes() + b"different retained bytes")
+        with self.assertRaisesRegex(release.Invalid, "validated release plan"):
+            release.artifact_records(self.source, self.assets)
 
     def test_lock_digest_changes_for_exact_bytes_not_just_semantics(self):
         expected = release.locks(self.source)
@@ -420,6 +460,66 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(release.Invalid, "Noncanonical"):
             release.validate_provenance(self.source, self.assets)
 
+    def test_selective_provenance_binds_the_original_main_plan_and_all_fifteen_archive_records(self):
+        import agent_selection as selection
+        legacy = self.provenance()
+        inventory = release.load(self.source / "packages.json")
+        for index, row in enumerate(inventory["packages"]):
+            row["key"] = f"agent-fixture-{index}"
+        write(self.source / "packages.json", inventory)
+        rows = release.inventory(self.source)["packages"]
+        plan = dict(schemaVersion=1, repository=selection.REPOSITORY, artifactSourceCommit=legacy["artifactSourceCommit"],
+            lockSetSha256=release.locks(self.source), **legacy["publication"], packages=sorted([
+                {key: row[key] for key in ("key", "packageId", "projectPath", "version")} | dict(
+                    tag=row["key"] + "/v" + row["version"], selected=True, retainedArchive=None, retainedEvidence=None)
+                for row in rows], key=lambda row: row["packageId"]))
+        value = dict(schemaVersion=2, buildType=legacy["buildType"], artifactSourceCommit=plan["artifactSourceCommit"],
+            lockSetSha256=plan["lockSetSha256"],
+            publication=legacy["publication"], materials=[dict(legacy["materials"][0], name="Sunder.Package.Build")], artifacts=legacy["artifacts"],
+            invocation=dict(repository=selection.REPOSITORY, workflowPath=".github/workflows/sunder-package-release.yml",
+                workflowRef=selection.REPOSITORY + "/.github/workflows/sunder-package-release.yml@refs/heads/main",
+                workflowSha=plan["artifactSourceCommit"], event="workflow_dispatch", repositoryId=42,
+                runId="8001", runAttempt="1", releaseId=424242))
+        for schema in (1, 2):
+            with self.subTest(plan_schema=schema):
+                plan["schemaVersion"] = schema
+                if schema == 2:
+                    del plan["ownerPrincipalId"]
+                    value["publication"] = dict(registryOrigin=plan["registryOrigin"])
+                write(self.assets / selection.PLAN, plan)
+                value.update(schemaVersion=schema + 1, planSha256=release.file_sha(self.assets / selection.PLAN))
+                write(self.assets / "release-provenance.json", value)
+                self.assertEqual(value, release.validate_provenance(self.source, self.assets))
+                for mutate in (lambda v: v.update(planSha256="f" * 64), lambda v: v["publication"].update(ownerPrincipalId="f" * 32),
+                               lambda v: v["invocation"].update(event="pull_request"), lambda v: v["invocation"].update(releaseId=True),
+                               lambda v: v["artifacts"][0].update(size=float(v["artifacts"][0]["size"])),
+                               lambda v: v["artifacts"].pop()):
+                    bad = copy.deepcopy(value)
+                    mutate(bad)
+                    write(self.assets / "release-provenance.json", bad)
+                    with self.assertRaises(release.Invalid):
+                        release.validate_provenance(self.source, self.assets)
+        write(self.assets / "release-provenance.json", value)
+        observed = [release.publication(record, f"{index + 1:032x}") for index, record in enumerate(value["artifacts"])]
+        observed.sort(key=lambda item: item["package"]["packageId"])
+        write(self.assets / release.PUBLICATIONS, observed)
+        # The offline publication importer uses retained per-package ownership,
+        # including a different owner for another package in the same test batch.
+        for expected in (observed[0], observed[-1]):
+            data = subprocess.check_output([sys.executable, "-B", str(Path(release.__file__)), "expected-publication",
+                str(self.assets / "release-provenance.json"), expected["package"]["packageId"]])
+            self.assertEqual(expected, release.decode(data))
+        for mutate in (lambda values: values.pop(), lambda values: values.append(values[0]),
+                       lambda values: values.reverse(), lambda values: values[0].update(ownerPrincipalId="0" * 32),
+                       lambda values: values[0]["package"].update(packageContentIdentity="f" * 64),
+                       lambda values: values[0].update(extra=True)):
+            bad = copy.deepcopy(observed); mutate(bad); write(self.assets / release.PUBLICATIONS, bad)
+            with self.assertRaises(release.Invalid):
+                release.read_publications(self.assets, value["artifacts"], required=True)
+        (self.assets / release.PUBLICATIONS).unlink()
+        with self.assertRaisesRegex(release.Invalid, "Missing retained Registry publication"):
+            release.read_publications(self.assets, value["artifacts"], required=True)
+
     def test_evidence_child_preserves_source_locks_descriptor_history_and_modes(self):
         provenance = self.provenance()
         relative = "src/Fixture0/sunder-contracts.owned.json"
@@ -654,6 +754,33 @@ class CohortTests(unittest.TestCase):
                     cohort.apply("https://registry.test", self.req, self.res)
                 send.assert_not_called()
 
+    def test_api_key_mode_requires_the_key_and_never_falls_back_to_human_credentials(self):
+        token = "sunder_pub_v1_" + "b" * 43
+        with patch.dict(os.environ, {"SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE": "api-key",
+                "SUNDER_REGISTRY_PUBLISH_TOKEN": token, "SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}):
+            self.assertEqual(token, cohort.mutation_credential(self.request))
+            with patch.dict(os.environ, {"SUNDER_REGISTRY_PUBLISH_TOKEN": ""}), self.assertRaisesRegex(release.Invalid, "no CLI credential fallback"):
+                cohort.mutation_credential(self.request)
+            reverse = copy.deepcopy(self.request)
+            reverse["versions"][0].update(expectedAvailability="Listed", availability="Yanked")
+            with self.assertRaisesRegex(release.Invalid, "only forward"):
+                cohort.mutation_credential(reverse)
+
+    def test_http_does_not_put_credentials_in_process_arguments_or_environment(self):
+        token = "sunder_pub_v1_" + "b" * 43
+        paths = []
+        def send(command, **kwargs):
+            self.assertNotIn(token, " ".join(command))
+            self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", kwargs["env"])
+            header_path = Path(next(command[i + 1][1:] for i, arg in enumerate(command) if arg == "--header" and command[i + 1].startswith("@")))
+            paths.append(header_path)
+            self.assertEqual("Authorization: Bearer " + token + "\n", header_path.read_text())
+            self.assertEqual(0, header_path.stat().st_mode & 0o077)
+            return subprocess.CompletedProcess(command, 0, b"{}\n200")
+        with patch.dict(os.environ, {"SUNDER_REGISTRY_PUBLISH_TOKEN": token}), patch.object(cohort.subprocess, "run", side_effect=send):
+            self.assertEqual((200, b"{}", 0), cohort.http("https://registry.test", "/api/v1/me/package-cohorts/availability", b"{}", token))
+        self.assertTrue(all(not path.exists() for path in paths))
+
     def test_post_commit_verification_failure_retains_result_without_compensation(self):
         with patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}), \
                 patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), patch.object(cohort, "guard"), \
@@ -736,9 +863,17 @@ class CohortTests(unittest.TestCase):
                     cohort.confirm("https://registry.test", self.req, self.res, self.root)
                 self.assertEqual(["/api/v1/policy/synchronize"], sent)
 
+    def staged_publications(self):
+        records = [dict(identity, publicInventorySha256="a" * 64) for identity in self.identities]
+        write(self.root / release.PUBLICATIONS, sorted([release.publication(record, "b" * 32) for record in records],
+            key=lambda item: item["package"]["packageId"]))
+        return records
+
     def test_pipeline_retains_current_policy_request_before_cohort_mutation(self):
         provenance = {"invocation": {"releaseId": 424242}, "publication": {"registryOrigin": "https://registry.test"},
-                      "artifactSourceCommit": "1" * 40, "artifacts": self.identities}
+                      "artifactSourceCommit": "1" * 40, "artifacts": self.staged_publications()}
+        plan = dict(schemaVersion=2, registryOrigin="https://registry.test", artifactSourceCommit="1" * 40,
+                    packages=[dict(packageId=item["packageId"], selected=True) for item in self.identities])
         store = Mock(tag="agent/v2.0.0")
         retained = {}
         def http(registry, route, payload, token=None):
@@ -754,27 +889,29 @@ class CohortTests(unittest.TestCase):
         def apply(registry, request_path, result_path):
             store.upload.assert_called_once_with(424242, [request_path])
             proposed = release.load(request_path)
-            self.assertEqual(pipeline.cohort_request(provenance, 43), proposed)
+            self.assertEqual(pipeline.cohort_request(plan, provenance, 43), proposed)
             committed = {**self.result, "idempotencyKey": proposed["idempotencyKey"], "requestSha256": cohort.request_hash(proposed),
                          "packagePolicy": {"revision": 44, "fingerprint": "b" * 64}, "versions": proposed["versions"]}
             cohort.result(committed, proposed)
             cohort.store(result_path, committed)
             retained.update(schemaVersion=2, registryOrigin=registry, artifactSourceCommit=provenance["artifactSourceCommit"],
                             releaseId=424242, request=proposed, result=committed)
-        with patch.dict(os.environ), patch.object(pipeline, "verified", return_value=(store, {"draft": True}, provenance)), \
+        with patch.dict(os.environ), patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
                 patch.object(pipeline, "registry_versions") as versions, patch.object(cohort, "http", side_effect=http), \
                 patch.object(cohort, "apply", side_effect=apply) as mutate, patch.object(receipts, "upload"), \
                 patch.object(receipts, "download_bytes", side_effect=lambda *args: retained), patch.object(cohort, "confirm") as confirm:
-            pipeline.visibility(self.root / "core", self.root, 424242)
+            pipeline.visibility(self.root / "core", self.root, plan)
             mutate.assert_called_once()
             confirm.assert_called_once()
-            self.assertEqual(["Yanked", "Listed"], [call.args[2] for call in versions.call_args_list])
-        self.assertEqual(pipeline.cohort_request(provenance, 43), release.load(self.root / pipeline.REQUEST))
+            self.assertEqual(["Yanked", "Listed"], [call.args[3] for call in versions.call_args_list])
+        self.assertEqual(pipeline.cohort_request(plan, provenance, 43), release.load(self.root / pipeline.REQUEST))
         self.assertEqual(retained, release.load(self.root / ("agent-family-cohort-" + cohort.request_hash(retained["request"]) + ".json")))
 
     def test_pipeline_invalid_policy_never_retains_or_dispatches_a_cohort(self):
         provenance = {"invocation": {"releaseId": 424242}, "publication": {"registryOrigin": "https://registry.test"},
-                      "artifacts": self.identities}
+                      "artifacts": self.staged_publications()}
+        plan = dict(schemaVersion=2, registryOrigin="https://registry.test",
+                    packages=[dict(packageId=item["packageId"], selected=True) for item in self.identities])
         store = Mock(tag="agent/v2.0.0")
         mutations = {
             "nonce": lambda v: v.update(nonce="0" * 32),
@@ -793,12 +930,12 @@ class CohortTests(unittest.TestCase):
             value = self.policy_response(release.decode(payload), "Yanked")
             mutate(value)
             return 200, release.encoded(value), 0
-        with patch.object(pipeline, "verified", return_value=(store, {"draft": True}, provenance)), \
+        with patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
                 patch.object(pipeline, "registry_versions"), patch.object(cohort, "http", side_effect=http), \
                 patch.object(cohort, "apply") as apply:
             for name, mutate in mutations.items():
                 with self.subTest(case=name), self.assertRaises(release.Invalid):
-                    pipeline.visibility(self.root / "core", self.root, 424242)
+                    pipeline.visibility(self.root / "core", self.root, plan)
                 self.assertFalse((self.root / pipeline.REQUEST).exists())
             store.upload.assert_not_called()
             apply.assert_not_called()
@@ -911,6 +1048,21 @@ class ReverseTests(unittest.TestCase):
         write(self.forward_path, self.forward)
         with self.assertRaisesRegex(release.Invalid, "protected configuration"):
             reversal.guard(*self.args)
+
+    def test_selected_cohort_reverse_is_blocked_after_any_sibling_announcement(self):
+        import agent_selection as selection
+        rows = [dict(packageId=package["packageId"], version=package["version"], selected=True,
+            tag="agent/v2.0.0" if index == 0 else f"agent-fixture-{index}/v2.0.0") for index, package in enumerate(self.identities)]
+        plan = dict(packages=rows)
+        data = release.encoded(plan)
+        self.info["assets"] = [dict(id=123, name=selection.PLAN, size=len(data), digest="sha256:" + release.sha(data))]
+        remote = [dict(tag_name=row["tag"], draft=True, target_commitish="1" * 40) for row in rows]
+        with patch.object(reversal.subprocess, "check_output", return_value=data), patch.object(selection, "validate", return_value=plan), \
+             patch.object(selection, "releases", return_value=remote):
+            reversal.guard(*self.args)
+            remote[-1]["draft"] = False
+            with self.assertRaisesRegex(release.Invalid, "already announced"):
+                reversal.guard(*self.args)
 
     def test_reverse_orchestration_retains_one_request_and_exact_restored_result(self):
         def apply(registry, request_path, result_path):

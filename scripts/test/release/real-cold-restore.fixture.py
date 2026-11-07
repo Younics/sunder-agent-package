@@ -49,7 +49,7 @@ def main(source, tasks, catalog):
             projects.append((path, lock, original))
         owner = next(p for p in release.inventory(source)["packages"] if p["packageId"] == "younics.ai.agent")
         candidate_project = Path(owner["projectPath"])
-        candidate = source / candidate_project.parent / "bin/Debug/net10.0" / f"{candidate_project.stem}.2.0.0.sunderpkg"
+        candidate = source / candidate_project.parent / "bin/Debug/net10.0" / f"{candidate_project.stem}.{owner['version']}.sunderpkg"
         probe = next(path for path, lock, _ in projects if lock["packageArtifacts"])
         common = ["-t:RestoreSunderContracts", "-nr:false", "-p:SunderPlatformCatalogPath=" + str(catalog)]
         missing = subprocess.run([*prefix, "dotnet", "msbuild", str(probe), *common], env=env, text=True, capture_output=True)

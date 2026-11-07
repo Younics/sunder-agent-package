@@ -22,7 +22,7 @@ internal static class BuilderProjectHistory
                 if (root.GetProperty("schemaVersion").GetInt32() != 1 || owner is null || requiredReceiptOwner is not null && owner != requiredReceiptOwner) return Unknown(file.Key);
                 BuilderProjectSource.ValidateId(owner);
                 if (!Hash(root.GetProperty("inputFingerprint").GetString()) || !Hash(root.GetProperty("lockSha256").GetString())
-                    || root.GetProperty("producer").GetProperty("name").GetString() is not ("Sunder.Package.Build" or "@sunder/package-tool")) return Unknown(file.Key);
+                    || root.GetProperty("producer").GetProperty("name").GetString() is not ("Sunder.Package.Build" or "@younics/sunder-package-tool")) return Unknown(file.Key);
                 var version = root.GetProperty("packageVersion").GetString();
                 if (string.IsNullOrEmpty(version)) return Unknown(file.Key);
                 var contracts = root.GetProperty("contracts").EnumerateArray().ToArray();

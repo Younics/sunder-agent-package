@@ -97,13 +97,13 @@ public sealed partial class AgentPublicSourceMigrationTests
             using var sources = new RegressionTestSourceProviders();
             var targetRegistration = sources.Create(RegressionTestBindings.ExecutionTargets, target, receiver);
             var targetSnapshot = state.Add("younics.ai.agent", descriptors[RegressionTestBindings.ExecutionTargets], target, targetRegistration.Handler,
-                EmptyDisposable.Instance, targetRegistration.ProviderId, "2.0.0");
+                EmptyDisposable.Instance, targetRegistration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
             var targetReference = Assert.Single((await receiver.Providers<AgentServices.IExecutionTargetService>().ListAsync()).Providers).Reference;
             var resolver = CreateResolver(targetReference);
             var service = resolver;
             var registration = sources.Create(RegressionTestBindings.WorkspaceExecutionResolver, service, receiver);
             var resolverDescriptor = descriptors[RegressionTestBindings.WorkspaceExecutionResolver];
-            state.Add("younics.ai.agent", resolverDescriptor, service, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent", resolverDescriptor, service, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
             var providers = (await client.DiscoverAsync(resolverDescriptor.ContractId)).Providers;
             var source = providers.Single(value => value.ProviderId == registration.ProviderId);
             var resolverJson = new JsonSerializerOptions(JsonSerializerDefaults.Web)

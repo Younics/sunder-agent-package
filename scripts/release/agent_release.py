@@ -9,33 +9,17 @@ import copy
 from datetime import datetime
 import hashlib
 import json
-import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 import zipfile
 
 
-# Explicit runtime identities; project/NuGet names and the agent/v* tag are separate.
-# Package Maker intentionally belongs to this family without the AI Agent prefix.
-FAMILY_PACKAGE_IDS = (
-    "younics.ai.agent",
-    "younics.sunder.package.maker",
-    "younics.ai.agent.execution.docker",
-    "younics.ai.agent.execution.local",
-    "younics.ai.agent.mcp",
-    "younics.ai.agent.memory.semantic",
-    "younics.ai.agent.provider.anthropic",
-    "younics.ai.agent.provider.gemini",
-    "younics.ai.agent.provider.lmstudio",
-    "younics.ai.agent.provider.openai",
-    "younics.ai.agent.skills",
-    "younics.ai.agent.subagents",
-    "younics.ai.agent.tools.files",
-    "younics.ai.agent.tools.shell",
-    "younics.ai.agent.tools.web",
-)
+from family_policy import FAMILY_PACKAGE_IDS, FAMILY_PROJECTS
+
+PUBLICATIONS = "registry-publications.json"
 
 
 class Invalid(ValueError):
@@ -189,12 +173,23 @@ def inventory(source):
     value = load(source_file(source, "packages.json"))
     version(value["releaseVersion"])
     packages = value["packages"]
-    require(len(packages) == 15 and all(p["artifactType"] == "sunderpkg" for p in packages), "Expected 15 archives")
-    require(len({p["packageId"] for p in packages}) == 15, "Duplicate family identity")
+    require(len(packages) == len(FAMILY_PROJECTS) and all(p["artifactType"] == "sunderpkg" for p in packages), "Expected the complete reviewed family")
+    require(len({p["packageId"] for p in packages}) == len(packages), "Duplicate family identity")
     require({p["packageId"] for p in packages} == set(FAMILY_PACKAGE_IDS), "Expected the exact AI Agent runtime family")
     for package in packages:
         require(re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", package["packageId"]), "Invalid package ID")
         safe_relative(package["projectPath"])
+        project = source_file(source, package["projectPath"], optional=True)
+        tree = None if project is None else ET.parse(project).getroot()
+        authored = [] if tree is None else tree.findall("./PropertyGroup/Version")
+        require(len(authored) <= 1, "Author one literal Version per canonical package project")
+        if project is not None:
+            groups = tree.findall("./PropertyGroup")
+            require(len(authored) == 1 and not authored[0].attrib
+                    and all("Condition" not in group.attrib for group in groups if group.find("Version") is not None),
+                    "Canonical projects must author one unconditional literal Version")
+        package["version"] = authored[0].text if authored else value["releaseVersion"]
+        version(package["version"])
     return value
 
 
@@ -203,7 +198,7 @@ def locks(source):
     for package in inventory(source)["packages"]:
         relative = str(PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json")
         records.append({"path": relative, "sha256": file_sha(source_file(source, relative))})
-    require(len({r["path"] for r in records}) == 15, "Each production project must own one lock")
+    require(len({r["path"] for r in records}) == len(FAMILY_PROJECTS), "Each production project must own one lock")
     records.sort(key=lambda r: r["path"])
     # Canonical UTF-8, sorted object keys, no BOM or final newline (Workstream H).
     return sha(canonical(records))
@@ -453,25 +448,55 @@ def archive_metadata(path):
 
 def artifact_records(source, assets):
     family = inventory(source)
+    plan_path = Path(assets) / "release-plan.json"
+    from agent_selection import load as load_plan
+    retained = {row["packageId"]: row for row in load_plan(plan_path, source)["packages"] if not row["selected"]} if plan_path.exists() else {}
     result = []
     for package in family["packages"]:
-        name = f"{package['packageId']}.{family['releaseVersion']}.sunderpkg"
+        row = retained.get(package["packageId"])
+        package = dict(package, version=row["version"] if row else package["version"])
+        name = f"{package['packageId']}.{package['version']}.sunderpkg"
         path = Path(assets) / name
         manifest, public, public_sha = archive_metadata(path)
-        require(manifest["id"] == package["packageId"] and manifest["version"] == family["releaseVersion"],
+        require(manifest["id"] == package["packageId"] and manifest["version"] == package["version"],
                 "Retained archive is a different package/version")
-        result.append({"path": name, "packageId": package["packageId"], "version": family["releaseVersion"],
-                       "size": path.stat().st_size, "sha256": file_sha(path),
-                       "packageContentIdentity": public["packageContentIdentity"], "publicInventorySha256": public_sha})
+        record = {"path": name, "packageId": package["packageId"], "version": package["version"],
+                  "size": path.stat().st_size, "sha256": file_sha(path),
+                  "packageContentIdentity": public["packageContentIdentity"], "publicInventorySha256": public_sha}
+        if row:
+            require(all(record[key] == row["retainedArchive"][key] for key in ("size", "sha256")), "Retained archive differs from the validated release plan")
+        result.append(record)
     return sorted(result, key=lambda r: r["path"])
 
 
-def publication(record, owner):
-    digest(owner, 32)
-    require(owner != "0" * 32, "Missing approved Registry owner")
-    return {"package": {k: record[k] for k in ("packageId", "version", "packageContentIdentity")},
-            "ownerPrincipalId": owner, "publicInventorySha256": record["publicInventorySha256"],
-            "initialAvailability": "Yanked"}
+def publication(record, owner=None):
+    value = {"package": {k: record[k] for k in ("packageId", "version", "packageContentIdentity")},
+             "publicInventorySha256": record["publicInventorySha256"], "initialAvailability": "Yanked"}
+    if owner is not None:
+        digest(owner, 32)
+        require(owner != "0" * 32, "Missing Registry publication owner")
+        value["ownerPrincipalId"] = owner
+    return value
+
+
+def publication_evidence(value, record):
+    closed(value, "package ownerPrincipalId publicInventorySha256 initialAvailability")
+    require(value == publication(record, value["ownerPrincipalId"]), "Registry publication evidence differs from the tested artifact")
+    return value
+
+
+def read_publications(assets, records, *, required=False):
+    path = Path(assets) / PUBLICATIONS
+    if not path.exists() and not path.is_symlink():
+        require(not required, "Missing retained Registry publication evidence")
+        return {}
+    values = load(path)
+    expected = sorted(records, key=lambda record: record["packageId"])
+    require(type(values) is list and len(values) == len(expected), "Incomplete Registry publication evidence")
+    for value, record in zip(values, expected):
+        publication_evidence(value, record)
+    require(path.read_bytes() == canonical(values) + b"\n", "Noncanonical Registry publication evidence")
+    return {value["package"]["packageId"]: value for value in values}
 
 
 def native_source_role_uses(assets, records):
@@ -482,15 +507,15 @@ def native_source_role_uses(assets, records):
     from native_release_inputs import RIDS, json_file
     regular(path)
     evidence = json_file(path.parent.resolve() / path.name, 256 * 1024 * 1024, 4 * 1024 * 1024)
-    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] == 3, "Expected native source-use evidence schema 3")
+    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] in (3, 4), "Expected native source-use evidence schema 3 or 4")
     expected = {item["path"]: {field: item[field] for field in ("path", "size", "sha256")} for item in records}
     final = evidence["finalArtifacts"]
     require(len(final) == len(expected) and {item["path"]: item for item in final} == expected,
             "Source role-use evidence belongs to different final archives")
     runs = evidence["nativeRuns"]
     require(len(runs) == len(RIDS) and {run["rid"] for run in runs} == set(RIDS), "Incomplete native source-use RID evidence")
-    package_ids = {item["packageId"] for item in records}
-    result = {}
+    package_ids = set(evidence["packageVersions"]) if evidence["schemaVersion"] == 4 else {item["packageId"] for item in records}
+    result = dict(evidence.get("retainedSourceRoleUses", {}))
     for run in runs:
         require(len(run["packages"]) == len(package_ids) and {item["packageId"] for item in run["packages"]} == package_ids,
                 "Incomplete native source-use package evidence")
@@ -511,6 +536,9 @@ def verify_family(source, assets, registry=None, *, source_role_uses=None):
         origin(registry)
     family = inventory(source)
     records = artifact_records(source, assets)
+    plan_path = Path(assets) / "release-plan.json"
+    from agent_selection import load as load_plan
+    retained_ids = {row["packageId"] for row in load_plan(plan_path, source)["packages"] if not row["selected"]} if plan_path.exists() else set()
     reviewed_uses = native_source_role_uses(assets, records) if source_role_uses is None else source_role_uses
     require(type(reviewed_uses) is dict and set(reviewed_uses) <= {item["packageId"] for item in records}, "Unknown source role-use package")
     metadata = {r["packageId"]: archive_metadata(Path(assets) / r["path"]) for r in records}
@@ -525,6 +553,11 @@ def verify_family(source, assets, registry=None, *, source_role_uses=None):
             target = dependency["packageId"]
             require(target in metadata, "Dependency outside retained Agent cohort requires separately reviewed candidates")
             require(satisfies(metadata[target][0]["version"], dependency["versionRange"]), "Retained dependency fails ordinary range")
+        if package_id in retained_ids:
+            # These are independently verified published archives, not products of
+            # the current source. Their native source-use evidence travels with them.
+            require(package_id in reviewed_uses, "Retained package lacks original source-use evidence")
+            continue
         relative = str(PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json")
         lock_path = source_file(source, relative)
         lock = load(lock_path)
@@ -577,16 +610,18 @@ def verify_family(source, assets, registry=None, *, source_role_uses=None):
     return {"lockSetSha256": locks(source), "order": order, "artifacts": records}
 
 
-def family_plan(source, assets, registry, owner):
+def family_plan(source, assets, registry):
     origin(registry)
     verified = verify_family(source, assets, registry)
     return {"lockSetSha256": verified["lockSetSha256"], "order": verified["order"],
-            "publications": [publication(record, owner) for record in verified["artifacts"]]}
+            "publications": [publication(record) for record in verified["artifacts"]]}
 
 
 def validate_provenance(source, assets):
     path = Path(assets) / "release-provenance.json"
     value = load(path)
+    if value.get("schemaVersion") in (2, 3):
+        return validate_selective_provenance(source, assets, value)
     closed(value, "schemaVersion buildType invocation sources materials artifactSourceCommit lockSetSha256 controlPlane publication artifacts")
     require(path.read_bytes() == canonical(value) + b"\n", "Noncanonical release provenance")
     require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1
@@ -621,15 +656,50 @@ def validate_provenance(source, assets):
     closed(value["publication"], "registryOrigin ownerPrincipalId")
     origin(value["publication"]["registryOrigin"])
     digest(value["publication"]["ownerPrincipalId"], 32)
-    require(value["publication"]["ownerPrincipalId"] != "0" * 32, "Missing approved owner")
+    require(value["publication"]["ownerPrincipalId"] != "0" * 32, "Missing historical publication owner")
     require(value["lockSetSha256"] == locks(source), "Aggregate production lock set differs")
-    require(type(value["artifacts"]) is list and len(value["artifacts"]) == 15, "Expected exactly 15 primary artifacts")
+    require(type(value["artifacts"]) is list and len(value["artifacts"]) == len(FAMILY_PROJECTS), "Expected the complete reviewed primary artifacts")
     for record in value["artifacts"]:
         closed(record, "path packageId version size sha256 packageContentIdentity publicInventorySha256")
         positive(record["size"])
         for field in ("sha256", "packageContentIdentity", "publicInventorySha256"):
             digest(record[field])
     require(value["artifacts"] == artifact_records(source, assets), "Inspected primary artifact set differs")
+    return value
+
+
+def validate_selective_provenance(source, assets, value):
+    from agent_selection import load as load_plan, PLAN, REPOSITORY
+    closed(value, "schemaVersion buildType invocation artifactSourceCommit planSha256 lockSetSha256 publication materials artifacts")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (2, 3)
+            and value["buildType"] == "https://sunderapp.io/provenance/github-actions/v1", "Unknown selective provenance")
+    plan = load_plan(Path(assets) / PLAN, source, digest(value["artifactSourceCommit"], 40))
+    destination = dict(registryOrigin=plan["registryOrigin"])
+    if plan["schemaVersion"] == 1:
+        destination["ownerPrincipalId"] = plan["ownerPrincipalId"]
+    require(value["schemaVersion"] == plan["schemaVersion"] + 1
+            and value["planSha256"] == file_sha(Path(assets) / PLAN) and value["lockSetSha256"] == plan["lockSetSha256"]
+            and value["publication"] == destination,
+            "Selective provenance input/destination differs")
+    inv = value["invocation"]
+    closed(inv, "repository workflowPath workflowRef workflowSha event repositoryId runId runAttempt releaseId")
+    require(inv["repository"] == REPOSITORY and inv["workflowPath"] == ".github/workflows/sunder-package-release.yml"
+            and inv["workflowRef"] == REPOSITORY + "/" + inv["workflowPath"] + "@refs/heads/main"
+            and inv["workflowSha"] == value["artifactSourceCommit"] and inv["event"] in ("push", "workflow_dispatch"),
+            "Selective provenance workflow differs")
+    for key in ("repositoryId", "releaseId"):
+        positive(inv[key])
+    for key in ("runId", "runAttempt"):
+        require(type(inv[key]) is str and re.fullmatch(r"[1-9][0-9]*", inv[key]), "Invalid original run coordinate")
+    require(len(value["materials"]) == 1, "Selective release requires one exact Core material")
+    material = value["materials"][0]
+    closed(material, "name tag sha packageVersion")
+    digest(material["sha"], 40); version(material["packageVersion"])
+    require(material["name"] == "Sunder.Package.Build" and material["tag"] in ("sdk/v" + material["packageVersion"],
+        "nuget-sunder-package-build/v" + material["packageVersion"]), "Selective Core build material differs")
+    require(canonical(value["artifacts"]) == canonical(artifact_records(source, assets)),
+            "Selective provenance differs from full-family tested archives")
+    require((Path(assets) / "release-provenance.json").read_bytes() == canonical(value) + b"\n", "Noncanonical selective provenance")
     return value
 
 
@@ -707,24 +777,12 @@ def main():
     command, *args = sys.argv[1:]
     if command == "lock-set":
         print(locks(*args))
+    elif command == "file-sha":
+        print(file_sha(args[0]))
     elif command == "plan":
         print(encoded(family_plan(*args)).decode())
     elif command == "verify-provenance":
         validate_provenance(*args)
-    elif command == "complete-provenance":
-        source, assets = args
-        path = Path(assets) / "release-provenance.json"
-        value = load(path)
-        value.update(artifactSourceCommit=value["invocation"]["sha"], lockSetSha256=locks(source),
-                     controlPlane={"repositoryId": int(os.environ["GITHUB_REPOSITORY_ID"]),
-                                   "runId": int(value["invocation"]["runId"]),
-                                   "workflowPath": ".github/workflows/sunder-package-release.yml",
-                                   "workflowSha": os.environ["GITHUB_WORKFLOW_SHA"], "event": os.environ["GITHUB_EVENT_NAME"]},
-                     publication={"registryOrigin": origin(os.environ["REGISTRY_API_URL"].rstrip("/")),
-                                  "ownerPrincipalId": digest(os.environ["SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID"], 32)},
-                     artifacts=artifact_records(source, assets))
-        path.write_bytes(canonical(value) + b"\n")
-        validate_provenance(source, assets)
     elif command == "verify-evidence-commit":
         source, assets, commit = args
         verify_evidence_commit(source, commit, validate_provenance(source, assets))
@@ -733,7 +791,11 @@ def main():
         value = load(provenance)
         records = [r for r in value["artifacts"] if r["packageId"] == package_id]
         require(len(records) == 1, "Missing exact primary artifact")
-        print(encoded(publication(records[0], value["publication"]["ownerPrincipalId"])).decode())
+        if value["schemaVersion"] == 3:
+            expected = read_publications(Path(provenance).parent, value["artifacts"], required=True)[package_id]
+        else:
+            expected = publication(records[0], value["publication"]["ownerPrincipalId"])
+        print(encoded(expected).decode())
     elif command == "publication-time":
         source, commit, package_id = args
         digest(commit, 40)
@@ -744,7 +806,7 @@ def main():
         contracts = owned_contracts(decode(data), package_id) if data is not None else {}
         times = {s["publication"]["publishedAtUtc"] for c in contracts.values() if has_public_evidence(c)
                  for s in snapshots(c) if s["state"] == "published"
-                 and s["publication"]["packageVersion"] == family["releaseVersion"]}
+                 and s["publication"]["packageVersion"] == package["version"]}
         require(len(times) <= 1, "Owned publication timestamps disagree")
         print(next(iter(times), ""))
     elif command == "check-json":

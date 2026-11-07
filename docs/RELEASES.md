@@ -1,15 +1,23 @@
 # AI Agent Family Releases
 
-AI Agent releases contain exactly fifteen `.sunderpkg` entries from `packages.json`,
-one Agent source commit, one final Core SDK commit and one family version.
+AI Agent releases select version-bumped `.sunderpkg` entries from the fifteen-package
+`packages.json` inventory. Each canonical `.csproj` owns its literal `<Version>`;
+there is no implicit family-wide version override in CI. `packages.json.releaseVersion`
+remains a legacy compatibility/default-contract marker, not the release selector.
 There is no Protocol NuGet or Agent NuGet publishing credential.
 
 The owner `younics.ai.agent` publishes first. The explicit family includes
 `younics.sunder.package.maker` (Sunder Package Maker) alongside the AI Agent
 extensions; a shared runtime-ID prefix is not the family inventory. Release
-workflow/provenance uses **AI Agent Family Release**, and the release title is
-**AI Agent Family &lt;version&gt;**. Tags remain `agent/v*`; repository URLs,
-inventory keys, project paths and artifact labels keep their technical names.
+workflow uses **AI Agent Family Release**. It runs on protected `main` pushes or
+manual dispatch on `main`, compares evaluated Release versions with paginated
+**published GitHub releases**, and automatically creates `<inventory-key>/v<version>`
+tags/releases only for newer versions (for example `agent-provider-openai/v2.1.0`).
+Tags without a published release do not count as completed publication. A run with
+no newer versions succeeds without native builds or publication.
+GitHub hides draft releases from callers without push access, so the protected
+planning job needs `contents:write` to discover interrupted drafts. The planner
+issues only reads and removes GitHub/Registry credentials from MSBuild evaluation.
 
 `packages.json` records the predicted package-wide capability union. Local
 Execution drops `background-services.v1` and `runtime-generations.v1`; Files,
@@ -31,7 +39,7 @@ There are three GitHub workflows:
 
 - `sunder-package-smoke.yml`: Linux/Windows source CI, scheduled/manual stress,
   plus locked-package compatibility when called by a release.
-- `sunder-package-release.yml`: the integrated `agent/v*` pipeline from validation
+- `sunder-package-release.yml`: the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
 - `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
   cohort, sharing the release concurrency group.
@@ -43,35 +51,65 @@ and [cold release inputs](cold-release-inputs.md).
 
 ## Ordinary CI Inputs
 
+Workflow configuration has these owners:
+
+- `global.json` and the exact Core checkout supply .NET/Node/npm toolchains through
+  `.github/actions/setup/action.yml`.
+- `eng/ci/platforms.json` supplies native and source/package behavior matrices.
+  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables.
+- `scripts/test/ci-scenarios.json` owns required test selections; `agent_ci.py test`
+  and `report` execute/check them. `run-ci-checks.py source|release` discovers script checks.
+- `compatibility/agent-current-inventory.json` remains the independently reviewed
+  family expectation. Release helpers derive membership/counts from it and still
+  require every package and native RID. Produced archives cannot redefine that policy.
+
+Tool and verifier paths come from evaluated project outputs; native inputs are
+discovered from Core's qualified role bundles and ambiguous outputs fail. Workflows
+own ordering, permissions, protected credentials, artifact transport and action pins.
+
 `scripts/ci/agent_ci.py` shares the release input owner's complete byte/lock
 validator. It invokes Core's `RestoreSunderContracts`, uses an isolated cache and
-retained toolset, runs normal parallel builds, then explicitly prepares the generated
-provider fixture before tests. It does not write approval or cold-release receipts.
+retained toolset, and runs normal parallel builds. Generated test providers are a
+project dependency built with the tests; discovery and execution retain per-run
+evidence. It does not write approval or cold-release receipts.
 
-Set the repository variable `SUNDER_AGENT_CI_INPUTS` to a numeric GitHub asset
-locator: `{repository, releaseId, assetId, name, size, sha256}`. The located bounded
-JSON document contains exactly:
+`dependency_inputs.py` discovers dependencies automatically. The locked
+`Sunder.Package.Build` NuGet version identifies its published Core release/tag and
+source commit. Other SDK packages retain their independent locked versions.
+Published Agent archive/catalog assets are located from their actual identities;
+identical coordinator copies are allowed, conflicting copies are rejected.
 
-- `schemaVersion: 1`;
-- `coreCommit`: the exact Core commit to check out;
-- `candidates`: numeric asset locators for every selected owner archive;
-- `platformCatalog`: the numeric asset locator for the canonical Core catalog.
+If an exact selected dependency was never published, the resolver can build its
+same-version canonical source against its locked NuGet dependencies, in dependency
+order, and export the local Core catalog. This uses the production Release/CI
+package build mode even when preparing source-mode tests. Full content identities,
+public inventories and descriptor/ABI tuples must still reproduce the committed
+locks. It never silently selects another
+version, substitutes mismatched bytes or rewrites a lock. Missing published bytes
+without matching authored source are a genuine dependency error, not a request for
+an operator-supplied SHA or asset locator.
 
-Each locator binds the actual uploaded file's ID, name, size and SHA-256.
-Preparation verifies every committed package content identity, complete public
-inventory and platform descriptor/ABI tuple. A different rebuilt owner archive
-is not a substitute for the archive selected by the locks. Missing input configuration
-fails before build. Ordinary CI uses no production approval or offline-runner variables.
+CI package builds normalize generated-role compiler paths and omit debug symbols
+and commit-dependent assembly/Source Link metadata. This makes unchanged payloads
+reproducible across checkout locations and lock-only commits; the exact source
+commit remains bound by release provenance and qualified native inputs. The
+repository's LF checkout policy preserves source bytes across operating systems.
+Use a clean checkout, or `dotnet clean` before switching an existing output tree
+to these CI settings, so stale portable symbols cannot enter the archive.
 
-For local validation, explicit retained files can replace download configuration:
+The resolver generates `ci-inputs.json` with local `{name,size,sha256}` records.
+No `SUNDER_AGENT_CI_INPUTS`, approval reference or per-release input manifest needs
+configuration. Ordinary CI and production native preparation use normal prepared
+execution; explicit denied-network/cold acceptance remains a separate profile.
+
+For local validation:
 
 ```sh
+python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output /tmp/agent-inputs
 python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core \
-  --candidate /tmp/selected-agent.sunderpkg --catalog /tmp/selected-core-catalog.json \
-  --work /tmp/agent-ci
+  --inputs /tmp/agent-inputs --work /tmp/agent-ci
 python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
   dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
-python3 -B scripts/ci/agent_ci.py fixtures --state /tmp/agent-ci/ci-state.json
 python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
   dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
 ```
@@ -79,30 +117,39 @@ python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
 Use a fresh temporary work directory. On macOS, use physical paths consistently
 when invoking package projects beneath `/var` (`/private/var`). No baseline or lock
 selection is updated by these commands. `--mode package` is the focused compatibility
-profile against the final locked SDK packages; production release callers additionally
-verify their approved cold-input manifest.
+profile against the final locked SDK packages. Explicit `--candidate` and `--catalog`
+files remain available for local authoring checks; their identities are checked too.
 
 ## Core Coordination
 
-Before an Agent tag, publish the compatible final Core `sdk/v*` release and developer
-packages, review every Agent release lock against those exact packages, commit the
-Agent changes and require CI success. The release verifies Core tag/provenance,
-GitHub assets, NuGet canonical content, repository signatures and the same full Core
-commit on each runner. `agent/v<version>` must equal `packages.json` `releaseVersion`.
+Publish the declared Core developer dependencies first. The resolver accepts the
+Build project's `nuget-sunder-package-build/v*` release or a historical combined
+`sdk/v*` release, resolves its immutable tag, and checks out that source on all
+standalone runners. No manually maintained Core commit/version variable is needed.
+Workspace CI instead uses its checked-out Core source. Exact NuGet release locks
+still bind real dependency versions/content hashes; no common SDK version is imposed.
 
-Local `scripts/dev/refresh-release-locks.sh <version> <feed>` is explicit preparation,
+Local `scripts/dev/refresh-release-locks.sh <feed>` is explicit preparation,
 not a release-time fallback. Source baseline publication evidence remains a separate
 authoring operation; the immutable artifact-source tag and frozen histories never move.
 
 ## Native Build Boundary
 
-Each native job builds all fifteen canonical projects for its actual `win-x64`,
+Each native job builds only selected canonical projects for its actual `win-x64`,
 `win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64` or `osx-arm64` architecture.
 Workers are framework-dependent, untrimmed .NET10 modules with no bundled runtime,
 apphost, SDK or toolchain. Generated App roles are retained where authored.
 
+Unchanged packages are downloaded from exact numeric published-release assets,
+with their original hash/size and six-RID native evidence. They are not rebuilt or
+repacked. Every native smoke test still installs and exercises **all fifteen**
+packages: selected current-RID outputs plus unchanged universal archives. Mixed
+package versions are expected. The final output audit and Runtime/App gates still
+inspect all fifteen archives. Exact reviewed dependency candidates/catalogs remain
+separate dependency inputs; changing a version never regenerates a dependency lock.
+
 Release restore preserves the complete six-RID graph. Native Build selects its RID
-only after locked restore and explicit cold hydration. Current-RID smoke archives
+only after locked restore and explicit contract hydration. Current-RID smoke archives
 and final fan-in consume Core-qualified role inputs with
 `SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false` and an explicit
 `SunderPackagePrebuiltRoleInputsFile`; they never rebuild captured role bytes.
@@ -123,30 +170,40 @@ or rebuild native inputs during fan-in or publication.
 
 ## Publication Order
 
-`agent_pipeline.py` owns release sequencing; Core's `github_release.py` owns shared
-numeric GitHub transport. The pipeline:
+`agent_selection.py` owns read-only planning. `agent_pipeline.py` is the single
+publication pipeline; `agent_publication.py` owns bounded numeric GitHub transport
+and public install-plan postchecks. The pipeline:
 
-1. Verifies clean protected tag/source/Core/lock coordinates and native evidence.
-2. Stages the fifteen tested archives, two native reports and four evidence files
-   on one numeric draft. Partial/equal retries reuse exact retained bytes.
+1. Verifies the canonical selection, clean protected-main source/Core/lock
+   coordinates and full-family native evidence before any tag/release write.
+2. Creates per-selected-package tags and numeric drafts. The first selected package
+   is the coordinator and retains all selected tested archives for recovery; other
+   drafts retain their own archive. Each retains the plan, full-family reports,
+   source/material/byte provenance, checksums, SBOM and original toolchain record.
 3. Calls `publish-registry-package.sh --initial-yanked` in dependency order. Each
-   immutable version is downloaded and verified before advancing.
+   selected immutable version is downloaded and verified before advancing.
+   Unchanged versions are verified read-only as Listed. The coordinator retains
+   `registry-publications.json`: the Registry-returned publication evidence for
+   every tested package, including its actual owner. Retries and later readback
+   compare that immutable evidence before visibility changes or announcement.
 4. Retains one complete cohort request with its idempotency key and current policy
    revision on the draft **before** any availability mutation.
-5. Commits the family-wide Yanked→Listed transition and all selected dist tags in
+5. Commits the selected-batch Yanked→Listed transition and its dist tags in
    one Registry operation; preserves its exact request/result for recovery.
 6. Confirms the committed result against fresh policy and the owner's retained
    operation, rechecks public package/projection bytes and six-RID install plans,
-   then finalizes the same draft with `make_latest=false`.
+   then finalizes those drafts with `make_latest=false`, coordinator last.
 
-The scoped publish token is never used as an owner-token fallback. No per-package
+Forward publication and visibility use the same scoped API key. Set
+`SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE=api-key` for forward cohort operations;
+there is no human CLI credential fallback in that mode. No per-package
 visibility loop, automatic compensation or new request after an ambiguous result
 is permitted. The metadata/provenance and native hashes continue to bind the same
 source and bytes throughout the pipeline.
 
 ## Promotion
 
-Visibility and finalization are jobs in the tag workflow, not separate dispatches.
+Visibility and finalization are jobs in the main workflow, not separate dispatches.
 Stable releases set Registry `latest`; prereleases set `preview`. Forward visibility
 cannot downgrade a tag. A fresh policy fence can fail if another operation changed
 the Registry; an unknown outcome must retain the original request/key/revision.
@@ -166,8 +223,14 @@ external policy stores are absent from the current release protocol.
 actual Registry `result`. Numeric asset readback checks its canonical bytes and
 release/source binding. It is not a synthetic production acceptance certificate.
 
-Use **Re-run failed jobs** on the same workflow/tag/source. Do not rebuild successful
-native jobs or replace their artifacts. Retained candidate/native artifacts last 90 days.
+Use **Re-run failed jobs** on the original workflow/source. Do not rebuild successful
+native jobs or replace their artifacts. A later dispatch of the same protected source
+recovers the original plan and tested bytes from the coordinator, skipping native
+builds. If staging stopped before retaining all selected archives, rerun the original
+failed job with its existing tested artifact; no rebuild fallback is allowed.
+Retained candidate/native Actions artifacts last 90 days; release assets are durable.
+An unfinished draft from another source blocks adoption. A GitHub/Registry mismatch
+requires reconciliation, not an automatic overwrite or an inferred successful tag.
 After a visibility failure, inspect/reconcile the retained operation before deciding
 whether administrator recovery or a reviewed reverse is needed. Missing or conflicting
 immutable bytes require investigation and a new version, not clobbering an old one.
@@ -177,6 +240,10 @@ immutable bytes require investigation and a new version, not clobbering an old o
 The explicit rollback workflow uses a new reviewed idempotency key and current
 policy revision, requires an unannounced numeric draft and the exact forward
 receipt, then restores the captured prior tag map and Yanks the cohort atomically.
+Supply `release_id`, `expected_package_policy_revision`, `idempotency_key` and
+`confirmation=reverse-unannounced-cohort`. The protected-main resolver derives the
+source commit, tag and forward-receipt digest from that draft and rejects missing
+or ambiguous receipts. Those coordinates are not manually maintained inputs.
 It cannot reverse a published announcement or overwrite concurrent tag changes.
 Security revocation and database recovery remain administrator operations. Service or
 transport failures retry only the exact retained request; an unresolved outcome retains
@@ -193,24 +260,34 @@ or metadata tests do not prove those qualifications passed.
 ## Shell Fixture Scope
 
 Run the release input/native/cohort Python fixtures, `test_agent_ci.py`,
-`test_agent_pipeline.py`, `native-release.fixture.sh`, and the existing Registry
-publish/Core SDK signature/version fixtures. They cover input tampering, preserved
+`test_agent_pipeline.py`, `test_agent_selection.py`, `test_selective_pipeline.py`,
+`test_dependency_inputs.py`,
+`native-release.fixture.sh`, and the existing Registry
+publish/NuGet signature/version fixtures. They cover input tampering, preserved
 native bytes, exact retries, policy fences, public projection checks and reviewed
 reverse behavior without publishing. The actual six native runners remain a
 separate execution result.
 
 ## Repository Configuration
 
-- Protected `agent/v*` tags and the `sunder-agent-release-promotion` environment.
-- `SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT`, `SUNDER_AGENT_LOCK_SET_SHA256`,
-  `SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE`, `SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID`,
-  and `SUNDER_REGISTRY_API_URL` for production release jobs.
-- `SUNDER_AGENT_COLD_INPUT_MANIFEST` with approved exact production source/lock/Core
-  bindings, plus required native offline adapters from [cold inputs](cold-release-inputs.md).
-- Separate secrets `SUNDER_REGISTRY_PUBLISH_TOKEN` and `SUNDER_REGISTRY_CLI_TOKEN`.
-- Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays and
-  `SUNDER_AGENT_OFFLINE_RUNNER_<RID>`/`SUNDER_AGENT_OFFLINE_RUNNER_SHA256_<RID>`.
+- Protected `main` and a main-only `sunder-agent-release-promotion` environment. Allow the
+  release job's `contents:write` token to create the automatic package-key tags;
+  tags do not trigger a second publication workflow. No manually created tag needed.
+- Environment variable `SUNDER_REGISTRY_API_URL`: the Registry HTTPS origin, without an `/api/v1` suffix.
+  Source/lock hashes and dependency locations are derived, never per-release settings.
+- One environment secret `SUNDER_REGISTRY_PUBLISH_TOKEN`, created at Registry
+  **Dashboard → API keys**, with `package:publish` and `package:release` for all
+  fifteen exact package IDs. The Registry derives the publisher from the key and
+  enforces package ownership/maintainer permissions; no owner ID is configured in
+  GitHub. First publication requires the publisher's package reservation, updates
+  preserve the existing owner, and atomic cohort release requires that owner's key.
+  `package:promote-latest` is unnecessary for staged atomic releases. API keys support
+  a 1–90 day lifetime or **Never**; rotate expiring keys before their selected expiry.
+- The separate reviewed reverse workflow still requires a human
+  `SUNDER_REGISTRY_CLI_TOKEN`; a release API key intentionally cannot roll back.
+- Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays.
   RID suffixes use uppercase underscores. Defaults use native Windows2022/Windows11ARM,
   Ubuntu24x64/ARM and macOS15Intel/ARM runners.
-- `SUNDER_AGENT_CI_INPUTS` supplies ordinary CI; it carries artifact locations, not
-  production approval or Registry credentials.
+
+Historical release/tag deletion is not part of this workflow. Require successful
+replacement publication and explicit confirmation of cleanup scope first.

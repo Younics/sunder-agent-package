@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
-"""Prepare exact locked local inputs for ordinary CI, then run normal .NET commands.
-
-Production cold/release approval remains in release_inputs.py. This entry point
-uses its byte/lock validator and Core's RestoreSunderContracts, without minting
-release evidence or requiring production credentials and offline runner adapters.
-"""
+"""Prepare authored dependencies automatically, then run normal .NET commands."""
 import argparse
+import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
+import time
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
@@ -28,36 +26,27 @@ def new_directory(path):
     return path.resolve()
 
 
-def resolve(locator_json, output, cold=False, core_commit=None):
-    selected = inputs.locator(inputs.decode(locator_json.encode()), inputs.MAX_MANIFEST)
-    if cold:
-        source = Path(__file__).resolve().parents[2]
-        inputs.digest(core_commit, 40)
-        inputs.fetch(source, output, head(source), core_commit, selected=selected)
-        if os.environ.get("GITHUB_OUTPUT"):
-            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
-                stream.write("core_commit=" + core_commit + "\n")
-        return
-    root = new_directory(output)
-    inputs.download(selected, root / "ci-inputs.json", inputs.MAX_MANIFEST)
-    value = inputs.load(root / "ci-inputs.json")
-    inputs.closed(value, "schemaVersion coreCommit candidates platformCatalog")
-    inputs.require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1, "Unknown CI input schema")
-    inputs.digest(value["coreCommit"], 40)
-    inputs.require(type(value["candidates"]) is list and 0 < len(value["candidates"]) <= 128, "Invalid CI candidate set")
-    names = {"ci-inputs.json"}
-    for item in [*value["candidates"], value["platformCatalog"]]:
-        maximum = 67108864 if item is value["platformCatalog"] else 268435456
-        inputs.locator(item, maximum)
-        inputs.require(item["name"].casefold() not in names, "CI asset name collision")
-        names.add(item["name"].casefold())
-        expected_repo = "Younics/sunder-core" if item is value["platformCatalog"] else "Younics/sunder-agent-package"
-        inputs.require(item["repository"] == expected_repo, "Unexpected CI input repository")
-        inputs.download(item, root / item["name"], maximum)
+def resolve(source, core, output):
+    import dependency_inputs
+    return dependency_inputs.resolve(source, core, output)
+
+
+def coordinates(source):
+    import dependency_inputs
+    value = dependency_inputs.coordinates(source)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
-            stream.write("core_commit=" + value["coreCommit"] + "\n")
-    print(value["coreCommit"])
+            stream.writelines(f"{key}={item}\n" for key, item in value.items())
+    print(inputs.canonical(value).decode())
+
+
+def matrices(package_tests):
+    import ci_platforms
+    value = ci_platforms.matrices(package_tests, json.loads(os.environ.get("RUNNER_VARIABLES", "{}")))
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+            stream.writelines(f"{key}={json.dumps(item, separators=(',', ':'))}\n" for key, item in value.items())
+    print(json.dumps(value))
 
 
 def selected_files(args, source, core):
@@ -68,10 +57,15 @@ def selected_files(args, source, core):
             return ([root / item["asset"]["name"] for item in value["candidates"]], root / value["platformCatalog"]["asset"]["name"])
         value = inputs.load(root / "ci-inputs.json")
         inputs.closed(value, "schemaVersion coreCommit candidates platformCatalog")
-        inputs.require(value["schemaVersion"] == 1 and value["coreCommit"] == head(core), "CI Core checkout differs from the selected input")
+        inputs.require(value["schemaVersion"] in (1, 2) and value["coreCommit"] == head(core), "CI Core checkout differs from the selected input")
         paths = []
         for item in [*value["candidates"], value["platformCatalog"]]:
-            inputs.locator(item)
+            if value["schemaVersion"] == 1:
+                inputs.locator(item)
+            else:
+                inputs.closed(item, "name size sha256")
+                inputs.require(Path(item["name"]).name == item["name"] and item["name"] not in (".", ".."), "Unsafe input filename")
+                inputs.positive(item["size"]); inputs.digest(item["sha256"])
             path = inputs.regular(root / item["name"])
             inputs.require(path.stat().st_size == item["size"] and inputs.file_sha(path) == item["sha256"], "CI input changed after download")
             paths.append(path.resolve())
@@ -82,6 +76,13 @@ def selected_files(args, source, core):
 
 def arguments(properties):
     return ["-p:" + key + "=" + value for key, value in properties.items()]
+
+
+def output_directory(project, env):
+    value = subprocess.run(["dotnet", "msbuild", str(project), "-p:Configuration=Release", "-getProperty:TargetDir"],
+        cwd=Path(project).parent, env=env, check=True, text=True, stdout=subprocess.PIPE).stdout.strip()
+    inputs.require(value and Path(value).is_absolute(), "Missing evaluated test/tool output directory")
+    return Path(value)
 
 
 def prepare(args):
@@ -97,7 +98,7 @@ def prepare(args):
     home.mkdir()
     env = inputs.isolated_env(home, cache)
     props = {"Configuration": "Release", "SunderUseSourceSdk": "false" if args.mode == "package" else "true", "ContinuousIntegrationBuild": "true",
-             "SunderAgentVersion": inputs.inventory(source)["releaseVersion"], "SunderContractCacheRoot": str(cache)}
+             "SunderContractCacheRoot": str(cache)}
     try:
         # Explicit full-graph dependency restore precedes package contract hydration.
         subprocess.run(["dotnet", "restore", str(source / "Sunder.AgentPackage.slnx"), "--locked-mode", *arguments(props)], env=env, check=True)
@@ -106,7 +107,7 @@ def prepare(args):
         subprocess.run(["dotnet", "build", str(driver), "-c", "Release", "--no-restore",
                         "-p:ContinuousIntegrationBuild=true", "-p:GeneratePackageOnBuild=false"], env=env, check=True)
         tools = root / "tools"
-        shutil.copytree(driver.parent / "bin/Release/net10.0", tools)
+        shutil.copytree(output_directory(driver, env), tools)
         for name in inputs.TOOL_FILES: inputs.regular(tools / name)
         props.update(SunderPackageBuildTaskAssembly=str(tools / "Sunder.Package.Build.dll"), SunderPackageBuildTaskSourceIsImmutable="true")
         for package, lock in inputs.lock_documents(source):
@@ -142,55 +143,91 @@ def context(path):
     env = inputs.isolated_env(state["home"], state["cache"])
     env.update(props)
     env["SUNDER_AGENT_SOURCE_PLATFORM_CATALOG"] = state["catalog"]
-    fixture = path.parent / "provider-fixture/test-environment.json"
-    if fixture.exists():
-        values = inputs.load(fixture)
-        inputs.require(all(key.startswith(("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_", "SUNDER_AGENT_PUBLIC_FIXTURE_"))
-                           and isinstance(value, str) for key, value in values.items()), "Unexpected fixture environment")
-        env.update(values)
     return state, env
 
 
-def fixtures(state_path):
+def execute(state_path, command, cwd=None, log=None):
     state, env = context(state_path)
-    source, core = Path(state["source"]), Path(state["core"])
-    tools = Path(state["properties"]["SunderPackageBuildTaskAssembly"]).parent
-    test_output = source / "tests/Sunder.Package.Agent.Tests/bin/Release/net10.0"
-    selected = inputs.verify_selected_files(source, state["candidates"], state["catalog"])
-    values = {"candidate": selected["younics.ai.agent"], "driver": tools / "Sunder.Package.Build.Tests.dll",
-              "sdk": test_output / "Sunder.Sdk.dll", "worker-sdk": test_output / "Sunder.Sdk.Worker.dll",
-              "di-abstractions": test_output / "Microsoft.Extensions.DependencyInjection.Abstractions.dll", "platform-catalog": Path(state["catalog"])}
-    command = [sys.executable, "-B", str(source / "scripts/test/prepare-shared-provider-fixture.py")]
-    for name, path in values.items(): command += ["--" + name, str(path), "--" + name + "-sha256", inputs.file_sha(path)]
-    command += ["--task-sha256", inputs.file_sha(tools / "Sunder.Package.Build.dll"), "--core-root", str(core),
-                "--seed-lock-sha256", inputs.file_sha(core / "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"),
-                "--output", str(Path(state_path).resolve().parent / "provider-fixture")]
-    subprocess.run(command, env=env, cwd=source, check=True)
-    context(state_path)
-
-
-def execute(state_path, command, cwd=None):
-    state, env = context(state_path)
+    command = list(command)
     inputs.require(command, "A CI command is required")
     if command[0] == "dotnet":
         inputs.require(len(command) > 1 and command[1] in ("build", "test", "restore", "msbuild"), "Unsupported CI .NET command")
         if command[1] in ("build", "test"):
             inputs.require("--no-restore" in command, "Use the explicitly restored dependency graph")
         command += arguments(state["properties"])
+    started, status = time.monotonic(), None
+    if log is not None:
+        log = Path(log)
+        log.parent.mkdir(parents=True, exist_ok=True)
+        env.update(DOTNET_CLI_UI_LANGUAGE="en", VSLANG="1033")
     try:
-        return subprocess.run(command, cwd=cwd or state["source"], env=env).returncode
+        if log is None:
+            status = subprocess.run(command, cwd=cwd or state["source"], env=env).returncode
+        else:
+            with log.open("w", encoding="utf-8") as output:
+                with subprocess.Popen(command, cwd=cwd or state["source"], env=env, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace") as process:
+                    for line in process.stdout:
+                        output.write(line)
+                        output.flush()
+                        print(line, end="", flush=True)
+                    status = process.wait()
+        return status
     finally:
+        if log is not None:
+            log.with_suffix(".command.json").write_text(json.dumps({
+                "command": command, "cwd": str(cwd or state["source"]), "state": str(Path(state_path).resolve()),
+                "exitCode": status, "elapsedMilliseconds": round((time.monotonic() - started) * 1000),
+                "output": log.name,
+            }, indent=2) + "\n", encoding="utf-8")
         context(state_path)
+
+
+def validate(args):
+    import test_lanes
+    source = Path(args.source).resolve()
+    reports = source / "artifacts/reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    with (reports / "test-inventory.json").open("w", encoding="utf-8") as stream:
+        subprocess.run(["bash", "scripts/test/generate-test-inventory.sh"], cwd=source, stdout=stream, check=True)
+    if args.mode == "source":
+        for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
+            subprocess.run([sys.executable, "-B", "scripts/test/run-ci-checks.py", group], cwd=source, check=True)
+    with tempfile.TemporaryDirectory(prefix="sunder-agent-ci-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        root = Path(temporary)
+        if not args.inputs and not args.candidate:
+            resolve(source, args.core, root / "inputs")
+            args.inputs = root / "inputs"
+        args.work = root / "prepared"
+        prepare(args)
+        state = args.work / "ci-state.json"
+        status = execute(state, ["dotnet", "build", "Sunder.AgentPackage.slnx", "-c", "Release", "--no-restore"])
+        if status: raise subprocess.CalledProcessError(status, "dotnet build")
+        test_lanes.validate(state, args.mode, args.stress)
+        if args.mode == "package" and sys.platform == "linux": test_lanes.retain_verifier()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
+    matrix_parser = commands.add_parser("matrices")
+    matrix_parser.add_argument("--package-tests", action="store_true")
+    test_parser = commands.add_parser("test")
+    test_parser.add_argument("--state", required=True)
+    test_parser.add_argument("--lane", required=True, choices=("source", "artifact", "package", "required-linux", "stress"))
+    report_parser = commands.add_parser("report")
+    report_parser.add_argument("--mode", required=True, choices=("source", "package"))
+    report_parser.add_argument("--platform", required=True, choices=("linux", "windows", "macos"))
+    commands.add_parser("retain-verifier")
+    family_parser = commands.add_parser("test-family")
+    family_parser.add_argument("--core", required=True)
+    family_parser.add_argument("--directory", required=True)
     resolve_parser = commands.add_parser("resolve")
-    resolve_parser.add_argument("--locator", default=os.environ.get("SUNDER_AGENT_CI_INPUTS"), required=False)
+    resolve_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
+    resolve_parser.add_argument("--core", required=True)
     resolve_parser.add_argument("--output", required=True)
-    resolve_parser.add_argument("--cold", action="store_true")
-    resolve_parser.add_argument("--core-commit")
+    coordinate_parser = commands.add_parser("coordinates")
+    coordinate_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     prepare_parser = commands.add_parser("prepare")
     prepare_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     prepare_parser.add_argument("--core", required=True)
@@ -199,22 +236,30 @@ def main():
     prepare_parser.add_argument("--candidate", action="append")
     prepare_parser.add_argument("--catalog")
     prepare_parser.add_argument("--mode", choices=("source", "package"), default="source")
-    for name in ("fixtures", "run"):
-        subparser = commands.add_parser(name)
-        subparser.add_argument("--state", required=True)
-        if name == "run":
-            subparser.add_argument("--cwd")
-            subparser.add_argument("command", nargs=argparse.REMAINDER)
+    validate_parser = commands.add_parser("validate")
+    validate_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
+    validate_parser.add_argument("--core", required=True)
+    validate_parser.add_argument("--inputs")
+    validate_parser.add_argument("--candidate", action="append")
+    validate_parser.add_argument("--catalog")
+    validate_parser.add_argument("--mode", choices=("source", "package"), default="source")
+    validate_parser.add_argument("--stress", action="store_true")
+    run_parser = commands.add_parser("run")
+    run_parser.add_argument("--state", required=True)
+    run_parser.add_argument("--cwd")
+    run_parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.action == "resolve":
-        inputs.require(bool(args.locator),
-                       "SUNDER_AGENT_CI_INPUTS must locate the exact retained CI inputs. "
-                       "Set the repository variable to the numeric asset locator "
-                       "{repository, releaseId, assetId, name, size, sha256} for the retained CI manifest; "
-                       "see docs/RELEASES.md#ordinary-ci-inputs. No latest-release or rebuilt-archive fallback is allowed.")
-        resolve(args.locator, args.output, args.cold, args.core_commit)
+    if args.action == "matrices": matrices(args.package_tests)
+    elif args.action in ("test", "report", "retain-verifier", "test-family"):
+        import test_lanes
+        if args.action == "test": test_lanes.tests(args.state, args.lane)
+        elif args.action == "report": test_lanes.report(args.mode, args.platform)
+        elif args.action == "retain-verifier": test_lanes.retain_verifier()
+        else: test_lanes.family(args.core, args.directory)
+    elif args.action == "resolve": resolve(args.source, args.core, args.output)
+    elif args.action == "coordinates": coordinates(args.source)
     elif args.action == "prepare": prepare(args)
-    elif args.action == "fixtures": fixtures(args.state)
+    elif args.action == "validate": validate(args)
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         return execute(args.state, command, args.cwd)

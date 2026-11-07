@@ -69,7 +69,6 @@ public sealed class MemorySemanticWorkerTopologyTests
                 "rpc.extended-deadline.v1",
                 "rpc.v1",
                 "runtime-generations.v1",
-                "sdk-baseline-1-1.v1",
                 "settings.schema.v1",
                 "settings.v1",
                 "storage.v1",

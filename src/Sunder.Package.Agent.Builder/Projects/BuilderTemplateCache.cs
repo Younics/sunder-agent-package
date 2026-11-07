@@ -74,7 +74,7 @@ internal sealed partial class BuilderTemplateCache : IDisposable
         var owner = JsonSerializer.SerializeToUtf8Bytes(new
         {
             purpose = Purpose, cacheRoot = ownershipRoot, templateBase = root,
-            template = "Sunder.Package.Templates@" + options.CoordinatedPackageVersion, archiveSha256, sdkVersion,
+            template = "Sunder.Package.Templates@" + options.DotnetTemplateVersion, archiveSha256, sdkVersion,
         });
         if (owner.Length > MaximumMarkerBytes) throw new IOException("Builder template cache identity exceeds its size limit.");
         var home = Path.Combine(root, Convert.ToHexStringLower(SHA256.HashData(owner))[..32]);

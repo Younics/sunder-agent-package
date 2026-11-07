@@ -8,6 +8,7 @@ expectation, baseline, lock, qualification, or source file. Default evidence mod
 compares the qualified proposal to the separately reviewed byte records.
 """
 import argparse
+import copy
 import json
 from pathlib import Path
 import re
@@ -54,6 +55,7 @@ def expected_inventory(root):
                 and set(contract["streams"]) <= set(contract["methods"]), "Invalid method/stream expectation")
         require(contract["source"].startswith(str(Path(packages[contract["packageId"]]["projectPath"]).parent) + "/"), "Contract source owner differs")
         if contract["exposure"] == "public": require(contract["packageId"] == AGENT, "Public API owner differs")
+    expected["packageVersions"] = {package_id: package["version"] for package_id, package in actual.items()}
     return expected, inventory
 
 
@@ -97,7 +99,41 @@ def actions(contract):
 
 
 def contract_version(contract, expected):
-    return contract.get("contractVersion", expected["publicVersion"] if contract["exposure"] == "public" else expected["packageVersion"])
+    return (contract.get("contractVersion", expected["publicVersion"]) if contract["exposure"] == "public"
+            else package_version(contract["packageId"], expected))
+
+
+def package_version(package_id, expected):
+    return expected.get("packageVersions", {}).get(package_id, expected["packageVersion"])
+
+
+def project_reviewed_records(reviewed, expected):
+    """Only the private root version label follows authored package versions.
+
+    Preserve the authenticated/reviewed API body and ABI, without rewriting the
+    byte-record file or reading expected values from generated output.
+    """
+    result = copy.deepcopy(reviewed)
+    contracts = index(expected["contracts"], "contractId")
+    require(set(index(result["contracts"], "contractId")) == set(contracts), "Reviewed contract inventory differs")
+    for record in result["contracts"]:
+        contract = contracts[record["contractId"]]
+        raw = record["canonicalDescriptor"]
+        descriptor = release.decode(raw.encode())
+        old = contract.get("contractVersion", expected["publicVersion"] if contract["exposure"] == "public" else expected["packageVersion"])
+        require(record["packageId"] == contract["packageId"] and record["exposure"] == contract["exposure"]
+                and descriptor["contractId"] == contract["contractId"] and descriptor["version"] == old
+                and release.sha(raw.encode()) == record["descriptorSha256"], "Reviewed contract tuple differs")
+        new = contract_version(contract, expected)
+        if contract["exposure"] == "package" and old != new:
+            release.version(new)
+            # Core's JCS root orders version last. Replace that one scalar without
+            # reserializing numbers, definitions, method policy or documentation.
+            tail = ',"version":' + json.dumps(old) + '}'
+            require(raw.endswith(tail), "Reviewed private descriptor is not canonical")
+            record["canonicalDescriptor"] = raw[:-len(tail)] + ',"version":' + json.dumps(new) + '}'
+            record["descriptorSha256"] = release.sha(record["canonicalDescriptor"].encode())
+    return result
 
 
 def uses(package, expected):
@@ -134,7 +170,7 @@ def contract_record(snapshot, contract, expected):
 def verify_manifest(manifest, package, expected, inventory):
     contracts = index(expected["contracts"], "contractId")
     policies = uses(package, expected)
-    require(manifest["id"] == package["packageId"] and manifest["version"] == expected["packageVersion"], "Manifest owner/version differs")
+    require(manifest["id"] == package["packageId"] and manifest["version"] == package_version(package["packageId"], expected), "Manifest owner/version differs")
     bundles = index(manifest["contractBundles"], "contractId")
     owned = {cid for cid, c in contracts.items() if c["packageId"] == package["packageId"]}
     require(set(bundles) == owned | set(package["providers"].values()) | {cid for _, cid in policies}, "Bundle inventory differs")
@@ -253,7 +289,7 @@ def propose(root, evidence_path, expected, inventory):
         qualification = release.load(qualification_path)
         frame, plan = qualification["inputs"], qualification["rolePlan"]
         require(qualification["schemaVersion"] == 1 and qualification["leaf"] == "sunder-dev", "Expected Core role qualification V1")
-        require(frame["packageId"] == package_id and frame["packageVersion"] == expected["packageVersion"]
+        require(frame["packageId"] == package_id and frame["packageVersion"] == package_version(package_id, expected)
                 and frame["project"] == str(Path(package["projectPath"]).relative_to("src"))
                 and frame["configuration"] == evidence["configuration"] and frame["runtimeIdentifier"] == evidence["rid"]
                 and frame["targetFramework"] == "net10.0", "Qualified source coordinates differ")
@@ -288,7 +324,7 @@ def propose(root, evidence_path, expected, inventory):
             require(bundle["authorityKind"] == "package" and bundle["authorityId"] == package_id, "Receipt authority differs")
             if contract["exposure"] == "public":
                 current = next(c["current"] for c in baseline["contracts"].values() if c["contractId"] == contract["contractId"])
-                require(current["state"] == "release-frozen" and current["packageRelease"] == dict(packageId=package_id, packageVersion=expected["packageVersion"]), "Public contract requires owning Accept/Freeze")
+                require(current["state"] == "release-frozen" and current["packageRelease"] == dict(packageId=package_id, packageVersion=package_version(package_id, expected)), "Public contract requires owning Accept/Freeze")
                 require(all(current[f] == record[f] for f in ("canonicalDescriptor", "descriptorSha256", "abiSha256")), "Owned/receipt tuple differs")
                 require(release.sha(b"sunder.rpc.abi.v1\0" + current["canonicalAbiProjection"].encode()) == record["abiSha256"], "Owned ABI digest differs")
             records.append(record)
@@ -334,7 +370,7 @@ def main():
         proposed = propose(root, args.evidence, expected, inventory)
         if args.propose: print(json.dumps(proposed, ensure_ascii=False, indent=2))
         else:
-            reviewed = release.load(root / RECORDS)
+            reviewed = project_reviewed_records(release.load(root / RECORDS), expected)
             require(reviewed["schemaVersion"] == 1 and reviewed["inventorySha256"] == proposed["inventorySha256"]
                     and reviewed["contracts"] == proposed["contracts"], "Current records differ; review a separate --propose result")
             print("Current qualified artifacts match independent inventory and reviewed contract records.")

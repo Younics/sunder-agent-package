@@ -47,7 +47,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Execution.Local" or "Sunder.Sdk.Worker");
             using var package = RegressionTestPackageScope.Create();
             var physicalRoot = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var context = new TestPackageContext("younics.ai.agent.execution.local", physicalRoot, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.execution.local", physicalRoot, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.execution.local"), storage: package.Context.Storage);
             using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
             var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.execution.local");
             var (options, lifetime, runtimeServices) = CreateGeneratedWorker(runtime, context, rpc);
@@ -70,7 +70,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var descriptor = provider.ProviderId == "local.presentation" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.local.presentation") : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("younics.ai.agent.execution.local", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.execution.local", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var presentationContract = presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Local_Services.IPresentationService", true)!;

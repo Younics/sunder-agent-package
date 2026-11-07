@@ -2,108 +2,93 @@ name: AI Agent Family Release
 
 on:
   push:
-    tags: ["agent/v*"]
+    branches: [main]
+  workflow_dispatch:
 
 permissions: {}
 concurrency:
   group: sunder-agent-family
   cancel-in-progress: false
 env:
-  DOTNET_VERSION: "10.0.403"
-  CORE_SDK_VERSION: "1.1.0"
   NUGET_SOURCE: https://api.nuget.org/v3/index.json
 
 jobs:
   prepare:
+    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: sunder-agent-release-promotion
     permissions:
-      contents: read
+      # GitHub exposes drafts only with push access. Planning itself is read-only,
+      # and its token is never inherited by MSBuild version evaluation.
+      contents: write
     outputs:
-      version: ${{ steps.release.outputs.version }}
+      selected_count: ${{ steps.selection.outputs.selected_count }}
+      resume: ${{ steps.selection.outputs.resume }}
+      plan_sha256: ${{ steps.selection.outputs.plan_sha256 }}
       core_commit: ${{ steps.release.outputs.core_commit }}
       core_tag: ${{ steps.release.outputs.core_tag }}
-      cold_inputs: ${{ steps.inputs.outputs.locator }}
+      core_version: ${{ steps.release.outputs.core_version }}
+      matrix: ${{ steps.matrix.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-      - name: Verify source, locks, version and the final Core SDK release
-        id: release
+          global-json-file: global.json
+      - id: matrix
         env:
-          SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
-          SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
-          SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
-        run: |
-          set -euo pipefail
-          test "$GITHUB_SHA" = "$SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT"
-          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
-          test "$GITHUB_REF_PROTECTED" = true
-          [[ "$SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE" =~ ^https://[^/?#]+/[^[:space:]#]+$ ]]
-          test "$(python3 -B scripts/release/agent_release.py lock-set "$PWD")" = "$SUNDER_AGENT_LOCK_SET_SHA256"
-          version="${GITHUB_REF_NAME#agent/v}"
-          test "$version" = "$(jq -er .releaseVersion packages.json)"
-          bash scripts/release/verify-agent-release-version.sh "$version" "$CORE_SDK_VERSION"
-          commit="$(bash scripts/release/verify-core-sdk-release.sh "$CORE_SDK_VERSION" resolve)"
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "core_commit=$commit" >> "$GITHUB_OUTPUT"
-          echo "core_tag=sdk/v$CORE_SDK_VERSION" >> "$GITHUB_OUTPUT"
-      - name: Verify exact durable release inputs
-        id: inputs
+          RUNNER_VARIABLES: ${{ toJSON(vars) }}
+        run: python3 -B scripts/ci/agent_ci.py matrices
+      - name: Select evaluated package versions against published releases
+        id: selection
         env:
           GH_TOKEN: ${{ github.token }}
-          SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ vars.SUNDER_AGENT_COLD_INPUT_MANIFEST }}
-          CORE_COMMIT: ${{ steps.release.outputs.core_commit }}
-        run: python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+        run: python3 -B scripts/release/agent_selection.py plan --plan artifacts/release-plan.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-release-selection
+          path: artifacts/release-plan.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Resolve the declared Core build-tool release
+        if: steps.selection.outputs.selected_count != '0'
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          test "$GITHUB_REF_PROTECTED" = true
+          python3 -B scripts/ci/agent_ci.py coordinates
 
   validation:
     needs: prepare
+    if: needs.prepare.outputs.resume != 'true'
     uses: ./.github/workflows/sunder-package-smoke.yml
     permissions:
       contents: read
     with:
       core_commit: ${{ needs.prepare.outputs.core_commit }}
-      cold_inputs: ${{ needs.prepare.outputs.cold_inputs }}
+      package-tests: ${{ needs.prepare.outputs.selected_count != '0' }}
 
   native:
     needs: [prepare, validation]
-    runs-on: ${{ fromJSON(matrix.runner_labels) }}
+    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - rid: win-x64
-            key: WIN_X64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_X64 || '["windows-2022"]' }}
-          - rid: win-arm64
-            key: WIN_ARM64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_WIN_ARM64 || '["windows-11-arm"]' }}
-          - rid: linux-x64
-            key: LINUX_X64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_X64 || '["ubuntu-24.04"]' }}
-          - rid: linux-arm64
-            key: LINUX_ARM64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_LINUX_ARM64 || '["ubuntu-24.04-arm"]' }}
-          - rid: osx-x64
-            key: OSX_X64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_X64 || '["macos-15-intel"]' }}
-          - rid: osx-arm64
-            key: OSX_ARM64
-            runner_labels: ${{ vars.SUNDER_AGENT_RUNNER_OSX_ARM64 || '["macos-15"]' }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
-      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_{0}', matrix.key)] }}
-      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars[format('SUNDER_AGENT_OFFLINE_RUNNER_SHA256_{0}', matrix.key)] }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
+      VERSION: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
       run:
         working-directory: sunder-agent-package
@@ -119,30 +104,33 @@ jobs:
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: ./sunder-agent-package/.github/actions/setup
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts
       - name: Verify release locks and download native inputs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bash scripts/release/verify-release-locks.sh "$CORE_SDK_VERSION"
+          bash scripts/release/verify-release-locks.sh
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
           python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-      - name: Build and qualify 15 exact native leaves offline
+      - name: Build and qualify only version-selected native leaves
         shell: pwsh
         run: |
-          $manifest = $env:SUNDER_AGENT_COLD_INPUT_MANIFEST | ConvertFrom-Json
           ./scripts/release/build-native-family.ps1 -Rid "${{ matrix.rid }}" -Version $env:VERSION `
-            -OutputDirectory "artifacts/native-build/${{ matrix.rid }}" -ColdInputsDirectory "$env:RUNNER_TEMP/release-inputs" `
-            -ColdManifestSha256 $manifest.sha256 -ArtifactSourceCommit $env:GITHUB_SHA -CoreCommit $env:CORE_COMMIT
+            -OutputDirectory "artifacts/native-build/${{ matrix.rid }}" -InputsDirectory "$env:RUNNER_TEMP/release-inputs"
       - name: Exercise actual native Workers and retain qualified role bytes
         env:
           RID: ${{ matrix.rid }}
-          SUNDER_AGENT_BUILDER_SDK_VERSION: ${{ env.DOTNET_VERSION }}
         run: |
           set -euo pipefail
           bash scripts/release/run-native-runtime-smoke.sh ../sunder-core "artifacts/native-build/$RID/current-rid-archives" "artifacts/native-build/$RID/metrics" "$CORE_COMMIT"
-          python3 -B scripts/release/native-family.py record "$RID" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" \
+          python3 -B scripts/release/native-family.py record "$RID" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" \
             "artifacts/native-build/$RID/current-rid-archives" "artifacts/native-build/$RID/metrics" "artifacts/native/$RID" "$PWD"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -154,6 +142,7 @@ jobs:
 
   fan-in:
     needs: [prepare, native]
+    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     permissions:
@@ -161,10 +150,9 @@ jobs:
     env:
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      VERSION: ${{ needs.prepare.outputs.version }}
-      SUNDER_AGENT_COLD_INPUT_MANIFEST: ${{ needs.prepare.outputs.cold_inputs }}
-      SUNDER_AGENT_OFFLINE_RUNNER: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_LINUX_X64 }}
-      SUNDER_AGENT_OFFLINE_RUNNER_SHA256: ${{ vars.SUNDER_AGENT_OFFLINE_RUNNER_SHA256_LINUX_X64 }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
+      VERSION: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
       run:
         working-directory: sunder-agent-package
@@ -180,42 +168,45 @@ jobs:
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
-        with:
-          node-version: "24.22.1"
+      - uses: ./sunder-agent-package/.github/actions/setup
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: sunder-agent-native-*
           path: native-input
           merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts
       - name: Prepare dependencies, then compose without rebuilding qualified leaves
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
           python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
-          manifest_sha="$(jq -r .sha256 <<< "$SUNDER_AGENT_COLD_INPUT_MANIFEST")"
-          python3 -B scripts/release/release_inputs.py prepare "$PWD" "$RUNNER_TEMP/release-inputs" "$RUNNER_TEMP/fanin" package "$GITHUB_SHA" "$CORE_COMMIT" "$manifest_sha"
-          python3 -B scripts/release/release_inputs.py exec "$RUNNER_TEMP/fanin/cold-state.json" -- \
-            python3 -B scripts/release/native-family.py assemble ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION" "$PWD"
-          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_SDK_VERSION"
+          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core --inputs "$RUNNER_TEMP/release-inputs" --work "$RUNNER_TEMP/fanin" --mode package
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/fanin/ci-state.json" -- \
+            python3 -B scripts/release/native-family.py assemble ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
+          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION"
+          cp "$VERSION" artifacts/family/release-plan.json
           bash scripts/release/generate-package-output-audit.sh artifacts/family artifacts/family/native-test-evidence.json "$PWD" artifacts/family/package-output-audit.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agent-package-test-binaries
-          path: sunder-agent-package/tests/Sunder.Package.Agent.Tests/bin/Release/net10.0
+          path: sunder-agent-package/artifacts/package-test-binaries
       - name: Inspect exact archives with the previously built Agent contract tests
+        id: archive_tests
         env:
           SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
           SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED: "1"
         run: >-
-          dotnet vstest tests/Sunder.Package.Agent.Tests/bin/Release/net10.0/Sunder.Package.Agent.Tests.dll
+          dotnet vstest artifacts/package-test-binaries/Sunder.Package.Agent.Tests.dll
           --TestCaseFilter:FullyQualifiedName~PackageFamilyArchiveContractTests --Logger:trx --ResultsDirectory:artifacts/family-results/agent
       - name: Require executed Agent archive assertions
+        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure')
         run: python3 scripts/test/generate-test-duration-report.py artifacts/family-results/agent --expected-skips 0
       - name: Build Core validation paths
         working-directory: sunder-core
@@ -223,23 +214,7 @@ jobs:
           dotnet restore Sunder.Core.slnx --locked-mode
           dotnet build Sunder.Core.slnx -c Release --no-restore -p:GeneratePackageOnBuild=false
       - name: Validate and exercise exact family bytes through Runtime and App
-        env:
-          SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE: "1"
-          SUNDER_REQUIRE_AGENT_UI_SNAPSHOT: "1"
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
-          SUNDER_AGENT_UI_SNAPSHOT_DIR: ${{ runner.temp }}/agent-ui-snapshot
-        run: |
-          set -euo pipefail
-          for archive in artifacts/family/*.sunderpkg; do
-            dotnet ../sunder-core/languages/csharp/dotnet/host/Sunder.Cli/bin/Release/net10.0/sunder.dll dev package validate "$archive"
-          done
-          for project in Sunder.Runtime.Host.Tests Sunder.App.Tests; do
-            dotnet test "../sunder-core/languages/csharp/dotnet/tests/$project/$project.csproj" -c Release --no-build --no-restore \
-              --filter FullyQualifiedName~AgentPackageReleaseSmokeTests --logger trx --results-directory "$PWD/artifacts/family-results/core"
-          done
-          node ../sunder-core/scripts/test-oracles/summarize-core-test-results.mjs "$PWD/artifacts/family-results/core" --allow-partial \
-            --require-test Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily \
-            --require-test Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp
+        run: python3 -B scripts/ci/agent_ci.py test-family --core ../sunder-core --directory artifacts/family
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-family-release
@@ -247,7 +222,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
-      - if: always()
+      - name: Retain family test results
+        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure' || steps.archive_tests.outcome == 'cancelled')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-family-results-${{ github.run_attempt }}
@@ -256,22 +232,19 @@ jobs:
 
   publish:
     needs: [prepare, fan-in]
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.selected_count != '0' && (needs.fan-in.result == 'success' || needs.prepare.outputs.resume == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: sunder-agent-release-promotion
     permissions:
       contents: write
-    outputs:
-      release_id: ${{ steps.stage.outputs.release_id }}
     env:
       GH_TOKEN: ${{ github.token }}
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
-      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
-      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
-      SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
     defaults:
       run:
         working-directory: sunder-agent-package
@@ -286,24 +259,37 @@ jobs:
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      - uses: ./sunder-agent-package/.github/actions/setup
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          node: 'false'
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.prepare.outputs.resume != 'true'
         with:
           name: sunder-agent-family-release
           path: sunder-agent-package/artifacts/release
-      - name: Stage immutable tested bytes on one numeric release
-        id: stage
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts/release
+      - name: Reuse unchanged archives and authenticate the selection
+        run: |
+          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_selection.py retain --plan artifacts/release/release-plan.json --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
+      - name: Recover original tested bytes without rebuilding
+        if: needs.prepare.outputs.resume == 'true'
+        run: python3 -B scripts/release/agent_pipeline.py recover --core ../sunder-core --directory artifacts/release
+      - name: Automatically tag and stage selected package releases
+        if: needs.prepare.outputs.resume != 'true'
         run: python3 -B scripts/release/agent_pipeline.py stage --core ../sunder-core --directory artifacts/release
-      - name: Publish and verify every exact Registry version as Yanked
+      - name: Publish selected Registry versions; verify unchanged versions read-only
         env:
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
-          RELEASE_ID: ${{ steps.stage.outputs.release_id }}
-        run: python3 -B scripts/release/agent_pipeline.py publish --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"
+          SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
+        run: python3 -B scripts/release/agent_pipeline.py publish --core ../sunder-core --directory artifacts/release
 
   release:
     needs: [prepare, publish]
+    if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: sunder-agent-release-promotion
@@ -313,13 +299,10 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      RELEASE_ID: ${{ needs.publish.outputs.release_id }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
-      SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT: ${{ vars.SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT }}
-      SUNDER_AGENT_LOCK_SET_SHA256: ${{ vars.SUNDER_AGENT_LOCK_SET_SHA256 }}
-      SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE: ${{ vars.SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE }}
-      SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID: ${{ vars.SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID }}
+      SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
     defaults:
       run:
         working-directory: sunder-agent-package
@@ -334,11 +317,22 @@ jobs:
           ref: ${{ needs.prepare.outputs.core_commit }}
           path: sunder-core
           persist-credentials: false
-      - name: Download only the same retained numeric release
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts/release
+      - name: Download and verify the exact retained package releases
         run: |
-          mkdir -p artifacts/release
-          python3 -B ../sunder-core/scripts/release/github_release.py download "$GITHUB_REF_NAME" --repository "$GITHUB_REPOSITORY" --release-id "$RELEASE_ID" --directory artifacts/release
+          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_pipeline.py recover --core ../sunder-core --directory artifacts/release
       - name: Commit and confirm one retained atomic visibility request
-        run: python3 -B scripts/release/agent_pipeline.py visibility --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"
+        env:
+          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+        run: python3 -B scripts/release/agent_pipeline.py visibility --core ../sunder-core --directory artifacts/release
       - name: Recheck public bytes, policy, tags and six-RID plans before announcement
-        run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release --release-id "$RELEASE_ID"
+        env:
+          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+        run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release

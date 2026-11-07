@@ -1,0 +1,26 @@
+name: Agent and Core toolchains
+description: Install toolchains from the exact Agent and Core checkouts.
+inputs:
+  node:
+    description: Install Core's Node/npm development toolchain.
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      with:
+        global-json-file: sunder-agent-package/global.json
+    - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+      with:
+        global-json-file: sunder-core/global.json
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      if: inputs.node == 'true'
+      with:
+        node-version-file: sunder-core/languages/typescript/node/.nvmrc
+    - name: Install the Core npm toolchain
+      if: inputs.node == 'true'
+      shell: bash
+      run: |
+        package_manager="$(node -p 'require("./sunder-core/languages/typescript/node/package.json").packageManager')"
+        [[ "$package_manager" =~ ^npm@[0-9]+\.[0-9]+\.[0-9]+$ ]]
+        npm install --global "$package_manager" --registry=https://registry.npmjs.org

@@ -15,12 +15,13 @@ import stat
 import tarfile
 import zipfile
 
-RIDS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64")
+from ci_platforms import RIDS
+from family_policy import FAMILY_PACKAGE_IDS, target_framework, runtime_requirement
 ROLE_INPUTS = "role-inputs.v1.json"
 MAX_DOCUMENT = 64 * 1024 * 1024
 MAX_FILES = 16384
 MAX_LEAF = 2 * 1024 * 1024 * 1024
-MAX_RUN = 15 * (MAX_LEAF + MAX_DOCUMENT + 16 * 1024 * 1024)
+MAX_RUN = len(FAMILY_PACKAGE_IDS) * (MAX_LEAF + MAX_DOCUMENT + 16 * 1024 * 1024)
 METADATA = {"manifest/sunder-package.json", "manifest/content-index.json"}
 RESERVED = {"CON", "PRN", "AUX", "NUL"} | {
     prefix + str(i) for prefix in ("COM", "LPT") for i in range(1, 10)
@@ -237,7 +238,7 @@ def qualification(data, package_id, project, rid, version):
          "assemblyName ownedBaseline ownedBaselineSha256 contractLock contractLockSha256 properties items sources toolset externalInputs")
     require(frame["packageId"] == package_id and frame["packageVersion"] == version
             and frame["project"] == project and frame["runtimeIdentifier"] == rid
-            and frame["configuration"] == "Release" and frame["targetFramework"] == "net10.0"
+            and frame["configuration"] == "Release" and frame["targetFramework"] == target_framework(project)
             and frame["projectIdentity"] == Path(project).stem
             and frame["assemblyName"] == Path(project).stem, "Mixed/stale package/project/configuration/RID qualification")
     for field in ("ownedBaseline", "contractLock"):
@@ -271,12 +272,13 @@ def validate_manifest(data, package_id, version, rids, has_app=None):
             and (not apps or sorted(t["rid"] for t in apps) == sorted(rids)), "Invalid manifest role/RID closure")
     if has_app is not None:
         require(bool(apps) == has_app, "Manifest and qualified App role disagree")
+    from family_policy import FAMILY_PROJECTS
+    framework = target_framework(FAMILY_PROJECTS[package_id])
     for target in targets:
-        require(target["targetFramework"] == "net10.0", "Invalid native framework")
+        require(target["targetFramework"] == framework, "Invalid native framework")
     for target in runtime:
         require(target["kind"] == "worker" and re.fullmatch(r"lib/[A-Za-z0-9._-]+\.dll", target["entryPoint"])
-                and target["executionRuntime"] == {"id": "sunder.runtime.dotnet", "versionRange": ">=10.0.0 <11.0.0",
-                                                   "moduleAbi": "sunder.dotnet-worker-module.v1"},
+                and target["executionRuntime"] == runtime_requirement(framework),
                 "Expected a framework-dependent Worker V1 module")
     return manifest
 

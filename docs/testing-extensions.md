@@ -21,6 +21,26 @@ Reuse test binaries with `--no-build` only while their relevant inputs are uncha
 For test-only edits, `-p:BuildProjectReferences=false` can reuse matching, already-built
 canonical role outputs. A filtered test still has its project's build dependencies.
 
+Generated-provider helpers are ordinary C# sources in
+`tests/Sunder.Package.Agent.TestProviders`. The shared RPC harness references that
+project, so `dotnet test` builds its native Agent dependency and real generated
+registration/dispatch automatically. The module embeds the generated model
+projection and descriptors used by the receiver-bound test adapters. Intermediate
+archives, import locks and generated code live under `obj`; there is no preparation
+command, fixture hash inventory or test-environment bundle. `--no-build` reuses this
+dependency just like any other project output.
+The prebuilt input copy is keyed by Core's qualified role-input hash, which includes
+the complete toolset. Repeated builds reuse those bytes; changed tooling gets a new
+immutable path.
+
+CI records the selected adapter cases before execution, using the same filter and
+binaries. Reports compare that discovery with TRX results on the current platform,
+including every pre-enumerated theory row and runtime-expanded deferred theories.
+Project ownership and compiled source skip attributes supply the compact policy.
+Source, artifact and required-input selections contribute to the same completeness
+check. Each run retains its command, filter, elapsed time, output, VSTest diagnostics,
+TRX failure message/stack and hang diagnostics under `artifacts/test-results`.
+
 | Changed behavior | Owning selection |
 | --- | --- |
 | Agent persistence, run control, permissions, workspaces, history | Relevant class in `Sunder.Package.Agent.Tests` |

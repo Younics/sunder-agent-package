@@ -47,8 +47,8 @@ public sealed class BuilderProjectMetadataService(string nodeExecutable = "node"
 
     private async Task SaveGeneratedNodeAsync(BuilderProjectSource source, BuilderProjectInspection current, Dictionary<string, byte[]> edits, CancellationToken token)
     {
-        var cli = nodeToolCliPath ?? Path.Combine(source.Root, "node_modules", "@sunder", "package-tool", "dist", "cli.js");
-        if (!File.Exists(cli)) throw new InvalidOperationException("This already-generated Node project needs @sunder/package-tool with 'metadata edit' support. Install the project tooling, then retry. No source files were changed.");
+        var cli = nodeToolCliPath ?? Path.Combine(source.Root, "node_modules", "@younics", "sunder-package-tool", "dist", "cli.js");
+        if (!File.Exists(cli)) throw new InvalidOperationException("This already-generated Node project needs @younics/sunder-package-tool with 'metadata edit' support. Install the project tooling, then retry. No source files were changed.");
         var request = new
         {
             schemaVersion = 1, expectedPackageId = current.PackageId,

@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Xml;
 using System.Xml.Linq;
+using Sunder.Sdk.Packaging;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -11,7 +12,7 @@ internal static partial class BuilderLocalNuGet
     private const string TemplateRoot = "content/sunder-package/";
     private const string TemplateProject = TemplateRoot + "Sunder.Package.Template/";
 
-    private static async Task ValidatePackageAsync(string path, string id, string version, CancellationToken token)
+    private static async Task ValidatePackageAsync(string path, string id, string version, IReadOnlyDictionary<string, string> versions, CancellationToken token)
     {
         await using var stream = OpenRead(path);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
@@ -48,17 +49,17 @@ internal static partial class BuilderLocalNuGet
         {
             var dependencyId = (string?)dependency.Attribute("id") ?? "";
             if (!dependencyId.StartsWith("Sunder.", StringComparison.OrdinalIgnoreCase)) continue;
-            if (!PackageIds.Contains(dependencyId, StringComparer.Ordinal) || !MatchesCoordinate((string?)dependency.Attribute("version"), version))
-                throw new InvalidDataException($"{id} has a Sunder SDK dependency outside the coordinated local feed: {dependency}.");
+            if (!versions.TryGetValue(dependencyId, out var selected) || !MatchesCoordinate((string?)dependency.Attribute("version"), selected))
+                throw new InvalidDataException($"{id} has a Sunder dependency outside the selected local feed: {dependency}.");
         }
         if (id.StartsWith("Sunder.Sdk", StringComparison.Ordinal))
         {
             Require("lib/net10.0/" + id + ".dll");
             if (id != "Sunder.Sdk" && !dependencies.Any(dependency => (string?)dependency.Attribute("id") == "Sunder.Sdk"))
-                throw new InvalidDataException($"{id} must declare its coordinated Sunder.Sdk dependency.");
+                throw new InvalidDataException($"{id} must declare its Sunder.Sdk dependency.");
             if (id == "Sunder.Sdk.Worker" && dependencies.Any(dependency => (string?)dependency.Attribute("id") == "Sunder.Sdk" &&
-                (string?)dependency.Attribute("version") != "[" + version + "]"))
-                throw new InvalidDataException("Sunder.Sdk.Worker must pin its Sunder.Sdk dependency to the exact same release.");
+                (string?)dependency.Attribute("version") != "[" + versions["Sunder.Sdk"] + "]"))
+                throw new InvalidDataException("Sunder.Sdk.Worker must pin its exact selected Sunder.Sdk dependency.");
             if (id == "Sunder.Sdk.Stacks")
             {
                 Require("contracts/sunder.stack.contributor.rpc.json");
@@ -83,47 +84,47 @@ internal static partial class BuilderLocalNuGet
             using var template = BuilderProjectSource.Json(await ReadEntryAsync(Require(TemplateRoot + ".template.config/template.json"), token).ConfigureAwait(false));
             var value = template.RootElement;
             var symbols = value.GetProperty("symbols");
-            if (value.GetProperty("identity").GetString() != "Sunder.Package" || value.GetProperty("shortName").GetString() != "sunder-package" ||
-                Constant(symbols, "coordinatedPackageVersion") != version || !MatchesCoordinate(Constant(symbols, "coordinatedPackageVersionRange"), version))
-                throw new InvalidDataException("Sunder template identity and coordinated SDK version/range must match the local feed.");
+            if (value.GetProperty("identity").GetString() != "Sunder.Package" || value.GetProperty("shortName").GetString() != "sunder-package")
+                throw new InvalidDataException("Sunder template identity must match the canonical package template.");
+            var legacyRange = Constant(symbols, "coordinatedPackageVersionRange");
             var project = ParseXml(await ReadEntryAsync(Require(TemplateProject + "Sunder.Package.Template.csproj"), token).ConfigureAwait(false));
             var frameworks = project.Descendants("TargetFramework").Select(element => element.Value).ToArray();
             if (frameworks.Length != 1 || !System.Text.RegularExpressions.Regex.IsMatch(frameworks[0], @"^net[1-9][0-9]\.0$",
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
                 throw new InvalidDataException("Sunder template must declare one canonical .NET Worker target framework.");
-            RequireReference(project, "Sunder.Sdk.Worker");
-            RequireReference(project, "Sunder.Package.Build");
+            RequireReference(project, "Sunder.Sdk.Worker", versions, legacyRange);
+            RequireReference(project, "Sunder.Package.Build", versions, legacyRange);
             foreach (var (folder, package) in new[] { ("Views/Avalonia", "Sunder.Sdk.Avalonia"), ("Stacks/Stacks", "Sunder.Sdk.Stacks") })
-                RequireReference(ParseXml(await ReadEntryAsync(Require(TemplateProject + folder + ".PackageReferences.props"), token).ConfigureAwait(false)), package);
+                RequireReference(ParseXml(await ReadEntryAsync(Require(TemplateProject + folder + ".PackageReferences.props"), token).ConfigureAwait(false)), package, versions, legacyRange);
         }
     }
 
-    // This optional source-pack override accepts the coordinated forms emitted by Core,
-    // not floating versions or arbitrary ranges that can select another SDK release.
+    // Exact or bounded NuGet constraints only; actual selected dependency versions
+    // are independent of the archive's own version. No public Sunder fallback.
     private static bool MatchesCoordinate(string? constraint, string version)
     {
         if (constraint == version || constraint == "[" + version + "]") return true;
-        if (version.Contains('-')) return false;
-        if (!Version.TryParse(version, out var parsed) || parsed.Minor == int.MaxValue) return false;
-        // Core's template constant uses the compact form; NuGet's pack writer emits
-        // the same bounded range with a space after the comma in the .nuspec.
-        var lower = $"{parsed.Major}.{parsed.Minor}.0";
-        var upper = $"{parsed.Major}.{parsed.Minor + 1}.0";
-        return constraint == $"[{lower},{upper})" || constraint == $"[{lower}, {upper})";
+        if (constraint is null || constraint.Length > 1024 || constraint.Length < 5 ||
+            constraint[0] is not ('[' or '(') || constraint[^1] is not (']' or ')') || !SemanticVersion.TryParse(version, out var selected)) return false;
+        var bounds = constraint[1..^1].Split(',', StringSplitOptions.TrimEntries);
+        if (bounds.Length != 2 || !SemanticVersion.TryParse(bounds[0], out var lower) || !SemanticVersion.TryParse(bounds[1], out var upper)) return false;
+        return (constraint[0] == '[' ? selected.ComparePrecedenceTo(lower) >= 0 : selected.ComparePrecedenceTo(lower) > 0)
+            && (constraint[^1] == ']' ? selected.ComparePrecedenceTo(upper) <= 0 : selected.ComparePrecedenceTo(upper) < 0);
     }
 
     private static string? Constant(JsonElement symbols, string name)
     {
-        var symbol = symbols.GetProperty(name);
+        if (!symbols.TryGetProperty(name, out var symbol)) return null;
         if (symbol.GetProperty("type").GetString() != "generated" || symbol.GetProperty("generator").GetString() != "constant") return null;
         return symbol.GetProperty("parameters").GetProperty("value").GetString();
     }
 
-    private static void RequireReference(XDocument project, string id)
+    private static void RequireReference(XDocument project, string id, IReadOnlyDictionary<string, string> versions, string? legacyRange)
     {
         var references = project.Descendants("PackageReference").Where(element => (string?)element.Attribute("Include") == id).ToArray();
-        if (references.Length != 1 || (string?)references[0].Attribute("Version") != "SUNDER_TEMPLATE_PACKAGE_VERSION_RANGE")
-            throw new InvalidDataException($"Sunder template must use its coordinated SDK range for {id}.");
+        var range = references.Length == 1 ? (string?)references[0].Attribute("Version") : null;
+        if (range == "SUNDER_TEMPLATE_PACKAGE_VERSION_RANGE") range = legacyRange;
+        if (!MatchesCoordinate(range, versions[id])) throw new InvalidDataException($"Sunder template dependency {id} does not admit its selected local version.");
     }
 
     private static XDocument ParseXml(byte[] bytes)

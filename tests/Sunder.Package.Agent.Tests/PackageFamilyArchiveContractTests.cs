@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Xml.Linq;
 using Sunder.Sdk.Packaging;
 using Sunder.Sdk.Rpc;
 using Xunit;
@@ -65,7 +66,7 @@ public sealed class PackageFamilyArchiveContractTests
                 .Count());
 
         var expectedNames = inventory.Packages
-            .Select(package => $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg")
+            .Select(package => $"{package.PackageId}.{package.Version}.sunderpkg")
             .Order(StringComparer.Ordinal)
             .ToArray();
         var actualNames = Directory.EnumerateFiles(archiveDirectory, "*.sunderpkg", SearchOption.TopDirectoryOnly)
@@ -82,7 +83,7 @@ public sealed class PackageFamilyArchiveContractTests
         {
             var archivePath = Path.Combine(
                 archiveDirectory,
-                $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
+                $"{package.PackageId}.{package.Version}.sunderpkg");
             var archiveBytes = new FileInfo(archivePath).Length;
             Assert.InRange(archiveBytes, 1, MaxArchiveBytes);
             familyBytes = checked(familyBytes + archiveBytes);
@@ -91,7 +92,7 @@ public sealed class PackageFamilyArchiveContractTests
             VerifyArchive(
                 archive,
                 package,
-                inventory.ReleaseVersion,
+                package.Version,
                 packageIds,
                 inventory.ContractIdentities);
         }
@@ -113,7 +114,7 @@ public sealed class PackageFamilyArchiveContractTests
         var package = inventory.Packages[0];
         var sourcePath = Path.Combine(
             archiveDirectory,
-            $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
+            $"{package.PackageId}.{package.Version}.sunderpkg");
         using var temporary = TemporaryDirectory.Create("sunder-agent-archive-mutation");
         var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
         RewriteArchive(sourcePath, mutatedPath, entries =>
@@ -130,7 +131,7 @@ public sealed class PackageFamilyArchiveContractTests
                 VerifyArchive(
                     archive,
                     package,
-                    inventory.ReleaseVersion,
+                    package.Version,
                     inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
                     inventory.ContractIdentities);
             });
@@ -150,7 +151,7 @@ public sealed class PackageFamilyArchiveContractTests
         var package = inventory.Packages[0];
         var sourcePath = Path.Combine(
             archiveDirectory,
-            $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
+            $"{package.PackageId}.{package.Version}.sunderpkg");
         using var temporary = TemporaryDirectory.Create("sunder-agent-archive-path-mutation");
         var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
         RewriteArchive(sourcePath, mutatedPath, entries =>
@@ -166,7 +167,7 @@ public sealed class PackageFamilyArchiveContractTests
             VerifyArchive(
                 archive,
                 package,
-                inventory.ReleaseVersion,
+                package.Version,
                 inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
                 inventory.ContractIdentities);
         });
@@ -186,7 +187,7 @@ public sealed class PackageFamilyArchiveContractTests
         var package = inventory.Packages.First(static item => item.ProviderIds.Count > 0);
         var sourcePath = Path.Combine(
             archiveDirectory,
-            $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
+            $"{package.PackageId}.{package.Version}.sunderpkg");
         using var temporary = TemporaryDirectory.Create("sunder-agent-archive-descriptor-mutation");
         var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
         RewriteArchive(sourcePath, mutatedPath, entries =>
@@ -204,7 +205,7 @@ public sealed class PackageFamilyArchiveContractTests
             VerifyArchive(
                 archive,
                 package,
-                inventory.ReleaseVersion,
+                package.Version,
                 inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
                 inventory.ContractIdentities);
         });
@@ -225,7 +226,7 @@ public sealed class PackageFamilyArchiveContractTests
             item.PackageId is not ("younics.ai.agent" or "younics.sunder.package.maker"));
         var sourcePath = Path.Combine(
             archiveDirectory,
-            $"{package.PackageId}.{inventory.ReleaseVersion}.sunderpkg");
+            $"{package.PackageId}.{package.Version}.sunderpkg");
         using var temporary = TemporaryDirectory.Create("sunder-agent-archive-dependency-mutation");
         var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
         RewriteArchive(sourcePath, mutatedPath, entries =>
@@ -243,7 +244,7 @@ public sealed class PackageFamilyArchiveContractTests
             VerifyArchive(
                 archive,
                 package,
-                inventory.ReleaseVersion,
+                package.Version,
                 inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
                 inventory.ContractIdentities);
         });
@@ -367,7 +368,9 @@ public sealed class PackageFamilyArchiveContractTests
         var root = audit.RootElement;
         Assert.Equal(1, root.GetProperty("schemaVersion").GetInt32());
         Assert.Equal("https://sunderapp.io/evidence/agent-package-output-audit/v1", root.GetProperty("kind").GetString());
-        Assert.Equal(inventory.ReleaseVersion, root.GetProperty("version").GetString());
+        foreach (var package in inventory.Packages)
+            Assert.Equal(package.Version, root.TryGetProperty("packageVersions", out var versions)
+                ? versions.GetProperty(package.PackageId).GetString() : root.GetProperty("version").GetString());
         var gate = root.GetProperty("installedProjectionGate");
         Assert.Equal(phase0BaselineBytes, gate.GetProperty("phase0BaselineBytes").GetInt64());
         Assert.Equal(75, gate.GetProperty("requiredReductionPercent").GetInt32());
@@ -413,10 +416,11 @@ public sealed class PackageFamilyArchiveContractTests
         Assert.Equal(dependencyIds.Length, dependencyIds.Distinct(StringComparer.Ordinal).Count());
         Assert.DoesNotContain(package.PackageId, dependencyIds, StringComparer.Ordinal);
         Assert.All(dependencyIds, packageId => Assert.Contains(packageId, packageIds));
-        Assert.All(dependencies, dependency => VerifyFamilyDependencyRange(
-            releaseVersion,
-            RequiredString(dependency, "versionRange"),
-            RequiredString(dependency, "packageId")));
+        Assert.All(dependencies, dependency =>
+        {
+            var dependencyId = RequiredString(dependency, "packageId");
+            VerifyFamilyDependencyRange(ReadPackageVersion(dependencyId), RequiredString(dependency, "versionRange"), dependencyId);
+        });
 
         var targets = root.GetProperty("targets").EnumerateArray().ToArray();
         var runtimeTargets = targets
@@ -1020,6 +1024,7 @@ public sealed class PackageFamilyArchiveContractTests
                 var projectPath = RequiredString(package, "projectPath");
                 return new PackageExpectation(
                     RequiredString(package, "packageId"),
+                    ReadPackageVersion(RequiredString(package, "packageId")),
                     Path.GetFileNameWithoutExtension(projectPath),
                     CurrentContractInventory.Packages.Single(value => value.ProjectPath == projectPath).HasApp,
                     package.GetProperty("providerIds").EnumerateArray()
@@ -1044,18 +1049,24 @@ public sealed class PackageFamilyArchiveContractTests
                 static identity => ContractKey(identity.ContractId, identity.Version),
                 StringComparer.Ordinal);
         return new PackageInventory(
-            RequiredString(root, "releaseVersion"),
             packages,
             contractIdentities);
     }
 
     private sealed record PackageInventory(
-        string ReleaseVersion,
         IReadOnlyList<PackageExpectation> Packages,
         IReadOnlyDictionary<string, ContractIdentity> ContractIdentities);
 
+    private static string ReadPackageVersion(string packageId)
+    {
+        var projectPath = CurrentContractInventory.Packages.Single(package => package.PackageId == packageId).ProjectPath;
+        return XDocument.Load(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, projectPath))
+            .Root!.Elements("PropertyGroup").Elements("Version").Single().Value;
+    }
+
     private sealed record PackageExpectation(
         string PackageId,
+        string Version,
         string WorkerAssemblyName,
         bool HasApp,
         IReadOnlyList<string> ProviderIds);

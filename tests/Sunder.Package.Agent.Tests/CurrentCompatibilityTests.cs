@@ -86,7 +86,9 @@ public sealed class CurrentCompatibilityTests
                 Assert.True(File.Exists(target), $"Missing project reference: {target}");
                 var package = CurrentContractInventory.Packages.SingleOrDefault(value => Path.Combine(root, value.ProjectPath) == target);
                 if (package is null) continue;
-                Assert.Equal("GetSunderPackageRoleReference", reference.Attribute("Targets")?.Value);
+                Assert.Contains(reference.Attribute("Targets")?.Value, new[] { "GetSunderPackageRoleReference", "GetSunderPackageRoleInputs" });
+                if (reference.Attribute("Targets")?.Value == "GetSunderPackageRoleInputs")
+                    Assert.Equal("false", reference.Attribute("ReferenceOutputAssembly")?.Value);
                 Assert.Contains(reference.Attribute("AdditionalProperties")?.Value,
                     package.HasApp ? new[] { "SunderPackageReferenceRole=worker", "SunderPackageReferenceRole=app" } : ["SunderPackageReferenceRole=worker"]);
             }

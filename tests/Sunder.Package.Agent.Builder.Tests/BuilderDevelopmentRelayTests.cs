@@ -10,7 +10,7 @@ using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Rpc;
 using Xunit;
-using App = BuilderApp::Sunder.Package.Agent.Builder;
+using MakerApp = BuilderApp::Sunder.Package.Agent.Builder;
 using Worker = BuilderWorker::Sunder.Package.Agent.Builder;
 using MakerContract = BuilderWorker::Sunder.Generated.Packages.Younics_Sunder_Package_Maker_Internal.CYounics_Sunder_Package_Maker_Runtime.__SunderContract;
 
@@ -114,7 +114,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         await using var fixture = new RelayFixture();
         var tools = await fixture.ConnectToolsAsync();
         var catalog = fixture.AppServices.GetRequiredService<Sunder.Sdk.Services.IServiceProviders<BuilderApp::Sunder.Generated.Packages.Younics_Sunder_Package_Maker_Services.IBuilderRuntimeService>>();
-        var gateway = new App.BuilderBackendGateway(catalog);
+        var gateway = new MakerApp.BuilderBackendGateway(catalog);
         fixture.Backend.Inspection = (entry, token) => entry == fixture.Project.EntryPoint
             ? Task.FromResult(fixture.Project) : gateway.InspectAsync(entry, token);
         if (entryName == "sunder.package.json") await File.WriteAllTextAsync(Path.Combine(fixture.Project.ProjectFolder, entryName), "{invalid-json");
@@ -141,17 +141,17 @@ public sealed partial class BuilderDevelopmentRelayTests
     }
 
     [Theory]
-    [InlineData(false, App.BuilderProjectKind.Dotnet)]
-    [InlineData(true, App.BuilderProjectKind.Dotnet)]
-    [InlineData(false, App.BuilderProjectKind.Node)]
-    [InlineData(true, App.BuilderProjectKind.Node)]
-    public async Task GeneratedHotreloadUsesTheSameOwnerLoadedByUiOrSharedOperations(bool throughUi, App.BuilderProjectKind kind)
+    [InlineData(false, MakerApp.BuilderProjectKind.Dotnet)]
+    [InlineData(true, MakerApp.BuilderProjectKind.Dotnet)]
+    [InlineData(false, MakerApp.BuilderProjectKind.Node)]
+    [InlineData(true, MakerApp.BuilderProjectKind.Node)]
+    public async Task GeneratedHotreloadUsesTheSameOwnerLoadedByUiOrSharedOperations(bool throughUi, MakerApp.BuilderProjectKind kind)
     {
         await using var fixture = new RelayFixture(kind);
         var tools = await fixture.ConnectToolsAsync();
         fixture.Development.PackageIdResolver = _ => fixture.Project.PackageId;
         fixture.BuiltIdentity = await BuilderTestDevelopmentOutput.WriteAsync(fixture.Project, Path.Combine(fixture.Project.ProjectFolder, "sunder-dev"));
-        App.BuilderViewModel? model = null;
+        MakerApp.BuilderViewModel? model = null;
         if (throughUi)
         {
             model = new(fixture.Application, new(new BuilderUiStore(), new BuilderUiStateUpdates(), TimeSpan.FromMinutes(1)),
@@ -197,7 +197,7 @@ public sealed partial class BuilderDevelopmentRelayTests
 
         // A successor can start before the original lease expires. It must wait
         // rather than fail its activation root or steal the old command queue.
-        await using var successor = new App.BuilderDevelopmentService(fixture.Operations, fixture.Application, catalog);
+        await using var successor = new MakerApp.BuilderDevelopmentService(fixture.Operations, fixture.Application, catalog);
         var before = fixture.Transport.Calls.Count(method => method == "connect-development-app");
         successor.Start(default);
         await BuilderUiFixture.WaitAsync(() => fixture.Transport.Calls.Count(method => method == "connect-development-app") >= before + 2);
@@ -298,7 +298,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await readEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await fixture.Activation.CancelAsync();
-        await fixture.AppServices.GetRequiredService<App.BuilderDevelopmentService>().DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await fixture.AppServices.GetRequiredService<MakerApp.BuilderDevelopmentService>().DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         await cancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await readCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
         // The current tool waits for observation, unlike the retired admission-only
@@ -333,7 +333,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         caller.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => execute.WaitAsync(TimeSpan.FromSeconds(5)));
         await fixture.Activation.CancelAsync();
-        await fixture.AppServices.GetRequiredService<App.BuilderDevelopmentService>().DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+        await fixture.AppServices.GetRequiredService<MakerApp.BuilderDevelopmentService>().DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
         Assert.Empty(fixture.Backend.Starts);
         Assert.Empty(fixture.Development.Loads);
     }
@@ -350,9 +350,9 @@ public sealed partial class BuilderDevelopmentRelayTests
         internal Worker.BuilderRuntimeService Runtime { get; }
         internal BuilderUiBackend Backend { get; } = new();
         internal BuilderUiDevelopment Development { get; } = new();
-        internal App.BuilderProjectApplicationService Application { get; }
-        internal App.BuilderPackageOperations Operations { get; }
-        internal App.BuilderProjectInspection Project { get; }
+        internal MakerApp.BuilderProjectApplicationService Application { get; }
+        internal MakerApp.BuilderPackageOperations Operations { get; }
+        internal MakerApp.BuilderProjectInspection Project { get; }
         internal ISunderAppPackageModule Module { get; } = new BuilderApp::Sunder.Generated.Package.AppModule();
         internal ServiceProvider AppServices { get; }
         internal CancellationTokenSource Activation { get; } = new();
@@ -363,7 +363,7 @@ public sealed partial class BuilderDevelopmentRelayTests
         internal string? BuiltIdentity;
         internal int PageResolutions;
 
-        internal RelayFixture(App.BuilderProjectKind kind = App.BuilderProjectKind.Dotnet)
+        internal RelayFixture(MakerApp.BuilderProjectKind kind = MakerApp.BuilderProjectKind.Dotnet)
         {
             Runtime = new(_inspectionContext);
             var client = new RegressionTestRpcClient(State, MakerId);
@@ -374,22 +374,22 @@ public sealed partial class BuilderDevelopmentRelayTests
             // This exercises the current generated private contract. Independent
             // byte-record acceptance remains in the existing artifact suite.
             State.Add(MakerId, MakerContract.Descriptor, Runtime, Transport, Noop.Instance, registration.ProviderId, "2.0.0");
-            var root = new App.BuilderPathService().ResolveContainedHostPath(_package.RootPath, Path.GetTempPath());
+            var root = new MakerApp.BuilderPathService().ResolveContainedHostPath(_package.RootPath, Path.GetTempPath());
             Project = BuilderUiFixture.Project("relay", kind) with { ProjectFolder = root,
-                EntryPoint = Path.Combine(root, kind == App.BuilderProjectKind.Dotnet ? "Package.csproj" : "sunder.package.json"),
-                TargetFramework = kind == App.BuilderProjectKind.Dotnet ? "net10.0" : null };
+                EntryPoint = Path.Combine(root, kind == MakerApp.BuilderProjectKind.Dotnet ? "Package.csproj" : "sunder.package.json"),
+                TargetFramework = kind == MakerApp.BuilderProjectKind.Dotnet ? "net10.0" : null };
             Backend.Projects[Project.EntryPoint] = Project;
             var store = new BuilderUiStore();
             var queue = new BuilderUiBackgroundQueue();
-            Application = new(Backend, store, new(queue), new App.BuilderJobJournal(new BuilderMemoryJournalStorage(), new BuilderUiStateUpdates()));
+            Application = new(Backend, store, new(queue), new MakerApp.BuilderJobJournal(new BuilderMemoryJournalStorage(), new BuilderUiStateUpdates()));
             Operations = new(Application, Development);
             var services = new ServiceCollection();
             Module.ConfigureAppServices(services, _package.Context);
             services.AddSingleton<ISunderRpcClient>(client);
             services.AddSingleton(Application);
             services.AddSingleton(Operations);
-            services.AddSingleton<App.BuilderViewModel>(_ => { Interlocked.Increment(ref PageResolutions); throw new InvalidOperationException("Startup must not resolve the page model."); });
-            services.AddTransient<App.BuilderView>(_ => { Interlocked.Increment(ref PageResolutions); throw new InvalidOperationException("Startup must not resolve the page."); });
+            services.AddSingleton<MakerApp.BuilderViewModel>(_ => { Interlocked.Increment(ref PageResolutions); throw new InvalidOperationException("Startup must not resolve the page model."); });
+            services.AddTransient<MakerApp.BuilderView>(_ => { Interlocked.Increment(ref PageResolutions); throw new InvalidOperationException("Startup must not resolve the page."); });
             AppServices = services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
         }
 

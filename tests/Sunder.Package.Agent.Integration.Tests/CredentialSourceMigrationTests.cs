@@ -45,10 +45,11 @@ public sealed class CredentialSourceMigrationTests
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, packageId);
-        state.Add(packageId, descriptor, instance, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+        var version = CurrentContractInventory.PackageVersionFor(packageId);
+        state.Add(packageId, descriptor, instance, registration.Handler, Noop.Instance, registration.ProviderId, version);
         var endpoint = Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint;
         using var scope = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext(packageId, scope.RootPath, version: "2.0.0", storage: scope.Context.Storage);
+        var context = new TestPackageContext(packageId, scope.RootPath, version: version, storage: scope.Context.Storage);
         await using var services = AgentSourceArtifactMigrationTests.CreateGeneratedApp(app, context, rpc);
         var serviceFamily = family == "LMStudio" ? "Lmstudio" : family;
         var api = app.GetType($"Sunder.Generated.Packages.Younics_Ai_Agent_Provider_{serviceFamily}_Services.ICredentialSettingsService", true)!;

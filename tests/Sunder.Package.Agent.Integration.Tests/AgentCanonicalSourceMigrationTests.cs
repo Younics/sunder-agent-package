@@ -88,7 +88,7 @@ public sealed class AgentCanonicalSourceMigrationTests
         {
             await activate(static (_, _, _) => ValueTask.CompletedTask, default).AsTask().WaitAsync(TimeSpan.FromSeconds(15));
             foreach (var provider in options.Providers)
-                state.Add("younics.ai.agent", descriptors[provider.ContractId], provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent", descriptors[provider.ContractId], provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
             var profiles = options.Providers.Single(provider => provider.ContractId == "younics.ai.agent.agent.profile");
             var profile = await profiles.Handler.InvokeUnaryAsync(null!, "agent-profile", "create-profile",
                 JsonSerializer.SerializeToElement("Canonical source profile"));

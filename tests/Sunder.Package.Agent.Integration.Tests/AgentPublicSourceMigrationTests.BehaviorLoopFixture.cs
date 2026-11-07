@@ -26,7 +26,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         var control = new AgentRunControlService(activeRuns);
         var controlRegistration = ownerReceiver.Register(control, descriptors[RegressionTestBindings.RunControls].ContractId);
         state.Add("younics.ai.agent", descriptors[RegressionTestBindings.RunControls], control, controlRegistration.Handler,
-            EmptyDisposable.Instance, controlRegistration.ProviderId, "2.0.0");
+            EmptyDisposable.Instance, controlRegistration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var loopType = assembly.GetType("Sunder.Package.Agent.Rpc.Public.BehaviorLoopService", true)!;
         Assert.True(loopType.IsInterface);
         var implementation = loop;
@@ -36,7 +36,9 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(loop is BehaviorProbe ? "fixture.regression.behavior.loop" : "agent.behavior.loop", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add(loopPackage, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var loopVersion = loopPackage == CurrentContractInventory.AgentId
+            ? CurrentContractInventory.PackageVersionFor(loopPackage) : "2.0.0";
+        state.Add(loopPackage, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, loopVersion);
         var provider = Assert.Single((await ownerReceiver.Providers<AgentServices.IBehaviorLoopService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var controlReference = Assert.Single((await ownerReceiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers,

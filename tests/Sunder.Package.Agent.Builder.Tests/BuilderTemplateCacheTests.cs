@@ -52,7 +52,7 @@ public sealed class BuilderTemplateCacheTests
         Assert.Equal(original, await HomeAsync(fixture.Options with { CacheRootPath = Path.Combine(fixture.Options.CacheRootPath, "..", "tools") }));
         Assert.NotEqual(original, await HomeAsync(fixture.Options with { CacheRootPath = fixture.PathOf("another-owner") }));
         Assert.NotEqual(original, await HomeAsync(fixture.Options, "10.0.403"));
-        Assert.NotEqual(original, await HomeAsync(fixture.Options with { CoordinatedPackageVersion = "1.1.1" }));
+        Assert.NotEqual(original, await HomeAsync(fixture.Options with { DotnetTemplateVersion = "1.1.1" }));
         var archive = fixture.PathOf("template.nupkg");
         await File.WriteAllTextAsync(archive, "first archive bytes");
         var local = fixture.Options with { DotnetTemplatePackagePath = archive };
@@ -323,7 +323,7 @@ public sealed class BuilderTemplateCacheTests
     {
         // An explicitly injected short base in every test protects the user's real template home.
         internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-bt-" + Guid.NewGuid().ToString("N"));
-        internal BuilderProjectDriverOptions Options => new(PathOf("tools")) { CoordinatedPackageVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
+        internal BuilderProjectDriverOptions Options => new(PathOf("tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
         internal FakeProcess Process { get; } = new();
         internal FakeTools Tools { get; } = new();
         internal Fixture() => PrivateDirectory(Root);

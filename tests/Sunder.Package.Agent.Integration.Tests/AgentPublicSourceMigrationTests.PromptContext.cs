@@ -164,7 +164,9 @@ public sealed partial class AgentPublicSourceMigrationTests
             ? "agent.workspace.documentation" : "fixture.regression.prompt.context", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add(packageId, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        var version = CurrentContractInventory.Packages.Any(package => package.PackageId == packageId)
+            ? CurrentContractInventory.PackageVersionFor(packageId) : "2.0.0";
+        state.Add(packageId, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, version);
         var provider = Assert.Single((await receiver.Providers<AgentServices.IPromptContextContributorService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,

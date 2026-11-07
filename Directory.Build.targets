@@ -1,4 +1,22 @@
 <Project>
+  <PropertyGroup Condition="'$(ContinuousIntegrationBuild)' == 'true' and '$(SunderPackageProject)' == 'true'">
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+  <Target Name="NormalizeAgentReleaseCompilerPaths" BeforeTargets="CoreCompile"
+          DependsOnTargets="_SetPathMapFromSourceRoots"
+          Condition="'$(ContinuousIntegrationBuild)' == 'true' and '$(SunderPackageRoleCompilationRoot)' != ''">
+    <PropertyGroup>
+      <PathMap>$(SunderPackageRoleCompilationRoot)=/_/generated/$(MSBuildProjectName)/$(SunderPackageCompilationRole),$(PathMap)</PathMap>
+    </PropertyGroup>
+  </Target>
+  <PropertyGroup>
+    <!-- Retain explicit historical tooling overrides, but never supply one in
+         ordinary CI or a version-selected release. -->
+    <Version Condition="'$(SunderAgentVersion)' != ''">$(SunderAgentVersion)</Version>
+    <PackageVersion>$(Version)</PackageVersion>
+    <InformationalVersion>$(Version)</InformationalVersion>
+  </PropertyGroup>
   <ItemGroup Condition="'$(SunderAgentCurrentPackageStorageKey)' == 'true'">
     <Compile Include="$(MSBuildThisFileDirectory)src/Sunder.Package.Agent.Shared/Storage/CurrentPackageStorageKey.cs"
              Link="Storage/CurrentPackageStorageKey.cs" />

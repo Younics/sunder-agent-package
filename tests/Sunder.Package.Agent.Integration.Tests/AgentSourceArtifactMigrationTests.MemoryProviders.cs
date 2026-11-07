@@ -75,7 +75,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var inputJson = new JsonSerializerOptions(MemoryProviderJson) { DefaultIgnoreCondition = JsonIgnoreCondition.Never };
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
-        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.memory.semantic", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"), storage: package.Context.Storage);
         var ownerRpc = new RegressionTestRpcClient(state, context.PackageId);
         Type Type(string name) => assembly.GetType("Sunder.Package.Agent.Memory.Semantic." + name, true)!;
         Assert.Null(assembly.GetType("Sunder.Package.Agent.Memory.Semantic.Rpc.MemoryProviderCatalog"));
@@ -92,7 +92,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var registration in registrations)
         {
             var transport = transports[registration.ProviderId];
-            state.Add("younics.ai.agent.memory.semantic", descriptors[registration.ContractId], transport, transport, Noop.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent.memory.semantic", descriptors[registration.ContractId], transport, transport, Noop.Instance, registration.ProviderId, context.Version);
         }
         var rpc = new RegressionTestRpcClient(state, "example.agent.consumer");
         await using var appServices = CreateGeneratedApp(app, context, ownerRpc);

@@ -175,8 +175,7 @@ public sealed partial class AgentPublicSourceMigrationTests
 
         private async ValueTask<T> ProjectAsync<T>(object? value, CancellationToken token)
         {
-            var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
-                Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, RegressionTestBindings.RuntimeCatalog);
+            var projection = RegressionTestGeneratedProviderProjection.FromBuild(RegressionTestBindings.RuntimeCatalog);
             return (T)(await projection.ProjectAsync(value, typeof(T),
                 ProjectionReceiver ?? throw new InvalidOperationException("The generated fixture receiver is required."), token))!;
         }

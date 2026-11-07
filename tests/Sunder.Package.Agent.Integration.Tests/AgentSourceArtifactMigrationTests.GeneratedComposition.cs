@@ -26,7 +26,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Null(worker.GetType(prefix + "Worker.McpWorkerConfiguration"));
         Assert.Null(worker.GetType(prefix + "Worker.McpWorkerBindings"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("younics.ai.agent.mcp", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.mcp", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.mcp"), storage: package.Context.Storage);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var (options, lifetime, services) = CreateGeneratedWorker(worker, context, new RegressionTestRpcClient(state, context.PackageId));
         await using var owned = lifetime;
@@ -57,7 +57,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Null(worker.GetType(prefix + "Worker.OpenAiWorkerConfiguration"));
         Assert.Null(worker.GetType(prefix + "Worker.OpenAiWorkerBindings"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("younics.ai.agent.provider.openai", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.provider.openai", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.provider.openai"), storage: package.Context.Storage);
         await context.Settings.SetValueAsync("auth.mode", "api-key");
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var (options, lifetime, services) = CreateGeneratedWorker(worker, context, new RegressionTestRpcClient(state, context.PackageId));
@@ -106,7 +106,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Null(worker.GetType(prefix + "DockerWorkerConfiguration"));
         Assert.Null(worker.GetType(prefix + "DockerWorkerBindings"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext("younics.ai.agent.execution.docker", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var context = new TestPackageContext("younics.ai.agent.execution.docker", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.execution.docker"), storage: package.Context.Storage);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var (options, lifetime, services) = CreateGeneratedWorker(worker, context, new RegressionTestRpcClient(state, context.PackageId));
         await using var owned = lifetime;
@@ -150,7 +150,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Null(worker.GetType(prefix + "." + family + "WorkerComposition"));
         Assert.Null(worker.GetType(prefix + "." + family + "WorkerBindings"));
         using var package = RegressionTestPackageScope.Create();
-        var context = new TestPackageContext(AgentPackageRepositoryInventory.GetRuntimePackageId(prefix), package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+        var packageId = AgentPackageRepositoryInventory.GetRuntimePackageId(prefix);
+        var context = new TestPackageContext(packageId, package.RootPath, version: CurrentContractInventory.PackageVersionFor(packageId), storage: package.Context.Storage);
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
         var rpc = new RegressionTestRpcClient(state, context.PackageId);
         var (options, lifetime, services) = CreateGeneratedWorker(worker, context, rpc);
@@ -186,7 +187,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             var descriptor = registration.ProviderId == id + ".credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(registration.ContractId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-            state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+            state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, context.Version);
         }
         var credentialEndpoint = Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint;
         Assert.False((await Command("get-status", new { })).GetBoolean());

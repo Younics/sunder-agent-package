@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Agent schema-3 native provenance and Core V1 prebuilt Pack orchestration."""
+"""Agent schema-3/4 native provenance and Core V1 prebuilt Pack orchestration."""
 
 import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -14,7 +15,7 @@ import zipfile
 import zlib
 
 from agent_release import (
-    FAMILY_PACKAGE_IDS, owned_contracts, has_public_evidence, source_role_use_evidence,
+    FAMILY_PACKAGE_IDS, FAMILY_PROJECTS, owned_contracts, has_public_evidence, source_role_use_evidence,
     validate_role_uses, version as semantic_version,
 )
 from native_release_inputs import (
@@ -29,10 +30,9 @@ MAX_PROVENANCE = 256 * 1024 * 1024
 
 def inventory(repository):
     rows = json_file(repository / "packages.json")["packages"]
-    require(len(rows) == 15 and all(row["artifactType"] == "sunderpkg" for row in rows)
-            and len({row["packageId"].lower() for row in rows}) == 15
-            and len({row["projectPath"].lower() for row in rows}) == 15,
-             "Expected exactly 15 unique runtime packages")
+    require(len(rows) == len(FAMILY_PROJECTS) and all(row["artifactType"] == "sunderpkg" for row in rows)
+            and len({row["packageId"].lower() for row in rows}) == len(rows)
+            and len({row["projectPath"].lower() for row in rows}) == len(rows), "Expected the complete unique runtime family")
     require({row["packageId"] for row in rows} == set(FAMILY_PACKAGE_IDS), "Expected the exact AI Agent runtime family")
     for row in rows:
         require(re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)*", row["packageId"]), "Invalid package ID")
@@ -47,14 +47,51 @@ def release_version(value):
         raise ValueError("Expected an explicit release version (full strict SemVer)") from error
 
 
+def plan_coordinate(value):
+    try:
+        semantic_version(value)
+        return False
+    except ValueError:
+        return str(value).endswith(".json")
+
+
 def identity(version, agent_commit, core_tag, core_commit, core_version):
-    for value in (version, core_version):
+    for value in ([core_version] if plan_coordinate(version) else [version, core_version]):
         release_version(value)
     require(all(re.fullmatch(r"[0-9a-f]{40}", commit) for commit in (agent_commit, core_commit)),
             "Agent and Core commits must be full lowercase Git SHAs")
-    require(core_tag == "sdk/v" + core_version, "Core tag and package version do not agree")
-    return {"schemaVersion": SCHEMA, "version": version, "agentCommit": agent_commit,
-            "core": {"tag": core_tag, "commit": core_commit, "packageVersion": core_version}}
+    require(core_tag in ("sdk/v" + core_version, "nuget-sunder-package-build/v" + core_version), "Core build-tool tag and package version do not agree")
+    result = {"schemaVersion": SCHEMA, "version": version, "agentCommit": agent_commit,
+              "core": {"tag": core_tag, "commit": core_commit, "packageVersion": core_version}}
+    if plan_coordinate(version):
+        from agent_selection import selected, retained_role_uses
+        plan = json_file(Path(version).resolve())
+        require(plan["artifactSourceCommit"] == agent_commit and selected(plan), "Native selection source differs or selects no packages")
+        del result["version"]
+        result.update(schemaVersion=4, planSha256=digest(read_bytes(Path(version).resolve())),
+            packageVersions={row["packageId"]: row["version"] for row in selected(plan)},
+            familyVersions={row["packageId"]: row["version"] for row in plan["packages"]},
+            retainedSourceRoleUses=retained_role_uses(plan, os.environ.get("SUNDER_AGENT_RETAINED_ARCHIVE_DIR", "")),
+            retainedArtifacts=[dict(path=row["retainedArchive"]["name"], size=row["retainedArchive"]["size"],
+                sha256=row["retainedArchive"]["sha256"]) for row in plan["packages"] if row["retainedArchive"] is not None])
+    return result
+
+
+def release_rows(repository, coordinate):
+    rows = inventory(repository)
+    if plan_coordinate(coordinate):
+        from agent_selection import load, selected
+        versions = {row["packageId"]: row["version"] for row in selected(load(coordinate, repository))}
+        return [dict(row, version=versions[row["packageId"]]) for row in rows if row["packageId"] in versions]
+    return [dict(row, version=coordinate) for row in rows]
+
+
+def package_version(expected, package_id):
+    return expected["packageVersions"][package_id] if expected["schemaVersion"] == 4 else expected["version"]
+
+
+def identity_keys(expected):
+    return " ".join(expected)
 
 
 def artifact_output(path, repository):
@@ -92,7 +129,8 @@ def tool_properties(repository):
 
 
 def frozen_baselines(repository, rows, version):
-    release_version(version)
+    if not plan_coordinate(version):
+        release_version(version)
     for row in rows:
         path = repository / Path(row["projectPath"]).parent / "sunder-contracts.owned.json"
         regular(path.parent, directory=True)
@@ -159,14 +197,14 @@ def leaf_record(package_id, project, rid, files, has_app):
 
 
 def validate_run(run, expected, rows):
-    keys(run, "schemaVersion rid version agentCommit core bundle packages")
+    keys(run, identity_keys(expected) + " rid bundle packages" + (" familyTests" if expected["schemaVersion"] == 4 else ""))
     require(all(run[key] == value for key, value in expected.items()) and run["rid"] in RIDS,
-            "Native evidence schema/identity mismatch (schema-version-3 required)")
+            "Native evidence schema/identity differs from the approved selection")
     rid = run["rid"]
     record_shape(run["bundle"], "native-leaves-" + rid + ".tar.gz", MAX_RUN)
-    require(isinstance(run["packages"], list) and len(run["packages"]) == 15
+    require(isinstance(run["packages"], list) and len(run["packages"]) == len(rows)
             and sorted(p["packageId"] for p in run["packages"]) == sorted(row["packageId"] for row in rows),
-            "Native evidence requires exactly 15 unique canonical packages")
+             "Native evidence must contain exactly the selected canonical packages")
     projects = {row["packageId"]: row["projectPath"] for row in rows}
     for package in run["packages"]:
         keys(package, "packageId workerProject qualification leaf testedArchive metricsSha256 metricsSize metrics"
@@ -180,7 +218,7 @@ def validate_run(run, expected, rows):
         require(package["workerProject"] == project, "Mixed canonical project")
         prefix = package_id + "/" + rid + "/"
         record_shape(package["qualification"], prefix + ROLE_INPUTS, MAX_DOCUMENT)
-        record_shape(package["testedArchive"], package_id + "." + expected["version"] + ".sunderpkg")
+        record_shape(package["testedArchive"], package_id + "." + package_version(expected, package_id) + ".sunderpkg")
         sha(package["metricsSha256"])
         integer(package["metricsSize"], MAX_DOCUMENT, 1)
         leaf = package["leaf"]
@@ -188,6 +226,20 @@ def validate_run(run, expected, rows):
         files = file_set(leaf["files"])
         require(leaf == leaf_record(package_id, project, rid, files, leaf["hasApp"]), "Mixed native leaf/module projection")
         validate_metrics(package, rid)
+    if expected["schemaVersion"] == 4:
+        tests = run["familyTests"]
+        require(type(tests) is list and len(tests) == len(expected["familyVersions"]) and {test["packageId"] for test in tests} == set(expected["familyVersions"]),
+                "Selective native builds still require all fifteen Worker tests")
+        for test in tests:
+            keys(test, "packageId testedArchive metricsSha256 metricsSize metrics")
+            record_shape(test["testedArchive"], test["packageId"] + "." + expected["familyVersions"][test["packageId"]] + ".sunderpkg")
+            sha(test["metricsSha256"]); integer(test["metricsSize"], MAX_DOCUMENT, 1)
+            validate_metrics(test, rid)
+            if test["packageId"] in expected["packageVersions"]:
+                package = next(package for package in run["packages"] if package["packageId"] == test["packageId"])
+                require(all(package[field] == test[field] for field in test), "Selected native metric differs from the full-family smoke test")
+            else:
+                require(test["testedArchive"] in expected["retainedArtifacts"], "Smoke test did not use the exact unchanged archive")
 
 
 def transport(run, bundle, destination=None):
@@ -209,11 +261,15 @@ def transport(run, bundle, destination=None):
         metric_path = "metrics/" + package["packageId"] + "." + run["rid"] + ".json"
         expected[metric_path] = {"sha256": package["metricsSha256"], "size": package["metricsSize"]}
         metadata[metric_path] = ("metrics", package)
+    for test in run.get("familyTests", []):
+        metric_path = "metrics/" + test["packageId"] + "." + run["rid"] + ".json"
+        expected[metric_path] = {"sha256": test["metricsSha256"], "size": test["metricsSize"]}
+        metadata[metric_path] = ("metrics", test)
 
     def consume(name, data):
         kind, package = metadata[name]
         if kind == "qualification":
-            q, files = qualification(data, package["packageId"], package["workerProject"], run["rid"], run["version"])
+            q, files = qualification(data, package["packageId"], package["workerProject"], run["rid"], package_version(run, package["packageId"]))
             require(list(files.values()) == package["leaf"]["files"], "Native provenance differs from Core's qualified file closure")
             require(q["rolePlan"]["hasApp"] == package["leaf"]["hasApp"], "Native provenance differs from qualified App role")
             source_uses = source_role_use_evidence(q)
@@ -222,7 +278,7 @@ def transport(run, bundle, destination=None):
                     "Native source role uses differ from the qualified Worker receipt")
             roles[package["packageId"]] = q["rolePlan"]["hasApp"]
         elif kind == "manifest":
-            manifest = validate_manifest(data, package["packageId"], run["version"], [run["rid"]])
+            manifest = validate_manifest(data, package["packageId"], package_version(run, package["packageId"]), [run["rid"]])
             manifests[package["packageId"]] = any(t["role"] == "app" for t in manifest["targets"])
         elif kind == "metrics":
             require(parse(data) == package["metrics"], "Core metric file differs from native provenance")
@@ -232,11 +288,20 @@ def transport(run, bundle, destination=None):
     require(file_record(bundle, run["bundle"]["path"], MAX_RUN) == run["bundle"], "Native bundle changed during validation")
 
 
+def native_root(repository, project, rid):
+    require(rid in RIDS, "Unknown native platform")
+    outputs = repository / Path(project).parent / "bin/Release"
+    matches = list(outputs.glob("*/sunder-targets/" + rid + "/" + ROLE_INPUTS))
+    require(len(matches) == 1, "Missing/ambiguous qualified native output: " + str(outputs))
+    regular(matches[0])
+    return matches[0].parent
+
+
 def select_native(repository, package_id, rid, version):
     require(rid in RIDS, "Unsupported native RID")
     release_version(version)
     row = next(row for row in inventory(repository) if row["packageId"] == package_id)
-    root = repository / Path(row["projectPath"]).parent / "bin/Release/net10.0/sunder-targets" / rid
+    root = native_root(repository, row["projectPath"], rid)
     data = read_bytes(root / ROLE_INPUTS)
     q, files = qualification(data, package_id, row["projectPath"], rid, version)
     require(tree(root / "sunder-dev") == files, "Native leaf changed after Core qualification")
@@ -266,7 +331,7 @@ def capture(args):
     rid, version, agent_commit, core_tag, core_commit, core_version, archives, metrics, output, repository = args
     require(rid in RIDS, "Unsupported native RID")
     repository = Path(repository).resolve()
-    rows = inventory(repository)
+    rows = release_rows(repository, version)
     expected = identity(version, agent_commit, core_tag, core_commit, core_version)
     archives, metrics = Path(archives).resolve(), Path(metrics).resolve()
     output = artifact_output(output, repository)
@@ -276,14 +341,15 @@ def capture(args):
         (work / "metrics").mkdir()
         for row in rows:
             package_id, project = row["packageId"], row["projectPath"]
-            root = repository / Path(project).parent / "bin/Release/net10.0/sunder-targets" / rid
+            package_release = row["version"]
+            root = native_root(repository, project, rid)
             data = read_bytes(root / ROLE_INPUTS)
-            q, files = qualification(data, package_id, project, rid, version)
+            q, files = qualification(data, package_id, project, rid, package_release)
             require(read_bytes(root / (ROLE_INPUTS + ".sha256"), 65) == (digest(data) + "\n").encode(), "Qualification sidecar mismatch")
             require(tree(root / "sunder-dev") == files, "Native leaf changed after Core qualification")
             prefix = package_id + "/" + rid + "/"
             manifest = read_bytes(root / "sunder-dev/manifest/sunder-package.json")
-            validate_manifest(manifest, package_id, version, [rid], q["rolePlan"]["hasApp"])
+            validate_manifest(manifest, package_id, package_release, [rid], q["rolePlan"]["hasApp"])
             leaf = leaf_record(package_id, project, rid, files, q["rolePlan"]["hasApp"])
             metric_name = package_id + "." + rid + ".json"
             metric_data = read_bytes(metrics / metric_name)
@@ -291,23 +357,34 @@ def capture(args):
             package = {"packageId": package_id, "workerProject": project,
                         "qualification": {"path": prefix + ROLE_INPUTS, "sha256": digest(data), "size": len(data)},
                         "sourceRoleUses": source_role_use_evidence(q),
-                       "leaf": leaf, "testedArchive": file_record(archives / (package_id + "." + version + ".sunderpkg")),
+                       "leaf": leaf, "testedArchive": file_record(archives / (package_id + "." + package_release + ".sunderpkg")),
                        "metricsSha256": digest(metric_data), "metricsSize": len(metric_data), "metrics": parse(metric_data)}
             validate_metrics(package, rid)
-            verify_archive(archives / package["testedArchive"]["path"], [(rid, package)], version)
+            verify_archive(archives / package["testedArchive"]["path"], [(rid, package)], package_release)
             packages.append(package)
             sources[prefix + ROLE_INPUTS] = root / ROLE_INPUTS
             sources[prefix + ROLE_INPUTS + ".sha256"] = root / (ROLE_INPUTS + ".sha256")
             sources.update({prefix + "sunder-dev/" + name: root / "sunder-dev" / name for name in files})
             sources["metrics/" + metric_name] = work / "metrics" / metric_name
+        family_tests = []
+        if expected["schemaVersion"] == 4:
+            for package_id, package_release in sorted(expected["familyVersions"].items()):
+                metric_name = package_id + "." + rid + ".json"
+                metric_data = read_bytes(metrics / metric_name)
+                (work / "metrics" / metric_name).write_bytes(metric_data)
+                family_tests.append(dict(packageId=package_id, testedArchive=file_record(archives / (package_id + "." + package_release + ".sunderpkg")),
+                    metricsSha256=digest(metric_data), metricsSize=len(metric_data), metrics=parse(metric_data)))
+                sources["metrics/" + metric_name] = work / "metrics" / metric_name
         bundle = work / ("native-leaves-" + rid + ".tar.gz")
         write_tar(bundle, sources)
         run = dict(expected, rid=rid, bundle=file_record(bundle, maximum=MAX_RUN), packages=packages)
+        if expected["schemaVersion"] == 4:
+            run["familyTests"] = family_tests
         validate_run(run, expected, rows)
         transport(run, bundle)
         # Revalidate the producer trees and tested archives after capture, too.
         for row, package in zip(rows, packages):
-            root = repository / Path(row["projectPath"]).parent / "bin/Release/net10.0/sunder-targets" / rid
+            root = native_root(repository, row["projectPath"], rid)
             require(tree(root / "sunder-dev") == file_set(package["leaf"]["files"]), "Native leaf changed while recording")
             require(file_record(archives / package["testedArchive"]["path"]) == package["testedArchive"], "Tested archive changed while recording")
         (output / "metrics").mkdir(exist_ok=True)
@@ -318,34 +395,39 @@ def capture(args):
         evidence = work / ("native-leaf-evidence-" + rid + ".json")
         evidence.write_bytes(compact(run))
         os.replace(evidence, output / evidence.name)
-    print("Recorded Core V1 qualification digests, tested bytes and metric evidence for 15 " + rid + " Workers (native schema 3).")
+    print(f"Recorded {len(rows)} qualified native leaves and full-family {rid} smoke evidence.")
 
 
 def verify_document(document, artifacts, rows, expected):
-    keys(document, "schemaVersion version agentCommit core nativeRuns finalArtifacts")
-    require(all(document[key] == value for key, value in expected.items()), "Native family schema/identity mismatch (schema-version-3 required)")
+    keys(document, identity_keys(expected) + " nativeRuns finalArtifacts")
+    require(all(document[key] == value for key, value in expected.items()), "Native family schema/identity differs from the approved selection")
     runs = document["nativeRuns"]
     require(isinstance(runs, list) and sorted(run["rid"] for run in runs) == sorted(RIDS), "Require exactly six unique native RID runs")
     for run in runs:
         validate_run(run, expected, rows)
     records = document["finalArtifacts"]
-    expected_names = {row["packageId"] + "." + expected["version"] + ".sunderpkg" for row in rows}
-    require(isinstance(records, list) and len(records) == 15 and {r["path"] for r in records} == expected_names,
-            "Require exactly 15 final package archives")
+    versions = expected.get("familyVersions", {row["packageId"]: expected.get("version") for row in rows})
+    expected_names = {package_id + "." + version + ".sunderpkg" for package_id, version in versions.items()}
+    require(isinstance(records, list) and len(records) == len(expected_names) and {r["path"] for r in records} == expected_names,
+            "Require the complete final family archive set")
     actual_names = {p.name for p in artifacts.iterdir() if p.suffix in (".sunderpkg", ".nupkg")}
     require(actual_names == expected_names, "Missing/extra final family artifacts")
     for record in records:
         record_shape(record, record["path"])
         require(file_record(artifacts / record["path"]) == record, "Native family archive differs from evidence: " + record["path"])
-        package_id = record["path"][:-len("." + expected["version"] + ".sunderpkg")]
+        package_id = next(package_id for package_id, version in versions.items() if record["path"] == package_id + "." + version + ".sunderpkg")
+        if expected["schemaVersion"] == 4 and package_id not in expected["packageVersions"]:
+            require(record in expected["retainedArtifacts"] and all(next(test for test in run["familyTests"]
+                if test["packageId"] == package_id)["testedArchive"] == record for run in runs), "Retained archive differs from native-tested bytes")
+            continue
         packages = [(run["rid"], next(p for p in run["packages"] if p["packageId"] == package_id)) for run in runs]
-        verify_archive(artifacts / record["path"], packages, expected["version"])
+        verify_archive(artifacts / record["path"], packages, versions[package_id])
 
 
 def assemble(args):
     native_input, output, version, agent_commit, core_tag, core_commit, core_version, repository = args
     repository, native_input = Path(repository).resolve(), Path(native_input).resolve()
-    rows = inventory(repository)
+    rows = release_rows(repository, version)
     expected = identity(version, agent_commit, core_tag, core_commit, core_version)
     properties = tool_properties(repository)
     output = artifact_output(output, repository)
@@ -366,7 +448,7 @@ def assemble(args):
     if "metrics" in actual_inputs:
         metric_directory = native_input / "metrics"
         regular(metric_directory, directory=True)
-        expected_metrics = {p["packageId"] + "." + run["rid"] + ".json": p for run in runs for p in run["packages"]}
+        expected_metrics = {p["packageId"] + "." + run["rid"] + ".json": p for run in runs for p in run.get("familyTests", run["packages"])}
         require({path.name for path in metric_directory.iterdir()} == set(expected_metrics), "Missing/extra native metric copies")
         for name, package in expected_metrics.items():
             require(file_record(metric_directory / name, maximum=MAX_DOCUMENT) ==
@@ -376,6 +458,12 @@ def assemble(args):
         inputs, archives = work / "inputs", work / "archives"
         inputs.mkdir()
         archives.mkdir()
+        if expected["schemaVersion"] == 4:
+            retained = Path(os.environ.get("SUNDER_AGENT_RETAINED_ARCHIVE_DIR", ""))
+            for record in expected["retainedArtifacts"]:
+                path = retained / record["path"]
+                require(file_record(path) == record, "Retained archive differs from the release plan")
+                shutil.copyfile(path, archives / record["path"])
         for run in runs:
             transport(run, native_input / run["bundle"]["path"], inputs)
         for row in rows:
@@ -386,14 +474,14 @@ def assemble(args):
                 entries.append({"runtimeIdentifier": run["rid"], "path": package["qualification"]["path"], "sha256": package["qualification"]["sha256"]})
             selection = inputs / (package_id + ".selection.json")
             selection.write_bytes(compact({"schemaVersion": 1, "inputs": entries}))
-            archive = archives / (package_id + "." + version + ".sunderpkg")
+            archive = archives / (package_id + "." + row["version"] + ".sunderpkg")
             # All restore/tool retention happens explicitly BEFORE entering fan-in.
             # Core's public prebuilt dispatch reevaluates/validates each RID and
             # performs transactional Pack; it never bootstraps mutable source tools.
             subprocess.run(["dotnet", "msbuild", str(repository / row["projectPath"]), "-t:PackSunderPackage",
                             "-p:Configuration=Release", "-p:BuildProjectReferences=false", "-p:SunderPackageUsePrebuiltLeaves=true",
                             "-p:SunderPackageComposeRuntimeIdentifiers=" + "%3B".join(RIDS),
-                            "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection), "-p:SunderAgentVersion=" + version,
+                             "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection),
                             "-p:SunderPackageOutputPath=" + str(archive)] + properties, cwd=repository, check=True)
         records = [file_record(path) for path in sorted(archives.glob("*.sunderpkg"))]
         document = dict(expected, nativeRuns=runs, finalArtifacts=records)
@@ -408,7 +496,7 @@ def assemble(args):
             for record in records:
                 os.replace(archives / record["path"], output / record["path"])
             os.replace(evidence, output / evidence.name)
-    print("Composed 15 immutable archives from six Core-qualified native bundles without Build/Compile/Restore.")
+    print(f"Composed {len(rows)} selected archives without Build/Compile/Restore; reused the remaining family bytes.")
 
 
 def main():
@@ -420,14 +508,18 @@ def main():
     elif command == "verify" and len(args) == 8:
         evidence, artifacts, inventory_path, *versions = args
         document = json_file(Path(evidence).resolve(), MAX_PROVENANCE, 24 * 1024 * 1024)
-        verify_document(document, Path(artifacts).resolve(), inventory(Path(inventory_path).resolve().parent), identity(*versions))
-        print("Verified complete schema-version-3 native evidence, Core qualification digests and 15 exact final archives.")
+        verify_document(document, Path(artifacts).resolve(), release_rows(Path(inventory_path).resolve().parent, versions[0]), identity(*versions))
+        print(f"Verified schema-version-{document['schemaVersion']} native evidence, Core qualifications and {len(document['finalArtifacts'])} exact family archives.")
     elif command == "select-native" and len(args) == 4:
         print(select_native(Path(args[0]).resolve(), *args[1:]))
+    elif command == "native-root" and len(args) == 3:
+        repository = Path(args[0]).resolve()
+        row = next(row for row in inventory(repository) if row["packageId"] == args[1])
+        print(native_root(repository, row["projectPath"], args[2]))
     elif command == "producer-preflight" and len(args) == 2:
         repository = Path(args[0]).resolve()
         tool_properties(repository)
-        frozen_baselines(repository, inventory(repository), args[1])
+        frozen_baselines(repository, release_rows(repository, args[1]), args[1])
     else:
         raise ValueError("Invalid native-family command/arguments")
 

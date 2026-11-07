@@ -1,300 +1,337 @@
 #!/usr/bin/env python3
-"""Integrated immutable publication, atomic family visibility and announcement."""
+"""The single version-selected Agent publication pipeline."""
 import argparse
-import importlib
 import os
 from pathlib import Path
+import re
 import secrets
 import subprocess
 import sys
 import tempfile
-from urllib.parse import quote, urlsplit
 
 sys.dont_write_bytecode = True
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
+import agent_publication as publication
 import agent_release as r
+import agent_selection as selection
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW = ".github/workflows/sunder-package-release.yml"
-REPOSITORY = "Younics/sunder-agent-package"
-REQUEST = "agent-family-cohort-request.json"
-EVIDENCE = {"SHA256SUMS", "release-provenance.json", "release-sbom.spdx.json", "toolchain.txt"}
+COMMON = {selection.PLAN, "native-test-evidence.json", "package-output-audit.json", "release-provenance.json", "toolchain.txt"}
+PER_RELEASE = {"SHA256SUMS", "release-sbom.spdx.json"}
+REQUEST = publication.REQUEST
 
 
-def source_guard(core):
-    source, core_sha = r.digest(os.environ["GITHUB_SHA"], 40), r.digest(os.environ["CORE_COMMIT"], 40)
-    tag = "agent/v" + r.inventory(ROOT)["releaseVersion"]
-    r.require(os.environ["GITHUB_REPOSITORY"] == REPOSITORY and os.environ["GITHUB_EVENT_NAME"] == "push"
-              and os.environ["GITHUB_REF"] == "refs/tags/" + tag and os.environ["GITHUB_REF_NAME"] == tag
-              and os.environ["GITHUB_WORKFLOW_SHA"] == source
-              and os.environ["GITHUB_WORKFLOW_REF"] == f"{REPOSITORY}/{WORKFLOW}@refs/tags/{tag}"
-              and os.environ["GITHUB_REF_PROTECTED"] == "true", "Publication requires the exact protected tag workflow")
-    r.require(source == os.environ["SUNDER_AGENT_ARTIFACT_SOURCE_COMMIT"]
-              and r.locks(ROOT) == os.environ["SUNDER_AGENT_LOCK_SET_SHA256"], "Approved source or lock set differs")
-    approval = urlsplit(os.environ["SUNDER_AGENT_RELEASE_APPROVAL_REFERENCE"])
-    r.require(approval.scheme == "https" and approval.hostname and approval.path not in ("", "/")
-              and not approval.username and not approval.password and not approval.fragment, "Release approval reference is missing")
-    for root, sha in ((ROOT, source), (core, core_sha)):
+def source_guard(core, plan):
+    source = r.digest(os.environ["GITHUB_SHA"], 40)
+    r.require(os.environ["GITHUB_REPOSITORY"] == selection.REPOSITORY
+        and os.environ["GITHUB_EVENT_NAME"] in ("push", "workflow_dispatch")
+        and os.environ["GITHUB_REF"] == "refs/heads/main" and os.environ["GITHUB_REF_NAME"] == "main"
+        and os.environ["GITHUB_WORKFLOW_SHA"] == source and os.environ["GITHUB_REF_PROTECTED"] == "true"
+        and os.environ["GITHUB_WORKFLOW_REF"] == f"{selection.REPOSITORY}/{publication.WORKFLOW}@refs/heads/main",
+        "Selective publication requires the exact protected-main workflow")
+    r.require(plan["artifactSourceCommit"] == source and plan["lockSetSha256"] == r.locks(ROOT)
+        and plan["registryOrigin"] == r.origin(os.environ["REGISTRY_API_URL"]), "Release source/locks/destination differ")
+    for root, sha in ((ROOT, source), (core, r.digest(os.environ["CORE_COMMIT"], 40))):
         r.require(r.git(root, "rev-parse", "HEAD").decode().strip() == sha
-                  and not r.git(root, "status", "--porcelain", "--untracked-files=no").strip(), "Release checkout is not the exact clean source")
-    r.require(os.environ["CORE_TAG"] == "sdk/v" + os.environ["CORE_SDK_VERSION"], "Core release coordinates differ")
-    return source, tag
+            and not r.git(root, "status", "--porcelain", "--untracked-files=no").strip(), "Release checkout is not the exact clean source")
+    r.require(os.environ["CORE_TAG"] in ("sdk/v" + os.environ["CORE_BUILD_VERSION"],
+        "nuget-sunder-package-build/v" + os.environ["CORE_BUILD_VERSION"]), "Core build-tool release coordinates differ")
+    selection.validate(plan, ROOT, source)
 
 
-def transport(core):
-    # The workflow checks out the verified final Core SDK commit. Share its one
-    # numeric-ID, immutable-byte transport rather than maintaining another client.
-    sys.path.insert(0, str(Path(core).resolve() / "scripts/release"))
-    return importlib.import_module("github_release")
+def stores(core, plan):
+    return [(row, publication.GitHubRelease(selection.REPOSITORY, row["tag"])) for row in selection.selected(plan)]
 
 
-def remote_tag(store, source):
-    target = store.api("git/ref/tags/" + quote(store.tag, safe=""))["object"]
-    for _ in range(9):
-        r.digest(target["sha"], 40)
-        if target["type"] == "commit":
-            r.require(target["sha"] == source, "Agent tag moved away from its artifact source")
-            return
-        r.require(target["type"] == "tag", "Invalid tag target")
-        target = store.api("git/tags/" + target["sha"])["object"]
-    raise r.Invalid("Excessive tag indirection")
+def primary_names(plan, row, coordinator=False):
+    packages = selection.selected(plan) if coordinator else [row]
+    return COMMON | {selection.archive_name(package) for package in packages}
 
 
-def primary_names():
-    inventory = r.inventory(ROOT)
-    return {f"{p['packageId']}.{inventory['releaseVersion']}.sunderpkg" for p in inventory["packages"]} | {
-        "native-test-evidence.json", "package-output-audit.json"}
+def persist(path, data):
+    path = Path(path)
+    if path.exists():
+        r.require(r.regular(path).read_bytes() == data, "Immutable publication input changed: " + str(path))
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as output:
+            output.write(data)
 
 
-def verify_primary(directory):
-    directory = Path(directory)
-    version = r.inventory(ROOT)["releaseVersion"]
+def verify_primary(core, directory, plan):
+    source_guard(core, plan)
     subprocess.run([sys.executable, "-B", str(ROOT / "scripts/release/native-family.py"), "verify",
-                    str(directory / "native-test-evidence.json"), str(directory), str(ROOT / "packages.json"), version,
-                    os.environ["GITHUB_SHA"], os.environ["CORE_TAG"], os.environ["CORE_COMMIT"], os.environ["CORE_SDK_VERSION"]], check=True)
-    with tempfile.TemporaryDirectory() as work:
-        audit = Path(work) / "audit.json"
+        str(directory / "native-test-evidence.json"), str(directory), str(ROOT / "packages.json"), str(directory / selection.PLAN),
+        plan["artifactSourceCommit"], os.environ["CORE_TAG"], os.environ["CORE_COMMIT"], os.environ["CORE_BUILD_VERSION"]], check=True)
+    with tempfile.TemporaryDirectory() as temporary:
+        audit = Path(temporary) / "audit.json"
         subprocess.run(["bash", str(ROOT / "scripts/release/generate-package-output-audit.sh"), str(directory),
-                        str(directory / "native-test-evidence.json"), str(ROOT), str(audit)], check=True)
+            str(directory / "native-test-evidence.json"), str(ROOT), str(audit)], check=True)
         r.require(audit.read_bytes() == (directory / "package-output-audit.json").read_bytes(), "Native output audit changed")
-    return r.family_plan(ROOT, directory, r.origin(os.environ["REGISTRY_API_URL"].rstrip("/")), os.environ["SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID"])
+    return r.verify_family(ROOT, directory, plan["registryOrigin"])
 
 
-def verify_evidence(directory, release_id):
-    directory = Path(directory)
-    value = r.validate_provenance(ROOT, directory)
+def provenance(directory, plan, release_id, family):
+    destination = dict(registryOrigin=plan["registryOrigin"])
+    if plan["schemaVersion"] == 1:
+        destination["ownerPrincipalId"] = plan["ownerPrincipalId"]
+    return dict(schemaVersion=plan["schemaVersion"] + 1, buildType="https://sunderapp.io/provenance/github-actions/v1",
+        invocation=dict(repository=selection.REPOSITORY, workflowPath=publication.WORKFLOW,
+            workflowRef=os.environ["GITHUB_WORKFLOW_REF"], workflowSha=os.environ["GITHUB_WORKFLOW_SHA"],
+            event=os.environ["GITHUB_EVENT_NAME"], repositoryId=int(os.environ["GITHUB_REPOSITORY_ID"]),
+            runId=os.environ["GITHUB_RUN_ID"], runAttempt=os.environ["GITHUB_RUN_ATTEMPT"], releaseId=int(release_id)),
+        artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN),
+        lockSetSha256=plan["lockSetSha256"], publication=destination,
+        materials=[dict(name="Sunder.Package.Build", tag=os.environ["CORE_TAG"], sha=os.environ["CORE_COMMIT"], packageVersion=os.environ["CORE_BUILD_VERSION"])],
+        artifacts=family["artifacts"])
+
+
+def verify_provenance(directory, plan, release_id, family):
+    value = r.load(directory / "release-provenance.json")
+    expected = provenance(directory, plan, release_id, family)
     inv = value["invocation"]
-    r.require(inv["releaseId"] == int(release_id) and inv["sha"] == os.environ["GITHUB_SHA"]
-              and inv["runId"] == os.environ["GITHUB_RUN_ID"]
-              and int(inv["runAttempt"]) <= int(os.environ["GITHUB_RUN_ATTEMPT"])
-              and value["controlPlane"]["repositoryId"] == int(os.environ["GITHUB_REPOSITORY_ID"])
-              and value["materials"] == [dict(name="sunder-core-sdk", tag=os.environ["CORE_TAG"], sha=os.environ["CORE_COMMIT"], packageVersion=os.environ["CORE_SDK_VERSION"])]
-              and value["publication"] == dict(registryOrigin=r.origin(os.environ["REGISTRY_API_URL"].rstrip("/")),
-                                                ownerPrincipalId=os.environ["SUNDER_AGENT_RELEASE_OWNER_PRINCIPAL_ID"]), "Release invocation/materials differ")
-    expected = primary_names()
-    sums = sorted(f"{r.file_sha(directory / name)}  {name}" for name in expected)
-    r.require(sorted((directory / "SHA256SUMS").read_text().splitlines()) == sums, "Checksum inventory differs")
-    sbom = r.load(directory / "release-sbom.spdx.json")
-    r.require(sbom["spdxVersion"] == "SPDX-2.3" and sbom["dataLicense"] == "CC0-1.0"
-              and len(sbom["files"]) == len(expected), "Invalid SBOM")
-    for name in expected:
-        matches = [item for item in sbom["files"] if item["fileName"] == "./" + name]
-        r.require(len(matches) == 1 and matches[0]["checksums"] == [dict(algorithm="SHA256", checksumValue=r.file_sha(directory / name))], "SBOM bytes differ")
+    for field in ("releaseId", "repositoryId"):
+        r.positive(inv[field])
+    for field in ("runId", "runAttempt"):
+        r.require(type(inv[field]) is str and re.fullmatch(r"[1-9][0-9]*", inv[field]), "Invalid original run coordinate")
+        r.positive(int(inv[field]))
+    r.require(inv["event"] in ("push", "workflow_dispatch"), "Unexpected original release event")
+    # Recovery may be a later run of the same protected source, never a new source.
+    expected["invocation"].update({key: inv[key] for key in ("runId", "runAttempt", "event")})
+    r.require(value == expected and (directory / "release-provenance.json").read_bytes() == r.canonical(value) + b"\n",
+              "Retained release source, invocation, materials or family bytes differ")
     return value
 
 
-def stage(core, directory):
-    source, tag = source_guard(core)
-    helper = transport(core); store = helper.GitHubRelease(REPOSITORY, tag)
-    remote_tag(store, source)
-    directory = Path(directory).resolve()
-    files = helper.local_files(directory)
-    r.require(set(files) - EVIDENCE == primary_names(), "Expected exactly the 15 tested archives and two native reports")
-    verify_primary(directory)
-    info = store.create(source, "AI Agent Family " + r.inventory(ROOT)["releaseVersion"])
-    r.require(info["draft"], "Published Agent versions cannot be restaged")
-    old = {item["name"]: item for item in info["assets"]}
-    r.require(old.keys() <= primary_names() | EVIDENCE, "Unexpected retained publication assets")
-    for name in sorted(old.keys() & EVIDENCE): store.download(old[name], directory / name)
-    files = helper.local_files(directory)
-    if not EVIDENCE <= files.keys():
-        env = dict(os.environ, GITHUB_RELEASE_ID=str(info["id"]), SUNDER_CORE_TAG=os.environ["CORE_TAG"],
-                   SUNDER_CORE_COMMIT=os.environ["CORE_COMMIT"], SUNDER_CORE_PACKAGE_VERSION=os.environ["CORE_SDK_VERSION"])
-        if "release-provenance.json" in files: env["GITHUB_RUN_ATTEMPT"] = r.load(files["release-provenance.json"])["invocation"]["runAttempt"]
-        with tempfile.TemporaryDirectory(dir=directory) as temporary:
-            for name in sorted(primary_names()): os.link(files[name], Path(temporary) / name)
-            subprocess.run(["bash", str(ROOT / "scripts/release/generate-release-evidence.sh"), temporary,
-                            "sunder-agent-package=" + source, "sunder-core=" + os.environ["CORE_COMMIT"]], cwd=ROOT, env=env, check=True)
-            for name in EVIDENCE - files.keys():
-                with (directory / name).open("xb") as output: output.write((Path(temporary) / name).read_bytes())
-    verify_evidence(directory, info["id"])
-    files = helper.local_files(directory)
-    store.upload(info["id"], list(files.values()))
-    store.verify(info["id"], files, draft=True)
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output: output.write(f"release_id={info['id']}\n")
-    return info["id"]
+def files_for(directory, plan, row, coordinator=False):
+    names = primary_names(plan, row, coordinator)
+    records = [dict(path=name, size=(directory / name).stat().st_size, sha256=r.file_sha(directory / name)) for name in sorted(names)]
+    evidence = directory / ".github" / row["key"]
+    persist(evidence / "SHA256SUMS", "".join(f"{item['sha256']}  {item['path']}\n" for item in records).encode())
+    sbom = dict(spdxVersion="SPDX-2.3", dataLicense="CC0-1.0", SPDXID="SPDXRef-DOCUMENT", name=row["tag"],
+        documentNamespace="https://sunderapp.io/spdx/" + r.file_sha(directory / selection.PLAN) + "/" + row["key"],
+        files=[dict(SPDXID=f"SPDXRef-File-{i}", fileName="./" + item["path"],
+            checksums=[dict(algorithm="SHA256", checksumValue=item["sha256"])]) for i, item in enumerate(records)])
+    persist(evidence / "release-sbom.spdx.json", r.canonical(sbom) + b"\n")
+    files = {name: directory / name for name in names} | {name: evidence / name for name in PER_RELEASE}
+    if coordinator and r.read_publications(directory, r.load(directory / "release-provenance.json")["artifacts"]):
+        files[r.PUBLICATIONS] = directory / r.PUBLICATIONS
+    if coordinator and (directory / REQUEST).exists():
+        proposed = cohort.request(r.load(directory / REQUEST))
+        files[REQUEST] = directory / REQUEST
+        receipt = "agent-family-cohort-" + cohort.request_hash(proposed) + ".json"
+        if (directory / receipt).exists():
+            files[receipt] = directory / receipt
+    return files
 
 
-def verified(core, directory, release_id):
-    source, tag = source_guard(core)
-    helper = transport(core); store = helper.GitHubRelease(REPOSITORY, tag)
-    remote_tag(store, source)
-    files = helper.local_files(directory)
-    base = primary_names() | EVIDENCE
-    extras = set(files) - base
-    r.require(base <= files.keys() and extras <= {REQUEST} | {name for name in extras if name.startswith("agent-family-cohort-") and name.endswith(".json")}, "Unexpected publication files")
-    if extras:
-        r.require(REQUEST in extras, "Cohort result has no retained request")
-        request_sha = cohort.request_hash(r.load(files[REQUEST]))
-        r.require(extras <= {REQUEST, f"agent-family-cohort-{request_sha}.json"}, "Cohort asset does not bind the retained request")
-    value = verify_evidence(directory, release_id)
-    verify_primary(directory)
-    info = store.verify(release_id, files)
-    r.require(info["target_commitish"] == source and info["prerelease"] is ("-" in tag), "Release source/version changed")
-    return store, info, value
+def stage(core, directory, plan):
+    family = verify_primary(core, directory, plan)
+    targets = stores(core, plan)
+    r.require(targets, "Nothing selected for publication")
+    for index, (row, store) in enumerate(targets):
+        # Explicitly create the tag only after the tested-byte gates. A lost reply
+        # is reconciled by the exact commit, never by force-updating a reference.
+        try:
+            store.api("git/refs", "POST", dict(ref="refs/tags/" + row["tag"], sha=plan["artifactSourceCommit"]))
+        except (ValueError, subprocess.TimeoutExpired):
+            pass
+        publication.remote_tag(store, plan["artifactSourceCommit"])
+        info = store.create(plan["artifactSourceCommit"], row["tag"])
+        if index == 0:
+            old = {asset["name"]: asset for asset in info["assets"]}
+            for name in ("release-provenance.json", "toolchain.txt", r.PUBLICATIONS, REQUEST):
+                if name in old:
+                    store.download(old[name], directory / name)
+            if REQUEST in old:
+                receipt_name = "agent-family-cohort-" + cohort.request_hash(r.load(directory / REQUEST)) + ".json"
+                if receipt_name in old:
+                    store.download(old[receipt_name], directory / receipt_name)
+            if not (directory / "release-provenance.json").exists():
+                persist(directory / "release-provenance.json", r.canonical(provenance(directory, plan, info["id"], family)) + b"\n")
+            if not (directory / "toolchain.txt").exists():
+                persist(directory / "toolchain.txt", subprocess.check_output(["dotnet", "--info"]))
+            verify_provenance(directory, plan, info["id"], family)
+        files = files_for(directory, plan, row, index == 0)
+        if info["draft"]:
+            # The selection must become durable before any tested payload. A new
+            # dispatch may recover it, but must never infer a fresh build instead.
+            names = [selection.PLAN, *sorted(set(files) - {selection.PLAN})]
+            store.upload(info["id"], [files[name] for name in names])
+        store.verify(info["id"], files)
+    # The first selected package also retains all selected archives. Thus a new
+    # run can recover the complete tested batch without rebuilding any archive.
 
 
-def registry_versions(directory, provenance, availability=None):
-    registry = provenance["publication"]["registryOrigin"]
-    plan = r.family_plan(ROOT, directory, registry, provenance["publication"]["ownerPrincipalId"])
+def recover(core, directory, plan):
+    source_guard(core, plan)
+    selection.retain(plan, directory)
+    row, store = stores(core, plan)[0]
+    info = store.resolve()
+    r.require(info is not None and info["target_commitish"] == plan["artifactSourceCommit"], "Missing original coordinator release")
+    info = store.get(info["id"])
+    required = primary_names(plan, row, True) | PER_RELEASE
+    r.require(required <= {asset["name"] for asset in info["assets"]},
+        "Interrupted staging is incomplete; rerun the original failed job with its retained tested artifact, never rebuild it")
+    for asset in info["assets"]:
+        if asset["name"] not in PER_RELEASE:
+            store.download(asset, directory / asset["name"])
+    family = verify_primary(core, directory, plan)
+    verify_provenance(directory, plan, info["id"], family)
+    stage(core, directory, plan)
+
+
+def verified(core, directory, plan):
+    family = verify_primary(core, directory, plan)
+    targets = stores(core, plan)
+    r.require(targets, "No selected release")
+    infos = []
+    for index, (row, store) in enumerate(targets):
+        info = store.resolve()
+        r.require(info is not None, "Missing staged package release")
+        publication.remote_tag(store, plan["artifactSourceCommit"])
+        r.require(info["target_commitish"] == plan["artifactSourceCommit"]
+            and info["prerelease"] is (not r.version(row["version"])[1]), "Package release source/version changed")
+        infos.append(store.verify(info["id"], files_for(directory, plan, row, index == 0)))
+    value = verify_provenance(directory, plan, infos[0]["id"], family)
+    return targets, infos, value
+
+
+def registry_versions(directory, plan, value, availability=None):
+    selected_ids = {row["packageId"] for row in selection.selected(plan)}
+    order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
+    records = {item["packageId"]: item for item in value["artifacts"]}
+    retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2 and availability is not None)
+    observed = []
     with tempfile.TemporaryDirectory() as temporary:
-        for package_id in plan["order"]:
-            publication = next(item for item in plan["publications"] if item["package"]["packageId"] == package_id)
+        for package_id in order:
+            record = records[package_id]
             expected = Path(temporary) / "expected.json"
-            expected.write_bytes(r.canonical(publication) + b"\n")
+            expected.write_bytes(r.canonical(retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))) + b"\n")
+            result = Path(temporary) / (package_id + ".json")
+            current = availability if package_id in selected_ids else "Listed"
             command = ["bash", str(ROOT / "scripts/release/publish-registry-package.sh")]
-            if availability: command += ["--verify-only", "--current-availability", availability]
-            version = publication["package"]["version"]
-            subprocess.run([*command, "--initial-yanked", str(expected), registry,
-                            str(Path(directory) / f"{package_id}.{version}.sunderpkg"), package_id, version], check=True)
+            if current:
+                command += ["--verify-only", "--current-availability", current]
+            subprocess.run([*command, "--initial-yanked", str(expected), "--publication-output", str(result),
+                plan["registryOrigin"], str(directory / record["path"]),
+                package_id, record["version"]], check=True)
+            observed.append(r.publication_evidence(r.load(result), record))
+    # Ownership is observed from the Registry, per package. A later run compares
+    # the same immutable evidence, including owners, instead of supplying an owner.
+    persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
 
 
-def cohort_request(provenance, policy_revision):
-    versions = [dict(package={key: item[key] for key in ("packageId", "version", "packageContentIdentity")},
-                     expectedAvailability="Yanked", availability="Listed") for item in provenance["artifacts"]]
-    versions.sort(key=lambda item: item["package"]["packageId"] + "/" + item["package"]["version"])
-    tag = "latest" if r.version(versions[0]["package"]["version"])[1] else "preview"
-    return cohort.request(dict(idempotencyKey="agent-release-" + str(provenance["invocation"]["releaseId"]),
-        expectedPackagePolicyRevision=policy_revision, versions=versions,
-        distTags=[dict(packageId=item["package"]["packageId"], tag=tag, target=item["package"]) for item in versions]))
-
-
-def visibility(core, directory, release_id):
-    directory = Path(directory).resolve()
-    store, info, provenance = verified(core, directory, release_id)
-    registry = provenance["publication"]["registryOrigin"]
-    path = directory / REQUEST
-    if not info["draft"]:
-        # A final PATCH/readback can lose its acknowledgement. A rerun of the
-        # release job reaches this stage first; validate its retained transition
-        # without issuing a new visibility mutation before final verification.
-        proposed = cohort.request(r.load(path))
-        r.require(proposed == cohort_request(provenance, proposed["expectedPackagePolicyRevision"]), "Published cohort request differs")
-        receipt = receipts.download_bytes(REPOSITORY, str(release_id), store.tag, cohort.request_hash(proposed))
-        r.require(receipt["request"] == proposed and receipt["artifactSourceCommit"] == provenance["artifactSourceCommit"]
-                  and receipt["registryOrigin"] == registry, "Published cohort binding differs")
-        cohort.verify_current(registry, proposed, receipt["result"])
+def publish_versions(core, directory, plan):
+    targets, infos, value = verified(core, directory, plan)
+    if (directory / REQUEST).exists():
+        visibility(core, directory, plan)
         return
+    r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
+    registry_versions(directory, plan, value)
+    row, store = targets[0]
+    store.upload(infos[0]["id"], [directory / r.PUBLICATIONS])
+    store.verify(infos[0]["id"], files_for(directory, plan, row, True))
+
+
+def cohort_request(plan, value, revision):
+    ids = {row["packageId"] for row in selection.selected(plan)}
+    versions = [dict(package={key: item[key] for key in ("packageId", "version", "packageContentIdentity")},
+        expectedAvailability="Yanked", availability="Listed") for item in value["artifacts"] if item["packageId"] in ids]
+    versions.sort(key=lambda item: item["package"]["packageId"] + "/" + item["package"]["version"])
+    return cohort.request(dict(idempotencyKey="agent-release-" + str(value["invocation"]["releaseId"]),
+        expectedPackagePolicyRevision=revision, versions=versions,
+        distTags=[dict(packageId=item["package"]["packageId"], tag="latest" if r.version(item["package"]["version"])[1] else "preview",
+            target=item["package"]) for item in versions]))
+
+
+def visibility(core, directory, plan):
+    targets, infos, value = verified(core, directory, plan)
+    r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2)
+    _, store = targets[0]
+    info = infos[0]
+    path = directory / REQUEST
     if not path.exists():
-        registry_versions(directory, provenance, "Yanked")
-        nonce = secrets.token_hex(16)
-        subjects = sorted([{key: item[key] for key in ("packageId", "version", "packageContentIdentity")}
-                           for item in provenance["artifacts"]], key=lambda item: (item["packageId"], item["version"], item["packageContentIdentity"]))
-        synchronization = dict(nonce=nonce, packages=subjects, platformCatalogs=[], minimumPackagePolicy=None)
-        status, data, failed = cohort.http(registry, "/api/v1/policy/synchronize", r.encoded(synchronization))
+        r.require(all(info["draft"] for info in infos), "An announcement has no retained cohort request")
+        registry_versions(directory, plan, value, "Yanked")
+        subjects = sorted([change["package"] for change in cohort_request(plan, value, 1)["versions"]],
+                          key=lambda item: (item["packageId"], item["version"], item["packageContentIdentity"]))
+        synchronization = dict(nonce=secrets.token_hex(16), packages=subjects, platformCatalogs=[], minimumPackagePolicy=None)
+        status, data, failed = cohort.http(plan["registryOrigin"], "/api/v1/policy/synchronize", r.encoded(synchronization))
         r.require(not failed and status == 200, "Cannot obtain the current Registry policy fence")
-        policy = cohort.policy_snapshot(r.decode(data), registry, synchronization)
+        policy = cohort.policy_snapshot(r.decode(data), plan["registryOrigin"], synchronization)
         r.require(all(item["packageState"] == "Active" and item["versionAvailability"] == "Yanked" for item in policy["packages"]),
-                  "The complete family is not active and Yanked")
-        cohort.store(path, cohort_request(provenance, policy["packagePolicy"]["revision"]))
-        store.upload(release_id, [path])
+            "Selected cohort is not active and Yanked")
+        cohort.store(path, cohort_request(plan, value, policy["packagePolicy"]["revision"]))
+        store.upload(info["id"], [path])
     proposed = cohort.request(r.load(path))
-    r.require(proposed == cohort_request(provenance, proposed["expectedPackagePolicyRevision"]), "Retained request differs from the complete family")
-    result_path = directory / ("agent-family-cohort-" + cohort.request_hash(proposed) + ".json")
+    r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"]), "Retained selected cohort differs")
+    receipt_name = "agent-family-cohort-" + cohort.request_hash(proposed) + ".json"
     with tempfile.TemporaryDirectory() as temporary:
-        result = Path(temporary) / "result.json"
-        if result_path.exists():
-            receipt = r.load(result_path); receipts.check(receipt)
-            cohort.store(result, receipt["result"])
-        os.environ["SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON"] = r.encoded([sys.executable, "-B", str(Path(__file__).resolve()),
-            "guard", "--core", str(core), "--directory", str(directory), "--release-id", str(release_id)]).decode()
-        cohort.apply(registry, path, result)
-        receipts.upload(REPOSITORY, str(release_id), store.tag, registry, provenance["artifactSourceCommit"], str(path), str(result))
-        retained = receipts.download_bytes(REPOSITORY, str(release_id), store.tag, cohort.request_hash(proposed))
-        cohort.store(result_path, retained)
-        # Fresh policy synchronization plus an idempotent owner readback proves
-        # this exact request committed. No synthetic acceptance decision is issued.
-        cohort.confirm(registry, path, result, directory)
-    registry_versions(directory, provenance, "Listed")
+        result_path = Path(temporary) / "result.json"
+        if (directory / receipt_name).exists():
+            receipt = receipts.download_bytes(selection.REPOSITORY, str(info["id"]), store.tag, cohort.request_hash(proposed))
+            r.require(receipt["request"] == proposed and receipt["registryOrigin"] == plan["registryOrigin"]
+                and receipt["artifactSourceCommit"] == plan["artifactSourceCommit"], "Retained cohort result differs")
+            cohort.store(result_path, receipt["result"])
+        else:
+            r.require(info["draft"], "Published release has no retained result")
+            os.environ["SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON"] = r.encoded([sys.executable, "-B", str(Path(__file__).resolve()),
+                "guard", "--core", str(core), "--directory", str(directory)]).decode()
+            cohort.apply(plan["registryOrigin"], path, result_path)
+            receipt = dict(schemaVersion=2, registryOrigin=plan["registryOrigin"], artifactSourceCommit=plan["artifactSourceCommit"],
+                releaseId=info["id"], request=proposed, result=r.load(result_path))
+            receipts.check(receipt)
+            cohort.store(directory / receipt_name, receipt)
+            store.upload(info["id"], [directory / receipt_name])
+            r.require(receipts.download_bytes(selection.REPOSITORY, str(info["id"]), store.tag, cohort.request_hash(proposed)) == receipt,
+                "Durable cohort readback differs")
+        cohort.confirm(plan["registryOrigin"], path, result_path, directory)
+    registry_versions(directory, plan, value, "Listed")
 
 
-def install_plans(directory, provenance):
-    """Check anonymous current-RID projections for every exact Listed family tuple."""
-    manifests = {item["packageId"]: r.archive_metadata(Path(directory) / item["path"])[0] for item in provenance["artifacts"]}
-    identities = {(item["packageId"], item["version"], item["packageContentIdentity"]) for item in provenance["artifacts"]}
-    capabilities = sorted({"core.v1", "worker-protocol.v1", "sdk-baseline-1-1.v1"} |
-                          {capability for manifest in manifests.values() for target in manifest["targets"] for capability in target.get("requiredHostCapabilities", [])})
-    for rid in ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64"):
-        targets = {key: [dict(role=t["role"], rid=rid) for t in manifest["targets"] if t["rid"] == rid] for key, manifest in manifests.items()}
-        payload = dict(packages=[dict(packageId=key, version=manifest["version"], desiredTargets=targets[key]) for key, manifest in sorted(manifests.items())],
-                       installedPackages=[], includePrerelease=not r.version(r.inventory(ROOT)["releaseVersion"])[1],
-                       compatibility=dict(manifestVersions=[1], runtimeTargetKinds=["worker"], workerProtocol="worker-protocol.v1",
-                                          workerCapabilities=capabilities, sdkBaseline="sdk-baseline-1-1.v1", rid=rid))
-        status, data, failed = cohort.http(provenance["publication"]["registryOrigin"], "/api/v1/packages/resolve-package-changes", r.encoded(payload))
-        r.require(not failed and status == 200, "Public install-plan resolution failed for " + rid)
-        value = r.decode(data)
-        r.require(value["success"] is True and not value["errors"] and not value["conflicts"]
-                  and len(value["items"]) == 15
-                  and {(item["packageId"], item["version"], item["packageContentIdentity"]) for item in value["items"]} == identities,
-                  "Install plan does not select the exact Listed family")
-        for item in value["items"]:
-            expected = {(target["role"], rid) for target in targets[item["packageId"]]}
-            r.require({(target["role"], target["rid"]) for target in item["targets"]} == expected
-                      and {(artifact["kind"], artifact["rid"]) for artifact in item["artifacts"]} == expected | {("shared", None)},
-                      "Install plan omitted a role or selected another RID")
+def finalize(core, directory, plan):
+    visibility(core, directory, plan)
+    targets, infos, value = verified(core, directory, plan)
+    publication.install_plans(directory, value)  # all fifteen exact tuples, every RID
+    # Keep the coordinator draft until the other package announcements finish.
+    for index in [*range(1, len(targets)), 0]:
+        row, store = targets[index]
+        info = infos[index]
+        source_guard(core, plan)
+        publication.remote_tag(store, plan["artifactSourceCommit"])
+        current = store.get(info["id"])
+        r.require(current["assets"] == info["assets"] and current["target_commitish"] == plan["artifactSourceCommit"], "Release changed before announcement")
+        if current["draft"]:
+            try:
+                store.api("releases/" + str(info["id"]), "PATCH", dict(draft=False, make_latest="false"))
+            except (ValueError, subprocess.TimeoutExpired):
+                pass
+        store.verify(info["id"], files_for(directory, plan, row, index == 0), draft=False)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("stage", "publish", "visibility", "guard", "finalize"))
+    parser.add_argument("action", choices=("stage", "recover", "publish", "visibility", "guard", "finalize"))
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
-    parser.add_argument("--release-id")
     args = parser.parse_args()
-    core = args.core.resolve(strict=True)
-    if args.action == "stage": stage(core, args.directory); return
-    if args.action == "visibility": visibility(core, args.directory, args.release_id); return
-    store, info, provenance = verified(core, args.directory, args.release_id)
-    if args.action == "publish":
-        r.require(info["draft"], "Immutable publication requires a draft")
-        registry_versions(args.directory, provenance)
-    elif args.action == "guard":
-        r.require(info["draft"], "Cohort mutation requires a draft")
-        proposed = r.load(args.directory / REQUEST)
-        r.require(proposed == cohort_request(provenance, proposed["expectedPackagePolicyRevision"]), "Cohort source binding differs")
+    directory, core = args.directory.resolve(), args.core.resolve(strict=True)
+    plan = selection.load(directory / selection.PLAN, ROOT)
+    if args.action == "stage": stage(core, directory, plan)
+    elif args.action == "recover": recover(core, directory, plan)
+    elif args.action == "publish": publish_versions(core, directory, plan)
+    elif args.action == "visibility": visibility(core, directory, plan)
+    elif args.action == "finalize": finalize(core, directory, plan)
     else:
-        proposed = r.load(args.directory / REQUEST)
-        receipt = receipts.download_bytes(REPOSITORY, args.release_id, store.tag, cohort.request_hash(proposed))
-        r.require(receipt["artifactSourceCommit"] == provenance["artifactSourceCommit"] and receipt["request"] == proposed
-                  and receipt["registryOrigin"] == provenance["publication"]["registryOrigin"], "Cohort release binding differs")
-        with tempfile.TemporaryDirectory() as temporary:
-            result = Path(temporary) / "result.json"
-            cohort.store(result, receipt["result"])
-            cohort.confirm(receipt["registryOrigin"], args.directory / REQUEST, result, args.directory)
-        registry_versions(args.directory, provenance, "Listed")
-        install_plans(args.directory, provenance)
-        remote_tag(store, provenance["artifactSourceCommit"])
-        current = store.get(args.release_id)
-        r.require(current["assets"] == info["assets"] and current["target_commitish"] == info["target_commitish"], "Release changed before announcement")
-        if current["draft"]:
-            try: store.api("releases/" + str(args.release_id), "PATCH", dict(draft=False, make_latest="false"))
-            except (ValueError, subprocess.TimeoutExpired): pass
-        store.verify(args.release_id, transport(core).local_files(args.directory), draft=False)
+        targets, infos, value = verified(core, directory, plan)
+        r.require(infos[0]["draft"], "Cohort mutation requires its coordinator draft")
+        proposed = r.load(directory / REQUEST)
+        r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"]), "Cohort source binding differs")
 
 
 if __name__ == "__main__":
     try: main()
     except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
-        raise SystemExit("Agent publication rejected: " + str(error))
+        raise SystemExit("Selective publication rejected: " + str(error))

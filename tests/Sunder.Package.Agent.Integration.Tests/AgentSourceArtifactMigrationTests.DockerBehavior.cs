@@ -50,7 +50,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var runnerType = await BuildDockerBackend(root, worker, load);
             using var package = RegressionTestPackageScope.Create();
             var physicalRoot = OperatingSystem.IsMacOS() && package.RootPath.StartsWith("/var/", StringComparison.Ordinal) ? "/private" + package.RootPath : package.RootPath;
-            var context = new TestPackageContext("younics.ai.agent.execution.docker", physicalRoot, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.execution.docker", physicalRoot, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.execution.docker"), storage: package.Context.Storage);
             var backend = new DockerArtifactBackend();
             Func<string[], int, CancellationToken, string?, Task<(int, string, bool, bool)>> run = backend.Run;
             var runner = Activator.CreateInstance(runnerType, context, run)!;
@@ -71,7 +71,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                     : provider.ProviderId == "docker.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
                         "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json"))) : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add("younics.ai.agent.execution.docker", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add("younics.ai.agent.execution.docker", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc, new CompositionBackgroundTaskQueue());
             var presentationContract = presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Execution_Docker_Services.IPresentationService", true)!;
@@ -133,7 +133,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var presentationService = AgentRoleBoundary.Create(presentationType, context, runner, catalog);
             var management = presentationService;
             var managementRegistration = managementReceiver.Register(management, "younics.ai.agent.execution.docker.presentation");
-            state.Add("younics.ai.agent.execution.docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"), management, managementRegistration.Handler, Noop.Instance, managementRegistration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent.execution.docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"), management, managementRegistration.Handler, Noop.Instance, managementRegistration.ProviderId, context.Version);
             var large = await Present(new { kind = "get-settings" });
             Assert.Equal(2500, large.GetProperty("images").GetArrayLength());
             state.FailNextResponseContentRegistration(new IOException("private docker content failure"));
@@ -144,7 +144,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             presentationService = AgentRoleBoundary.Create(presentationType, context, runner, catalog);
             management = presentationService;
             managementRegistration = managementReceiver.Register(management, "younics.ai.agent.execution.docker.presentation");
-            state.Add("younics.ai.agent.execution.docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"), management, managementRegistration.Handler, Noop.Instance, managementRegistration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent.execution.docker", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation"), management, managementRegistration.Handler, Noop.Instance, managementRegistration.ProviderId, context.Version);
             Assert.Equal(SunderRpcErrorKind.ProviderFaulted, (await Assert.ThrowsAsync<SunderRpcException>(() => Present(new { kind = "get-settings" }))).Error.Kind);
             await state.RetireAsync(management);
             Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Present(new { kind = "get-settings" }))).Error.Code);

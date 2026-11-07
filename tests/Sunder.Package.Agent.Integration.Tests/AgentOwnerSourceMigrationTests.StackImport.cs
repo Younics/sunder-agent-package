@@ -24,7 +24,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
         Assert.Empty(receipt.GetProperty("packageArtifacts").EnumerateArray());
         Assert.Empty(receipt.GetProperty("packageArtifactImports").EnumerateArray());
         using var export = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalAgentRoles.AnalysisRoot, "package-export.v1.json")));
-        Assert.Equal("2.0.0", export.RootElement.GetProperty("packageVersion").GetString());
+        Assert.Equal(OwnerVersion, export.RootElement.GetProperty("packageVersion").GetString());
         Assert.Equal(20, export.RootElement.GetProperty("contracts").GetArrayLength());
         Assert.DoesNotContain(export.RootElement.GetProperty("contracts").EnumerateArray(), value => value.GetProperty("contractId").GetString() == "sunder.stack.contributor");
 

@@ -542,7 +542,9 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
         Assert.Equal(descriptor.Version, registration.ContractVersion);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        return Add(packageId, descriptor, implementation, registration.Handler, ownedCatalog, providerId, "2.0.0");
+        var version = CurrentContractInventory.Packages.Any(package => package.PackageId == packageId)
+            ? CurrentContractInventory.PackageVersionFor(packageId) : "2.0.0";
+        return Add(packageId, descriptor, implementation, registration.Handler, ownedCatalog, providerId, version);
     }
 
     public SunderRpcProviderSnapshot Add(

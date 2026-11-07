@@ -4,8 +4,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentPublicSourceMigrationTests
 {
-    // Preparation is an explicit parent-owned step. These source scenarios share
-    // the validated module; they never Pack, restore, select or generate at runtime.
+    // The normal project dependency supplies the generated provider module.
     // root/loadContext remain in the signature for the existing scenario lifetimes.
     internal static Task<object> CreateGeneratedExtensionProviderAsync(string root, AssemblyLoadContext loadContext,
         string service, Func<string, Type, object?, CancellationToken, object> invoke)
@@ -24,9 +23,9 @@ public sealed partial class AgentPublicSourceMigrationTests
             "ToolExecutionObserved" => "ObservedTool",
             "DurableLifecycleObserver" => "DurableLifecycle",
             "SystemPromptContributor" => "SystemPrompt",
-            _ => throw new InvalidOperationException("No prepared extension provider is registered for " + service),
+            _ => throw new InvalidOperationException("No generated extension provider is registered for " + service),
         };
-        var provider = RegressionTestGeneratedProviders.CreatePreparedProvider(family,
+        var provider = RegressionTestGeneratedProviders.CreateProvider(family,
             (method, result, arguments, token) => invoke(method, result, arguments.Length switch
             {
                 0 => null,

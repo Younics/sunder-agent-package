@@ -65,7 +65,8 @@ class ColdInputsTests(unittest.TestCase):
             "abiSha256": c["abiSha256"], "etag": '"' + c["descriptorSha256"] + '"'} for c in public["contracts"]}
         for i, row in enumerate(rows):
             parent = self.source / Path(row["projectPath"]).parent
-            write(self.source / row["projectPath"], {})
+            (self.source / row["projectPath"]).parent.mkdir(parents=True, exist_ok=True)
+            (self.source / row["projectPath"]).write_text('<Project><PropertyGroup><Version>2.0.0</Version></PropertyGroup></Project>')
             write(parent / "sunder-contracts.owned.json", {"contracts": {}})
             write(parent / "packages.release.lock.json", {"version": 1})
             write(parent / "sunder-contracts.lock.json", {"lockVersion": 1, "packageImports": {} if not i else {
@@ -105,15 +106,17 @@ class ColdInputsTests(unittest.TestCase):
         if command[1] == "build":
             self.assertEqual(self.mode, "source")
             self.assertTrue(command[2].endswith("Sunder.Package.Build.csproj"))
-            tools = Path(command[2]).parent / "bin/Release/net10.0"
+            tools = Path(command[2]).parent / "bin/Release/future-framework"
             tools.mkdir(parents=True)
             for name in inputs.TOOL_FILES:
                 (tools / name).write_bytes(b"mock retained tool bytes")
             return subprocess.CompletedProcess(command, 0)
         self.assertNotIn("-r", command)
         self.assertIn("-p:Configuration=Release", command)
-        self.assertIn("-p:SunderAgentVersion=2.0.0", command)
+        self.assertFalse(any(arg.startswith("-p:SunderAgentVersion=") for arg in command))
         self.assertIn("-p:ContinuousIntegrationBuild=true", command)
+        if "-getProperty:TargetDir" in command:
+            return subprocess.CompletedProcess(command, 0, str(Path(command[2]).parent / "bin/Release/future-framework"))
         if command[1] == "restore":
             self.assertEqual("--locked-mode" in command, self.mode == "package")
             return subprocess.CompletedProcess(command, 0)
@@ -237,7 +240,7 @@ class ColdInputsTests(unittest.TestCase):
         def capture(command, env, cwd, capture=False):
             executed.append(command)
             self.assertEqual("Release", env["Configuration"])
-            self.assertEqual("2.0.0", env["SunderAgentVersion"])
+            self.assertNotIn("SunderAgentVersion", env)
             self.assertEqual("true", env["ContinuousIntegrationBuild"])
             self.assertEqual(str(self.work / "sunder-home/contracts/v1/sha256"), env["SunderContractCacheRoot"])
             self.assertNotIn("GH_TOKEN", env)
@@ -248,7 +251,7 @@ class ColdInputsTests(unittest.TestCase):
             inputs.execute(self.work / "cold-state.json", ["python3", "-B", "scripts/release/native-family.py", "assemble"])
         self.assertTrue(all(command[:2] == ["deny-network", "--"] for command in executed))
         self.assertIn("-p:Configuration=Release", executed[0])
-        self.assertIn("-p:SunderAgentVersion=2.0.0", executed[0])
+        self.assertFalse(any(arg.startswith("-p:SunderAgentVersion=") for arg in executed[0]))
         self.assertIn("-p:ContinuousIntegrationBuild=true", executed[0])
 
     def test_offline_launcher_failure_has_no_unsandboxed_fallback(self):
@@ -258,6 +261,22 @@ class ColdInputsTests(unittest.TestCase):
             with self.assertRaisesRegex(release.Invalid, "launcher unavailable"):
                 inputs.prepare(self.source, self.bundle, self.work, "package", self.source_sha, self.core_sha, self.manifest_sha)
             execute.assert_not_called()
+
+    def test_authored_version_change_after_hydration_stops_before_build(self):
+        self.prepare()
+        project = self.source / self.rows[1]["projectPath"]
+        project.write_text('<Project><PropertyGroup><Version>2.1.0</Version></PropertyGroup></Project>')
+        with patch.object(inputs, "run") as execute, self.assertRaisesRegex(release.Invalid, "source/locks changed"):
+            inputs.execute(self.work / "cold-state.json", ["dotnet", "build", str(project), "--no-restore"])
+        execute.assert_not_called()
+
+    def test_initial_source_guard_includes_the_authored_version_policy_files(self):
+        for name in ("Directory.Build.props", "Directory.Build.targets"):
+            def diff(command, **_):
+                return subprocess.CompletedProcess(command, 1 if name in command else 0)
+            with self.subTest(path=name), patch.object(inputs.subprocess, "check_output", return_value=self.source_sha), \
+                 patch.object(inputs.subprocess, "run", side_effect=diff), self.assertRaisesRegex(release.Invalid, "local changes"):
+                inputs.clean_source(self.source, self.source_sha)
 
     def test_external_offline_adapter_is_hash_pinned_and_snapshotted(self):
         adapter = self.root / "offline-runner"
@@ -279,14 +298,14 @@ class ColdInputsTests(unittest.TestCase):
             with self.assertRaisesRegex(release.Invalid, "digest differs"):
                 inputs.offline_prefix()
 
-    def test_producer_routes_build_and_pack_through_shared_cold_state(self):
+    def test_producer_routes_build_and_pack_through_prepared_ci_state(self):
         # PowerShell execution is owned by native CI; inspect the actual producer's
         # integration boundary here, and execute the shared prepare/exec paths above.
         producer = (RELEASE / "build-native-family.ps1").read_text()
-        self.assertIn("$releaseInputHelper prepare", producer)
-        self.assertIn("$releaseInputHelper exec $coldState -- dotnet @Arguments", producer)
+        self.assertIn("$ciHelper prepare", producer)
+        self.assertIn("$ciHelper run --state $ciState -- dotnet @Arguments", producer)
         self.assertNotIn('$restoreArguments = @("restore"', producer)
-        self.assertLess(producer.index("$releaseInputHelper prepare"), producer.index("foreach ($package in $packages)"))
+        self.assertLess(producer.index("$ciHelper prepare"), producer.index("foreach ($package in $packages)"))
         self.assertIn('"--no-restore"', producer)
         self.assertIn('"-p:SunderPackageUsePrebuiltLeaves=true"', producer)
 

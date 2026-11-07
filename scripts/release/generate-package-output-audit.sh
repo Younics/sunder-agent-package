@@ -43,19 +43,31 @@ temp_root="${TMPDIR:-/tmp}"
 work="$(mktemp -d "${temp_root%/}/sunder-agent-output-audit.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
-rids=(win-x64 win-arm64 linux-x64 linux-arm64 osx-x64 osx-arm64)
-version="$(jq -er '.version' "$native_evidence")"
+policy="$(python3 -B "$script_dir/family_policy.py")"
+rid_policy="$(jq -ce '.rids' <<< "$policy")"
+rids=()
+while IFS= read -r rid; do rids+=("$rid"); done < <(jq -r '.[]' <<< "$rid_policy")
+family_count="$(jq '.packageIds | length' <<< "$policy")"
+version="$(jq -r '.version // empty' "$native_evidence")"
+coordinate="$version"
+if [[ "$(jq -r .schemaVersion "$native_evidence")" == 4 ]]; then
+  coordinate="$archive_directory/release-plan.json"
+fi
 agent_commit="$(jq -er '.agentCommit' "$native_evidence")"
 core_tag="$(jq -er '.core.tag' "$native_evidence")"
 core_commit="$(jq -er '.core.commit' "$native_evidence")"
 core_package_version="$(jq -er '.core.packageVersion' "$native_evidence")"
 python3 -B "$script_dir/native-family.py" verify \
   "$native_evidence" "$archive_directory" "$repository_root/packages.json" \
-  "$version" "$agent_commit" "$core_tag" "$core_commit" "$core_package_version" >/dev/null
+  "$coordinate" "$agent_commit" "$core_tag" "$core_commit" "$core_package_version" >/dev/null
 
-packages='[]'
+packages="$work/packages.jsonl"
+: > "$packages"
 while IFS= read -r package_id; do
-  archive="$archive_directory/$package_id.$version.sunderpkg"
+  package_version="$(jq -er --arg id "$package_id" '.familyVersions[$id] // .version' "$native_evidence")"
+  target_framework="$(jq -er --arg id "$package_id" '.targetFrameworks[$id]' <<< "$policy")"
+  runtime_requirement="$(jq -ce --arg id "$package_id" '.runtimeRequirements[$id]' <<< "$policy")"
+  archive="$archive_directory/$package_id.$package_version.sunderpkg"
   [[ -f "$archive" ]] \
     || { printf 'Package output audit input is missing: %s\n' "$archive" >&2; exit 1; }
 
@@ -89,7 +101,8 @@ while IFS= read -r package_id; do
     --argjson bytes "$(file_size "$archive")" \
     --argjson files "$(( $(jq '.files | length' "$index") + 1 ))" \
     '{path: $path, sha256: $sha256, files: $files, bytes: $bytes}')"
-  rid_audits='[]'
+  rid_audits="$work/$package_id.rids.jsonl"
+  : > "$rid_audits"
   for rid in "${rids[@]}"; do
     runtime_target="$(jq -ce --arg rid "$rid" '
       [.targets[] | select(.role == "runtime" and .rid == $rid)]
@@ -98,26 +111,22 @@ while IFS= read -r package_id; do
       printf 'Package output audit requires one Runtime target for %s/%s.\n' "$package_id" "$rid" >&2
       exit 1
     }
-    jq -e --arg rid "$rid" '
+    jq -e --argjson rids "$rid_policy" --arg tfm "$target_framework" --argjson runtime "$runtime_requirement" '
       ([.targets[] | select(.role == "runtime") | .rid] | sort)
-        == ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"]
+        == ($rids | sort)
       and all(.targets[] | select(.role == "runtime");
         .kind == "worker"
-        and .targetFramework == "net10.0"
-        and (.sdkVersion | type == "string" and test("^1[.]1[.]0([+][0-9A-Za-z-]+([.][0-9A-Za-z-]+)*)?$"))
-        and .executionRuntime == {
-          id: "sunder.runtime.dotnet",
-          versionRange: ">=10.0.0 <11.0.0",
-          moduleAbi: "sunder.dotnet-worker-module.v1"
-        }
+        and .targetFramework == $tfm
+        and (.sdkVersion | type == "string" and test("^[0-9]+[.][0-9]+[.][0-9]+([-+][0-9A-Za-z.+-]+)?$"))
+        and .executionRuntime == $runtime
         and (.requiredHostCapabilities | index("execution-runtime.v1") != null)
         and (.requiredHostCapabilities | index("rpc.v1") != null)
-        and (.requiredHostCapabilities | index("sdk-baseline-1-1.v1") != null)
+        and all(.requiredHostCapabilities[]; startswith("sdk-baseline-") | not)
         and (.requiredHostCapabilities | index("worker-protocol.v1") != null)
         and all(.requiredHostCapabilities[];
           . != "worker-protocol.v2" and . != "worker-protocol.v3" and . != "rpc.v2" and . != "rpc.v3"))
       and (([.targets[] | select(.role == "app") | .rid] | sort) as $app_rids
-        | ($app_rids == [] or $app_rids == ["linux-arm64","linux-x64","osx-arm64","osx-x64","win-arm64","win-x64"]))
+        | ($app_rids == [] or $app_rids == ($rids | sort)))
     ' "$manifest" >/dev/null || {
       printf 'Package output audit found an invalid V1 target matrix for %s/%s.\n' "$package_id" "$rid" >&2
       exit 1
@@ -143,12 +152,12 @@ while IFS= read -r package_id; do
     }
     runtime_config="$work/$package_id.$rid.runtimeconfig.json"
     unzip -p "$archive" "$runtime_config_path" > "$runtime_config"
-    framework="$(jq -ce '
+    framework="$(jq -ce --arg tfm "$target_framework" --arg major "${target_framework#net}" '
       .runtimeOptions as $options
-      | select($options.tfm == "net10.0")
+      | select($options.tfm == $tfm)
       | select(($options.includedFrameworks // null) == null and ($options.frameworks // null) == null)
       | $options.framework
-      | select(.name == "Microsoft.NETCore.App" and (.version | startswith("10.")))
+      | select(.name == "Microsoft.NETCore.App" and (.version | startswith(($major | split(".")[0]) + ".")))
       | {tfm: $options.tfm, name, version}
     ' "$runtime_config")" || {
       printf 'Package output audit found a runtimeconfig/profile mismatch for %s/%s.\n' "$package_id" "$rid" >&2
@@ -204,7 +213,7 @@ while IFS= read -r package_id; do
         }
     ' "$index")"
     installed_bytes="$(jq -er --arg rid "$rid" --arg package_id "$package_id" '
-      [.nativeRuns[] | select(.rid == $rid) | .packages[] | select(.packageId == $package_id)
+      [.nativeRuns[] | select(.rid == $rid) | (.familyTests // .packages)[] | select(.packageId == $package_id)
         | .metrics.measurement.currentRidInstalledBytes]
       | if length == 1 and .[0] > 0 then .[0] else error("missing installed measurement") end
     ' "$native_evidence")" || {
@@ -212,7 +221,7 @@ while IFS= read -r package_id; do
       exit 1
     }
     projected_files="$(jq -r '.projected.files' <<< "$layers")"
-    rid_json="$(jq -n \
+    jq -n \
       --arg rid "$rid" \
       --arg entryPoint "$entry_point" \
       --arg sdkVersion "$(jq -er '.sdkVersion' <<< "$runtime_target")" \
@@ -233,26 +242,26 @@ while IFS= read -r package_id; do
           installedProjection: {files: $installedFiles, bytes: $installedBytes},
           largest25: $layers.largest25
         }
-      ')"
-    rid_audits="$(jq -cn --argjson current "$rid_audits" --argjson item "$rid_json" '$current + [$item]')"
+      ' >> "$rid_audits"
   done
 
-  package_json="$(jq -n \
+  jq -n \
     --arg packageId "$package_id" \
     --argjson archive "$archive_json" \
-    --argjson contractBundles "$(jq -c '[.contractBundles[]? | {contractId, version, descriptorPath, descriptorSha256, abiSha256}] | sort_by(.contractId, .version)' "$manifest")" \
-    --argjson rids "$rid_audits" '
-      {packageId: $packageId, archive: $archive, contractBundles: $contractBundles, rids: $rids}
-    ')"
-  packages="$(jq -cn --argjson current "$packages" --argjson item "$package_json" '$current + [$item]')"
+    --slurpfile manifest "$manifest" \
+    --slurpfile rids "$rid_audits" '
+      {packageId: $packageId, archive: $archive,
+       contractBundles: ([$manifest[0].contractBundles[]? | {contractId, version, descriptorPath, descriptorSha256, abiSha256}] | sort_by(.contractId, .version)),
+       rids: $rids}
+    ' >> "$packages"
 done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.packageId)[] | .packageId' "$repository_root/packages.json")
 
-[[ "$(jq 'length' <<< "$packages")" == 15 ]] \
-  || { printf 'Package output audit requires exactly 15 package archives.\n' >&2; exit 1; }
+[[ "$(jq -s 'length' "$packages")" == "$family_count" ]] \
+  || { printf 'Package output audit requires the complete reviewed family archive set.\n' >&2; exit 1; }
 
 family_rids='[]'
 for rid in "${rids[@]}"; do
-  rid_family="$(jq -cn --arg rid "$rid" --argjson packages "$packages" '
+  rid_family="$(jq -cn --arg rid "$rid" --slurpfile packages "$packages" '
     [$packages[].rids[] | select(.rid == $rid)] as $selected
     | {
         rid: $rid,
@@ -270,12 +279,13 @@ for rid in "${rids[@]}"; do
 done
 
 core="$(jq -c '.core' "$native_evidence")"
-archive_files="$(jq '[.[].archive.files] | add' <<< "$packages")"
-archive_bytes="$(jq '[.[].archive.bytes] | add' <<< "$packages")"
-indexed_payload_files="$(jq '[.[].archive.files - 1] | add' <<< "$packages")"
+archive_files="$(jq -s '[.[].archive.files] | add' "$packages")"
+archive_bytes="$(jq -s '[.[].archive.bytes] | add' "$packages")"
+indexed_payload_files="$(jq -s '[.[].archive.files - 1] | add' "$packages")"
 # The universal indexed total is retained for archive diagnostics, never used as the installed-footprint gate.
-indexed_payload_bytes="$(for package_id in $(jq -r '.[].packageId' <<< "$packages"); do
-  unzip -p "$archive_directory/$package_id.$version.sunderpkg" manifest/content-index.json \
+indexed_payload_bytes="$(for package_id in $(jq -r '.packageId' "$packages"); do
+  package_version="$(jq -er --arg id "$package_id" '.familyVersions[$id] // .version' "$native_evidence")"
+  unzip -p "$archive_directory/$package_id.$package_version.sunderpkg" manifest/content-index.json \
     | jq '[.files[].size] | add // 0'
 done | jq -s 'add')"
 
@@ -295,6 +305,7 @@ mkdir -p "$output_parent"
 next="$output.next"
 jq -n \
   --arg version "$version" \
+  --argjson packageVersions "$(jq -c '.familyVersions // null' "$native_evidence")" \
   --arg agentCommit "$agent_commit" \
   --argjson core "$core" \
   --argjson archiveFiles "$archive_files" \
@@ -302,7 +313,7 @@ jq -n \
   --argjson indexedPayloadFiles "$indexed_payload_files" \
   --argjson indexedPayloadBytes "$indexed_payload_bytes" \
   --argjson familyRids "$family_rids" \
-  --argjson packages "$packages" '
+  --slurpfile packages "$packages" '
     {
       schemaVersion: 1,
       kind: "https://sunderapp.io/evidence/agent-package-output-audit/v1",
@@ -325,8 +336,8 @@ jq -n \
         rids: ($familyRids | map(. + {meetsInstalledProjectionGate: true}))
       },
       packages: $packages
-    }
+    } | if $packageVersions == null then . else del(.version) + {packageVersions: $packageVersions} end
   ' > "$next"
 mv "$next" "$output"
 
-printf 'Generated deterministic output audit for 15 packages across six RIDs.\n'
+printf 'Generated deterministic output audit for %s packages across %s RIDs.\n' "$family_count" "${#rids[@]}"

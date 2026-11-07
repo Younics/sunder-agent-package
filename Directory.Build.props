@@ -9,14 +9,17 @@
         <LangVersion>14.0</LangVersion>
         <Deterministic>true</Deterministic>
         <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true'">true</ContinuousIntegrationBuild>
+        <!-- Release provenance records the commit. Lock-only commits must not
+             change unchanged package payloads or their selected API identities. -->
+        <IncludeSourceRevisionInInformationalVersion Condition="'$(ContinuousIntegrationBuild)' == 'true'">false</IncludeSourceRevisionInInformationalVersion>
+        <EnableSourceLink Condition="'$(ContinuousIntegrationBuild)' == 'true'">false</EnableSourceLink>
         <EnableNETAnalyzers>true</EnableNETAnalyzers>
         <AnalysisLevel>latest</AnalysisLevel>
         <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
         <VersionPrefix>2.0.0</VersionPrefix>
-        <SunderAgentVersion Condition="'$(SunderAgentVersion)' == ''">$(VersionPrefix)</SunderAgentVersion>
-        <Version>$(SunderAgentVersion)</Version>
-        <PackageVersion>$(SunderAgentVersion)</PackageVersion>
-        <InformationalVersion>$(SunderAgentVersion)</InformationalVersion>
+        <!-- Canonical packages author Version in their own project. This is the
+             default for support/test projects, not a family release version. -->
+        <Version>$(VersionPrefix)</Version>
         <Authors>Younics</Authors>
         <Company>Younics</Company>
         <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>

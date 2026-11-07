@@ -427,7 +427,8 @@ public sealed class AgentChatPublicationTests
 
             window.MouseMove(new Point(400, 180), RawInputModifiers.None);
             window.MouseWheel(new Point(400, 180), new Vector(0, 3), RawInputModifiers.None);
-            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await WaitForPendingCoordinatorOperationsAsync(view);
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Loaded);
             var detachedAnchor = Assert.IsAssignableFrom<Control>(transcript.CurrentAnchor);
             Assert.IsNotType<AgentTranscriptTailSentinelRowViewModel>(detachedAnchor.DataContext);
             var detachedAnchorKey = Assert.IsAssignableFrom<AgentTranscriptRowViewModel>(

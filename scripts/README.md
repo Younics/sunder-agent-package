@@ -2,8 +2,8 @@
 
 | Directory | Responsibility |
 | --- | --- |
-| `ci/` | Ordinary exact-input hydration, parallel builds and generated provider-fixture preparation. |
-| `release/` | Approved cold inputs; native capture/no-rebuild fan-in; immutable publication, atomic cohort visibility and reviewed reverse. |
+| `ci/` | Ordinary exact-input hydration, parallel builds and test execution. |
+| `release/` | Automatic dependencies; explicit cold acceptance; native capture/no-rebuild fan-in; immutable publication, atomic cohort visibility and reviewed reverse. |
 | `dev/` | Explicit local contract-cache preparation/checks and deliberate source-lock preparation from an exact Core feed. Never part of immutable publication/promotion. |
 | `test/` | Test inventory, duration/evidence report and analyzer/report fixtures. |
 | `test/release/` | Release tooling mocks, bounded native transport fixtures, and explicit real-input qualification commands. |
@@ -51,22 +51,44 @@ its diagnostics report the effective cache root and missing selected input kinds
 
 ### Local checks
 
+The same discovered script-check groups used by GitHub can be listed or executed locally:
+
+```sh
+python3 -B scripts/test/run-ci-checks.py source --list
+python3 -B scripts/test/run-ci-checks.py release
+python3 -B scripts/ci/agent_ci.py matrices --package-tests
+python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
+python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package
+```
+
+`validate` is the workflow entry point: discover scripts/tests, resolve and hydrate
+exact inputs, build the projects and their provider dependency, execute the selected suites and
+verify combined evidence. Its temporary tools/cache are cleaned on success or
+failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
+local inputs. Source readers precede the required all-family artifact producer;
+required Linux/Docker cases run once in their owning lane. `--stress` adds the
+scheduled Linux repetitions. Report directories replace prior CI runs; hosted
+reports expire after fourteen days, while immutable release handoffs keep their
+release-specific retention.
+
+Individual checks remain useful for focused iteration:
+
 ```sh
 node --test scripts/compatibility/check-package-boundaries.test.mjs
 python3 -B scripts/test/release/agent-release.fixture.py
 python3 -B scripts/test/release/release-inputs.fixture.py
 python3 -B scripts/test/release/native-family.fixture.py
 python3 -B scripts/test/verify-current-contracts.fixture.py
-python3 -B scripts/test/test_prepare_shared_provider_fixture.py
 python3 -B scripts/test/test_prepare_contracts.py
 python3 -B scripts/test/verify-current-contracts.py --source-only
 python3 -B scripts/test/release/test_agent_ci.py
 python3 -B scripts/test/release/test_agent_pipeline.py
-bash scripts/test/generate-test-duration-report.fixture.sh
+python3 -B scripts/test/release/test_dependency_inputs.py
+python3 -B scripts/test/test_test_evidence.py
 ```
 
-Use Python 3.9+ and the tools required by the selected fixture. The release-version
-and analyzer fixtures run .NET; the two `real-*.fixture.py` commands require explicit
+Use Python 3.9+ and the tools required by the selected fixture. The analyzer
+fixtures run .NET; the two `real-*.fixture.py` commands require explicit
 already-built inputs as described in [cold inputs](../docs/cold-release-inputs.md).
 They are not implicit fast-loop checks or substitutes for native acceptance.
 
@@ -92,7 +114,7 @@ Project evaluation distinguishes NuGet `PackageId` from runtime
 dependencies and artifacts remain prohibited; no remote absence audit is used.
 
 Local Core candidate preparation is documented by the Core producer's script guide.
-Given its exact feed, run `bash scripts/dev/refresh-release-locks.sh 1.1.0 <feed>`;
+Given its exact feed, run `bash scripts/dev/refresh-release-locks.sh <feed>`;
 inspect the resulting lock changes before release qualification.
 
 ### Current contract records
@@ -120,7 +142,8 @@ evolution and public baseline history remain supported.
   sequential dist-tag fixture below.
 - `scripts/generate-test-*` and `scripts/test-silent-return-analyzer.fixture.sh`
   → `scripts/test/`.
-- `scripts/generate-release-evidence.sh` → `scripts/release/generate-release-evidence.sh`.
+- The generic `generate-release-evidence.sh` is retired; `agent_pipeline.py` owns
+  current selected-package provenance and evidence.
 - `scripts/release/refresh-release-locks.sh` → `scripts/dev/refresh-release-locks.sh`.
 
 CI, Python imports and current architecture script references use the new paths.

@@ -218,8 +218,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             if (ForgedCancellation) throw new OperationCanceledException("Unrequested provider cancellation.");
             if (TypedStreams.TryGetValue(method, out var typed))
             {
-                var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
-                    Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, ContractId!);
+                var projection = RegressionTestGeneratedProviderProjection.FromBuild(ContractId!);
                 foreach (var value in typed)
                 {
                     token.ThrowIfCancellationRequested();

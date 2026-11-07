@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Xml.Linq;
+using Sunder.Sdk.Packaging;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -16,11 +18,18 @@ internal static class CurrentContractInventory
     internal static string PublicVersion => Data.PublicVersion;
     internal static Contract Find(string id) => Assert.Single(Contracts, value => value.ContractId == id);
     internal static Package Owner(string id) => Assert.Single(Packages, value => value.PackageId == id);
+    internal static string PackageVersionFor(string id)
+    {
+        var version = XDocument.Load(Path.Combine(RegressionTestRpcDescriptors.RepositoryRoot, Owner(id).ProjectPath))
+            .Root!.Elements("PropertyGroup").Elements("Version").Single().Value;
+        Assert.True(SemanticVersion.TryParse(version, out _));
+        return version;
+    }
 
-    internal static void AssertDescriptor(SunderRpcContractDescriptor descriptor)
+    internal static void AssertDescriptor(SunderRpcContractDescriptor descriptor, bool reviewed = false)
     {
         var expected = Find(descriptor.ContractId);
-        Assert.Equal(expected.Version, descriptor.Version);
+        Assert.Equal(reviewed ? expected.ReviewedVersion : expected.Version, descriptor.Version);
         Assert.Equal(SunderRpcProtocol.ValueSchemaProfile, descriptor.SchemaProfile);
         var service = Assert.Single(descriptor.Services);
         Assert.Equal(expected.Service, service.ServiceId);
@@ -93,7 +102,8 @@ internal static class CurrentContractInventory
     internal sealed record Contract(string ContractId, string PackageId, string Exposure, string Source,
         string Service, string[] Methods, string[] Streams, bool Runtime, bool App, string? ContractVersion = null)
     {
-        internal string Version => ContractVersion ?? (Exposure == "public" ? PublicVersion : PackageVersion);
+        internal string ReviewedVersion => ContractVersion ?? (Exposure == "public" ? PublicVersion : PackageVersion);
+        internal string Version => Exposure == "package" ? PackageVersionFor(PackageId) : ReviewedVersion;
         internal string[] Actions => Streams.Length == 0 ? ["discover", "invoke"] : ["discover", "invoke", "subscribe"];
     }
 

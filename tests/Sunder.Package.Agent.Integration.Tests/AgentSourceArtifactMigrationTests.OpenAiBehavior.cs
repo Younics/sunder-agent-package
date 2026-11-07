@@ -46,7 +46,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             }
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.OpenAI" or "Sunder.Sdk.Worker" or "OpenAI");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("younics.ai.agent.provider.openai", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.openai", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.provider.openai"), storage: package.Context.Storage);
             await context.Settings.SetValueAsync("auth.mode", "api-key");
             using var backend = new OpenAiArtifactHttp();
             using var apiHttp = new HttpClient(backend, disposeHandler: false);
@@ -85,7 +85,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var expected = provider.ProviderId == "openai.management" ? descriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(expected.Sha256, provider.DescriptorSha256); Assert.Equal(expected.AbiSha256, provider.AbiSha256);
-                state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add(context.PackageId, expected, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var management = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Openai_Services.IManagementService", true)!);
@@ -161,7 +161,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcErrorKind.NotFound, missingManagement.Error.Kind);
             Assert.Equal("rpc.provider-not-found", missingManagement.Error.Code);
             Assert.Null(await rpc.GetProviderAsync(old));
-            state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, "2.0.0");
+            state.Add(context.PackageId, descriptor, registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, context.Version);
             Assert.NotEqual(old, Assert.Single((await rpc.DiscoverAsync(descriptor.ContractId)).Providers).Endpoint);
             Assert.True((await Manage("GetCredentialStatusAsync", [CancellationToken.None])).GetBoolean());
             Assert.False((await Manage("ClearCredentialAsync", [CancellationToken.None])).GetBoolean());
@@ -206,7 +206,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     private static async Task VerifyOpenAiAppCallbackLifetime(Assembly app, TestPackageContext context, ISunderRpcClient rpc)
     {
         var callbacks = new AppCallbackProbe(context.PackageId, PackageCallbackHandlerIds.Authentication);
-        var appContext = new TestPackageContext(context.PackageId, version: "2.0.0", storage: context.Storage,
+        var appContext = new TestPackageContext(context.PackageId, version: context.Version, storage: context.Storage,
             settings: context.Settings, secrets: context.Secrets, callbacks: callbacks);
         await using var services = CreateGeneratedApp(app, appContext, rpc);
         var type = app.GetType("Sunder.Package.Agent.Provider.OpenAI.OpenAiSettingsViewModel", true)!;

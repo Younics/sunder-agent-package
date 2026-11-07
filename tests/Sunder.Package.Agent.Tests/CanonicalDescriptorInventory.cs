@@ -32,7 +32,7 @@ internal static class CanonicalDescriptorInventory
             using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(directory), "authoring-receipt.v1.json")));
             Assert.Equal(1, receipt.RootElement.GetProperty("schemaVersion").GetInt32());
             Assert.Equal(package.PackageId, receipt.RootElement.GetProperty("packageId").GetString());
-            Assert.Equal(CurrentContractInventory.PackageVersion, receipt.RootElement.GetProperty("packageVersion").GetString());
+            Assert.Equal(CurrentContractInventory.PackageVersionFor(package.PackageId), receipt.RootElement.GetProperty("packageVersion").GetString());
             var bundles = receipt.RootElement.GetProperty("bundles").EnumerateArray().ToDictionary(value => value.GetProperty("contractKey").GetString()!);
             foreach (var contract in receipt.RootElement.GetProperty("contracts").EnumerateArray())
             {
@@ -59,7 +59,7 @@ internal static class CanonicalDescriptorInventory
                     Assert.Equal(descriptor.GetCanonicalUtf8().Length, current.GetProperty("descriptorBytes").GetInt32());
                     Assert.Equal(descriptor.GetCanonicalAbiProjectionUtf8().Length, current.GetProperty("abiProjectionBytes").GetInt32());
                     Assert.Equal(package.PackageId, current.GetProperty("packageRelease").GetProperty("packageId").GetString());
-                    Assert.Equal(CurrentContractInventory.PackageVersion, current.GetProperty("packageRelease").GetProperty("packageVersion").GetString());
+                    Assert.Equal(CurrentContractInventory.PackageVersionFor(package.PackageId), current.GetProperty("packageRelease").GetProperty("packageVersion").GetString());
                     Assert.Equal(descriptor.GetCanonicalUtf8(), Encoding.UTF8.GetBytes(current.GetProperty("canonicalDescriptor").GetString()!));
                     Assert.Equal(descriptor.Sha256, current.GetProperty("descriptorSha256").GetString());
                     Assert.Equal(descriptor.AbiSha256, current.GetProperty("abiSha256").GetString());

@@ -141,7 +141,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(executor is ChildRunProbe ? "fixture.regression.child.run" : "agent.child.runs", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var provider = Assert.Single((await receiver.Providers<IChildRunExecutorService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,
@@ -164,8 +164,7 @@ public sealed partial class AgentPublicSourceMigrationTests
     private static async Task<AgentChildRunResult> InvokeChildRunAsync(IChildRunExecutorService client,
         GeneratedServiceTestScope receiver, AgentChildRunRequest request, CancellationToken token)
     {
-        var projection = RegressionTestGeneratedProviderProjection.FromCandidate(
-            Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!, RegressionTestBindings.ChildRunExecutor);
+        var projection = RegressionTestGeneratedProviderProjection.FromBuild(RegressionTestBindings.ChildRunExecutor);
         var input = (ChildConsumerModels.AgentChildRunRequest)(await projection.ProjectAsync(
             request, typeof(ChildConsumerModels.AgentChildRunRequest), receiver, token))!;
         var result = await client.RunChildAsync(input, token);

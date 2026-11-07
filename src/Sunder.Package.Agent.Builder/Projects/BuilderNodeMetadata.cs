@@ -171,10 +171,10 @@ internal static class BuilderNodeMetadata
         if (export < 0 || string.Join(" ", tokens.Skip(export).Take(6).Select(token => token.Value)) != "export const messages = defineService (") return reason;
         var importEnd = tokens.FindIndex(token => token.Value == ";");
         var import = string.Join(" ", tokens.Take(importEnd + 1).Select(token => token.Value));
-        if (import is not ("import { defineService , type ServiceContext } from \"@sunder/sdk\" ;" or "import { defineService } from \"@sunder/sdk\" ;")) return reason;
+        if (import is not ("import { defineService , type ServiceContext } from \"@younics/sunder-sdk\" ;" or "import { defineService } from \"@younics/sunder-sdk\" ;")) return reason;
         var header = tokens.Skip(importEnd + 1).Take(export - importEnd - 1).ToArray();
         if (header.Length != 5 || header[0].Value != "const" || header[1].Value != "packageName" || header[2].Value != "=" || header[3].StringValue is null || header[4].Value != ";") return reason;
-        var sdk = tokens.FirstOrDefault(token => token.StringValue == "@sunder/sdk");
+        var sdk = tokens.FirstOrDefault(token => token.StringValue == "@younics/sunder-sdk");
         if (sdk is null) return reason;
         var call = export + 6;
         if (tokens[call].Value != "{") return reason;

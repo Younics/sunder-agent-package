@@ -26,7 +26,8 @@ Avalonia's required xUnit 3 ABI while the ordinary suites use xUnit 2. Do not er
 these identities or mix test-framework dependencies just to remove source links.
 
 Keep each inclusion narrow. Test projects must not link source from sibling
-executable test projects. Current generated-provider fixture input text remains in
-`Sunder.Package.Agent.Tests/Fixtures`; its exact hashes are validated by the existing
-preparation/loader pipeline. The source-only Maker and MCP projects do not participate
-in the separately selected locked-package compatibility lane.
+executable test projects. Generated providers compile in
+`Sunder.Package.Agent.TestProviders`, referenced by `RegressionTestHarness.props`;
+their projection and descriptors are embedded in that assembly. The source-only
+Maker and MCP projects do not participate in the separately selected locked-package
+compatibility lane.

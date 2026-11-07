@@ -8,6 +8,14 @@ It is independent of generated receipts, owned/lock JSON and archived identity m
 Source review uses each entry's explicit service declaration path, source provider
 attributes, canonical project metadata and reviewed consumer intent.
 
+Package versions come from each canonical project's authored `Version`, not from
+the archives under test. Core binds private RPC versions to their owning package.
+Readers therefore authenticate the original reviewed records first, then project
+**only the private descriptor's root version label** to the authored version;
+the complete API body and ABI must remain unchanged. Public contract versions and
+bytes are never projected. This does not edit the reviewed inventory/record files,
+re-freeze a public API, change a dependency lock or qualify untested artifacts.
+
 Compact pagination added `read-compact-transcript` and `read-activity-members` to
 runtime-catalog `2.0.0`; its frozen evidence remains retained. The Agent
 owner and Subagents owner each gain the corresponding two App reads. These are
@@ -232,8 +240,10 @@ future history/projection reviews; no identity-fork receipt is needed by Agent.
 4. After build inputs are ready, run focused current inventory/architecture
    checks, functional PublicSource/Owner/Catalog/Credential suites, the full affected
    suite and the required all-family gate. Then collect actual Linux source/package
-   TRX evidence and deliberately refresh `tests/test-evidence-expectations.json`.
-   Its old identity hashes are not waived or fabricated; the report rejects drift.
+    TRX evidence with the adapter-discovered selection for each run. The report
+    rejects missing cases, incomplete runs and unexpected skips against current
+    project ownership and source policy; no checked-in expanded identity hashes
+    need refreshing.
 
 Shared descriptor fixtures are linked through `tests/CurrentContractFixtures.props`;
 `tests/RegressionTestHarness.props` imports it. Main tests compile their local copies.

@@ -1,0 +1,37 @@
+<Project>
+  <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+  <PropertyGroup>
+    <AssemblyName>RegressionTestGeneratedProviders</AssemblyName>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(SunderBuildToolingProject)" Condition="'$(SunderUseSourceSdk)' == 'true'"
+                      ReferenceOutputAssembly="false" Private="false"
+                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
+    <PackageReference Include="Sunder.Package.Build" Condition="'$(SunderUseSourceSdk)' == 'false'"
+                      PrivateAssets="all" ExcludeAssets="all" GeneratePathProperty="true" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProviderContract Include="chat.provider" LocalName="chatProvider" />
+    <ProviderContract Include="tool.source" LocalName="toolSource" />
+    <ProviderContract Include="execution.target" LocalName="executionTarget" />
+    <ProviderContract Include="runtime.catalog" LocalName="runtimeCatalog" />
+    <ProviderContract Include="embedding.provider" LocalName="embeddingProvider" />
+    <ProviderContract Include="session.cleaner" LocalName="sessionCleaner" />
+    <ProviderContract Include="durable.lifecycle.observer" LocalName="durableLifecycle" />
+    <ProviderContract Include="prompt.context.contributor" LocalName="promptContext" />
+    <ProviderContract Include="system.prompt.contributor" LocalName="systemPrompt" />
+    <ProviderContract Include="permission.surface" LocalName="permission" />
+    <ProviderContract Include="profile.capability.consumer" LocalName="profileCapability" />
+    <ProviderContract Include="selectable.capability.provider" LocalName="selectableCapability" />
+    <ProviderContract Include="workspace.editor" LocalName="workspaceEditor" />
+    <ProviderContract Include="behavior.loop" LocalName="behaviorLoop" />
+    <ProviderContract Include="child.run.executor" LocalName="childRun" />
+    <ProviderContract Include="tool.execution.observed" LocalName="observedTool" />
+    <ProviderContract Include="workspace.execution.resolver" LocalName="workspaceResolver" />
+  </ItemGroup>
+  <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+  <Import Project="Providers.targets" />
+</Project>

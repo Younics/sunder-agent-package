@@ -364,7 +364,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal("fixture.regression.runtime.catalog", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var provider = Assert.Single((await receiver.Providers<AgentServices.IRuntimeCatalogService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var endpoint = Assert.Single(state.Discover(descriptor.ContractId).Providers,

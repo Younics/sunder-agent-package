@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -14,8 +15,23 @@ internal static class CurrentContractRecords
     private static readonly Lazy<IReadOnlyDictionary<string, SunderRpcContractDescriptor>> Records = new(Read);
 
     internal static SunderRpcContractDescriptor Get(string id)
-        => Records.Value.TryGetValue(id, out var value) ? value
+    {
+        var reviewed = Records.Value.TryGetValue(id, out var value) ? value
             : throw new InvalidOperationException($"No reviewed current contract '{id}'.");
+        var expected = CurrentContractInventory.Find(id);
+        if (reviewed.Version == expected.Version) return reviewed;
+        return ProjectPrivateVersion(reviewed, expected.Version);
+    }
+
+    internal static SunderRpcContractDescriptor ProjectPrivateVersion(SunderRpcContractDescriptor reviewed, string version)
+    {
+        Assert.Equal("package", CurrentContractInventory.Find(reviewed.ContractId).Exposure);
+        var document = JsonNode.Parse(reviewed.GetCanonicalUtf8())!;
+        document["version"] = version;
+        var projected = SunderRpcContractDescriptor.Parse(JsonSerializer.SerializeToUtf8Bytes(document));
+        Assert.Equal(reviewed.AbiSha256, projected.AbiSha256);
+        return projected;
+    }
 
     internal static void AssertCurrent(SunderRpcContractDescriptor actual)
     {
@@ -47,7 +63,7 @@ internal static class CurrentContractRecords
             var bytes = Encoding.UTF8.GetBytes(entry.GetProperty("canonicalDescriptor").GetString()!);
             var descriptor = SunderRpcContractDescriptor.Parse(bytes);
             Assert.Equal(expected.ContractId, descriptor.ContractId);
-            CurrentContractInventory.AssertDescriptor(descriptor);
+            CurrentContractInventory.AssertDescriptor(descriptor, reviewed: true);
             Assert.Equal(bytes, descriptor.GetCanonicalUtf8());
             Assert.Equal(entry.GetProperty("descriptorSha256").GetString(), descriptor.Sha256);
             Assert.Equal(entry.GetProperty("abiSha256").GetString(), descriptor.AbiSha256);

@@ -10,16 +10,20 @@ This guide is for extension authors. Maintainers releasing the complete first-pa
 ## Compatibility Contract
 
 Agent derives its compatibility surface from ordinary implementation and declaration
-source. It has 19 reviewed public contracts with independent semantic versions;
-private contracts follow package versions. Cross-package behavior uses generated
+source. It owns 18 public contracts and imports the Core Stack contract, each with
+an independent semantic version; private contracts follow package versions. Cross-package behavior uses generated
 APIs and manifest-declared providers, not implementation assembly references.
 
-Use the coordinated Core SDK range:
+Declare ordinary NuGet dependency versions for each Core package independently:
 
 ```xml
-<PackageReference Include="Sunder.Sdk" Version="[1.1.0,1.2.0)" />
-<PackageReference Include="Sunder.Package.Build" Version="[1.1.0,1.2.0)" PrivateAssets="all" />
+<PackageReference Include="Sunder.Sdk" Version="1.0.1" />
+<PackageReference Include="Sunder.Package.Build" Version="1.0.1" PrivateAssets="all" />
 ```
+
+Commit the resolved NuGet lock for reproducible release builds. Build dependency
+selection is separate from runtime compatibility: Registry and receiving App/Host
+profiles admit supported SDK majors, protocols and explicitly required capabilities.
 
 Select `younics.ai.agent` with the reviewed runtime range `>=2.0.0 <3.0.0`
 through the ordinary package API/provider-import commands. The resulting lock owns
@@ -84,15 +88,14 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 9. For future supported extension upgrades, exercise their explicitly supported persistence/version policy. The current first-party clean-slate baseline has no pre-V1 migration prerequisite.
 10. Publish immutable bytes, then move a Registry dist tag only after verification.
 
-The first-party family releases exactly fifteen `.sunderpkg` archives from one Agent
-commit, with no Protocol NuGet. Release CI resolves the immutable Core
-`sdk/v<CORE_SDK_VERSION>` release and requires its tag, package provenance and all
-Core checkouts to identify one commit; smoke CI alone tracks Core `main`. Recovery
-reuses that same immutable identity and tested bytes. Publication has 17 primary
-files and 21 release assets; the Actions-only handoff adds a twenty-second file.
-The separate first-party native, authenticated publication and cohort-promotion
-requirements remain in [`RELEASES.md`](RELEASES.md). Third-party extensions should
-not assume a mixed family patch set is valid.
+The first-party release selector publishes only never-published or version-increased
+projects and tests the full fifteen-package family, including retained unchanged
+archives. Mixed versions must satisfy the actual dependency/contract constraints;
+there is no forced family-wide bump or Protocol NuGet. Standalone CI resolves Core
+source from the locked Build-tool release and verifies its tag/provenance; workspace
+CI uses its source checkout. Recovery reuses the same tested bytes.
+Native, authenticated publication and atomic visibility requirements remain in
+[`RELEASES.md`](RELEASES.md).
 
 ## Troubleshooting
 
@@ -121,7 +124,7 @@ Check the generated `sunder-package.json`, not a source manifest:
 - Package id is lowercase dot-separated ASCII.
 - Entry assembly contains one `SunderPackage` attribute.
 - Dependency is exactly `younics.ai.agent` with a satisfiable bounded range.
-- Installed base Agent and SDK baseline are from the same compatible family.
+- Installed Agent satisfies the declared range, and the receiving App/Host profile supports the SDK major and protocols.
 - Required capabilities inferred by `Sunder.Package.Build` are supported by the host.
 - No implementation/host assemblies were packaged as private dependencies.
 

@@ -1,7 +1,8 @@
 # Qualified native release inputs
 
 The Agent native scripts consume Core's **qualified generated-role inputs V1**.
-Native release provenance is **schema 3**. Schema-2 marker-only native evidence is
+Current selective native provenance is **schema 4**; the legacy single-version
+schema 3 reader remains supported. Schema-2 marker-only native evidence is
 rejected; it cannot be upgraded by relabeling or rehashing an old handoff.
 
 Core's authoritative contract is
@@ -22,34 +23,43 @@ source, locks and tools unchanged during the complete native operation.
 From the Agent repository root:
 
 ```powershell
-./scripts/release/build-native-family.ps1 -Rid osx-arm64 -Version 2.0.0 `
+./scripts/release/build-native-family.ps1 -Rid osx-arm64 -Version artifacts/release-plan.json `
   -OutputDirectory artifacts/native-build/osx-arm64 `
-  -ColdInputsDirectory /retained/agent-inputs -ColdManifestSha256 <approved-sha256> `
-  -ArtifactSourceCommit <approved-agent-commit> -CoreCommit <approved-core-commit>
+  -InputsDirectory /resolved/agent-inputs
 ```
 
-The producer explicitly restores the locked graph, builds each canonical project
+First use `agent_selection.py retain` to fetch unchanged archive/evidence assets into
+`SUNDER_AGENT_RETAINED_ARCHIVE_DIR`. The canonical, source/lock-bound plan is produced
+by `agent_selection.py plan`; do not hand-author or modify it during release.
+The producer explicitly restores the locked graph, builds each selected canonical project
 for the exact native RID, then uses a compact Core V1 selection and prebuilt Pack
-to produce the 15 `current-rid-archives` used by native lifecycle/metric tests.
+to produce selected `current-rid-archives`, then adds exact unchanged universal
+archives. Native lifecycle/metric tests still require fifteen Workers.
 It does not call `GetSunderPackageRoleInputs` after Build: that target depends on
 Build. NuGet mode is the default (`SunderUseSourceSdk=false`). `NUGET_SOURCE`, when
 set, selects the explicit producer restore source.
 
-The producer now invokes the shared [reviewed cold-input preparation](cold-release-inputs.md)
-before its first Build. It allocates a new isolated Sunder home/cache, proves Core's
-pre-hydration missing diagnostic, restores exact approved candidates/catalog without
-lock changes, and routes Build and prebuilt Pack through the verified network-denied
-executor. The manifest/durable input identities and source/Core commits are required
-explicit inputs; a warm developer cache cannot replace them.
+The producer invokes `agent_ci.py prepare` before its first Build. It allocates a
+new isolated Sunder home/cache, validates automatically resolved candidates/catalog
+against the committed locks, hydrates through Core, and routes Build/prebuilt Pack
+through that same prepared state. No operator manifest locator, source SHA or
+offline-runner hash is required. A warm cache cannot replace selected input bytes.
+Explicit denied-network diagnostics remain in [cold acceptance](cold-release-inputs.md),
+not in the ordinary production native path.
 
 Ordinary Core Build exports, beside each canonical RID leaf:
 
 ```text
-src/<project>/bin/Release/net10.0/sunder-targets/<rid>/
+src/<project>/bin/Release/<target-framework>/sunder-targets/<rid>/
   role-inputs.v1.json
   role-inputs.v1.json.sha256
   sunder-dev/                    # complete Worker and optional App inputs
 ```
+
+The producer discovers this qualified bundle rather than embedding a framework
+version in CI. It rejects missing/ambiguous output and validates the framework
+against the authored project policy. Native RIDs come from `eng/ci/platforms.json`;
+complete-family membership comes from the independently reviewed current inventory.
 
 Apply native signing using Core's **pre-index Worker signing hooks**, before this
 qualification is exported. Subsequent signing, reindexing or editing invalidates
@@ -64,7 +74,7 @@ After the existing native lifecycle/metric gate, call
 3. Checks exact Core metric identity, counts and thresholds.
 4. Writes `native-leaves-<rid>.tar.gz`, `native-leaf-evidence-<rid>.json` and metric copies.
 
-Each package in native schema 3 retains `workerProject`, `leaf`, `testedArchive`,
+Each selected package in native schema 3/4 retains `workerProject`, `leaf`, `testedArchive`,
 `metricsSha256` and `metrics`. It adds:
 
 ```json
@@ -101,6 +111,13 @@ execution-target discovery does not grant invocation, subscription or App use.
 Older schema-3 captures without this projection are usable only when their qualified
 receipts contain no separately authored role uses.
 
+Schema 4 binds `planSha256`, selected `packageVersions`, all fifteen `familyVersions`,
+exact `retainedArtifacts` and their previously authenticated `retainedSourceRoleUses`.
+Every RID run includes `familyTests` for all fifteen archive/measurement identities,
+including unchanged packages. Selected leaves still require Core qualifications on
+all six RIDs. Missing unchanged-worker tests, mismatched versions, substituted
+retained bytes or lost source-backed use evidence reject fan-in before Pack.
+
 ## Fan-in prerequisites and execution
 
 Before invoking the assembler, the owning workflow must explicitly restore every
@@ -110,7 +127,7 @@ producers, including all declared RID graphs. For the normal NuGet release mode:
 ```sh
 dotnet restore <canonical-project.csproj> --locked-mode --source "$NUGET_SOURCE" \
   -p:Configuration=Release -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true \
-  -p:SunderAgentVersion=2.0.0 -p:ContinuousIntegrationBuild=true
+   -p:ContinuousIntegrationBuild=true
 ```
 
 Then call `python3 -B scripts/release/native-family.py assemble` with its eight positional arguments.
@@ -151,7 +168,8 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 
 ### Transport and publication behavior
 
-- Exact six-RID/15-package inventory; no extra native input artifacts or selection
+- Exact six-RID selected-leaf inventory plus complete fifteen-package smoke/final
+  archive inventory; no extra native input artifacts or selection
   entries. Optional standalone metric copies must be complete and byte-identical.
 - Portable ASCII paths, depth/length limits, no rooted/parent/device/backslash paths,
   case collisions, duplicate entries, file/directory collisions, links/reparse

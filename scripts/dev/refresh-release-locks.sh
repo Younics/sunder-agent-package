@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  printf 'Usage: refresh-release-locks.sh <core-sdk-version> <core-package-feed> [repository-root]\n' >&2
+if [[ $# -lt 1 || $# -gt 2 ]]; then
+  printf 'Usage: refresh-release-locks.sh <core-package-feed> [repository-root]\n' >&2
   exit 2
 fi
 
-version="$1"
-core_package_feed="$(cd "$2" && pwd -P)"
-repository_root="${3:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+core_package_feed="$(cd "$1" && pwd -P)"
+repository_root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 repository_root="$(cd "$repository_root" && pwd -P)"
 
 for command_name in dotnet mktemp rm; do
@@ -34,6 +33,5 @@ dotnet restore "$repository_root/Sunder.AgentPackage.slnx" \
   -p:RestorePackagesWithLockFile=true
 
 bash "$repository_root/scripts/release/verify-release-locks.sh" \
-  "$version" \
   "$repository_root" \
   "$core_package_feed"

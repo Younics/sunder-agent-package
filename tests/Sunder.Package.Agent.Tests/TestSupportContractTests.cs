@@ -55,20 +55,18 @@ public sealed class TestSupportContractTests
         var worker = roles.Load("Execution.Local", "worker");
         var target = worker.GetType(
             "Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceAuthorityValidation", true)!;
-        var candidate = Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE")!;
-        Assert.False(string.IsNullOrWhiteSpace(candidate));
         using var state = new RegressionTestRpcState();
         await using var receiver = new GeneratedServiceTestScope(new RegressionTestRpcClient(state, "test.receiver"));
         var denied = new Sunder.Package.Agent.Contracts.Contracts.AgentResourceAuthorityValidation(
             false, "resource-authority-retired", "The original authority was retired.");
-        var execution = RegressionTestGeneratedProviderProjection.FromCandidate(candidate, RegressionTestBindings.ExecutionTargets);
+        var execution = RegressionTestGeneratedProviderProjection.FromBuild(RegressionTestBindings.ExecutionTargets);
         var projected = await execution.ProjectAsync(denied, target, receiver, CancellationToken.None);
         Assert.NotNull(projected);
         Assert.Equal(false, target.GetProperty("IsValid")!.GetValue(projected));
         Assert.Equal(denied.ErrorCode, target.GetProperty("ErrorCode")!.GetValue(projected));
         Assert.Equal(denied.ErrorMessage, target.GetProperty("ErrorMessage")!.GetValue(projected));
 
-        var chat = RegressionTestGeneratedProviderProjection.FromCandidate(candidate, RegressionTestBindings.ChatProviders);
+        var chat = RegressionTestGeneratedProviderProjection.FromBuild(RegressionTestBindings.ChatProviders);
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             chat.ProjectAsync(denied, target, receiver, CancellationToken.None).AsTask());
     }

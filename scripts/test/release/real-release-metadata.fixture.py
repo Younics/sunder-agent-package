@@ -28,15 +28,16 @@ def main(source, cli):
         output = Path(temporary).resolve()
         for package in family["packages"]:
             project = Path(package["projectPath"])
-            archive = source / project.parent / "bin/Debug/net10.0" / f"{project.stem}.{family['releaseVersion']}.sunderpkg"
+            archive = source / project.parent / "bin/Debug/net10.0" / f"{project.stem}.{package['version']}.sunderpkg"
             release.regular(archive)
-            expected_name = f"{package['packageId']}.{family['releaseVersion']}.sunderpkg"
+            expected_name = f"{package['packageId']}.{package['version']}.sunderpkg"
             os.link(archive, output / expected_name)
-        plan = release.family_plan(source, output, "https://hub.sunderapp.io/", "1" * 32)
+        plan = release.family_plan(source, output, "https://hub.sunderapp.io/")
         release.require(plan["order"][0] == "younics.ai.agent", "Real family owner/order differs")
         inspected = []
         for package_id in ("younics.ai.agent", "younics.ai.agent.provider.anthropic", "younics.ai.agent.tools.shell"):
-            archive = output / f"{package_id}.{family['releaseVersion']}.sunderpkg"
+            package_version = next(package["version"] for package in family["packages"] if package["packageId"] == package_id)
+            archive = output / f"{package_id}.{package_version}.sunderpkg"
             inspection = output / (package_id + "-api")
             subprocess.run(["dotnet", str(cli), "dev", "package", "validate", str(archive), "--api-output", str(inspection)], check=True)
             receipt = release.load(inspection / "inspection.json")
@@ -73,7 +74,7 @@ def local_handoff(source, handoff_path):
                     and set(rows) == {row["packageId"] for row in family["packages"]}, "Handoff must contain the exact current 15-package family")
     archives = Path(handoff["archiveRoot"])
     release.require({path.name for path in archives.glob("*.sunderpkg")} == {
-        row["packageId"] + "." + family["releaseVersion"] + ".sunderpkg" for row in family["packages"]}, "Unexpected local archive inventory")
+        row["packageId"] + "." + row["version"] + ".sunderpkg" for row in family["packages"]}, "Unexpected local archive inventory")
     before = release.locks(source)
     pinned = {path: release.file_sha(path) for path in (handoff_path, validation_path, inventory_path, source / "packages.json")}
 
@@ -86,7 +87,7 @@ def local_handoff(source, handoff_path):
         package_id, project = package["packageId"], Path(package["projectPath"])
         row, identity = rows[package_id], reviewed[package["key"]]
         release.require(identity["packageId"] == package_id and identity["projectPath"] == package["projectPath"], "Current package coordinates differ")
-        archive = archives / f"{package_id}.{family['releaseVersion']}.sunderpkg"
+        archive = archives / f"{package_id}.{package['version']}.sunderpkg"
         pin(archive, row["archiveSha256"])
         release.require(release.file_sha(archive) == pinned[archive], "Local archive changed after Core inspection")
         manifest, public, public_sha = release.archive_metadata(archive)
@@ -100,7 +101,7 @@ def local_handoff(source, handoff_path):
         release.require(release.file_sha(qualification_path) == pinned[qualification_path], "Qualified source-use evidence changed after handoff")
         qualification = release.load(qualification_path)
         frame = qualification["inputs"]
-        release.require(frame["packageId"] == package_id and frame["packageVersion"] == family["releaseVersion"]
+        release.require(frame["packageId"] == package_id and frame["packageVersion"] == package["version"]
                         and frame["project"] == project.relative_to("src").as_posix()
                         and frame["configuration"] == handoff["configuration"] and frame["runtimeIdentifier"] == handoff["rid"],
                         "Local source qualification coordinates differ")

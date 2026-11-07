@@ -1,7 +1,6 @@
+extern alias AgentTestProviders;
+
 using System.Reflection;
-using System.Runtime.Loader;
-using System.Security.Cryptography;
-using System.Text.Json;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Rpc.Public;
@@ -9,21 +8,15 @@ using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Sunder.Sdk.Services;
 using Sunder.Sdk.Worker;
-using Xunit;
 using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
 
 namespace Sunder.Package.Agent.Tests;
 
-// Loads an explicitly prepared imported-provider fixture. The fixture owns generated
+// Uses the ordinary project dependency. The fixture owns generated
 // registration/dispatch; this test-side bridge only invokes current typed fakes.
 internal static class RegressionTestGeneratedProviders
 {
-    private static readonly string[] FixtureSources =
-    [
-        "Chat", "ToolSource", "ExecutionTarget", "RuntimeCatalog", "Embedding", "SessionCleaner", "DurableLifecycle",
-        "PromptContext", "SystemPrompt", "Permission", "ProfileCapability", "SelectableCapability", "WorkspaceEditor",
-        "BehaviorLoop", "ChildRun", "ObservedTool", "WorkspaceResolver",
-    ];
+    internal static Assembly FixtureAssembly => typeof(AgentTestProviders::RegressionTestGeneratedProviders.Fixture).Assembly;
     internal static bool TryRegister(GeneratedServiceTestScope receiver, string contractId, object implementation,
         out SunderWorkerProviderRegistration registration)
     {
@@ -33,7 +26,7 @@ internal static class RegressionTestGeneratedProviders
                     type.FullName == typeof(AgentServices.IChatProviderService).FullName
                     || type.FullName == "Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Chat_Provider.IChatProviderService") ? implementation
                 : new RegressionTestChatProvider(AgentRoleBoundary.As<IAgentChatProvider>(implementation), receiver,
-                    RegressionTestGeneratedProviderProjection.FromCandidate(ResolveQualifiedCandidate(), contractId)),
+                    RegressionTestGeneratedProviderProjection.FromBuild(contractId)),
             RegressionTestBindings.ToolSources => implementation is RegressionTestToolProvider tool ? tool
                 : new RegressionTestToolProvider(AgentRoleBoundary.As<IAgentToolSource>(implementation)),
             RegressionTestBindings.ExecutionTargets => implementation is RegressionTestExecutionProvider target ? target
@@ -78,7 +71,7 @@ internal static class RegressionTestGeneratedProviders
             return false;
         }
 
-        var assembly = FixtureAssembly();
+        var assembly = FixtureAssembly;
         var typeName = contractId switch
         {
             RegressionTestBindings.ChatProviders => "RegressionTestGeneratedProviders.ChatProvider",
@@ -102,131 +95,14 @@ internal static class RegressionTestGeneratedProviders
         };
         var fixture = Activator.CreateInstance(assembly.GetType(typeName, throwOnError: true)!,
             new Func<string, Type, object?[], CancellationToken, object>(new FixtureBridge(provider, receiver,
-                RegressionTestGeneratedProviderProjection.FromCandidate(ResolveQualifiedCandidate(), contractId)).Invoke))!;
+                RegressionTestGeneratedProviderProjection.FromBuild(contractId)).Invoke))!;
         registration = receiver.Register(fixture, contractId);
         return true;
     }
 
-    internal static object CreatePreparedProvider(string family,
+    internal static object CreateProvider(string family,
         Func<string, Type, object?[], CancellationToken, object> invoke)
-    {
-        Assert.Contains(family, FixtureSources);
-        return Activator.CreateInstance(FixtureAssembly().GetType("RegressionTestGeneratedProviders." + family + "Provider", throwOnError: true)!, invoke)!;
-    }
-
-    private static Assembly FixtureAssembly()
-    {
-        ValidatePreparedInputs();
-        var configured = Environment.GetEnvironmentVariable("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_MODULE");
-        Assert.False(string.IsNullOrWhiteSpace(configured),
-            "Tests require the parent-prepared shared-provider fixture module; runtime fixture generation is forbidden.");
-        var path = Path.GetFullPath(configured!);
-        Assert.True(File.Exists(path), $"Prepared shared-provider fixture module does not exist: {path}");
-        var expectedSha = Environment.GetEnvironmentVariable("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_MODULE_SHA256");
-        Assert.False(string.IsNullOrWhiteSpace(expectedSha),
-            "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_MODULE_SHA256 is required for the prepared fixture module.");
-        using var stream = File.OpenRead(path);
-        Assert.Equal(expectedSha, Convert.ToHexStringLower(SHA256.HashData(stream)), ignoreCase: true);
-        return AssemblyLoadContext.Default.LoadFromAssemblyPath(path);
-    }
-
-    // Preparation is parent-owned. Tests validate its receipt instead of creating
-    // a fresh fixture, so changed sources can never silently reuse old bytes.
-    private static void ValidatePreparedInputs()
-    {
-        var manifest = RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_INPUT_MANIFEST");
-        VerifyHash(manifest, "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_INPUT_MANIFEST_SHA256");
-        using var document = JsonDocument.Parse(File.ReadAllBytes(manifest));
-        var root = document.RootElement;
-        AssertFields(root, "schemaVersion", "candidateSha256", "sdkSha256", "workerSdkSha256", "driverSha256",
-            "taskSha256", "diAbstractionsSha256", "moduleSha256", "receiptSha256", "seedLockSha256", "platformCatalogSha256", "fixtureSources", "commands");
-        Assert.Equal(2, root.GetProperty("schemaVersion").GetInt32());
-        var candidate = Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE_SHA256");
-        Assert.Equal(candidate, root.GetProperty("candidateSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(ResolveQualifiedCandidate()), root.GetProperty("candidateSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(typeof(SunderRpcOffsetDateTime).Assembly.Location), root.GetProperty("sdkSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(typeof(SunderWorker).Assembly.Location), root.GetProperty("workerSdkSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(typeof(Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute).Assembly.Location),
-            root.GetProperty("diAbstractionsSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_MODULE")), root.GetProperty("moduleSha256").GetString(), ignoreCase: true);
-        var task = RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_TASK");
-        VerifyHash(task, "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_TASK_SHA256");
-        Assert.Equal(Hash(task), root.GetProperty("taskSha256").GetString(), ignoreCase: true);
-        Assert.Equal(Hash(Path.Combine(Path.GetDirectoryName(task)!, "Sunder.Package.Build.Tests.dll")), root.GetProperty("driverSha256").GetString(), ignoreCase: true);
-        var sources = root.GetProperty("fixtureSources");
-        Assert.Equal(FixtureSources.Order(StringComparer.Ordinal), sources.EnumerateObject().Select(source => source.Name).Order(StringComparer.Ordinal));
-        var directory = Path.Combine(RegressionTestRpcDescriptors.RepositoryRoot, "tests/Sunder.Package.Agent.Tests/Fixtures");
-        foreach (var name in FixtureSources)
-            Assert.Equal(Hash(Path.Combine(directory, "RegressionTestGeneratedProviders." + name + ".cs.txt")),
-                sources.GetProperty(name).GetString(), ignoreCase: true);
-        var receipt = RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_RECEIPT");
-        VerifyHash(receipt, "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_RECEIPT_SHA256");
-        Assert.Equal(Hash(receipt), root.GetProperty("receiptSha256").GetString(), ignoreCase: true);
-        var seedLock = RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_SEED_LOCK");
-        VerifyHash(seedLock, "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_SEED_LOCK_SHA256");
-        Assert.Equal(Hash(seedLock), root.GetProperty("seedLockSha256").GetString(), ignoreCase: true);
-        var platformCatalog = RequiredPath("SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_PLATFORM_CATALOG");
-        VerifyHash(platformCatalog, "SUNDER_AGENT_SHARED_PROVIDER_FIXTURE_PLATFORM_CATALOG_SHA256");
-        Assert.Equal(Hash(platformCatalog), root.GetProperty("platformCatalogSha256").GetString(), ignoreCase: true);
-        var labels = new[] { "00-restore", "01-accept", "02-freeze", "03-add" }
-            .Concat(FixtureSources.Select((name, index) => $"{index + 4:00}-implement-{name}"))
-            .Append($"{FixtureSources.Length + 4:00}-build").ToArray();
-        var commands = root.GetProperty("commands").EnumerateArray().ToArray();
-        Assert.Equal(labels.Length, commands.Length);
-        for (var index = 0; index < commands.Length; index++)
-        {
-            var record = commands[index];
-            AssertFields(record, "label", "command", "exitCode", "elapsedSeconds");
-            Assert.Equal(labels[index], record.GetProperty("label").GetString());
-            Assert.Equal(0, record.GetProperty("exitCode").GetInt32());
-            var elapsed = record.GetProperty("elapsedSeconds").GetDouble();
-            Assert.True(double.IsFinite(elapsed) && elapsed >= 0);
-            var arguments = record.GetProperty("command").EnumerateArray().Select(value => value.GetString()).ToArray();
-            Assert.True(arguments.Length >= 2);
-            Assert.Equal("dotnet", arguments[0]);
-            Assert.All(arguments, argument => Assert.False(string.IsNullOrEmpty(argument)));
-        }
-    }
-
-    private static void AssertFields(JsonElement value, params string[] fields)
-        => Assert.Equal(fields.Order(StringComparer.Ordinal), value.EnumerateObject().Select(property => property.Name).Order(StringComparer.Ordinal));
-
-    private static string RequiredPath(string variable)
-    {
-        var value = Environment.GetEnvironmentVariable(variable);
-        Assert.False(string.IsNullOrWhiteSpace(value), $"{variable} is required for the prepared fixture.");
-        var path = Path.GetFullPath(value!);
-        Assert.True(File.Exists(path), $"Prepared fixture input does not exist: {path}");
-        return path;
-    }
-
-    private static void VerifyHash(string path, string variable)
-    {
-        var expected = Environment.GetEnvironmentVariable(variable);
-        Assert.False(string.IsNullOrWhiteSpace(expected), $"{variable} is required for the prepared fixture.");
-        Assert.Equal(expected, Hash(path), ignoreCase: true);
-    }
-
-    private static string Hash(string path)
-    {
-        using var stream = File.OpenRead(path);
-        return Convert.ToHexStringLower(SHA256.HashData(stream));
-    }
-
-    private static string ResolveQualifiedCandidate()
-    {
-        var configured = Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE");
-        Assert.False(string.IsNullOrWhiteSpace(configured),
-            "SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE is required for the shared generated-provider fixture lane.");
-        var candidate = Path.GetFullPath(configured!);
-        Assert.True(File.Exists(candidate), $"Qualified public fixture candidate does not exist: {candidate}");
-        var expectedSha = Environment.GetEnvironmentVariable("SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE_SHA256");
-        Assert.False(string.IsNullOrWhiteSpace(expectedSha),
-            "SUNDER_AGENT_PUBLIC_FIXTURE_CANDIDATE_SHA256 is required for the shared generated-provider fixture lane.");
-        using var stream = File.OpenRead(candidate);
-        Assert.Equal(expectedSha, Convert.ToHexStringLower(SHA256.HashData(stream)), ignoreCase: true);
-        return candidate;
-    }
+        => Activator.CreateInstance(FixtureAssembly.GetType("RegressionTestGeneratedProviders." + family + "Provider", throwOnError: true)!, invoke)!;
 
     private sealed class FixtureBridge(object implementation, GeneratedServiceTestScope receiver,
         RegressionTestGeneratedProviderProjection projection)

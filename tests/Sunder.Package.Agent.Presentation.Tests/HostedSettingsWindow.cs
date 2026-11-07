@@ -1,17 +1,24 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml.Styling;
 using Microsoft.Extensions.DependencyInjection;
+using System.Reflection;
+using Sunder.App.Bridge;
 using Sunder.App.Services;
 using Sunder.App.ViewModels;
 using Sunder.App.Views;
 using Sunder.Runtime.Contracts;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Avalonia;
+using Sunder.Sdk.Avalonia.Hosting;
 
 namespace Sunder.Package.Agent.Presentation.Tests;
 
 // Exercise the real host boundary as well as the package's own scrolling content.
 internal sealed class HostedSettingsWindow : IAsyncDisposable
 {
-    private readonly ServiceProvider _services;
+    private readonly Control? _view;
+    private readonly AppPackageViewRegistry _registry = new();
+    private IAppPackageActivationV1? _activation;
     private readonly PackageViewHostService _host;
     internal SettingsWindowViewModel Model { get; }
     internal SettingsWindow Window { get; }
@@ -19,12 +26,8 @@ internal sealed class HostedSettingsWindow : IAsyncDisposable
 
     internal HostedSettingsWindow(Control? view, string root, IReadOnlyList<PackageSettingsSchemaDescriptor>? schemas = null)
     {
-        var services = new ServiceCollection();
-        if (view is not null) services.AddSingleton(view);
-        _services = services.BuildServiceProvider();
-        var registry = new AppPackageViewRegistry();
-        if (view is not null) registry.RegisterSettingsView<Control>(PackageId, _services);
-        _host = new(registry, [], [_services], [], sessionFolder: null);
+        _view = view;
+        _host = new(_registry, [], [], [], sessionFolder: null);
         Model = new(new EmptySettingsClient(schemas ?? []), _host, new CliInstallationService(),
             runtimeResourcePolicySettingsService: new AppRuntimeResourcePolicySettingsService(Path.Combine(root, "ui-resource-policy.json")));
         Window = new() { DataContext = Model, MinWidth = 0, Width = 1294, Height = 800 };
@@ -34,6 +37,9 @@ internal sealed class HostedSettingsWindow : IAsyncDisposable
 
     internal async Task ShowAsync()
     {
+        if (_view is not null)
+            _activation = await AppPackageRuntime.CreateAsync(new SettingsModule(_view),
+                DispatchProxy.Create<IAppPackageHostV1, LayoutHost>(), new AppPackageContributionRegistry(_registry, PackageId));
         await Model.RefreshPackageSectionsAsync();
         Xunit.Assert.True(await Model.SelectPackageSettingsAsync(PackageId));
         Window.Show();
@@ -45,7 +51,20 @@ internal sealed class HostedSettingsWindow : IAsyncDisposable
         Window.CloseForShutdown();
         Model.Dispose();
         await _host.DisposeAsync();
-        await _services.DisposeAsync();
+        if (_activation is not null) await _activation.DisposeAsync();
+    }
+
+    private sealed class SettingsModule(Control view) : ISunderAppPackageModule
+    {
+        public void ConfigureAppServices(IServiceCollection services, IPackageContext context) => services.AddSingleton(view);
+        public void RegisterAppContributions(ISunderAppContributionRegistry registry, IServiceProvider services)
+            => ((IAvaloniaPackageContributionRegistry)registry).RegisterSettingsView<Control>();
+    }
+
+    public class LayoutHost : DispatchProxy
+    {
+        protected override object? Invoke(MethodInfo? method, object?[]? args)
+            => throw new NotSupportedException("The layout fixture cannot invoke host services: " + method?.Name);
     }
 
     private sealed class EmptySettingsClient(IReadOnlyList<PackageSettingsSchemaDescriptor> schemas) : IRuntimePackageSettingsClient

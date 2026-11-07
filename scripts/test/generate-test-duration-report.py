@@ -3,17 +3,18 @@
 import argparse
 import functools
 import getpass
-import hashlib
 import json
 import os
 import re
 import sys
 import tempfile
 import xml.etree.ElementTree as ElementTree
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 SKIP_ATTRIBUTE_NAMES = {
@@ -26,6 +27,7 @@ SKIP_ATTRIBUTE_NAMES = {
     "PlatformTheory",
     "UnixFact",
     "UnixTheory",
+    "UnprivilegedUnixTheory",
 }
 
 
@@ -60,8 +62,8 @@ def normalized_outcome(value: str) -> str:
 def project_name(storage: str | None, trx_path: Path) -> str:
     if storage:
         name = Path(storage.replace("\\", "/")).name
-        return name[:-4] if name.casefold().endswith(".dll") else name
-    return trx_path.stem
+        return (name[:-4] if name.casefold().endswith(".dll") else name).casefold()
+    return trx_path.stem.casefold()
 
 
 def timestamp(value: str | None) -> datetime | None:
@@ -76,12 +78,19 @@ def elapsed_milliseconds(start: datetime | None, finish: datetime | None) -> flo
 
 def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[str, object]]:
     document = ElementTree.parse(trx_path)
+    violations = []
+    summary = document.find("./{*}ResultSummary")
+    if summary is None or summary.get("outcome") not in {"Completed", "Passed", "Failed"}:
+        violations.append("TRX has no completed run summary")
     definitions: dict[str, tuple[str, str]] = {}
     for unit_test in document.findall(".//{*}UnitTest"):
         test_id = unit_test.get("id")
         method = unit_test.find(".//{*}TestMethod")
         if not test_id or method is None:
+            violations.append("TRX contains an incomplete test definition")
             continue
+        if test_id in definitions:
+            violations.append(f"TRX repeats test definition '{test_id}'")
         class_name = method.get("className", "")
         method_name = method.get("name", unit_test.get("name", ""))
         qualified_name = ".".join(part for part in (class_name, method_name) if part)
@@ -94,9 +103,17 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
     results: list[dict[str, object]] = []
     test_starts: list[datetime] = []
     test_finishes: list[datetime] = []
+    observed_ids, executions = set(), set()
     for result in document.findall(".//{*}UnitTestResult"):
         test_id = result.get("testId", "")
         fallback_name = result.get("testName", "<unknown>")
+        if test_id not in definitions:
+            violations.append(f"TRX result '{fallback_name}' has no definition")
+        observed_ids.add(test_id)
+        execution = result.get("executionId")
+        if not execution or execution in executions:
+            violations.append(f"TRX result '{fallback_name}' has a missing or repeated execution id")
+        executions.add(execution)
         qualified_name, project = definitions.get(
             test_id,
             (fallback_name, project_name(None, trx_path)),
@@ -111,6 +128,8 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
                 "fullyQualifiedName": qualified_name,
                 "outcome": outcome,
                 "skipReason": reason if outcome == "skipped" else None,
+                "message": reason if outcome == "failed" else None,
+                "stackTrace": result.findtext("./{*}Output/{*}ErrorInfo/{*}StackTrace") if outcome == "failed" else None,
                 "durationMilliseconds": duration_milliseconds(result.get("duration")),
                 "trx": relative_trx,
             }
@@ -119,6 +138,27 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
             test_starts.append(test_start)
         if (test_finish := timestamp(result.get("endTime"))) is not None:
             test_finishes.append(test_finish)
+
+    if not results:
+        violations.append("TRX contains zero results")
+    if missing := set(definitions) - observed_ids:
+        violations.append(f"TRX omitted results for {len(missing)} discovered definitions")
+    if summary is not None:
+        counters = summary.find("./{*}Counters")
+        expected = {"total": len(results), "executed": sum(row["outcome"] != "skipped" for row in results),
+                    "passed": sum(row["outcome"] == "passed" for row in results),
+                    "failed": sum(row["outcome"] == "failed" for row in results)}
+        expected.update(dict.fromkeys(("error", "timeout", "aborted", "passedButRunAborted", "inProgress", "pending", "disconnected"), 0))
+        if counters is None:
+            violations.append("TRX has no result counters")
+        else:
+            for name, count in expected.items():
+                value = counters.get(name)
+                if (value is None and name in {"total", "executed", "passed", "failed"}) or (value is not None and value != str(count)):
+                    violations.append(f"TRX counter {name}={value}, observed {count}")
+        run_errors = any(info.get("outcome") == "Error" for info in summary.findall(".//{*}RunInfo"))
+        if (summary.get("outcome") == "Failed" or run_errors) and not expected["failed"]:
+            violations.append("TRX run failed or aborted despite its completed cases having no failures")
 
     times = document.find("./{*}Times")
     run_start = timestamp(times.get("start")) if times is not None else None
@@ -131,6 +171,7 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
         "name": document.getroot().get("name", trx_path.stem),
         "project": projects[0] if len(projects) == 1 else None,
         "resultCount": len(results),
+        "violations": violations,
         "elapsedMilliseconds": elapsed_milliseconds(run_start, run_finish),
         "setupMilliseconds": elapsed_milliseconds(run_start, first_test_start),
         "testWindowMilliseconds": elapsed_milliseconds(first_test_start, last_test_finish),
@@ -141,7 +182,7 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate and optionally verify exact AI Agent TRX evidence."
+        description="Summarize adapter discovery, TRX completeness, failures and skip policy."
     )
     parser.add_argument("trx_directory", type=Path)
     parser.add_argument("--inventory", type=Path)
@@ -149,69 +190,53 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--platform", choices=("linux", "macos", "windows"))
     parser.add_argument("--lane")
     parser.add_argument("--exclude-category")
-    parser.add_argument("--expectations", type=Path)
+    parser.add_argument("--verify", action="store_true", help="Require fresh adapter discovery and current source skip policy.")
+    parser.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     parser.add_argument("--expected-skips", type=int)
-    parser.add_argument("--write-expectations", type=Path)
     return parser.parse_args()
 
 
-def identity_evidence(results: list[dict[str, object]]) -> list[dict[str, object]]:
-    identities: dict[str, set[tuple[str, str]]] = defaultdict(set)
-    for result in results:
-        identities[str(result["project"])].add(
-            (str(result["fullyQualifiedName"]), str(result["test"]))
-        )
-
-    evidence = []
-    for project, project_identities in sorted(identities.items()):
-        serialized = "".join(
-            f"{fully_qualified_name}\0{test}\n"
-            for fully_qualified_name, test in sorted(project_identities)
-        ).encode("utf-8")
-        evidence.append(
-            {
-                "project": project,
-                "identityCount": len(project_identities),
-                "identitySha256": hashlib.sha256(serialized).hexdigest(),
-            }
-        )
-    return evidence
+def read_records(root: Path, suffix: str, violations: list[str]):
+    for path in sorted(root.rglob(suffix)):
+        try:
+            record = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(record, dict):
+                raise ValueError("Expected a JSON object")
+            yield path, record
+        except (OSError, ValueError) as error:
+            violations.append(f"{path.relative_to(root)}: invalid evidence: {error}")
 
 
-def project_suite(evidence: list[dict[str, object]]) -> list[str]:
-    return [str(project["project"]) for project in evidence]
+def discovery_violations(root: Path, results: list[dict[str, object]], discoveries) -> list[str]:
+    """Each selection is checked against its own adapter discovery on this runner.
 
-
-def aggregate_identity_evidence(results: list[dict[str, object]]) -> dict[str, object]:
-    identities = sorted(
-        {
-            (
-                str(result["project"]),
-                str(result["fullyQualifiedName"]),
-                str(result["test"]),
-            )
-            for result in results
-        }
-    )
-    serialized = "".join(
-        f"{project}\0{fully_qualified_name}\0{test}\n"
-        for project, fully_qualified_name, test in identities
-    ).encode("utf-8")
-    return {
-        "identityCount": len(identities),
-        "identitySha256": hashlib.sha256(serialized).hexdigest(),
-    }
-
-
-def evidence_hash(evidence: list[dict[str, object]]) -> dict[str, object]:
-    serialized = "".join(
-        json.dumps(item, sort_keys=True, separators=(",", ":"), ensure_ascii=True) + "\n"
-        for item in evidence
-    ).encode("utf-8")
-    return {
-        "identityCount": len(evidence),
-        "identitySha256": hashlib.sha256(serialized).hexdigest(),
-    }
+    Deferred theories are discovered as a method; the adapter expands their rows
+    during execution. Pre-enumerated rows must each have their exact result.
+    """
+    violations, covered = [], set()
+    for path, discovery in discoveries:
+        project = discovery["project"].casefold()
+        report = (path.parent / discovery["report"]).relative_to(root).as_posix()
+        expected = discovery["tests"]
+        observed = [row for row in results if row["trx"] == report and row["project"] == project]
+        covered.add((project, report))
+        names = Counter(row["test"] for row in observed)
+        selected = Counter(expected)
+        methods = {row["fullyQualifiedName"] for row in observed}
+        for name, count in selected.items():
+            if names[name] < count and name not in methods:
+                violations.append(f"{report}: discovery omitted result '{name}'")
+        for row in observed:
+            if row["test"] not in expected and row["fullyQualifiedName"] not in expected:
+                violations.append(f"{report}: result was not discovered: '{row['test']}'")
+            elif names[row["test"]] > selected[row["test"]] and row["fullyQualifiedName"] not in expected:
+                violations.append(f"{report}: result repeated beyond discovery: '{row['test']}'")
+        if expected and not observed:
+            violations.append(f"{report}: selected project produced no results")
+    for row in results:
+        if (row["project"], row["trx"]) not in covered:
+            violations.append(f"{row['trx']}: missing adapter discovery for {row['project']}")
+    return sorted(set(violations))
 
 
 def project_owners(inventory: dict[str, object]) -> dict[str, str]:
@@ -225,55 +250,130 @@ def decode_csharp_string(value: str) -> str:
     return json.loads(value)
 
 
+def csharp_tokens(source: str) -> list[str]:
+    """Keep literals atomic so fixture text cannot introduce declaration scopes."""
+    def comment_end(start):
+        if source.startswith("//", start) or source[start] == "#":
+            end = source.find("\n", start)
+            return len(source) if end < 0 else end
+        if source.startswith("/*", start):
+            end = source.find("*/", start + 2)
+            return len(source) if end < 0 else end + 2
+
+    def interpolation_end(start, width=1):
+        depth, index = 1, start + 1
+        while index < len(source):
+            end = comment_end(index) or literal_end(index)
+            if end is not None:
+                index = end
+                continue
+            if source[index] == "{": depth += 1
+            if source[index] == "}":
+                depth -= 1
+                if depth == 0: return index + width
+            index += 1
+        return len(source)
+
+    def literal_end(start):
+        quote = start
+        while quote < len(source) and source[quote] in "$@": quote += 1
+        prefix = source[start:quote]
+        if quote == len(source) or (source[quote] != '"' and (prefix or source[quote] != "'")):
+            return None
+        delimiter, verbatim, interpolated = source[quote], "@" in prefix, "$" in prefix
+        if delimiter == '"' and not verbatim and source.startswith('"""', quote):
+            width = 3
+            while quote + width < len(source) and source[quote + width] == '"': width += 1
+            index = quote + width
+            while index < len(source):
+                if source.startswith('"' * width, index): return index + width
+                if interpolated and source.startswith("{" * len(prefix), index):
+                    while source[index + 1:index + 2] == "{": index += 1
+                    index = interpolation_end(index, len(prefix))
+                else: index += 1
+            return len(source)
+        index = quote + 1
+        while index < len(source):
+            if not verbatim and source[index] == "\\": index += 2; continue
+            if source[index] == delimiter:
+                if verbatim and source[index + 1:index + 2] == '"': index += 2; continue
+                return index + 1
+            if interpolated and source[index] == "{":
+                index = index + 2 if source[index + 1:index + 2] == "{" else interpolation_end(index)
+            else: index += 1
+        return len(source)
+
+    tokens, index = [], 0
+    identifier = re.compile(r"@?[^\W\d]\w*")
+    while index < len(source):
+        if source[index].isspace(): index += 1; continue
+        end = comment_end(index)
+        if end is not None: index = end; continue
+        match = identifier.match(source, index)
+        end = literal_end(index) or (match.end() if match else index + 1)
+        tokens.append(source[index:end])
+        index = end
+    return tokens
+
+
 def method_attribute_blocks(path: Path) -> list[tuple[str, str, list[str]]]:
-    source = path.read_text(encoding="utf-8")
-    namespace_match = re.search(r"\bnamespace\s+([A-Za-z_][\w.]*)\s*[;{]", source)
-    namespace = namespace_match.group(1) if namespace_match else ""
-    lines = source.splitlines()
-    attributes: list[str] = []
-    results: list[tuple[str, str, list[str]]] = []
-    current_class = ""
-    index = 0
-    while index < len(lines):
-        line = lines[index]
-        stripped = line.strip()
-        class_match = re.search(
-            r"\b(?:public|internal|private|protected)\s+(?:(?:sealed|static|partial|abstract)\s+)*class\s+([A-Za-z_]\w*)",
-            stripped,
-        )
-        if class_match is not None:
-            current_class = class_match.group(1)
-        if stripped.startswith("["):
-            block = [stripped]
-            balance = stripped.count("[") - stripped.count("]")
-            index += 1
-            while balance > 0 and index < len(lines):
-                continuation = lines[index].strip()
-                block.append(continuation)
-                balance += continuation.count("[") - continuation.count("]")
-                index += 1
-            attributes.append(" ".join(block))
-            continue
-        if not attributes:
-            index += 1
-            continue
-        if not stripped or stripped.startswith("//"):
-            index += 1
-            continue
-        declaration = stripped
-        cursor = index + 1
-        while "(" not in declaration and cursor < len(lines):
-            declaration += " " + lines[cursor].strip()
-            cursor += 1
-        method_match = re.search(
-            r"\b(?:public|internal)\s+(?:(?:static|async|virtual|sealed|override)\s+)*"
-            r"[A-Za-z_][\w.<>,?\[\]\s]*\s+([A-Za-z_]\w*)\s*\(",
-            declaration,
-        )
-        if method_match is not None and current_class:
-            qualified_class = f"{namespace}.{current_class}" if namespace else current_class
-            results.append((qualified_class, method_match.group(1), attributes.copy()))
-        attributes.clear()
+    tokens = csharp_tokens(path.read_text(encoding="utf-8"))
+    scopes, results = [], []
+    file_namespace, index = "", 0
+
+    def balanced_end(start, opening, closing):
+        depth = 0
+        for end in range(start, len(tokens)):
+            if tokens[end] == opening: depth += 1
+            if tokens[end] == closing:
+                depth -= 1
+                if depth == 0: return end + 1
+        return len(tokens)
+
+    while index < len(tokens):
+        token = tokens[index]
+        parent = scopes[-1][0] if scopes else None
+        if token == "}":
+            if scopes: scopes.pop()
+        elif token == "{": scopes.append(("block", ""))
+        elif token == "namespace" and parent in (None, "namespace"):
+            end = index + 1
+            while end < len(tokens) and tokens[end] not in (";", "{"): end += 1
+            if end < len(tokens):
+                name = "".join(tokens[index + 1:end])
+                if tokens[end] == ";": file_namespace = name
+                else: scopes.append(("namespace", name))
+            index = end
+        elif token in ("class", "struct", "interface", "record") and parent in (None, "namespace", "type"):
+            name_index = index + 1
+            if token == "record" and tokens[name_index] in ("class", "struct"): name_index += 1
+            name, end = tokens[name_index].lstrip("@"), name_index + 1
+            while end < len(tokens) and tokens[end] not in ("{", ";"):
+                if tokens[end] in ("(", "["): end = balanced_end(end, tokens[end], ")" if tokens[end] == "(" else "]")
+                else: end += 1
+            if end < len(tokens) and tokens[end] == "{": scopes.append(("type", name))
+            index = end
+        elif token == "[" and parent == "type":
+            attributes, end = [], index
+            while end < len(tokens) and tokens[end] == "[":
+                close = balanced_end(end, "[", "]") - 1
+                start = end = end + 1
+                while end <= close:
+                    if tokens[end] == "(": end = balanced_end(end, "(", ")")
+                    elif tokens[end] == "[": end = balanced_end(end, "[", "]")
+                    elif end == close or tokens[end] == ",":
+                        attributes.append("[" + "".join(tokens[start:end]) + "]")
+                        start = end = end + 1
+                    else: end += 1
+            method = end
+            while method < len(tokens) and tokens[method] not in ("(", "{", ";", "=", "}"): method += 1
+            header = tokens[end:method]
+            if (method < len(tokens) and tokens[method] == "(" and "public" in header
+                    and not any(kind in header for kind in ("class", "struct", "interface", "record"))):
+                namespace = ".".join(filter(None, [file_namespace, *(name for kind, name in scopes if kind == "namespace")]))
+                class_name = "+".join(name for kind, name in scopes if kind == "type")
+                results.append((".".join(filter(None, [namespace, class_name])), header[-1].lstrip("@"), attributes))
+            index = end - 1
         index += 1
     return results
 
@@ -301,13 +401,12 @@ def trait_value(attributes: list[str], name: str) -> str | None:
 
 
 def skip_policy(
-    expectations_path: Path,
+    repository_root: Path,
     inventory: dict[str, object],
     mode: str,
     lane: str | None,
     exclude_category: str | None,
 ) -> list[dict[str, object]]:
-    repository_root = expectations_path.resolve().parent.parent
     policies: list[dict[str, object]] = []
     for project in inventory["projects"]:
         if mode not in project["modes"]:
@@ -316,7 +415,7 @@ def skip_policy(
             continue
         project_path = repository_root / str(project["path"])
         project_name_value = project_path.stem.casefold()
-        for source_path in sorted(project_path.parent.rglob("*.cs")):
+        for source_path in sorted(repository_root / source for source in project["sources"]):
             if any(part in {"bin", "obj"} for part in source_path.parts):
                 continue
             for class_name, method_name, attributes in method_attribute_blocks(source_path):
@@ -397,33 +496,41 @@ def filesystem_capability_available(capability: str) -> bool:
 
 
 def expected_skip(
-    policy: dict[str, object], platform: str | None = None
+    policy: dict[str, object], platform: str | None = None, environment=None
 ) -> dict[str, object] | None:
     platform = platform or current_platform()
+    environment = os.environ if environment is None else environment
     attribute = str(policy["attribute"])
     target = policy["platform"]
     reason = str(policy["reason"])
     should_skip = False
     if attribute in {"UnixFact", "UnixTheory"}:
         should_skip = platform == "windows"
+    elif attribute == "UnprivilegedUnixTheory":
+        if platform == "windows":
+            should_skip = True
+            reason = "This permission-denied fixture requires Unix."
+        elif os.geteuid() == 0 and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1":
+            should_skip = True
+            reason = "A real permission-denied fixture requires a non-root Unix user."
     elif attribute == "DockerIntegrationFact":
         if platform == "windows":
             should_skip = True
             reason = "The Docker bind-mount integration test requires a Unix host."
         else:
             should_skip = (
-                os.environ.get("SUNDER_DOCKER_INTEGRATION") != "1"
-                and os.environ.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+                environment.get("SUNDER_DOCKER_INTEGRATION") != "1"
+                and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
             )
     elif attribute == "PackageArtifactsFact":
         should_skip = (
-            not os.environ.get("SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "").strip()
-            and os.environ.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+            not environment.get("SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "").strip()
+            and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
         )
     elif attribute == "NativeReleaseFact":
         should_skip = (
-            not os.environ.get("SUNDER_AGENT_NATIVE_ARCHIVE_DIR", "").strip()
-            and os.environ.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+            not environment.get("SUNDER_AGENT_NATIVE_ARCHIVE_DIR", "").strip()
+            and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
         )
     elif attribute in {"PlatformFact", "PlatformTheory"}:
         should_skip = {
@@ -454,7 +561,7 @@ def expected_skip(
         not should_skip
         and capability is not None
         and not filesystem_capability_available(str(capability))
-        and os.environ.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+        and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
     ):
         should_skip = True
         reason = f"{reason} Required filesystem capability '{capability}' is unavailable."
@@ -469,32 +576,6 @@ def expected_skip(
     }
 
 
-def write_expectations(
-    path: Path,
-    mode: str,
-    platform: str,
-    evidence: list[dict[str, object]],
-    policy_evidence: list[dict[str, object]],
-) -> None:
-    document = (
-        json.loads(path.read_text(encoding="utf-8"))
-        if path.exists()
-        else {"schemaVersion": 3, "modes": {}}
-    )
-    document["schemaVersion"] = 3
-    document["modes"][mode] = {
-        "projectSuite": project_suite(evidence),
-        "canonicalIdentity": {
-            "platform": platform,
-            "projects": evidence,
-        },
-        "skipPolicy": evidence_hash(policy_evidence),
-    }
-    path.write_text(
-        json.dumps(document, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
-    )
-
-
 def main() -> int:
     arguments = parse_arguments()
     platform = arguments.platform or current_platform()
@@ -507,28 +588,44 @@ def main() -> int:
     if arguments.exclude_category is not None and arguments.mode is None:
         print("--exclude-category requires --mode.", file=sys.stderr)
         return 2
-    if arguments.expectations is not None and arguments.mode is None:
-        print("--expectations requires --mode.", file=sys.stderr)
-        return 2
-    if arguments.write_expectations is not None and arguments.mode is None:
-        print("--write-expectations requires --mode.", file=sys.stderr)
-        return 2
-    if arguments.write_expectations is not None and arguments.platform is None:
-        print("--write-expectations requires an explicit --platform owner.", file=sys.stderr)
+    if arguments.verify and (arguments.inventory is None or arguments.mode is None):
+        print("--verify requires --inventory and --mode.", file=sys.stderr)
         return 2
 
     root = arguments.trx_directory.resolve()
     trx_paths = sorted(root.rglob("*.trx"))
-    if not trx_paths:
-        print(f"No TRX files were found under {root}.", file=sys.stderr)
-        return 1
-
     results: list[dict[str, object]] = []
     runs: list[dict[str, object]] = []
+    evidence_violations = [] if trx_paths else [f"No TRX files were found under {root}."]
     for path in trx_paths:
-        trx_results, run = read_trx(root, path)
+        try:
+            trx_results, run = read_trx(root, path)
+        except (ElementTree.ParseError, ValueError) as error:
+            evidence_violations.append(f"{path.relative_to(root)}: {error}")
+            continue
         results.extend(trx_results)
         runs.append(run)
+        evidence_violations.extend(f"{run['trx']}: {error}" for error in run["violations"])
+    commands = []
+    for path, record in read_records(root, "*.command.json", evidence_violations):
+        record["record"] = path.relative_to(root).as_posix()
+        commands.append(record)
+        if record.get("exitCode") != 0:
+            evidence_violations.append(f"{path.relative_to(root)}: command did not succeed (exitCode={record.get('exitCode')})")
+    discoveries = []
+    if arguments.verify:
+        for path, record in read_records(root, "*.discovery.json", evidence_violations):
+            try:
+                if (record["schemaVersion"] != 1 or not isinstance(record["project"], str) or not record["project"]
+                        or not isinstance(record["tests"], list) or not all(isinstance(name, str) and name for name in record["tests"])
+                        or not isinstance(record["report"], str) or not record["report"]
+                        or not isinstance(record.get("prerequisites", {}), dict)):
+                    raise ValueError("Invalid discovery selection")
+                (path.parent / record["report"]).resolve().relative_to(root)
+                discoveries.append((path, record))
+            except (KeyError, ValueError) as error:
+                evidence_violations.append(f"{path.relative_to(root)}: invalid discovery: {error}")
+        evidence_violations.extend(discovery_violations(root, results, discoveries))
     results.sort(
         key=lambda result: (
             str(result["project"]),
@@ -545,7 +642,7 @@ def main() -> int:
     repeated_tests = []
     flake_candidates = []
     for (project, test), observations in sorted(repetitions.items()):
-        if len(observations) < 2:
+        if len({row["trx"] for row in observations}) < 2:
             continue
         outcomes = sorted({str(observation["outcome"]) for observation in observations})
         repeated = {
@@ -562,15 +659,13 @@ def main() -> int:
     for result in results:
         outcome_counts[str(result["outcome"])] += 1
 
-    full_results = [
-        result for result in results if str(result["trx"]).startswith("full/")
-    ]
-    primary_results = full_results or results
+    # Source, required-input and artifact lanes are disjoint parts of one suite.
+    # Stress repetitions live in their own report directory.
+    primary_results = results
     primary_outcome_counts: dict[str, int] = defaultdict(int)
     for result in primary_results:
         primary_outcome_counts[str(result["outcome"])] += 1
-    identities = identity_evidence(primary_results)
-    evidence_violations: list[str] = []
+    observed_projects = sorted({result["project"] for result in primary_results})
     inventory: dict[str, object] | None = None
     owners: dict[str, str] = {}
     if arguments.inventory is not None:
@@ -585,7 +680,6 @@ def main() -> int:
                 or arguments.lane in project.get("lanes", [])
             )
         )
-        observed_projects = sorted(item["project"] for item in identities)
         if observed_projects != expected_projects:
             evidence_violations.append(
                 "project identities differ: "
@@ -639,89 +733,38 @@ def main() -> int:
 
     policy_evidence: list[dict[str, object]] = []
     expected_skips: list[dict[str, object]] = []
-    policy_path = arguments.expectations or arguments.write_expectations
-    if policy_path is not None:
-        if inventory is None:
-            evidence_violations.append("skip-policy verification requires --inventory")
-        else:
-            policy_evidence = skip_policy(
-                policy_path,
-                inventory,
-                arguments.mode,
-                arguments.lane,
-                arguments.exclude_category,
-            )
-            expected_skips = [
-                expected
-                for policy in policy_evidence
-                if (expected := expected_skip(policy, platform)) is not None
-            ]
-            expected_skips.sort(
-                key=lambda result: tuple(str(result[key]) for key in (
-                    "project", "owner", "fullyQualifiedName", "test", "reason"
-                ))
-            )
-
-    canonical_platform: str | None = None
-    canonical_identity_enforced = False
-    if arguments.expectations is not None:
-        expectations = json.loads(arguments.expectations.read_text(encoding="utf-8"))
-        if expectations.get("schemaVersion") != 3:
-            evidence_violations.append(
-                f"test evidence expectations must use schemaVersion 3: {arguments.expectations}"
-            )
-        mode_expectations = expectations.get("modes", {}).get(arguments.mode, {})
-        observed_project_suite = project_suite(identities)
-        if mode_expectations.get("projectSuite") != observed_project_suite:
-            evidence_violations.append(
-                f"{arguments.mode} {platform} project suite differs from {arguments.expectations}: "
-                + f"expected {mode_expectations.get('projectSuite')}, observed {observed_project_suite}"
-            )
-        canonical_identity = mode_expectations.get("canonicalIdentity", {})
-        canonical_platform = canonical_identity.get("platform")
-        canonical_identity_enforced = platform == canonical_platform
-        if canonical_identity_enforced and canonical_identity.get("projects") != identities:
-            evidence_violations.append(
-                f"{arguments.mode} canonical {platform} test identity hashes differ from {arguments.expectations}"
-            )
-        if mode_expectations.get("skipPolicy") != evidence_hash(policy_evidence):
-            evidence_violations.append(
-                f"{arguments.mode} skip-policy identity differs from {arguments.expectations}"
-            )
+    if arguments.verify:
+        policy_evidence = skip_policy(arguments.repository_root, inventory, arguments.mode,
+                                      arguments.lane, arguments.exclude_category)
+        for _, discovery in discoveries:
+            for policy in policy_evidence:
+                if policy["project"] != discovery["project"].casefold():
+                    continue
+                identity = policy["fullyQualifiedName"]
+                if not any(name == identity or name.startswith(identity + "(") for name in discovery["tests"]):
+                    continue
+                if (expected := expected_skip(policy, platform, discovery.get("prerequisites", {}))) is not None:
+                    expected_skips.append(expected)
+        expected_skips.sort(key=lambda result: tuple(str(result[key]) for key in (
+            "project", "owner", "fullyQualifiedName", "test", "reason")))
         if expected_skips != skipped_tests:
             evidence_violations.append(
                 f"{arguments.mode} skips differ by exact identity, reason, or owner: "
                 + f"expected {expected_skips}, observed {skipped_tests}"
             )
-        if primary_outcome_counts["failed"] != 0:
-            evidence_violations.append(
-                f"{arguments.mode} {platform} evidence must have zero primary-run failures"
-            )
-        unexpected_outcomes = sum(
-            count
-            for outcome, count in primary_outcome_counts.items()
-            if outcome not in {"passed", "failed", "skipped"}
-        )
-        if unexpected_outcomes != 0:
-            evidence_violations.append(
-                f"{arguments.mode} {platform} evidence has {unexpected_outcomes} unexpected primary-run outcomes"
-            )
+        if repeated_tests:
+            evidence_violations.append("Primary suite contains repeated test identities across its selections")
+    if primary_outcome_counts["failed"] != 0:
+        evidence_violations.append("Evidence must have zero primary-run failures")
+    unexpected_outcomes = sum(count for outcome, count in primary_outcome_counts.items()
+                              if outcome not in {"passed", "failed", "skipped"})
+    if unexpected_outcomes:
+        evidence_violations.append(f"Evidence has {unexpected_outcomes} unexpected primary-run outcomes")
 
     if arguments.expected_skips is not None and len(skipped_tests) != arguments.expected_skips:
         evidence_violations.append(
             f"expected exactly {arguments.expected_skips} primary-run skips, observed {len(skipped_tests)}"
         )
-
-    if arguments.write_expectations is not None:
-        write_expectations(
-            arguments.write_expectations,
-            arguments.mode,
-            platform,
-            identities,
-            policy_evidence,
-        )
-        canonical_platform = platform
-        canonical_identity_enforced = True
 
     slowest = sorted(
         results,
@@ -732,7 +775,7 @@ def main() -> int:
         ),
     )[:25]
     report = {
-        "schemaVersion": 4,
+        "schemaVersion": 5,
         "selection": {
             "mode": arguments.mode,
             "lane": arguments.lane,
@@ -741,6 +784,8 @@ def main() -> int:
         "trxFiles": [path.relative_to(root).as_posix() for path in trx_paths],
         "projects": sorted({str(result["project"]) for result in results}),
         "runs": runs,
+        "commands": commands,
+        "failures": [row for row in results if row["outcome"] == "failed"],
         "summary": {
             "total": len(results),
             "passed": outcome_counts["passed"],
@@ -767,14 +812,9 @@ def main() -> int:
                 if outcome not in {"passed", "failed", "skipped"}
             ),
         },
-        "identityEvidence": identities,
-        "aggregateIdentityEvidence": aggregate_identity_evidence(primary_results),
-        "projectSuiteEvidence": project_suite(identities),
-        "canonicalIdentityExpectation": {
-            "platform": canonical_platform,
-            "enforced": canonical_identity_enforced,
-        },
-        "skipPolicyEvidence": evidence_hash(policy_evidence),
+        "projectSuiteEvidence": observed_projects,
+        "discoveryVerified": arguments.verify,
+        "skipPolicyEvidence": policy_evidence,
         "expectedSkipEvidence": expected_skips,
         "skippedTests": skipped_tests,
         "evidenceViolations": evidence_violations,

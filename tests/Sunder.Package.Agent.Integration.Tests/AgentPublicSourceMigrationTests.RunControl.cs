@@ -169,7 +169,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal("agent.run.control", registration.ProviderId);
         Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var endpoint = (await rpc.DiscoverAsync(descriptor.ContractId)).Providers.Single(value => value.ProviderId == registration.ProviderId).Endpoint;
         var client = Assert.Single((await receiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers).Service;
         var scope = await rpc.CreateCallScopeAsync();

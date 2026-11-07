@@ -299,7 +299,8 @@ public sealed class AgentNativeReleaseSmokeTests(
             var packageId = manifest.RootElement.GetProperty("id").GetString();
             Assert.False(string.IsNullOrWhiteSpace(packageId));
             var runtimeTargets = manifest.RootElement.GetProperty("targets").EnumerateArray()
-                .Where(static target => target.GetProperty("role").GetString() == "runtime")
+                .Where(target => target.GetProperty("role").GetString() == "runtime"
+                    && target.GetProperty("rid").GetString() == rid)
                 .ToArray();
             var target = Assert.Single(runtimeTargets);
             Assert.Equal(rid, target.GetProperty("rid").GetString());

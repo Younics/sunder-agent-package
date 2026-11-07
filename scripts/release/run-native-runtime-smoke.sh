@@ -61,7 +61,26 @@ SUNDER_AGENT_BUILDER_DOTNET_PATH="$(native_path "$builder_dotnet_path")" \
     "${injection_properties[@]}" \
     --filter "FullyQualifiedName=$test_fqn"
 
-metric_count="$(find "$metrics_directory" -maxdepth 1 -name '*.json' -type f | wc -l | tr -d '[:space:]')"
-[[ "$metric_count" == 15 ]] \
-  || { printf 'Expected Core metrics for exactly 15 native workers, found %s.\n' "$metric_count" >&2; exit 1; }
-printf 'Exercised exactly 15 native workers through the real Runtime Host release lifecycle.\n'
+python3 -B - "$script_dir" "$metrics_directory" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, sys.argv[1])
+from family_policy import FAMILY_PACKAGE_IDS
+from native_release_inputs import json_file, require
+from agent_release import version
+metrics = [json_file(path)["measurement"] for path in Path(sys.argv[2]).glob('*.json')]
+require(len(metrics) == len(FAMILY_PACKAGE_IDS), 'Missing/extra native family metrics')
+observed = []
+for item in metrics:
+    matches = []
+    for key in FAMILY_PACKAGE_IDS:
+        if not item['archive'].startswith(key + '.') or not item['archive'].endswith('.sunderpkg'): continue
+        try: version(item['archive'][len(key) + 1:-len('.sunderpkg')])
+        except ValueError: continue
+        matches.append(key)
+    require(len(matches) == 1, 'Unknown/ambiguous native metric archive')
+    observed.extend(matches)
+require(set(observed) == set(FAMILY_PACKAGE_IDS), 'Native metrics must cover every reviewed package exactly once')
+require(len({item['rid'] for item in metrics}) == 1, 'Mixed native metric platforms')
+print(f'Exercised all {len(metrics)} native family workers through the real Runtime Host release lifecycle.')
+PY

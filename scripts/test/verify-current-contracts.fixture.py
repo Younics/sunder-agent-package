@@ -38,6 +38,25 @@ class CurrentContractsTests(unittest.TestCase):
         self.assertEqual(self.contract["contractId"], value["contractId"])
         self.assertEqual(before, self.expected)
 
+    def test_private_version_projection_preserves_reviewed_body_abi_and_public_records(self):
+        reviewed = verifier.release.load(ROOT / verifier.RECORDS)
+        before = copy.deepcopy(reviewed)
+        package_id = "younics.ai.agent.provider.openai"
+        self.expected["packageVersions"][package_id] = "2.3.1-rc.2+Build.7"
+        projected = verifier.project_reviewed_records(reviewed, self.expected)
+        self.assertEqual(before, reviewed)
+        for old, new in zip(reviewed["contracts"], projected["contracts"]):
+            if old["packageId"] != package_id or old["exposure"] != "package":
+                self.assertEqual(old, new)
+                continue
+            self.assertEqual(old["abiSha256"], new["abiSha256"])
+            self.assertNotEqual(old["descriptorSha256"], new["descriptorSha256"])
+            self.assertEqual(verifier.release.sha(new["canonicalDescriptor"].encode()), new["descriptorSha256"])
+            actual, expected = json.loads(new["canonicalDescriptor"]), json.loads(old["canonicalDescriptor"])
+            self.assertEqual("2.3.1-rc.2+Build.7", actual.pop("version"))
+            expected.pop("version")
+            self.assertEqual(expected, actual)
+
     def test_coordinated_method_and_hash_replacement_cannot_rebase_expectations(self):
         methods = self.descriptor["services"][self.contract["service"]]["methods"]
         methods["unexpected"] = methods.pop("describe")

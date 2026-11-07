@@ -18,7 +18,7 @@ public sealed partial class BuilderProjectDriver
         RequireEmptyDestination(destination);
         if (request.Kind == BuilderProjectKind.Dotnet) _ = BuilderTemplateCache.ValidateBasePath(options);
         await using var selection = await toolchains.SelectAsync(request.Kind, null, request.Installation, new ToolchainStatusProgress(reporter), token).ConfigureAwait(false);
-        reporter.Update(new() { Installation = selection.Installation, Message = "Scaffolding the coordinated Sunder UI template." });
+        reporter.Update(new() { Installation = selection.Installation, Message = "Scaffolding the selected Sunder UI template." });
         var staging = Path.Combine(parent, ".sunder-builder-create-" + Guid.NewGuid().ToString("N"));
         var payload = Path.Combine(staging, "project");
         BuilderToolchainFiles.CreatePrivateDirectory(staging);
@@ -92,10 +92,10 @@ public sealed partial class BuilderProjectDriver
             if (!cache.IsReady())
             {
                 reporter.Update(new() { Message = "Preparing the Sunder .NET project template." });
-                var package = options.DotnetTemplatePackagePath ?? "Sunder.Package.Templates@" + options.CoordinatedPackageVersion;
+                var package = options.DotnetTemplatePackagePath ?? "Sunder.Package.Templates@" + options.DotnetTemplateVersion;
                 await RunAsync(selection, ["new", "install", package, "--force"], workingDirectory, reporter, token, cliHome: cache.HomePath).ConfigureAwait(false);
                 var listing = await RunAsync(selection, ["new", "list", "sunder-package"], workingDirectory, reporter, token, cliHome: cache.HomePath).ConfigureAwait(false);
-                if (!listing.StandardOutput.Contains("sunder-package", StringComparison.Ordinal)) throw new InvalidDataException("The coordinated package did not install the Sunder template.");
+                if (!listing.StandardOutput.Contains("sunder-package", StringComparison.Ordinal)) throw new InvalidDataException("The selected package did not install the Sunder template.");
                 await cache.MarkReadyAsync(token).ConfigureAwait(false);
             }
             return cache;
@@ -109,21 +109,21 @@ public sealed partial class BuilderProjectDriver
         var cache = Path.Combine(options.CacheRootPath, "node-creators", identity);
         using var cacheLock = await LockCacheAsync(cache, token).ConfigureAwait(false);
         var installed = Path.Combine(cache, "content");
-        var cli = Path.Combine(installed, "node_modules", "create-sunder-package", "dist", "cli.js");
+        var cli = Path.Combine(installed, "node_modules", "@younics", "create-sunder-package", "dist", "cli.js");
         if (await IsCreatorAsync(installed, token).ConfigureAwait(false)) return cli;
         var staging = Path.Combine(cache, "stage-" + Guid.NewGuid().ToString("N"));
         BuilderToolchainFiles.CreatePrivateDirectory(staging);
         try
         {
-            var sdk = options.NodePackageOverrides.TryGetValue("@sunder/sdk", out var localSdk) ? "file:" + localSdk.Replace('\\', '/') : options.CoordinatedPackageVersion;
-            var creator = options.NodeCreatorPackagePath is { } localCreator ? "file:" + localCreator.Replace('\\', '/') : options.CoordinatedPackageVersion;
+            var sdk = options.NodePackageOverrides.TryGetValue("@younics/sunder-sdk", out var localSdk) ? "file:" + localSdk.Replace('\\', '/') : options.NodeSdkVersion;
+            var creator = options.NodeCreatorPackagePath is { } localCreator ? "file:" + localCreator.Replace('\\', '/') : options.NodeCreatorVersion;
             await BuilderToolchainFiles.WriteJsonAsync(Path.Combine(staging, "package.json"), new
             {
                 name = "sunder-builder-creator-cache", version = "1.0.0", @private = true,
-                dependencies = new Dictionary<string, string> { ["create-sunder-package"] = creator, ["@sunder/sdk"] = sdk },
+                dependencies = new Dictionary<string, string> { ["@younics/create-sunder-package"] = creator, ["@younics/sunder-sdk"] = sdk },
             }, token).ConfigureAwait(false);
             await RunAsync(selection, ["install", "--no-audit", "--no-fund", "--ignore-scripts"], staging, reporter, token, npm: true).ConfigureAwait(false);
-            if (!await IsCreatorAsync(staging, token).ConfigureAwait(false)) throw new InvalidDataException("The creator cache does not contain the exact coordinated creator and SDK versions.");
+            if (!await IsCreatorAsync(staging, token).ConfigureAwait(false)) throw new InvalidDataException("The creator cache does not contain the exact selected creator and SDK versions.");
             token.ThrowIfCancellationRequested();
             BuilderToolchainFiles.DeleteTree(installed);
             Directory.Move(staging, installed);
@@ -136,15 +136,15 @@ public sealed partial class BuilderProjectDriver
     {
         try
         {
-            foreach (var name in new[] { "create-sunder-package", "@sunder/sdk" })
+            foreach (var (name, version) in new[] { ("@younics/create-sunder-package", options.NodeCreatorVersion), ("@younics/sunder-sdk", options.NodeSdkVersion) })
             {
                 var path = Path.Combine(directory, "node_modules", name, "package.json");
                 BuilderProjectSource.EnsureSafePath(directory, path);
                 if (!File.Exists(path) || new FileInfo(path).Length > 64 * 1024) return false;
                 using var json = BuilderProjectSource.Json(await File.ReadAllBytesAsync(path, token).ConfigureAwait(false));
-                if (json.RootElement.GetProperty("name").GetString() != name || json.RootElement.GetProperty("version").GetString() != options.CoordinatedPackageVersion) return false;
+                if (json.RootElement.GetProperty("name").GetString() != name || json.RootElement.GetProperty("version").GetString() != version) return false;
             }
-            var cli = Path.Combine(directory, "node_modules", "create-sunder-package", "dist", "cli.js");
+            var cli = Path.Combine(directory, "node_modules", "@younics", "create-sunder-package", "dist", "cli.js");
             BuilderProjectSource.EnsureSafePath(directory, cli);
             return File.Exists(cli);
         }
@@ -159,7 +159,7 @@ public sealed partial class BuilderProjectDriver
         foreach (var (name, file) in options.NodePackageOverrides)
         {
             if (!File.Exists(file)) throw new FileNotFoundException("Local Node package override is missing.", file);
-            var section = name == "@sunder/sdk" ? "dependencies" : "devDependencies";
+            var section = name == "@younics/sunder-sdk" ? "dependencies" : "devDependencies";
             json[section]!.AsObject()[name] = "file:" + file.Replace('\\', '/');
         }
         await File.WriteAllTextAsync(path, json.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n", token).ConfigureAwait(false);
@@ -167,14 +167,14 @@ public sealed partial class BuilderProjectDriver
 
     private async Task<string> CacheIdentityAsync(string? package, CancellationToken token)
     {
-        var values = new List<string> { options.CoordinatedPackageVersion, options.NodeRegistryUri ?? "" };
+        var values = new List<string> { options.NodeCreatorVersion, options.NodeSdkVersion, options.NodeRegistryUri ?? "" };
         foreach (var path in new[] { package }.Concat(options.NodePackageOverrides.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => item.Value)).Where(path => path is not null))
         {
             if (!File.Exists(path) || new FileInfo(path).Length > 512L * 1024 * 1024) throw new IOException("Local tooling packages must be existing archives smaller than 512 MiB.");
             await using var stream = File.OpenRead(path!);
             values.Add(Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false)));
         }
-        return options.CoordinatedPackageVersion + "-" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', values))))[..16];
+        return options.NodeCreatorVersion + "-" + Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(string.Join('\n', values))))[..16];
     }
 
     private async Task<IDisposable> LockCacheAsync(string directory, CancellationToken token)

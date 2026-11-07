@@ -34,7 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Provider.Anthropic.Protocol");
             Assert.DoesNotContain(presentation.GetReferencedAssemblies(), reference => reference.Name is "Sunder.Package.Agent.Provider.Anthropic" or "Sunder.Sdk.Worker" or "Anthropic");
             using var package = RegressionTestPackageScope.Create();
-            var context = new TestPackageContext("younics.ai.agent.provider.anthropic", package.RootPath, version: "2.0.0", storage: package.Context.Storage);
+            var context = new TestPackageContext("younics.ai.agent.provider.anthropic", package.RootPath, version: CurrentContractInventory.PackageVersionFor("younics.ai.agent.provider.anthropic"), storage: package.Context.Storage);
             using var handler = new AnthropicArtifactHttp();
             var factoryKeys = new List<string>();
             Func<string, IAnthropicClient> factory = key =>
@@ -56,7 +56,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             {
                 var descriptor = provider.ProviderId == "anthropic.credentials" ? credentialDescriptor : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
-                state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, "2.0.0");
+                state.Add(context.PackageId, descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }
             await using var appServices = CreateGeneratedApp(presentation, context, rpc);
             var credentials = appServices.GetRequiredService(presentation.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Provider_Anthropic_Services.ICredentialSettingsService", true)!);
@@ -171,7 +171,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             var credentialRegistration = registrations["anthropic.credentials"];
             await state.RetireAsync(credentialRegistration.Handler).WaitAsync(TimeSpan.FromSeconds(5));
             Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Credential("GetStatusAsync", [CancellationToken.None]))).Error.Code);
-            state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, "2.0.0");
+            state.Add(context.PackageId, credentialDescriptor, credentialRegistration.Handler, credentialRegistration.Handler, Noop.Instance, credentialRegistration.ProviderId, context.Version);
             Assert.NotEqual(oldCredentials, Assert.Single((await rpc.DiscoverAsync(credentialDescriptor.ContractId)).Providers).Endpoint);
             Assert.False(await Credential("GetStatusAsync", [CancellationToken.None]));
             Assert.Equal(handler.Responses, handler.DisposedResponses);

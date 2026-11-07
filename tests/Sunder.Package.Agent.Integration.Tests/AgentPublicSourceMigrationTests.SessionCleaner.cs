@@ -95,7 +95,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             Assert.Equal(expectedId, registration.ProviderId);
             Assert.Equal(descriptor.Sha256, registration.DescriptorSha256);
             Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
-            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+            state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         }
     }
 
@@ -108,7 +108,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         await using var receiver = new GeneratedServiceTestScope(rpc);
         using var sources = new RegressionTestSourceProviders();
         var registration = sources.Create(descriptor.ContractId, implementation, receiver);
-        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, "2.0.0");
+        state.Add("younics.ai.agent", descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent"));
         var client = Assert.Single((await receiver.Providers<AgentServices.ISessionCleanerService>().ListAsync()).Providers).Service;
         using var cancellation = new CancellationTokenSource();
         var invocation = Task.Run(() => client.DeleteSessionAsync(Guid.NewGuid(), cancellation.Token).AsTask());

@@ -2,6 +2,7 @@ using System.Formats.Tar;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Sunder.Sdk.Packaging;
 
 namespace Sunder.Package.Agent.Builder;
 
@@ -12,7 +13,7 @@ internal static class BuilderLocalNpm
     private const string OwnerName = ".sunder-builder-local-npm.json";
     private const int MaximumStateBytes = 16 * 1024;
     private const long MaximumArchiveBytes = 64L * 1024 * 1024;
-    private static readonly string[] PackageIds = ["@sunder/sdk", "@sunder/package-tool", "create-sunder-package"];
+    private static readonly string[] PackageIds = ["@younics/sunder-sdk", "@younics/sunder-package-tool", "@younics/create-sunder-package"];
 
     internal static async Task<BuilderProjectDriverOptions> LoadOptionsAsync(BuilderProjectDriverOptions options, CancellationToken token = default)
     {
@@ -38,25 +39,14 @@ internal static class BuilderLocalNpm
         }
         catch (Exception error) when (error is IOException or InvalidDataException or ArgumentException or JsonException or UnauthorizedAccessException or InvalidOperationException or KeyNotFoundException)
         {
-            throw new InvalidDataException($"Builder {pointer}: {error.Message} The configured local npm feed must contain all three coordinated Sunder packages; public Sunder fallback is disabled.", error);
+            throw new InvalidDataException($"Builder {pointer}: {error.Message} The configured local npm feed must contain all three Sunder packages; public Sunder fallback is disabled.", error);
         }
     }
 
     private static async Task<BuilderProjectDriverOptions> RetainAsync(BuilderProjectDriverOptions options, string root, string source, CancellationToken token)
     {
-        var version = options.CoordinatedPackageVersion;
-        if (version.Length > 100 || !System.Text.RegularExpressions.Regex.IsMatch(version,
-            @"\A[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
-            throw new InvalidDataException("An exact coordinated Sunder package version is required.");
-        var files = Directory.EnumerateFileSystemEntries(source).Take(4097).ToArray();
-        if (files.Length > 4096) throw new InvalidDataException("Local npm feed exceeds 4,096 top-level entries.");
-        var selected = PackageIds.Select(id =>
-        {
-            var name = id.TrimStart('@').Replace('/', '-') + "-" + version + ".tgz";
-            var matches = files.Where(path => string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (matches.Length != 1) throw new InvalidDataException($"Local npm feed requires exactly one flat {name} archive (found {matches.Length}).");
-            return (Id: id, Name: name, Path: matches[0]);
-        }).ToArray();
+        var selected = BuilderLocalPackageFeed.Select(source, PackageIds, npm: true);
+        var versions = selected.ToDictionary(item => item.Id, item => item.Version, StringComparer.Ordinal);
         var container = Path.Combine(root, "local-npm");
         CheckPath(container);
         BuilderToolchainFiles.CreatePrivateDirectory(container);
@@ -69,9 +59,9 @@ internal static class BuilderLocalNpm
             {
                 var destination = Path.Combine(stage, item.Name);
                 packages.Add(await CopyAsync(item.Path, destination, token).ConfigureAwait(false));
-                await ValidateAsync(destination, item.Id, version, token).ConfigureAwait(false);
+                await ValidateAsync(destination, item.Id, item.Version, versions["@younics/sunder-sdk"], token).ConfigureAwait(false);
             }
-            var owner = JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 1, feedPath = source, version, packages });
+            var owner = JsonSerializer.SerializeToUtf8Bytes(new { schemaVersion = 1, feedPath = source, versions, packages });
             var retained = Path.Combine(container, Convert.ToHexStringLower(SHA256.HashData(owner)));
             await using (var output = OpenNew(Path.Combine(stage, OwnerName)))
             {
@@ -96,6 +86,8 @@ internal static class BuilderLocalNpm
             return options with
             {
                 NodeCreatorPackagePath = Path.Combine(retained, selected[2].Name),
+                NodeCreatorVersion = versions["@younics/create-sunder-package"],
+                NodeSdkVersion = versions["@younics/sunder-sdk"],
                 NodePackageOverrides = new Dictionary<string, string>
                 {
                     [PackageIds[0]] = Path.Combine(retained, selected[0].Name),
@@ -109,7 +101,7 @@ internal static class BuilderLocalNpm
         }
     }
 
-    private static async Task ValidateAsync(string path, string id, string version, CancellationToken token)
+    private static async Task ValidateAsync(string path, string id, string version, string sdkVersion, CancellationToken token)
     {
         await using var input = OpenRead(path);
         await using var gzip = new GZipStream(input, CompressionMode.Decompress);
@@ -140,18 +132,16 @@ internal static class BuilderLocalNpm
             throw new InvalidDataException($"Local npm package identity must be exactly {id}@{version}.");
         var required = id switch
         {
-            "@sunder/sdk" => new[] { "dist/index.js", "dist/index.d.ts", "dist/generated.js", "dist/browser.js", "dist/react.js" },
-            "@sunder/package-tool" => ["dist/cli.js", "dist/index.js", "dist/index.d.ts"],
+            "@younics/sunder-sdk" => new[] { "dist/index.js", "dist/index.d.ts", "dist/generated.js", "dist/browser.js", "dist/react.js" },
+            "@younics/sunder-package-tool" => ["dist/cli.js", "dist/index.js", "dist/index.d.ts"],
             _ => ["dist/cli.js", "template/package.json", "template-react-node/package.json"],
         };
         if (required.Any(name => !entries.Contains("package/" + name))) throw new InvalidDataException($"{id} is missing a required package artifact.");
-        if (id != "@sunder/sdk")
+        if (id != "@younics/sunder-sdk")
         {
-            var constraint = value.GetProperty("dependencies").GetProperty("@sunder/sdk").GetString();
-            if (!Version.TryParse(version.Split('-')[0], out var parsed) || parsed.Minor == int.MaxValue)
-                throw new InvalidDataException("The coordinated npm version is outside the supported version range.");
-            if (constraint != version && constraint != $">={parsed.Major}.{parsed.Minor}.0 <{parsed.Major}.{parsed.Minor + 1}.0")
-                throw new InvalidDataException($"{id} must depend on the coordinated local Sunder SDK.");
+            var constraint = value.GetProperty("dependencies").GetProperty("@younics/sunder-sdk").GetString();
+            if (!PackageVersionRange.IsSatisfiedBy(sdkVersion, constraint ?? ""))
+                throw new InvalidDataException($"{id} must admit the selected local Sunder SDK version.");
         }
     }
 

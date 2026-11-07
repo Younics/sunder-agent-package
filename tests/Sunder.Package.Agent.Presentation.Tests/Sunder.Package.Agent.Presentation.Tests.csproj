@@ -14,6 +14,9 @@
     <SunderTestSourceMode>true</SunderTestSourceMode>
     <SunderTestPackageMode>true</SunderTestPackageMode>
     <SunderTestSourceOnlyTests>Sunder.Package.Agent.Presentation.Tests.CrossRepositoryCandidatePreparationTests.SelectedAgentChat_RecoversWhenCandidateOwnerProviderBecomesLeaseReady</SunderTestSourceOnlyTests>
+    <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.BuilderJobCompositionTests.RealQueueCancellationWhileWaitingForBuilderGateReturnsConfirmedNoDispatch;Sunder.Package.Agent.Presentation.Tests.BuilderJobCompositionTests.FailedJobThenQueuedSuccessorSettlesWithItsOwnJournalAndDispatcherAuthority</SunderTestSourceOnlyTests>
+    <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.GeneratedSettingsLayoutTests.RealPackageSchemasUseSpacedSectionsInlineHelpAndEdgeToEdgeScrollingWithoutReplacingDrafts;Sunder.Package.Agent.Presentation.Tests.SettingsLayoutTests.HostedSettingsKeepGuttersInsideScrollingContentAtEveryPaneWidth;Sunder.Package.Agent.Presentation.Tests.ProviderSettingsRenderedTests.ProviderSettings_ResizeWithoutOverflowOrReplacingCredentialDraft</SunderTestSourceOnlyTests>
+    <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.NativeViewportLayoutTests.AppNativeViewport_RadiusOnlyChangeInvalidatesArrangementAndReparentingUsesTheNewShell;Sunder.Package.Agent.Presentation.Tests.NativeViewportLayoutTests.AppNativeViewport_NormalizesAllCornerRadiiTogetherWithoutBlankingOrUnsafeHalfSizeClamping</SunderTestSourceOnlyTests>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,6 +26,8 @@
     <PackageReference Include="Avalonia.Headless.XUnit" />
     <PackageReference Include="Avalonia.Themes.Fluent" />
     <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="LiveMarkdown.Avalonia" />
+    <PackageReference Include="Markdig" />
     <PackageReference Include="Microsoft.Data.Sqlite" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit.v3.mtp-off" />
@@ -94,7 +99,10 @@
   </ItemGroup>
 
   <ItemGroup Condition="'$(SunderUseSourceSdk)' != 'true'">
+    <!-- These assertions exercise the actual Core shell implementation. -->
     <Compile Remove="CrossRepositoryCandidatePreparationTests.cs" />
+    <Compile Remove="BuilderJobCompositionTests.cs;GeneratedSettingsLayoutTests.cs;NativeViewportLayoutTests.cs" />
+    <Compile Remove="HostedSettingsWindow.cs;SettingsLayoutTests.Hosted.cs;ProviderSettingsRenderedTests.Hosted.cs" />
   </ItemGroup>
 
   <ItemGroup>
