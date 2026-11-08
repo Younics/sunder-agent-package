@@ -39,7 +39,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain("Sunder.Package.Agent.OwnerProtocol", File.ReadAllText(Path.Combine(appOutput, "Sunder.Package.Agent.App.deps.json")), StringComparison.Ordinal);
             Assert.False(File.Exists(Path.Combine(appOutput, "Sunder.Package.Agent.Protocol.dll")));
             Assert.DoesNotContain("Sunder.Package.Agent.Protocol", File.ReadAllText(Path.Combine(appOutput, "Sunder.Package.Agent.App.deps.json")), StringComparison.Ordinal);
-            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(worker), "authoring-receipt.v1.json")));
+            using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(worker, "obj/Debug/net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier, "sunder-rpc/authoring-receipt.v1.json")));
             var descriptors = receipt.RootElement.GetProperty("contracts").EnumerateArray().ToDictionary(
                 contract => contract.GetProperty("contractId").GetString()!,
                 contract => SunderRpcContractDescriptor.Parse(Encoding.UTF8.GetBytes(contract.GetProperty("canonicalDescriptor").GetString()!)));

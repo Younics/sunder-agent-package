@@ -39,11 +39,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var paths = new List<string>
         {
             Path.Combine(source, "sunder-contracts.lock.json"), Path.Combine(source, "sunder-contracts.owned.json"),
-            Path.Combine(source, "bin", CanonicalPackageRoles.Configuration, "net10.0/sunder-targets", rid, "role-inputs.v1.json"),
-            Path.Combine(source, "bin", CanonicalPackageRoles.Configuration, "net10.0/sunder-targets", rid, "sunder-dev/manifest/sunder-package.json"),
-            Path.Combine(CanonicalPackageRoles.Analysis(source), "authoring-receipt.v1.json"),
-            Path.Combine(CanonicalPackageRoles.Output(source, "worker"), name + ".dll"),
-            Path.Combine(CanonicalPackageRoles.Output(source, "app"), name + ".App.dll"),
+            Path.Combine(source, "bin/Debug/net10.0/sunder-targets", rid, "role-inputs.v1.json"),
+            Path.Combine(source, "bin/Debug/net10.0/sunder-targets", rid, "sunder-dev/manifest/sunder-package.json"),
+            Path.Combine(source, "obj/Debug/net10.0/sunder-analysis", rid, "sunder-rpc/authoring-receipt.v1.json"),
+            Path.Combine(source, "bin/Debug/net10.0/sunder-roles/worker", rid, name + ".dll"),
+            Path.Combine(source, "bin/Debug/net10.0/sunder-roles/app", rid, name + ".App.dll"),
         };
         if (selectedLock is not null) paths.Add(selectedLock);
         return paths.ToDictionary(path => path, path => File.Exists(path)

@@ -23,7 +23,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var compiler = Path.Combine(Path.GetDirectoryName(driver)!, "Sunder.Package.Build.dll");
         Assert.True(File.Exists(compiler), "The qualified fixture compiler must already be built beside its test task.");
         var identity = string.Join('\n', new[] { archive, driver, compiler, typeof(ISunderRpcClient).Assembly.Location, typeof(SunderWorker).Assembly.Location }
-            .Select(path => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))))) + "\n" + CanonicalPackageRoles.Configuration + "\n" + string.Join('\n', source);
+            .Select(path => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))))) + "\n" + string.Join('\n', source);
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         var directory = Path.Combine(root, "ControlledProviders-" + hash);
         return ControlledProviderBuilds.GetOrAdd(directory, _ => new(() => BuildAsync(), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
@@ -59,7 +59,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await Run(directory, "build", "Imported.csproj", "--no-restore", "-p:BuildProjectReferences=false");
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json")));
             VerifyStrictReferenceMetadata(directory);
-            return Path.Combine(directory, "bin", CanonicalPackageRoles.Configuration, "net10.0/ControlledNaturalProviders.dll");
+            return Path.Combine(directory, "bin/Debug/net10.0/ControlledNaturalProviders.dll");
         }
     }
 
@@ -77,7 +77,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             new XAttribute("IntermediateOutputPath", "$(IntermediateOutputPath)"),
             new XAttribute("AssemblyName", "$(AssemblyName)"), new XAttribute("ProjectIdentity", "Imported.csproj"),
             new XAttribute("PackageId", "example.agent.controlled"), new XAttribute("PackageVersion", "2.0.0"),
-            new XAttribute("Configuration", "$(Configuration)"), new XAttribute("TargetFramework", "net10.0"),
+            new XAttribute("Configuration", "Debug"), new XAttribute("TargetFramework", "net10.0"),
             new XAttribute("OutputType", "Library"), new XAttribute("GeneratePackageRoles", "true"),
             new XAttribute("ContractCacheRoot", cache), new XAttribute("SourceFiles", "@(_Source)"),
             new XAttribute("ReferencePaths", "@(ReferencePath)"),
@@ -92,7 +92,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var source = File.ReadAllText(Path.Combine(directory, "ControlledStrictReferenceService.cs"));
         Assert.Contains("required ServiceReference<IExecutionTargetService> Target", source, StringComparison.Ordinal);
         Assert.DoesNotContain("SunderOptionalServiceReference", source, StringComparison.Ordinal);
-        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "obj", CanonicalPackageRoles.Configuration, "net10.0/sunder-rpc/authoring-receipt.v1.json")));
+        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(directory, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
         var strict = Assert.Single(receipt.RootElement.GetProperty("contracts").EnumerateArray(),
             contract => contract.GetProperty("contractId").GetString() == "example.agent.controlled.strict.reference");
         var projection = strict.GetProperty("modelProjection");

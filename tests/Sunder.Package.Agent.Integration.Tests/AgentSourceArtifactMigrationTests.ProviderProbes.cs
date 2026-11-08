@@ -43,7 +43,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         if (controlledComposition) WriteControlledWorkerEntry(worker, directory);
         var references = new[]
         {
-            Path.Combine(output ?? Path.Combine(worker, "bin", CanonicalPackageRoles.Configuration, "net10.0", RuntimeInformation.RuntimeIdentifier), runtime.GetName().Name + ".dll"),
+            Path.Combine(output ?? Path.Combine(worker, "bin/Debug/net10.0", RuntimeInformation.RuntimeIdentifier), runtime.GetName().Name + ".dll"),
             typeof(ISunderRpcClient).Assembly.Location,
         }.Concat(extraReferences ?? []).GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).Select(group => group.First()).ToArray();
         assemblyName ??= runtime.GetName().Name + ".SemanticProbes";
@@ -55,7 +55,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             """);
         await Run(directory, "restore", "Probe.csproj", "--disable-parallel");
         await Run(directory, "build", "Probe.csproj", "--no-restore");
-        using var bytes = File.OpenRead(Path.Combine(directory, "bin", CanonicalPackageRoles.Configuration, "net10.0", assemblyName + ".dll"));
+        using var bytes = File.OpenRead(Path.Combine(directory, "bin/Debug/net10.0", assemblyName + ".dll"));
         var probes = AssemblyLoadContext.GetLoadContext(runtime)!.LoadFromStream(bytes);
         Assert.DoesNotContain(probes.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Protocol");
         return probes;

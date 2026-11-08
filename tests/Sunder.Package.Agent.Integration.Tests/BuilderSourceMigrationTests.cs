@@ -36,27 +36,11 @@ public sealed partial class BuilderSourceMigrationTests
     // SDK commands must retain the build host even when VSTest uses a newer CLR.
     internal static string DotnetBuildHost => Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host ? host : "dotnet";
 
-    internal static string CoreBuildTaskAssembly
-    {
-        get
-        {
-            var prepared = Environment.GetEnvironmentVariable("SunderPackageBuildTaskAssembly");
-            var path = Path.GetFullPath(string.IsNullOrWhiteSpace(prepared)
-                ? Path.Combine(FindRepository(), "../sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/bin",
-                    CanonicalPackageRoles.Configuration, "net10.0/Sunder.Package.Build.dll")
-                : prepared);
-            Assert.True(File.Exists(path), "Prepare the selected Core build tooling before this required-input probe: " + path);
-            return path;
-        }
-    }
-
     internal static async Task Run(string directory, TimeSpan timeLimit, params string[] arguments)
     {
         var start = new ProcessStartInfo(DotnetBuildHost) { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        start.ArgumentList.Add(arguments[0]);
-        start.ArgumentList.Add("-p:Configuration=" + CanonicalPackageRoles.Configuration);
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
         start.ArgumentList.Add("-v:minimal");
-        foreach (var argument in arguments.Skip(1)) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start.");
         using var timeout = new CancellationTokenSource(timeLimit);
         var output = process.StandardOutput.ReadToEndAsync();

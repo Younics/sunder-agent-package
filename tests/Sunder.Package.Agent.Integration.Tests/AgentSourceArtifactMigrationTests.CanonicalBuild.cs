@@ -128,11 +128,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 RedirectStandardError = true,
             };
             foreach (var argument in new[] { command, project }.Concat(arguments).Concat([
-                "-p:Configuration=" + CanonicalPackageRoles.Configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
+                "-p:Configuration=Debug", "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
                 "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
                 "-p:SunderContractCacheRoot=" + cache, "-nodeReuse:false", "-nologo"]))
                 start.ArgumentList.Add(argument);
-            var task = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
+            var task = Path.GetFullPath(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
+                "../sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/bin/Debug/net10.0/Sunder.Package.Build.dll"));
             var stamp = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(task)));
             start.ArgumentList.Add("-p:SunderPackageBuildTaskSourceIsImmutable=true");
             start.ArgumentList.Add("-p:SunderPackageBuildTaskAssembly=" + task);
@@ -186,10 +187,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         internal void CopyOutputs()
         {
-            CopyDirectory(Path.Combine(source, "bin", CanonicalPackageRoles.Configuration, "net10.0"),
-                Path.Combine(fixture, "bin", CanonicalPackageRoles.Configuration, "net10.0"));
-            CopyDirectory(Path.Combine(source, "obj", CanonicalPackageRoles.Configuration, "net10.0/sunder-analysis"),
-                Path.Combine(fixture, "obj", CanonicalPackageRoles.Configuration, "net10.0/sunder-analysis"));
+            CopyDirectory(Path.Combine(source, "bin/Debug/net10.0"), Path.Combine(fixture, "bin/Debug/net10.0"));
+            CopyDirectory(Path.Combine(source, "obj/Debug/net10.0/sunder-analysis"), Path.Combine(fixture, "obj/Debug/net10.0/sunder-analysis"));
             foreach (var (file, bytes) in evidence)
                 if (bytes is not null)
                     File.WriteAllBytes(Path.Combine(fixture, file), file == "sunder-contracts.lock.json" ? _fixtureLock ?? bytes : bytes);

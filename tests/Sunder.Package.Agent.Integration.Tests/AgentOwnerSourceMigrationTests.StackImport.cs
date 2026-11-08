@@ -58,10 +58,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var baselinePath = Path.Combine(projectRoot, "sunder-contracts.owned.json");
             var locked = File.ReadAllBytes(lockPath);
             var baseline = File.ReadAllBytes(baselinePath);
-            var taskAssembly = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
+            var taskAssembly = Path.Combine(core, "languages/csharp/dotnet/packages/Sunder.Package.Build/bin/Debug/net10.0/Sunder.Package.Build.dll");
             var common = new[]
             {
-                "-p:Configuration=" + CanonicalPackageRoles.Configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
+                "-p:Configuration=Debug", "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
                 "-p:SunderContractCacheRoot=" + cache, "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
                 "-p:SunderSdkProject=" + Sdk("Sunder.Sdk"), "-p:SunderSdkWorkerProject=" + Sdk("Sunder.Sdk.Worker"),
                 "-p:SunderSdkAvaloniaProject=" + Sdk("Sunder.Sdk.Avalonia"), "-p:SunderSdkStacksProject=" + Sdk("Sunder.Sdk.Stacks"),
@@ -75,7 +75,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             await Command("restore", ["--disable-parallel", "--no-dependencies"]);
             await Command("msbuild", ["-t:RestoreSunderContracts", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
             await Command("build", ["--no-restore"]);
-            var generatedRoot = CanonicalPackageRoles.Analysis(projectRoot);
+            var generatedRoot = Path.Combine(projectRoot, "obj/Debug/net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier, "sunder-rpc");
             var generated = Snapshot();
             var cachedCatalog = Path.Combine(cache, "platform-catalogs", platform.GetProperty("selectedAuthorityContentIdentity").GetString() + ".json");
             var original = File.ReadAllBytes(cachedCatalog);

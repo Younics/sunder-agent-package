@@ -24,7 +24,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var baseline = CanonicalPackageRoles.ReadOwnedBaseline(worker);
         Assert.DoesNotContain(Directory.EnumerateFiles(SingleProjectRoleOutput(worker, "app"), "*", SearchOption.AllDirectories),
             file => Path.GetFileName(file).Contains("sqlite", StringComparison.OrdinalIgnoreCase));
-        using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(CanonicalPackageRoles.Analysis(worker), "package-role-plan.v1.json"))))
+        using (var plan = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(worker, "obj/Debug/net10.0/sunder-analysis", RuntimeInformation.RuntimeIdentifier,
+            "sunder-rpc/package-role-plan.v1.json"))))
         {
             Assert.True(plan.RootElement.GetProperty("hasApp").GetBoolean());
             var services = plan.RootElement.GetProperty("composition").GetProperty("worker").EnumerateArray().ToArray();

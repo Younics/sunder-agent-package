@@ -12,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var repository = BuilderSourceMigrationTests.FindRepository();
         var core = Path.GetFullPath(Path.Combine(repository, "..", "sunder-core"));
-        var configuration = CanonicalPackageRoles.Configuration;
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
         var driver = Path.Combine(core, "languages/csharp/dotnet/tests/Sunder.Package.Build.Tests/bin", configuration, "net10.0/Sunder.Package.Build.Tests.dll");
         Assert.True(File.Exists(driver), "Build Core Package.Build.Tests before the required artifact source lane.");
         var root = Directory.CreateTempSubdirectory("sunder-agent-source-artifact-").FullName;
@@ -41,7 +41,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(before, File.ReadAllBytes(archive));
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
             Assert.Equal(owned, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json")));
-            Assert.True(Directory.Exists(Path.Combine(worker, "bin", configuration, "net10.0/sunder-dev")));
+            Assert.True(Directory.Exists(Path.Combine(worker, "bin/Debug/net10.0/sunder-dev")));
             RetainArtifactEvidence(root);
             completed = true;
         }
@@ -119,7 +119,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         Assert.Contains(archive.Entries, entry => entry.FullName.Contains("sqlite", StringComparison.OrdinalIgnoreCase) && entry.FullName.EndsWith(OperatingSystem.IsWindows() ? ".dll" : OperatingSystem.IsMacOS() ? ".dylib" : ".so", StringComparison.Ordinal));
         Assert.DoesNotContain(archive.Entries, entry => entry.FullName.EndsWith("/Sunder.Package.Build.dll", StringComparison.Ordinal));
-        // Ordinary App composition includes its own managed symbols;
+        // Ordinary Debug App composition includes its own managed symbols;
         // Worker publication strips symbols from every runtime payload.
         Assert.DoesNotContain(archive.Entries, entry => entry.FullName.StartsWith("payload/runtime/", StringComparison.Ordinal)
             && (entry.FullName.EndsWith(".pdb", StringComparison.Ordinal) || entry.FullName.EndsWith(".mdb", StringComparison.Ordinal)));
