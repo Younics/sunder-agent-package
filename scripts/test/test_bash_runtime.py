@@ -40,13 +40,14 @@ class BashRuntimeTests(unittest.TestCase):
                  self.assertRaisesRegex(ValueError, bash.VARIABLE):
                 bash.executable()
 
-    def test_windows_probe_rejects_wsl_and_non_msys_bash(self):
+    def test_windows_probe_rejects_wsl_and_accepts_native_git_bash_variants(self):
         for status, stdout in ((1, "Windows Subsystem for Linux has no installed distributions.\n"), (0, "5.2.0\nlinux-gnu\n")):
             with self.subTest(stdout=stdout), patch.object(bash.subprocess, "run", return_value=subprocess.CompletedProcess([], status, stdout, "probe stderr")):
-                with self.assertRaisesRegex(ValueError, "Git Bash.*stdout=.*stderr="):
+                with self.assertRaisesRegex(ValueError, "native Windows Bash.*stdout=.*stderr="):
                     bash.verify("fixture-bash", True)
-        with patch.object(bash.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "5.2.0\nmsys\n", "")):
-            bash.verify("fixture-bash", True)
+        for operating_system in ("msys", "cygwin"):
+            with self.subTest(operating_system=operating_system), patch.object(bash.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "5.3.15\n" + operating_system + "\n", "")):
+                bash.verify("fixture-bash-" + operating_system, True)
 
     def test_real_nested_process_preserves_binding_paths_arguments_and_failure(self):
         executable = bash.executable()

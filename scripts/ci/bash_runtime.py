@@ -15,8 +15,8 @@ def verify(path, windows):
     result = subprocess.run([path, "--noprofile", "--norc", "-c", 'printf "%s\\n" "$BASH_VERSION" "$OSTYPE"'],
                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
     lines = result.stdout.splitlines()
-    if result.returncode or len(lines) != 2 or not lines[0] or (windows and lines[1] != "msys"):
-        raise ValueError(f"Expected {'Git Bash (msys)' if windows else 'Bash'} at {path}; "
+    if result.returncode or len(lines) != 2 or not lines[0] or (windows and lines[1] not in ("msys", "cygwin")):
+        raise ValueError(f"Expected {'native Windows Bash (msys/cygwin)' if windows else 'Bash'} at {path}; "
                          f"exit={result.returncode}, stdout={result.stdout!r}, stderr={result.stderr!r}")
 
 

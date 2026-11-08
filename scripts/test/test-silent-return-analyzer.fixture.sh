@@ -16,7 +16,7 @@ fi
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/sunder-silent-return.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
 analyzer_project="$repository_root/tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj"
-if [[ "$OSTYPE" == msys ]]; then
+if [[ "$OSTYPE" == msys || "$OSTYPE" == cygwin ]]; then
   # MSYS converts process arguments, but not paths embedded in project XML.
   analyzer_project="$(cygpath -am "$analyzer_project")"
 fi
