@@ -51,7 +51,7 @@ class BashRuntimeTests(unittest.TestCase):
     def test_real_nested_process_preserves_binding_paths_arguments_and_failure(self):
         executable = bash.executable()
         script = self.root / "script with spaces.sh"
-        script.write_text('printf "<%s>\\n" "$1"\nexit 23\n', encoding="utf-8")
+        script.write_bytes(b'printf "<%s>\\n" "$1"\nexit 23\n')
         code = ('import sys; sys.path.insert(0, sys.argv[1]); import bash_runtime; import subprocess; '
                 'sys.exit(subprocess.run(bash_runtime.command(sys.argv[2], sys.argv[3])).returncode)')
         result = subprocess.run([sys.executable, "-B", "-c", code, str(Path(bash.__file__).parent), str(script), "argument with spaces"],

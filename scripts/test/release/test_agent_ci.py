@@ -318,7 +318,7 @@ class InventoryProcessTests(unittest.TestCase):
                                (0, '{"schemaVersion":2,"solution":"Sunder.AgentPackage.slnx","projects":[{}]}')):
             with self.subTest(status=status, output=output):
                 self.inventory.write_text('{"stale":true}')
-                self.script.write_text(f"printf '%s\\n' '{output}'\nprintf 'fixture stderr\\n' >&2\nexit {status}\n", encoding="utf-8")
+                self.script.write_bytes(f"printf '%s\\n' '{output}'\nprintf 'fixture stderr\\n' >&2\nexit {status}\n".encode("utf-8"))
                 diagnostics = io.StringIO()
                 with patch("sys.stderr", diagnostics), self.assertRaises((ValueError, subprocess.CalledProcessError)) as failure:
                     ci.generate_inventory(self.source)
@@ -337,11 +337,11 @@ class InventoryProcessTests(unittest.TestCase):
     def test_success_writes_only_valid_inventory_and_cli_preserves_failure_status(self):
         value = dict(schemaVersion=2, solution="Sunder.AgentPackage.slnx",
                      projects=[dict(path="tests/Fixture.csproj", owner="agent-family", modes=["source"])])
-        self.script.write_text("printf '%s\\n' '" + json.dumps(value) + "'\n", encoding="utf-8")
+        self.script.write_bytes(("printf '%s\\n' '" + json.dumps(value) + "'\n").encode("utf-8"))
         self.assertEqual(self.inventory, ci.generate_inventory(self.source))
         self.assertEqual(value, json.loads(self.inventory.read_text()))
         self.assertFalse(list(self.reports.glob(".test-inventory-*")))
-        self.script.write_text("printf 'original failure\\n' >&2\nexit 23\n", encoding="utf-8")
+        self.script.write_bytes(b"printf 'original failure\\n' >&2\nexit 23\n")
         result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "ci/agent_ci.py"), "preflight", "--source", str(self.source)],
                                 capture_output=True, text=True)
         self.assertEqual(23, result.returncode, result.stdout + result.stderr)
