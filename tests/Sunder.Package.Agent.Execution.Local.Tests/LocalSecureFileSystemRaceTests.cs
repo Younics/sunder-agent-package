@@ -337,7 +337,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, TestFileSystemCapability.DirectorySymbolicLinks, "Pinned-parent unlink races require Unix strict mutations and directory links.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Delete_UnlinksOnlyFromPinnedParent(bool recursive)
@@ -381,7 +381,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Post-delete compensation requires supported strict filesystem mutations.")]
     public async Task Delete_RecreatedBeforeReceipt_IsReportedAsCommittedAndCompensationRejectsReplacement()
     {
         var fixture = CreateFixture();
@@ -444,18 +444,25 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             CancellationToken.None);
 
         Assert.True(result.IsError);
-        Assert.Equal("recursive-directory-delete-required", result.ErrorCode);
+        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : "recursive-directory-delete-required", result.ErrorCode);
         Assert.True(Directory.Exists(Path.Combine(fixture.Pinned, "empty")));
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "empty", "sentinel.txt")));
     }
 
+    [PlatformFact(TestPlatform.Unix, "Newline filename checks require Unix path components.")]
+    public Task Search_TraversesPinnedDirectoryAndPreservesNewlineNames()
+        => VerifyPinnedSearchNameAsync("line\nbreak.txt", "line\\nbreak.txt");
+
     [Fact]
-    public async Task Search_TraversesPinnedDirectoryAndPreservesNewlineNames()
+    public Task Search_TraversesPinnedDirectoryAndPreservesUnicodeNames()
+        => VerifyPinnedSearchNameAsync("snow 雪.txt", "snow 雪.txt");
+
+    private async Task VerifyPinnedSearchNameAsync(string name, string listingName)
     {
         var fixture = CreateFixture();
         var search = Path.Combine(fixture.Pinned, "search");
         Directory.CreateDirectory(search);
-        await File.WriteAllTextAsync(Path.Combine(search, "line\nbreak.txt"), "needle");
+        await File.WriteAllTextAsync(Path.Combine(search, name), "needle");
         Directory.CreateDirectory(Path.Combine(fixture.Outside, "search"));
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, "search", "secret.txt"), "needle OUTSIDE");
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
@@ -475,9 +482,9 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         hook.Restore();
 
         var match = Assert.Single(result.Matches);
-        Assert.Contains("line\\nbreak.txt", listing.Content, StringComparison.Ordinal);
+        Assert.Contains(listingName, listing.Content, StringComparison.Ordinal);
         Assert.False(result.IsError, result.ErrorMessage);
-        Assert.Contains("line\nbreak.txt", match.Path, StringComparison.Ordinal);
+        Assert.Contains(name, match.Path, StringComparison.Ordinal);
         Assert.DoesNotContain("OUTSIDE", match.Text, StringComparison.Ordinal);
         Assert.Equal("needle OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "search", "secret.txt")));
     }
@@ -674,7 +681,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(result.Matches);
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Mutation checkpoint CAS races require Unix file-descriptor semantics.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SearchRejectsUnboundedExpressions(bool braceExpansion)
@@ -718,7 +725,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(result.Matches);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Successful content-CAS writes and deletes require supported strict filesystem mutations.")]
     public async Task ExpectedContentCas_AllowsMatchingWriteAndDelete()
     {
         var fixture = CreateFixture();
@@ -752,7 +759,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.False(File.Exists(path));
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Mutation checkpoint CAS races require Unix file-descriptor semantics.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ExpectedContentCas_RejectsContentChangedAtMutationCheckpoint(bool delete)
@@ -843,7 +850,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             content => content == "ATTACKER");
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Final publication races require supported strict filesystem mutations.")]
     public async Task MissingWriteTarget_CannotBeReplacedAtFinalPublishSyscall()
     {
         var fixture = CreateFixture();
@@ -862,18 +869,15 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("ATTACKER", await File.ReadAllTextAsync(target));
     }
 
-    [PlatformFact(TestPlatform.Windows, "Final mutation handle replacement is Windows-specific.")]
-    public async Task WindowsFinalMutationHandles_BlockInPlaceEntryReplacement()
+    [PlatformFact(TestPlatform.Windows, "Windows strict mutations must fail before final publication or unlink checkpoints.")]
+    public async Task WindowsMutations_FailClosedBeforeFinalSyscallCheckpoints()
     {
         var fixture = CreateFixture();
         var outside = Path.Combine(fixture.Outside, "outside.txt");
         await File.WriteAllTextAsync(outside, "OUTSIDE");
         var writeTarget = Path.Combine(fixture.Workspace, "windows-write.txt");
         await File.WriteAllTextAsync(writeTarget, "old");
-        var writeHook = new WindowsReplacementAttemptHook(
-            LocalSecureFileSystemCheckpoint.BeforePublishSyscall,
-            writeTarget,
-            outside);
+        var writeHook = new FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint.BeforePublishSyscall);
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
@@ -884,10 +888,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var deleteTarget = Path.Combine(fixture.Workspace, "windows-delete.txt");
         await File.WriteAllTextAsync(deleteTarget, "delete");
-        var deleteHook = new WindowsReplacementAttemptHook(
-            LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall,
-            deleteTarget,
-            outside);
+        var deleteHook = new FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
             new AgentFileDeleteRequest { Path = "windows-delete.txt", Recursive = false },
@@ -895,12 +896,14 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             CancellationToken.None,
             hooks: deleteHook);
 
-        Assert.False(write.IsError, write.Summary);
-        Assert.True(writeHook.Invoked && writeHook.Blocked);
-        Assert.Equal("new", await File.ReadAllTextAsync(writeTarget));
-        Assert.False(delete.IsError, delete.Summary);
-        Assert.True(deleteHook.Invoked && deleteHook.Blocked);
+        Assert.Equal("strict-platform-mutation-unavailable", write.ErrorCode);
+        Assert.False(writeHook.Invoked);
+        Assert.Equal("old", await File.ReadAllTextAsync(writeTarget));
+        Assert.Equal("strict-platform-mutation-unavailable", delete.ErrorCode);
+        Assert.False(deleteHook.Invoked);
+        Assert.Equal("delete", await File.ReadAllTextAsync(deleteTarget));
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
+        AssertNoTemporaryEntries(fixture.Workspace);
     }
 
     [FileSystemFact(
@@ -955,7 +958,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("content", await File.ReadAllTextAsync(alias));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Successful approved directory deletion requires supported strict filesystem mutations.")]
     public async Task ExactOutsideApproval_AllowsDeletingTheApprovedDirectory()
     {
         var fixture = CreateFixture();
@@ -996,7 +999,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             false,
             CancellationToken.None);
 
-        Assert.Equal(AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
+        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : AgentFileReadErrorCodes.OutsideConfiguredScope, result.ErrorCode);
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(nested, "keep.txt")));
     }
 
@@ -1288,31 +1291,13 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    private sealed class WindowsReplacementAttemptHook(
-        LocalSecureFileSystemCheckpoint checkpoint,
-        string target,
-        string outside) : ILocalSecureFileSystemHooks
+    private sealed class FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint checkpoint) : ILocalSecureFileSystemHooks
     {
         public bool Invoked { get; private set; }
 
-        public bool Blocked { get; private set; }
-
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint current, string parentPath, string? entryName)
         {
-            if (Invoked || current != checkpoint)
-            {
-                return;
-            }
-            Invoked = true;
-            try
-            {
-                File.Delete(target);
-                File.CreateSymbolicLink(target, outside);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                Blocked = true;
-            }
+            if (current == checkpoint) Invoked = true;
         }
     }
 

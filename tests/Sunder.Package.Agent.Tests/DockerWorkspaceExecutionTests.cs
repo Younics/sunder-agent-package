@@ -14,7 +14,7 @@ namespace Sunder.Package.Agent.Tests;
 [Collection("Workspace component behavior")]
 public sealed class DockerWorkspaceExecutionTests
 {
-    [Fact]
+    [UnixFact("Docker strict writes require supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_WriteFileAsync_UsesApprovedVerifiedHostBind()
     {
         using var scope = TestScope.Create();
@@ -52,7 +52,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Equal(content, await File.ReadAllTextAsync(Path.Combine(hostPath, "app", "page.tsx")));
     }
 
-    [Fact]
+    [UnixFact("Docker target reads require supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_ReadFileAsync_ReportsMissingFileLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -87,7 +87,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Empty(result.Content);
     }
 
-    [Fact]
+    [UnixFact("Docker target reads require supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_ReadFileAsync_RejectsBinaryFilesLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -119,7 +119,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Empty(result.Content);
     }
 
-    [Fact]
+    [UnixFact("Docker target deletes require supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_DeleteFileAsync_ReportsMissingPathLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -188,7 +188,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Equal(DockerPathResolver.StructuredBindRequiredMessage, result.ErrorMessage);
     }
 
-    [Fact]
+    [UnixFact("Docker scoped discovery requires supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_ScopedDiscoveryUsesVerifiedHostBind()
     {
         using var scope = TestScope.Create();
@@ -286,7 +286,7 @@ public sealed class DockerWorkspaceExecutionTests
         }
     }
 
-    [Fact]
+    [UnixFact("Docker endpoint qualification requires supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_PinsExplicitEndpointAcrossAmbientChange()
     {
         using var scope = TestScope.Create();
@@ -585,13 +585,26 @@ public sealed class DockerWorkspaceExecutionTests
         var readiness = await GetDockerReadinessAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding));
 
         Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
-        Assert.Contains("failed to start from image 'custom:1.0'", readiness.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("--pull", runArgs);
-        Assert.Contains("never", runArgs);
+        if (OperatingSystem.IsWindows())
+        {
+            const string unavailable = "Strict Docker bind-mount identity and mutation verification is unavailable on Windows.";
+            Assert.Equal(unavailable, readiness.Message);
+            var failure = await Assert.ThrowsAsync<PlatformNotSupportedException>(async () =>
+                await ApproveDockerResourceAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding), "file.txt", "files.read"));
+            Assert.Equal(unavailable, failure.Message);
+            Assert.DoesNotContain(targetRunner.Calls, args => args.Count > 0 && args[0] is "run" or "start" or "exec");
+            Assert.Empty(runArgs);
+        }
+        else
+        {
+            Assert.Contains("failed to start from image 'custom:1.0'", readiness.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("--pull", runArgs);
+            Assert.Contains("never", runArgs);
+        }
     }
 
-    [Fact]
+    [UnixFact("Docker container image replacement requires supported host bind-mount verification.")]
     public async Task DockerExecutionTarget_MutableTagChangeRecreatesContainerByImageId()
     {
         using var scope = TestScope.Create();

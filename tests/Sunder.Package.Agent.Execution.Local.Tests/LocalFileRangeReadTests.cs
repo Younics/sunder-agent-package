@@ -75,7 +75,12 @@ public sealed partial class LocalFileRangeReadTests : IDisposable
                 new AgentFileWriteRequest { Path = $"file-{index}.txt", Content = "content", Overwrite = false },
                 false,
                 CancellationToken.None);
-            Assert.False(result.IsError, result.Summary);
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Equal("strict-platform-mutation-unavailable", result.ErrorCode);
+                Assert.False(File.Exists(Path.Combine(_root, $"file-{index}.txt")));
+            }
+            else Assert.False(result.IsError, result.Summary);
         }
 
         Assert.Equal(0, LocalFileSystemExecutor.MutationGateCount);

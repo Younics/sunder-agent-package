@@ -88,7 +88,8 @@ public sealed class DockerSettingsRaceTests
         runtime.Requests[0].Response.TrySetResult(Response(Image("initial:1.0")));
         await initialization;
         viewModel.TimeoutSeconds = "111";
-        Assert.True(viewModel.ApplySelectedDockerCliPath("/tmp/docker-saved"));
+        var savedPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "docker-saved"));
+        Assert.True(viewModel.ApplySelectedDockerCliPath(savedPath));
 
         var staleSnapshot = viewModel.PrepareNavigationAsync(new PackageViewNavigationContext(
             "settings:test",
@@ -98,7 +99,7 @@ public sealed class DockerSettingsRaceTests
         await runtime.Requests[2].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         runtime.Requests[2].Response.TrySetResult(new DockerExecutionOperationResponse(
             "111",
-            "/tmp/docker-saved",
+            savedPath,
             []));
         await save;
 
@@ -110,7 +111,7 @@ public sealed class DockerSettingsRaceTests
             CatalogRevision: 99));
 
         Assert.Equal("111", viewModel.TimeoutSeconds);
-        Assert.Equal("/tmp/docker-saved", viewModel.DockerCliPath);
+        Assert.Equal(savedPath, viewModel.DockerCliPath);
         Assert.Equal("initial:1.0", Assert.Single(viewModel.Images).ImageReference);
         Assert.Equal("Docker execution settings saved.", viewModel.StatusText);
     }
@@ -216,14 +217,16 @@ public sealed class DockerSettingsRaceTests
         Assert.Equal("beta:latest", viewModel.SelectedImage?.ImageReference);
 
         viewModel.TimeoutSeconds = "111";
-        Assert.True(viewModel.ApplySelectedDockerCliPath("/tmp/docker-old"));
+        var oldPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "docker-old"));
+        var newPath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "docker-new"));
+        Assert.True(viewModel.ApplySelectedDockerCliPath(oldPath));
         var save = viewModel.SaveSettingsCommand.ExecuteAsync(null);
         await runtime.Requests[2].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         viewModel.TimeoutSeconds = "222";
-        Assert.True(viewModel.ApplySelectedDockerCliPath("/tmp/docker-new"));
+        Assert.True(viewModel.ApplySelectedDockerCliPath(newPath));
         runtime.Requests[2].Response.TrySetResult(new DockerExecutionOperationResponse(
             "111",
-            "/tmp/docker-old",
+            oldPath,
             []));
         await save;
 
@@ -234,7 +237,7 @@ public sealed class DockerSettingsRaceTests
                 draftValue: () => viewModel.TimeoutSeconds),
             "222");
         Assert.Equal("222", viewModel.TimeoutSeconds);
-        Assert.Equal("/tmp/docker-new", viewModel.DockerCliPath);
+        Assert.Equal(newPath, viewModel.DockerCliPath);
 
         viewModel.SelectedImage = viewModel.Images.Single(image => image.ImageReference == "alpha:latest");
         var delete = viewModel.DeleteSelectedImageCommand.ExecuteAsync(null);

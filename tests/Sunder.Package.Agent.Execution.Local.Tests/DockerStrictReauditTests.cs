@@ -87,7 +87,7 @@ public sealed class DockerStrictReauditTests : IDisposable
         Assert.Equal("/workspace/new.txt", claim.LogicalPath);
         Assert.Equal("/workspace", claim.ConfiguredRoot);
 
-        var mountRoot = HostSecurePathEngine.OpenRoot(path.Mount.HostPath);
+        using var mountRoot = HostSecurePathEngine.OpenRoot(path.Mount.HostPath);
         var authority = HostSecurePathEngine.CaptureFromRoot(
             mountRoot,
             path.HostPath,
@@ -110,8 +110,16 @@ public sealed class DockerStrictReauditTests : IDisposable
             authority,
             CancellationToken.None);
 
-        Assert.False(result.IsError, result.Summary);
-        Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, "new.txt")));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("strict-platform-mutation-unavailable", result.ErrorCode);
+            Assert.Empty(Directory.EnumerateFileSystemEntries(_root));
+        }
+        else
+        {
+            Assert.False(result.IsError, result.Summary);
+            Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, "new.txt")));
+        }
     }
 
     private static DockerModels.AgentExecutionTargetContext CreateResourceContext(string actionId)
@@ -173,7 +181,7 @@ public sealed class DockerStrictReauditTests : IDisposable
         var parked = _root + "-parked";
         var config = CreateConfig([new DockerExecutionMount(_root, "/workspace")]);
         var path = DockerPathResolver.ResolveHostBinding(config, "/workspace/new.txt");
-        var mountRoot = HostSecurePathEngine.OpenRoot(_root);
+        using var mountRoot = HostSecurePathEngine.OpenRoot(_root);
         var approvedChains = DockerMountRootIdentityChains.Capture(
             [new DockerVerifiedMount(path.Mount, mountRoot)]);
         var resourceAuthority = HostSecurePathEngine.CaptureFromRoot(mountRoot, path.HostPath);
@@ -182,26 +190,45 @@ public sealed class DockerStrictReauditTests : IDisposable
             path,
             resourceAuthority,
             approvedChains);
-        Directory.Move(_root, parked);
-        Directory.CreateDirectory(_root);
+        var moved = false;
         try
         {
-            using var replacement = HostSecurePathEngine.OpenRoot(_root);
-            var replacementChains = DockerMountRootIdentityChains.Capture(
-                [new DockerVerifiedMount(path.Mount, replacement)]);
+            if (OperatingSystem.IsWindows())
+            {
+                Assert.Throws<IOException>(() => Directory.Move(_root, parked));
+                Assert.False(Directory.Exists(parked));
+                using var current = HostSecurePathEngine.OpenRoot(_root);
+                var currentChains = DockerMountRootIdentityChains.Capture([new DockerVerifiedMount(path.Mount, current)]);
+                Assert.Equal(approvedChains[0].Identities, currentChains[0].Identities);
+                Assert.True(DockerResourceReference.TryRedeem(reference, "namespace", path, currentChains, out var unchanged));
+                unchanged!.Dispose();
+                Assert.False(DockerResourceReference.TryRedeem(reference, "namespace", path, currentChains, out _));
+            }
+            else
+            {
+                Directory.Move(_root, parked);
+                moved = true;
+                Directory.CreateDirectory(_root);
+                using var replacement = HostSecurePathEngine.OpenRoot(_root);
+                var replacementChains = DockerMountRootIdentityChains.Capture(
+                    [new DockerVerifiedMount(path.Mount, replacement)]);
 
-            Assert.NotEqual(approvedChains[0].Identities[^1], replacement.Handle.Identity);
-            Assert.False(DockerResourceReference.TryRedeem(
-                reference,
-                "namespace",
-                path,
-                replacementChains,
-                out _));
+                Assert.NotEqual(approvedChains[0].Identities[^1], replacement.Handle.Identity);
+                Assert.False(DockerResourceReference.TryRedeem(
+                    reference,
+                    "namespace",
+                    path,
+                    replacementChains,
+                    out _));
+            }
         }
         finally
         {
-            Directory.Delete(_root);
-            Directory.Move(parked, _root);
+            if (moved)
+            {
+                Directory.Delete(_root);
+                Directory.Move(parked, _root);
+            }
             if (DockerResourceReference.TryRedeem(
                     reference,
                     "namespace",

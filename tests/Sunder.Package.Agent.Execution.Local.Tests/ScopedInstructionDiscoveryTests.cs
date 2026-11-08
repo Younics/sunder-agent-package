@@ -39,8 +39,8 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
             : ToProjection(await DiscoverDockerAsync(workspace, target));
 
         var scope = Assert.Single(result.Scopes);
-        Assert.Equal(Physical(target), scope.TargetDirectory);
-        Assert.Equal(Physical(workspace), scope.ScopeRoot);
+        Assert.Equal(targetKind == "local" ? Physical(target) : "/workspace/src/feature", scope.TargetDirectory);
+        Assert.Equal(targetKind == "local" ? Physical(workspace) : "/workspace", scope.ScopeRoot);
         Assert.Equal(2, scope.Documents.Count);
         Assert.Contains(scope.Documents, document => document.Content == "root instructions");
         Assert.Contains(scope.Documents, document => document.Content == "nested instructions");
@@ -191,7 +191,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
         }
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Newlines are not valid Windows path components.")]
     public async Task DockerDiscovery_PreservesNewlinePathsWithoutProtocolEncoding()
     {
         var workspace = Path.Combine(_root, "newline-workspace");
@@ -201,7 +201,7 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
 
         var result = await DiscoverDockerAsync(workspace, target);
 
-        Assert.Equal(Physical(target), Assert.Single(result.Scopes).TargetDirectory);
+        Assert.Equal("/workspace/line\nbreak", Assert.Single(result.Scopes).TargetDirectory);
     }
 
     [Theory]
@@ -319,15 +319,15 @@ public sealed class ScopedInstructionDiscoveryTests : IDisposable
             "test-container",
             "/bin/sh",
             [],
-            [new DockerExecutionMount(workspace, workspace)],
-            workspace);
+            [new DockerExecutionMount(workspace, "/workspace")],
+            "/workspace");
         return await new DockerFileSystemExecutor().DiscoverScopedInstructionsAsync(
             config,
             new DockerModels.AgentScopedInstructionDiscoveryRequest
             {
                 Probes = probes.Select(probe => new DockerModels.AgentScopedInstructionProbe
                 {
-                    Path = probe.Path,
+                    Path = "/workspace/" + Path.GetRelativePath(workspace, probe.Path).Replace(Path.DirectorySeparatorChar, '/'),
                     IsDirectory = probe.IsDirectory,
                     FollowFinalSymbolicLink = probe.FollowFinalSymbolicLink,
                 }).ToArray(),

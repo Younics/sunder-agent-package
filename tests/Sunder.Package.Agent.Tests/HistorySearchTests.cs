@@ -42,15 +42,15 @@ public sealed class HistorySearchTests
     public void ProjectionStore_DeletesInvalidSchemaAndSidecarsBeforeRecreatingDerivedIndex()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var original = new HistorySearchStore(scope.Context);
-        using (var connection = Open(original.DatabasePath))
-        using (var command = connection.CreateCommand())
+        using (var original = new HistorySearchStore(scope.Context))
         {
+            using var connection = Open(original.DatabasePath);
+            using var command = connection.CreateCommand();
             command.CommandText = "UPDATE HistorySchemaMarker SET Version = 999 WHERE Id = 1;";
             command.ExecuteNonQuery();
         }
 
-        var recovered = new HistorySearchStore(scope.Context);
+        using var recovered = new HistorySearchStore(scope.Context);
 
         Assert.True(recovered.IsAvailable);
         Assert.True(recovered.WasRecovered);

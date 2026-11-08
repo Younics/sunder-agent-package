@@ -92,8 +92,9 @@ public sealed class WorkspaceStackTests
         Assert.Equal("1.1.0", requirement.MinimumVersion);
         Assert.Equal("younics.ai.agent.workspaces", contributor.ContributorId);
         Assert.Empty(fragment.RequiredInputs ?? []);
-        Assert.Contains(workspaceRoot, fragment.JsonPayload, StringComparison.Ordinal);
-        Assert.Contains(documentPath, fragment.JsonPayload, StringComparison.Ordinal);
+        using var payload = JsonDocument.Parse(fragment.JsonPayload);
+        Assert.Equal(workspaceRoot, Assert.Single(payload.RootElement.GetProperty("paths").EnumerateArray()).GetProperty("hostPath").GetString());
+        Assert.Equal(documentPath, Assert.Single(payload.RootElement.GetProperty("documents").EnumerateArray()).GetProperty("filePath").GetString());
         Assert.Contains("Stack Workspace", fragment.JsonPayload, StringComparison.Ordinal);
         Assert.Contains("local", fragment.JsonPayload, StringComparison.Ordinal);
     }

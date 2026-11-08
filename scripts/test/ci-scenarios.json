@@ -6,7 +6,7 @@
   ],
   "stress": {
     "repetitions": 3,
-    "filter": "(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsFinalMutationHandles_BlockInPlaceEntryReplacement&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
+    "filter": "(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsMutations_FailClosedBeforeFinalSyscallCheckpoints&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
   },
   "coreFamily": {
     "Sunder.Runtime.Host.Tests": ["Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"],

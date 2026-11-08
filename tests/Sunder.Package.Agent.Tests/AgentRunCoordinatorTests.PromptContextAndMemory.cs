@@ -343,8 +343,17 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
         Assert.All(await packageContext.Storage.State.ListKeysAsync(), TestPackageStorageGuards.Key);
-        Assert.False(mutation.IsError, mutation.Summary);
-        Assert.Equal("acknowledged", await File.ReadAllTextAsync(Path.Combine(root, "receipt.txt")));
+        Assert.True(mutation.RequiresPromptContextRefresh);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("strict-platform-mutation-unavailable", mutation.ErrorCode);
+            Assert.False(File.Exists(Path.Combine(root, "receipt.txt")));
+        }
+        else
+        {
+            Assert.False(mutation.IsError, mutation.Summary);
+            Assert.Equal("acknowledged", await File.ReadAllTextAsync(Path.Combine(root, "receipt.txt")));
+        }
     }
 
     [Fact]

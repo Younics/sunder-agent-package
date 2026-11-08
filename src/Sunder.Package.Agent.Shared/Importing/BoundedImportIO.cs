@@ -832,7 +832,8 @@ internal static partial class BoundedImportIO
             return OpenWindowsRelative(
                 parent,
                 name,
-                WindowsGenericWrite,
+                // Identity validation queries attributes on this same exclusive handle.
+                WindowsGenericWrite | WindowsReadAttributes,
                 ImportNodeKind.RegularFile,
                 WindowsFileCreate,
                 shareMode: 0,
@@ -1308,6 +1309,7 @@ internal static partial class BoundedImportIO
 
     private const uint WindowsGenericRead = 0x80000000;
     private const uint WindowsGenericWrite = 0x40000000;
+    private const uint WindowsReadAttributes = 0x00000080;
     private const uint WindowsShareRead = 0x00000001;
     private const uint WindowsShareWrite = 0x00000002;
     private const uint WindowsShareDelete = 0x00000004;

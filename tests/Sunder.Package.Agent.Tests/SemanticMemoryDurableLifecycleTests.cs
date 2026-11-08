@@ -634,7 +634,7 @@ public sealed class SemanticMemoryDurableLifecycleTests
 
     private static bool FileContains(string path, string value)
         => File.Exists(path)
-           && File.ReadAllBytes(path).AsSpan().IndexOf(Encoding.UTF8.GetBytes(value)) >= 0;
+           && TestSqliteFiles.ReadAllBytes(path).AsSpan().IndexOf(Encoding.UTF8.GetBytes(value)) >= 0;
 
     private static AgentTurnRecord TextTurn(Guid sessionId, Guid turnId, string text)
     {

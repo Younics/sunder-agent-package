@@ -117,7 +117,7 @@ public sealed partial class FilesToolSourceRefactorTests
         Assert.Equal(4, target.MutationCallCount);
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Native patch moves require supported strict filesystem mutations.")]
     public async Task ApplyPatch_Move_NativeTargetPreservesBomAndMixedEndings()
     {
         using var scope = RegressionTestPackageScope.Create();

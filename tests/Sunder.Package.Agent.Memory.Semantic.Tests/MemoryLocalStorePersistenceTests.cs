@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Microsoft.Data.Sqlite;
+using Sunder.Package.Agent.TestSupport;
 using MemoryWorker::Sunder.Package.Agent.Contracts.Models;
 using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 using Sunder.Sdk.Abstractions;
@@ -358,18 +359,25 @@ public sealed class MemoryLocalStorePersistenceTests
             "sunder-memory-persistence-tests",
             Guid.NewGuid().ToString("N"));
         private readonly TestPackageContext _context;
+        private readonly System.Collections.Concurrent.ConcurrentBag<MemoryLocalStore> _stores = [];
 
         public TemporaryMemoryStorage()
         {
             _context = new TestPackageContext(_rootPath);
         }
 
-        public MemoryLocalStore OpenStore() => new(_context);
+        public MemoryLocalStore OpenStore()
+        {
+            var store = new MemoryLocalStore(_context);
+            _stores.Add(store);
+            return store;
+        }
 
         public string DatabasePath => _context.Storage.RoleLocalWorkspace.GetLocalPath("memory/agent-memory.db");
 
         public void Dispose()
         {
+            foreach (var store in _stores) store.Dispose();
             if (Directory.Exists(_rootPath))
             {
                 Directory.Delete(_rootPath, recursive: true);
@@ -425,7 +433,7 @@ public sealed class MemoryLocalStorePersistenceTests
         var bytes = Encoding.UTF8.GetBytes(value);
         return new[] { databasePath, databasePath + "-wal" }
             .Where(File.Exists)
-            .Any(path => File.ReadAllBytes(path).AsSpan().IndexOf(bytes) >= 0);
+            .Any(path => TestSqliteFiles.ReadAllBytes(path).AsSpan().IndexOf(bytes) >= 0);
     }
 
     private static SqliteConnection OpenConnection(string databasePath)

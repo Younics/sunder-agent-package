@@ -1628,7 +1628,7 @@ public sealed class AgentLifecycleOutboxTests
     private static IReadOnlyList<byte[]> ReadSqliteDataFiles(string databasePath)
         => new[] { databasePath, databasePath + "-wal", databasePath + "-journal" }
             .Where(File.Exists)
-            .Select(File.ReadAllBytes)
+            .Select(TestSqliteFiles.ReadAllBytes)
             .ToArray();
 
     private static void AssertNoMissingCanaries(string value, IReadOnlyList<string> canaries)

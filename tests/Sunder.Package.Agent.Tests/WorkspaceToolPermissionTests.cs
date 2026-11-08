@@ -46,7 +46,7 @@ public sealed class WorkspaceToolPermissionTests
         Assert.Equal(AgentPermissionDecisionSource.ConfiguredOverride, denied.Source);
     }
 
-    [Theory]
+    [UnixTheory("Docker permission resolution requires supported host bind-mount verification.")]
     [InlineData("glob", "{\"pattern\":\"*.txt\"}")]
     [InlineData("glob", "{\"pattern\":\"*.txt\",\"path\":\".\"}")]
     [InlineData("grep", "{\"pattern\":\"needle\"}")]

@@ -58,7 +58,7 @@ public sealed class DeferredAgentRpcServiceHandlerTests
         var sessionId = Guid.NewGuid();
         await cleaner.StoreAttachmentAsync(sessionId, new AgentAttachmentUploadRequest("keep.txt", "text/plain", [1]));
         var attachmentDirectory = package.Context.Storage.RoleLocalWorkspace.GetLocalPath(
-            Path.Combine("agent", "attachments", sessionId.ToString("N")));
+            $"agent/attachments/{sessionId:N}");
         Assert.True(Directory.Exists(attachmentDirectory));
 
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);

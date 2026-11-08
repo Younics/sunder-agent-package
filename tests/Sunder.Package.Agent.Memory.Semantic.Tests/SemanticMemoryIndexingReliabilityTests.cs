@@ -651,7 +651,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
     private static int CountStagingEmbeddings(string databasePath)
     {
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        using var connection = new SqliteConnection(MemoryDatabase.CreateConnectionString(databasePath));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -666,7 +666,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
     private static int CountStagingGenerations(string databasePath, Guid sessionId)
     {
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        using var connection = new SqliteConnection(MemoryDatabase.CreateConnectionString(databasePath));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddingGenerations WHERE SessionId = $sessionId AND State = 'Staging';";
@@ -676,7 +676,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
     private static int CountAllEmbeddings(string databasePath, Guid memoryId)
     {
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        using var connection = new SqliteConnection(MemoryDatabase.CreateConnectionString(databasePath));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM SessionMemoryEmbeddings WHERE MemoryId = $memoryId;";
@@ -686,7 +686,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
 
     private static void SeedInactiveAndStagingEmbeddings(string databasePath, Guid memoryId, Guid sessionId)
     {
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
+        using var connection = new SqliteConnection(MemoryDatabase.CreateConnectionString(databasePath));
         connection.Open();
         using var command = connection.CreateCommand();
         command.CommandText = """

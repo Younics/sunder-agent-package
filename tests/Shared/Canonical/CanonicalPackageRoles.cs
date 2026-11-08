@@ -38,7 +38,8 @@ internal sealed class CanonicalPackageRoles : IDisposable
         Assert.True(File.Exists(path), $"Build the canonical {family} {role} before this required-input probe: {path}");
         var context = new RoleContext(path);
         _contexts.Add(context);
-        var assembly = context.LoadFromAssemblyPath(path);
+        using var bytes = File.OpenRead(path);
+        var assembly = context.LoadFromStream(bytes);
         Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference =>
             reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal)
             || reference.Name == "Sunder.Agent.Execution.Common");
@@ -85,8 +86,13 @@ internal sealed class CanonicalPackageRoles : IDisposable
             if (name.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal)
                 || name.Name == "Sunder.Agent.Execution.Common")
                 throw new InvalidDataException("A canonical role requested a cross-role binary: " + name);
-            return Default.Assemblies.FirstOrDefault(value => AssemblyName.ReferenceMatchesDefinition(value.GetName(), name))
-                ?? (_resolver.ResolveAssemblyToPath(name) is { } dependency ? LoadFromAssemblyPath(dependency) : null);
+            var shared = Default.Assemblies.FirstOrDefault(value => AssemblyName.ReferenceMatchesDefinition(value.GetName(), name));
+            if (shared is not null) return shared;
+            if (_resolver.ResolveAssemblyToPath(name) is not { } dependency) return null;
+            // Collectible contexts unload asynchronously. Stream loads let temporary
+            // role snapshots be removed immediately on Windows after the probe.
+            using var bytes = File.OpenRead(dependency);
+            return LoadFromStream(bytes);
         }
         protected override nint LoadUnmanagedDll(string name)
             => _resolver.ResolveUnmanagedDllToPath(name) is { } dependency ? LoadUnmanagedDllFromPath(dependency) : 0;

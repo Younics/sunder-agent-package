@@ -61,8 +61,16 @@ public sealed partial class LocalFileRangeReadTests
         Assert.Equal("\uFEFFone\r\ntwo", snapshot.Content);
         var written = await LocalFileSystemExecutor.WriteFileAsync(config, new WriteRequest
         { Path = "bom.txt", Content = "changed\r\ntwo", Overwrite = true, ExpectedContentHash = FileOperation.ComputeContentHash(snapshot.Content) }, false, CancellationToken.None);
-        Assert.False(written.IsError, written.Summary);
-        Assert.Equal(Encoding.UTF8.GetBytes("\uFEFFchanged\r\ntwo"), await File.ReadAllBytesAsync(path));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("strict-platform-mutation-unavailable", written.ErrorCode);
+            Assert.Equal(Encoding.UTF8.GetBytes(snapshot.Content), await File.ReadAllBytesAsync(path));
+        }
+        else
+        {
+            Assert.False(written.IsError, written.Summary);
+            Assert.Equal(Encoding.UTF8.GetBytes("\uFEFFchanged\r\ntwo"), await File.ReadAllBytesAsync(path));
+        }
 
         var invalidBytes = new byte[] { 0xC3, 0x28 };
         await File.WriteAllBytesAsync(path, invalidBytes);

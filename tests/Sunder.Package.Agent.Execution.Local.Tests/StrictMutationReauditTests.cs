@@ -114,8 +114,16 @@ public sealed class StrictMutationReauditTests : IDisposable
             authorizationContext: raced.Context,
             resourceReferences: raced.ResourceReferences);
 
-        Assert.False(written.IsError, written.Summary);
-        Assert.Equal("approved", await File.ReadAllTextAsync(approvedPath));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Equal("strict-platform-mutation-unavailable", written.ErrorCode);
+            Assert.False(File.Exists(approvedPath));
+        }
+        else
+        {
+            Assert.False(written.IsError, written.Summary);
+            Assert.Equal("approved", await File.ReadAllTextAsync(approvedPath));
+        }
         Assert.True(rejected.IsError);
         Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
         Assert.Equal("ATTACKER", await File.ReadAllTextAsync(racedPath));
@@ -133,8 +141,17 @@ public sealed class StrictMutationReauditTests : IDisposable
         var approvedPath = Path.Combine(approvedParent, "target.txt");
         using var approved = LocalResourceAuthorityTestContext.Approve(config, approvedPath, "files.mutate");
 
-        Directory.Move(approvedParent, Path.Combine(outside, "original-parent"));
-        Directory.CreateDirectory(approvedParent);
+        var originalParent = Path.Combine(outside, "original-parent");
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<IOException>(() => Directory.Move(approvedParent, originalParent));
+            Assert.False(Directory.Exists(originalParent));
+        }
+        else
+        {
+            Directory.Move(approvedParent, originalParent);
+            Directory.CreateDirectory(approvedParent);
+        }
         var rejected = await LocalFileSystemExecutor.WriteFileAsync(
             config,
             new AgentFileWriteRequest { Path = approvedPath, Content = "must-not-write", Overwrite = false },
@@ -145,8 +162,9 @@ public sealed class StrictMutationReauditTests : IDisposable
             resourceReferences: approved.ResourceReferences);
 
         Assert.True(rejected.IsError);
-        Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
+        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
         Assert.False(File.Exists(approvedPath));
+        Assert.False(File.Exists(Path.Combine(originalParent, "target.txt")));
     }
 
     [Fact]
@@ -219,7 +237,7 @@ public sealed class StrictMutationReauditTests : IDisposable
             false,
             CancellationToken.None);
 
-        Assert.Equal("recursive-directory-delete-required", result.ErrorCode);
+        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : "recursive-directory-delete-required", result.ErrorCode);
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(directory, "keep.txt")));
     }
 
@@ -251,7 +269,7 @@ public sealed class StrictMutationReauditTests : IDisposable
             path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Cancellable quarantine reservation requires supported Unix mutation slots.")]
     public void QuarantineAccounting_IsCancellableAndBounded()
     {
         var workspace = Path.Combine(_root, "workspace");

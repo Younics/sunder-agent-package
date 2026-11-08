@@ -56,9 +56,9 @@ public sealed class DockerHostBindRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "safe.txt")));
     }
 
-    [FileSystemFact(
-        TestFileSystemCapability.UnixDirectorySymbolicLinks,
-        "Bind-parent replacement requires directory symbolic links on Unix.")]
+    [PlatformFact(TestPlatform.Unix,
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Mutation bind-parent replacement requires Unix directory symbolic links.")]
     public async Task WriteAndDelete_UsePinnedBindParentDuringRenameAndSymlinkReplacement()
     {
         var fixture = CreateFixture();

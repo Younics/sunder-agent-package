@@ -438,7 +438,7 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
             path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Post-mutation compensation requires supported strict filesystem mutations.")]
     [InlineData("local", "add")]
     [InlineData("local", "update")]
     [InlineData("local", "delete")]

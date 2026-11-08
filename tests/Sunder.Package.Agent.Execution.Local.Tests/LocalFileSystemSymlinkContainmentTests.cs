@@ -50,7 +50,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateConfig(workspace);
 
-        Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
             config,
             Path.Combine("escape", "file.txt"),
             allowOutsideConfiguredScope: true));
@@ -77,12 +77,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             });
         Assert.False(resource.Exists);
         Assert.Equal(
-            HostSecurePathEngine.NormalizePath(workspace),
+            OperatingSystem.IsWindows() ? HostSecurePathEngine.NormalizePath(workspace).ToUpperInvariant() : HostSecurePathEngine.NormalizePath(workspace),
             Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
     }
 
     [Fact]
-    public void ResolveFileResource_UninspectableConfiguredRootUsesUnknownBoundary()
+    public void ResolveFileResource_UninspectableConfiguredRootUsesPlatformScopeEvidence()
     {
         var (workspace, outside) = CreateDirectories();
         var target = Path.Combine(outside, "file.txt");
@@ -95,9 +95,10 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             target,
             allowOutsideConfiguredScope: true);
 
-        Assert.Equal(AgentPermissionBoundaryIds.Unknown, resource.PermissionBoundaryId);
+        // Windows can exclude this path lexically; Unix requires opened ancestry.
+        Assert.Equal(OperatingSystem.IsWindows() ? AgentPermissionBoundaryIds.OutsideConfiguredScope : AgentPermissionBoundaryIds.Unknown, resource.PermissionBoundaryId);
         Assert.Equal(
-            AgentPermissionScopeClassificationBasis.Unresolved,
+            OperatingSystem.IsWindows() ? AgentPermissionScopeClassificationBasis.LexicalExclusion : AgentPermissionScopeClassificationBasis.Unresolved,
             resource.ScopeClassificationBasis);
         Assert.Null(Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
     }
@@ -173,7 +174,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         var (workspace, outside) = CreateDirectories();
         Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
 
-        Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
             CreateConfig(workspace),
             Path.Combine("escape", "project")));
     }
@@ -186,7 +187,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateDirectory(target);
         Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
-        Assert.Throws<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
             CreateConfig(workspace),
             Path.Combine("link", "project")));
     }
@@ -240,7 +241,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
         var config = CreateDockerConfig(workspace);
 
-        Assert.Throws<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
+        Assert.ThrowsAny<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
     }
 
     [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker contained-link checks require symbolic links.")]
@@ -251,7 +252,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Directory.CreateDirectory(target);
         Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
 
-        Assert.Throws<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() =>
+        Assert.ThrowsAny<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() =>
             DockerPathResolver.MapToHostPath(CreateDockerConfig(workspace), "/workspace/link/project"));
     }
 
@@ -339,7 +340,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.False(File.Exists(Path.Combine(target, "file.txt")));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Creating nested files requires supported strict filesystem mutations.")]
     public async Task FileOperations_PreserveWorkspaceRelativeNewFileBehavior()
     {
         var (workspace, _) = CreateDirectories();
@@ -363,7 +364,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Equal(Physical(Path.Combine(workspace, relativePath)), readResult.Path);
     }
 
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, "Atomic replacement fault injection requires supported strict filesystem mutations.")]
     [InlineData(nameof(LocalFileWriteFaultPoint.TemporaryFileFlushed))]
     [InlineData(nameof(LocalFileWriteFaultPoint.BeforeAtomicReplace))]
     public async Task WriteFileAsync_FailureBeforeAtomicReplace_PreservesOriginal(string faultPointName)
@@ -406,8 +407,9 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
-        Assert.Equal("file-content-changed", write.ErrorCode);
-        Assert.Equal("file-content-changed", delete.ErrorCode);
+        var expectedError = OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : "file-content-changed";
+        Assert.Equal(expectedError, write.ErrorCode);
+        Assert.Equal(expectedError, delete.ErrorCode);
         Assert.Equal("newer", await File.ReadAllTextAsync(target));
     }
 
@@ -425,8 +427,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             "local-resource-authority-v4:",
             Assert.Single(approved.Context.ApprovedResourceCapabilities),
             StringComparison.Ordinal);
-        File.Delete(first);
-        File.Move(second, first);
+        if (OperatingSystem.IsWindows())
+            Assert.Throws<IOException>(() => File.Delete(first));
+        else
+        {
+            File.Delete(first);
+            File.Move(second, first);
+        }
 
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             config,
@@ -449,7 +456,8 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Contains("approved target", read.Content, StringComparison.Ordinal);
         Assert.DoesNotContain("RETARGETED_SECRET", read.Content, StringComparison.Ordinal);
         Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, write.ErrorCode);
-        Assert.Equal("RETARGETED_SECRET", await File.ReadAllTextAsync(first));
+        Assert.Equal(OperatingSystem.IsWindows() ? "approved target" : "RETARGETED_SECRET", await File.ReadAllTextAsync(first));
+        if (OperatingSystem.IsWindows()) Assert.Equal("RETARGETED_SECRET", await File.ReadAllTextAsync(second));
     }
 
     [Fact]
@@ -468,8 +476,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         var config = CreateConfig(workspace);
         using var approved = LocalResourceAuthorityTestContext.Approve(config, requestedPath, "files.mutate");
         var parkedDirectory = Path.Combine(outside, "parked");
-        Directory.Move(firstDirectory, parkedDirectory);
-        Directory.Move(secondDirectory, firstDirectory);
+        if (OperatingSystem.IsWindows())
+            Assert.Throws<IOException>(() => Directory.Move(firstDirectory, parkedDirectory));
+        else
+        {
+            Directory.Move(firstDirectory, parkedDirectory);
+            Directory.Move(secondDirectory, firstDirectory);
+        }
         var result = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
             new AgentFileDeleteRequest { Path = requestedPath, Recursive = false },
@@ -479,12 +492,13 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             authorizationContext: approved.Context,
             resourceReferences: approved.ResourceReferences);
 
-        Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, result.ErrorCode);
-        Assert.True(File.Exists(Path.Combine(parkedDirectory, "victim.txt")));
-        Assert.True(File.Exists(Path.Combine(firstDirectory, "victim.txt")));
+        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : LocalResourceReference.ReapprovalRequiredErrorCode, result.ErrorCode);
+        Assert.Equal("approved target", await File.ReadAllTextAsync(Path.Combine(OperatingSystem.IsWindows() ? firstDirectory : parkedDirectory, "victim.txt")));
+        Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(OperatingSystem.IsWindows() ? secondDirectory : firstDirectory, "victim.txt")));
+        if (OperatingSystem.IsWindows()) Assert.False(Directory.Exists(parkedDirectory));
     }
 
-    [Fact]
+    [PlatformFact(TestPlatform.Unix, "Atomic publication revalidation requires supported strict filesystem mutations.")]
     public async Task OutsideApproval_RevalidatesImmediatelyBeforeAtomicWrite()
     {
         var (workspace, outside) = CreateDirectories();
