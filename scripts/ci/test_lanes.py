@@ -102,7 +102,8 @@ def validate(state_path, mode, stress=False):
     state, _ = agent_ci.context(state_path)
     source = Path(state["source"])
     previous = dict(os.environ)
-    platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    # Match inventory scoping and required-case filters, which use sys.platform.
+    platform = "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux"
     try:
         if mode == "source":
             os.environ.update(SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION="1",

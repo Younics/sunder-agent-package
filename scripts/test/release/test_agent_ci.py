@@ -232,12 +232,17 @@ class AgentCiTests(unittest.TestCase):
             if lane == "required-linux":
                 self.assertEqual("1", os.environ["SUNDER_REQUIRE_TEST_PREREQUISITES"])
                 raise ValueError("required case failed")
-        with patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), \
-                patch.object(sys, "platform", "linux"), patch.object(test_lanes, "tests", side_effect=run), \
-                patch.object(test_lanes, "report") as report:
-            with self.assertRaisesRegex(ValueError, "required case failed"): test_lanes.validate("state", "source")
-            self.assertEqual(["source", "artifact", "required-linux"], lanes)
-            report.assert_called_once_with("source", "linux")
+        for platform, report_platform in (("linux", "linux"), ("win32", "windows"), ("darwin", "macos")):
+            lanes.clear()
+            with self.subTest(platform=platform), patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), \
+                    patch.object(sys, "platform", platform), patch.object(test_lanes, "tests", side_effect=run), \
+                    patch.object(test_lanes, "report") as report:
+                if platform == "linux":
+                    with self.assertRaisesRegex(ValueError, "required case failed"): test_lanes.validate("state", "source")
+                else:
+                    test_lanes.validate("state", "source")
+                self.assertEqual(["source", "artifact"] + (["required-linux"] if platform == "linux" else []), lanes)
+                report.assert_called_once_with("source", report_platform)
         self.write_test_inventory()
         with patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), patch.object(test_lanes, "run_project", return_value=1) as execute:
             test_lanes.tests("state", "source")
