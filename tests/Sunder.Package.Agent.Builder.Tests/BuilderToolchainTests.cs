@@ -56,7 +56,7 @@ public sealed partial class BuilderToolchainTests
         if (OperatingSystem.IsWindows()) start.Environment["SystemRoot"] = systemRoot;
         foreach (var (key, value) in environment) if (value is not null) start.Environment[key] = value;
         foreach (var argument in OperatingSystem.IsWindows()
-            ? new[] { "/d", "/c", "cmd /d /c echo builder-shell-ready" }
+            ? new[] { "/d", "/c", "cmd.exe", "/d", "/c", "echo", "builder-shell-ready" }
             : new[] { "-c", "exec sh -c 'printf builder-shell-ready'" }) start.ArgumentList.Add(argument);
         using var child = System.Diagnostics.Process.Start(start)!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -534,7 +534,7 @@ public sealed partial class BuilderToolchainTests
         internal bool CorruptNpm;
         internal Func<CancellationToken, Task>? OnDownload;
         internal Fixture() => Directory.CreateDirectory(Root);
-        internal string PathOf(string path) => Path.Combine(Root, path);
+        internal string PathOf(string path) => Path.GetFullPath(Path.Combine(Root, path));
         internal string Project(string path) { var full = PathOf(path); Directory.CreateDirectory(full); return full; }
         internal BuilderToolchainService Service(Func<BuilderProjectKind, IReadOnlyList<string>>? candidates = null, SunderDevelopmentToolchain? versions = null)
             => new(ManagedRoot, versions ?? new("10.0.402", "24.22.0", "11.19.1"), this, this, Process, candidates ?? (_ => []), platform: Platform);

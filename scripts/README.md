@@ -60,6 +60,7 @@ python3 -B scripts/ci/agent_ci.py matrices --package-tests
 python3 -B scripts/ci/agent_ci.py preflight
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package
+python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --builder-diagnostics
 ```
 
 `preflight` generates and validates the test inventory and runs dependency-independent
@@ -77,6 +78,20 @@ required Linux/Docker cases run once in their owning lane. `--stress` adds the
 scheduled Linux repetitions. Report directories replace prior CI runs; hosted
 reports expire after fourteen days, while immutable release handoffs keep their
 release-specific retention.
+
+Completed assertion failures retain discovery/TRX evidence and allow the remaining
+independent source/package test projects to run. Capture, integrity, discovery,
+incomplete-run and cancellation errors stop execution. UTF-8 logs and command
+records retain child status and diagnostic failures; the console prints a bounded
+failure summary, and reporting failures remain attached to the original error.
+
+`--builder-diagnostics` prepares verified source-mode Release inputs, builds Builder,
+then runs its portability fixtures followed by the complete Builder project. Each
+stage verifies fresh discovery, TRX and declared skips, retaining reports under
+`artifacts/builder-diagnostics/`. The manual **Validate** input `builder-diagnostics`
+runs this sequence on Windows and Linux. Full source/package **Validate** and native
+release qualification are subsequent checkpoints; reusable release calls always
+run the normal validation lanes.
 
 Nested Python-to-Bash calls use `scripts/ci/bash_runtime.py`. Actions binds the
 running shell's absolute executable in `SUNDER_BASH_EXECUTABLE`; local Windows

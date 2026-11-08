@@ -316,7 +316,7 @@ public sealed class BuilderLocalNuGetTests
         await TerminalAsync(jobs, jobs.Start(fixture.CreateRequest()));
         var commands = fixture.Process.Requests.ToArray();
         Assert.Equal(new[] { "install", "list", "sunder-package" }, commands.Select(command => command.Arguments[1]));
-        Assert.StartsWith(fixture.Snapshots, commands[0].Arguments[2]);
+        Assert.StartsWith(fixture.Snapshots + Path.DirectorySeparatorChar, commands[0].Arguments[2]);
         Assert.Equal(File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates")), File.ReadAllBytes(commands[0].Arguments[2]));
         var home = Assert.Single(commands.Select(command => command.Environment["DOTNET_CLI_HOME"]).Distinct());
         Assert.True(Encoding.UTF8.GetByteCount(home!) <= BuilderTemplateCache.MaximumHomeUtf8Bytes);
@@ -340,7 +340,7 @@ public sealed class BuilderLocalNuGetTests
         release.SetResult();
         await TerminalAsync(jobs, id);
         var command1 = Assert.Single(fixture.Process.Requests);
-        Assert.StartsWith(selected, command1.Arguments[2]);
+        Assert.StartsWith(selected + Path.DirectorySeparatorChar, command1.Arguments[2]);
         Assert.Equal(Path.Combine(selected, "tools", "nuget-packages"), command1.Environment["NUGET_PACKAGES"]);
         Assert.Equal(Path.Combine(selected, "NuGet.Config"), command1.Environment["RestoreConfigFile"]);
         Assert.Equal(id, jobs.Start(first)); Assert.Single(fixture.Process.Requests);
@@ -367,7 +367,7 @@ public sealed class BuilderLocalNuGetTests
         Assert.NotEmpty(fixture.Process.Requests);
         var command = fixture.Process.Requests.Last();
         var config = command.Environment["RestoreConfigFile"]!;
-        Assert.StartsWith(fixture.Snapshots, config);
+        Assert.StartsWith(fixture.Snapshots + Path.DirectorySeparatorChar, config);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-packages"), command.Environment["NUGET_PACKAGES"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-http"), command.Environment["NUGET_HTTP_CACHE_PATH"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-plugins"), command.Environment["NUGET_PLUGINS_CACHE_PATH"]);
@@ -492,7 +492,7 @@ public sealed class BuilderLocalNuGetTests
             Options = new(PathOf("development-toolchains/project-tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
             Tools = new(Root);
         }
-        internal string PathOf(string name) => Path.Combine(Root, name);
+        internal string PathOf(string name) => Path.GetFullPath(Path.Combine(Root, name));
         internal string Archive(string id) => Path.Combine(Feed, id + "." + Versions.GetValueOrDefault(id, "1.1.0") + ".nupkg");
         internal void Pointer(string json) { Directory.CreateDirectory(Options.CacheRootPath); File.WriteAllText(PointerPath, json); }
         internal void CreateFeed()

@@ -4,6 +4,7 @@ using BuilderWorker::Sunder.Package.Agent.Builder;
 using BuilderModels = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using PermissionSurface = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
 using Xunit;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Sunder.Package.Agent.Tests;
@@ -23,25 +24,29 @@ public sealed class BuilderToolSourceTests
     }
 
     [Theory]
-    [InlineData("maker_package", "{\"package\":\"/project/sunder.package.json\",\"query\":null}", true)]
+    [InlineData("maker_package", "{\"package\":$node,\"query\":null}", true)]
     [InlineData("maker_view", "{\"target\":\"v1\",\"role\":null,\"name\":null,\"text\":null,\"within\":null,\"value\":null,\"limit\":null,\"cursor\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":null,\"verify\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":\"unexpected\"}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":\"10\"}", false)]
-    [InlineData("maker_logs", "{\"package\":\"/project/sunder.package.json\",\"limit\":20,\"level\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
-    [InlineData("maker_apply", "{\"package\":\"/project/Package.csproj\"}", true)]
-    [InlineData("maker_apply", "{\"package\":\"/project/package.json\"}", false)]
-    [InlineData("maker_package", "{\"package\":\"/project/Package.csproj\",\"package\":\"/other/Package.csproj\"}", false)]
+    [InlineData("maker_logs", "{\"package\":$node,\"limit\":20,\"level\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
+    [InlineData("maker_apply", "{\"package\":$dotnet}", true)]
+    [InlineData("maker_apply", "{\"package\":$npm}", false)]
+    [InlineData("maker_package", "{\"package\":$dotnet,\"package\":$other}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":51}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T03:35:00\"}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T04:00:00Z\",\"until\":\"2026-10-24T03:00:00Z\"}", false)]
     [InlineData("maker_view", "{\"target\":\"v1\",\"selector\":\"body\"}", false)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"evaluate-script\"}", false)]
     [InlineData("maker_apply", "{\"package\":\"relative.csproj\"}", false)]
-    [InlineData("maker_apply", "{\"path\":\"/project/Package.csproj\"}", false)]
+    [InlineData("maker_apply", "{\"path\":$dotnet}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"operationId\":\"untrusted\"}", false)]
     public async Task ArgumentValidationIsPureAndRejectsMalformedIntentBeforeAnyAuthority(string tool, string json, bool valid)
     {
+        // Substitute JSON string values, preserving duplicate fields and malformed intent.
+        foreach (var (token, folder, entry) in new[] { ("$node", "project", "sunder.package.json"),
+            ("$dotnet", "project", "Package.csproj"), ("$npm", "project", "package.json"), ("$other", "other", "Package.csproj") })
+            json = json.Replace(token, JsonSerializer.Serialize(Path.Combine(Path.GetTempPath(), "maker 项目", folder, entry)), StringComparison.Ordinal);
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
         var result = await source.ValidateArgumentsAsync(new BuilderModels.AgentToolRequest { ToolId = tool, ArgumentsJson = json });
@@ -61,7 +66,8 @@ public sealed class BuilderToolSourceTests
     {
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
-        var request = new BuilderModels.AgentToolRequest { ToolId = tool, ArgumentsJson = "{\"entryPoint\":\"/project/Package.csproj\"}" };
+        var request = new BuilderModels.AgentToolRequest { ToolId = tool,
+            ArgumentsJson = JsonSerializer.Serialize(new { entryPoint = Path.Combine(Path.GetTempPath(), "project", "Package.csproj") }) };
         Assert.NotNull(await source.ValidateArgumentsAsync(request));
         Assert.Null(await source.GetReadinessAsync(new() { ToolId = tool, Context = null! }));
         Assert.Null(await source.PermissionAsync(new() { Request = request, Context = null! }));

@@ -156,8 +156,21 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
                 value = counters.get(name)
                 if (value is None and name in {"total", "executed", "passed", "failed"}) or (value is not None and value != str(count)):
                     violations.append(f"TRX counter {name}={value}, observed {count}")
-        run_errors = any(info.get("outcome") == "Error" for info in summary.findall(".//{*}RunInfo"))
-        if (summary.get("outcome") == "Failed" or run_errors) and not expected["failed"]:
+        # xUnit's adapter also emits one Error notification for each failed case.
+        # Accept only exact, multiplicity-bound failed-result notifications;
+        # an unrelated adapter/host error must still invalidate a complete TRX.
+        failed_notifications = Counter(row["test"] for row in results if row["outcome"] == "failed")
+        run_errors = False
+        for info in summary.findall(".//{*}RunInfo"):
+            if info.get("outcome") != "Error": continue
+            notification = re.fullmatch(r"\[xUnit\.net \d+:\d{2}:\d{2}\.\d+\]\s+(.+) \[FAIL\]", info.findtext("./{*}Text", ""))
+            if notification and failed_notifications[notification[1]]:
+                failed_notifications[notification[1]] -= 1
+            else:
+                run_errors = True
+        if run_errors:
+            violations.append("TRX contains test-platform errors")
+        if summary.get("outcome") == "Failed" and not expected["failed"]:
             violations.append("TRX run failed or aborted despite its completed cases having no failures")
 
     times = document.find("./{*}Times")
@@ -612,6 +625,8 @@ def main() -> int:
         commands.append(record)
         if record.get("exitCode") != 0:
             evidence_violations.append(f"{path.relative_to(root)}: command did not succeed (exitCode={record.get('exitCode')})")
+        if record.get("errors"):
+            evidence_violations.append(f"{path.relative_to(root)}: command diagnostics failed: {record['errors']}")
     discoveries = []
     if arguments.verify:
         for path, record in read_records(root, "*.discovery.json", evidence_violations):

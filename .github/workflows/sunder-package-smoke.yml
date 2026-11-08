@@ -11,6 +11,10 @@ on:
         description: Include locked-package compatibility on the behavior runners
         type: boolean
         default: false
+      builder-diagnostics:
+        description: Run focused then full Builder tests on Windows/Linux
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       core_commit:
@@ -70,7 +74,7 @@ jobs:
       - id: matrix
         if: steps.selection.outputs.selected_count != '0'
         env:
-          PACKAGE_TESTS: ${{ inputs.package-tests }}
+          PACKAGE_TESTS: ${{ inputs.package-tests && !inputs.builder-diagnostics }}
         run: |
           args=()
           [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
@@ -175,7 +179,7 @@ jobs:
           retention-days: 14
 
   source:
-    name: Test ${{ matrix.mode }} · ${{ matrix.rid }}
+    name: ${{ inputs.builder-diagnostics && 'Builder diagnostics' || format('Test {0}', matrix.mode) }} · ${{ matrix.rid }}
     needs: [prepare, dependencies]
     if: needs.prepare.outputs.selected_count != '0'
     runs-on: ${{ matrix.runner }}
@@ -210,7 +214,13 @@ jobs:
         run: |
           set -euo pipefail
           test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+      - name: Run focused then full Builder diagnostics
+        if: github.event_name == 'workflow_dispatch' && inputs.builder-diagnostics
+        run: |
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
+            --inputs "$RUNNER_TEMP/agent-inputs" --builder-diagnostics
       - name: Build and test selected reference mode
+        if: github.event_name != 'workflow_dispatch' || !inputs.builder-diagnostics
         env:
           MODE: ${{ matrix.mode }}
           PACKAGES: ${{ needs.prepare.outputs.packages }}
@@ -239,6 +249,7 @@ jobs:
             sunder-agent-package/artifacts/stress
             sunder-agent-package/artifacts/source-family
             sunder-agent-package/artifacts/source-commands
+            sunder-agent-package/artifacts/builder-diagnostics
           if-no-files-found: error
           retention-days: 14
 

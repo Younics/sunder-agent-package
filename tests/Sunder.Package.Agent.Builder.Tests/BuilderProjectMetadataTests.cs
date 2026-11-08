@@ -282,7 +282,7 @@ public sealed class BuilderProjectMetadataTests : IDisposable
         await WriteAsync(folder + "/Views/DefaultPackageView.axaml.cs", "using Sunder.Sdk.Packaging;\nnamespace Original.Clr.Views;\n[SunderPackageView(\"example.old.default\", \"Old display\")] public partial class DefaultPackageView { }\n");
         await WriteAsync(folder + "/Views/DefaultPackageViewModel.cs", "using Sunder.Generated.Packages.Example_Old_Services;\nusing Sunder.Generated.Packages.Foreign_Package_Services;\nnamespace Original.Clr.Views;\npublic sealed class DefaultPackageViewModel;\n");
         await WriteAsync(folder + "/Views/DefaultPackageView.axaml", "<UserControl xmlns=\"https://github.com/avaloniaui\"><TextBlock Text=\"Old display\" FontSize=\"24\" FontWeight=\"SemiBold\" /></UserControl>\n");
-        return Path.Combine(_root, folder, entry);
+        return Path.GetFullPath(Path.Combine(_root, folder, entry));
     }
     private async Task<string> NodeAsync(string folder)
     {
@@ -298,7 +298,7 @@ public sealed class BuilderProjectMetadataTests : IDisposable
             """);
         await WriteAsync(folder + "/app/src/App.tsx", "const packageId = \"example.old\";\nconst packageName = \"Old display\";\nexport function App() { return <><h1>{packageName}</h1><p>Check this package's permissions.</p></>; }\n");
         await WriteAsync(folder + "/app/index.html", "<!doctype html><html><head><title>Old display</title></head><body></body></html>\n");
-        return Path.Combine(_root, folder, "sunder.package.json");
+        return Path.GetFullPath(Path.Combine(_root, folder, "sunder.package.json"));
     }
     private async Task WriteAsync(string path, string content)
     {

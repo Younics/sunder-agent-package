@@ -17,6 +17,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
 import release_inputs as inputs
 
 
+def configure_console():
+    # Redirected Windows streams otherwise use the ANSI code page, even when
+    # the .NET child and retained logs are UTF-8.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+def console_write(text, stream=None):
+    stream = sys.stdout if stream is None else stream
+    encoding = getattr(stream, "encoding", None)
+    if encoding:
+        text = text.encode(encoding, errors="backslashreplace").decode(encoding)
+    stream.write(text)
+    stream.flush()
+
+
+def describe_error(error):
+    return f"{type(error).__name__}: {error}" + "".join("\n" + note for note in getattr(error, "__notes__", []))
+
+
+def note_error(error, message):
+    # Retain CLI diagnostics on Python versions without BaseException.add_note.
+    error.__notes__ = [*getattr(error, "__notes__", []), message]
+
+
 def head(root):
     return subprocess.check_output(["git", "-C", str(root), "rev-parse", "HEAD"], text=True).strip()
 
@@ -157,7 +183,8 @@ def execute(state_path, command, cwd=None, log=None):
         if command[1] in ("build", "test"):
             inputs.require("--no-restore" in command, "Use the explicitly restored dependency graph")
         command += arguments(state["properties"])
-    started, status = time.monotonic(), None
+    started, status, process, failure = time.monotonic(), None, None, None
+    errors = {}
     if log is not None:
         log = Path(log)
         log.parent.mkdir(parents=True, exist_ok=True)
@@ -170,19 +197,49 @@ def execute(state_path, command, cwd=None, log=None):
                 with subprocess.Popen(command, cwd=cwd or state["source"], env=env, stdout=subprocess.PIPE,
                                       stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace") as process:
                     for line in process.stdout:
-                        output.write(line)
-                        output.flush()
-                        print(line, end="", flush=True)
+                        # A failed mirror must not close the pipe early, lose the
+                        # child's status, or leave it blocked on a full pipe.
+                        if "log" not in errors:
+                            try:
+                                output.write(line)
+                                output.flush()
+                            except (OSError, UnicodeError, ValueError) as error:
+                                errors["log"] = describe_error(error)
+                        if "console" not in errors:
+                            try:
+                                console_write(line)
+                            except (OSError, UnicodeError, ValueError) as error:
+                                errors["console"] = describe_error(error)
                     status = process.wait()
+            if errors:
+                raise OSError("CI output capture failed: " + json.dumps(errors))
         return status
+    except BaseException as error:
+        failure = error
+        errors["execution"] = describe_error(error)
+        raise
     finally:
-        if log is not None:
-            log.with_suffix(".command.json").write_text(json.dumps({
-                "command": command, "cwd": str(cwd or state["source"]), "state": str(Path(state_path).resolve()),
-                "exitCode": status, "elapsedMilliseconds": round((time.monotonic() - started) * 1000),
-                "output": log.name,
-            }, indent=2) + "\n", encoding="utf-8")
-        context(state_path)
+        if process is not None:
+            status = process.returncode
+        try:
+            context(state_path)
+        except Exception as error:
+            errors["verification"] = describe_error(error)
+            if failure is None:
+                failure = error
+                raise
+            note_error(failure, "Post-execution input verification also failed: " + describe_error(error))
+        finally:
+            if log is not None:
+                try:
+                    log.with_suffix(".command.json").write_text(json.dumps({
+                        "command": command, "cwd": str(cwd or state["source"]), "state": str(Path(state_path).resolve()),
+                        "exitCode": status, "elapsedMilliseconds": round((time.monotonic() - started) * 1000),
+                        "output": log.name, "errors": errors,
+                    }, indent=2) + "\n", encoding="utf-8")
+                except Exception as error:
+                    if failure is None: raise
+                    note_error(failure, "Command evidence could not be written: " + describe_error(error))
 
 
 def generate_inventory(source, selected=None, mode="source"):
@@ -250,6 +307,8 @@ def validate(args):
     if selected == []:
         print("No newer package versions; validation skipped.")
         return
+    builder_diagnostics = getattr(args, "builder_diagnostics", False)
+    inputs.require(not builder_diagnostics or args.mode == "source", "Builder diagnostics require source mode")
     inventory_path = generate_inventory(source, selected, args.mode)
     with tempfile.TemporaryDirectory(prefix="sunder-agent-ci-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         root = Path(temporary)
@@ -259,6 +318,9 @@ def validate(args):
         args.work = root / "prepared"
         prepare(args)
         state = args.work / "ci-state.json"
+        if builder_diagnostics:
+            test_lanes.builder_diagnostics(state, inventory_path)
+            return
         projects = ([row["path"] for row in inputs.load(inventory_path)["projects"] if args.mode in row["modes"]]
                     if selected is not None else ["Sunder.AgentPackage.slnx"])
         for project in projects:
@@ -308,6 +370,7 @@ def main():
     validate_parser.add_argument("--catalog")
     validate_parser.add_argument("--mode", choices=("source", "package"), default="source")
     validate_parser.add_argument("--stress", action="store_true")
+    validate_parser.add_argument("--builder-diagnostics", action="store_true", help="Run focused then full source-mode Builder tests")
     validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--state", required=True)
@@ -333,10 +396,11 @@ def main():
 
 
 if __name__ == "__main__":
+    configure_console()
     try:
         raise SystemExit(main())
     except subprocess.CalledProcessError as error:
-        print("Agent CI preparation failed: " + str(error), file=sys.stderr)
+        console_write("Agent CI failed: " + describe_error(error) + "\n", sys.stderr)
         raise SystemExit(error.returncode)
     except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
-        raise SystemExit("Agent CI preparation failed: " + str(error))
+        raise SystemExit("Agent CI failed: " + describe_error(error))

@@ -1,7 +1,9 @@
 """Agent CI test selection and evidence, shared by workflows and local commands."""
+import functools
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
@@ -9,6 +11,34 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = json.loads((ROOT / "scripts/test/ci-scenarios.json").read_text())
+BUILDER_PROJECT = "tests/Sunder.Package.Agent.Builder.Tests/Sunder.Package.Agent.Builder.Tests.csproj"
+BUILDER_FOCUS = ("BuilderLocalNuGetTests", "BuilderTemplateCacheTests", "BuilderProjectMetadataTests", "BuilderToolSourceTests", "BuilderToolchainTests")
+
+
+class TestProjectFailure(subprocess.CalledProcessError):
+    """A completed test run with assertion failures and complete discovery/TRX."""
+
+
+@functools.cache
+def evidence_reader():
+    return runpy.run_path(str(ROOT / "scripts/test/generate-test-duration-report.py"))
+
+
+def project_results(output, name, discovery):
+    reader = evidence_reader()
+    results, run = reader["read_trx"](output, output / (name + ".trx"))
+    violations = run["violations"] + reader["discovery_violations"](output, results, [(output / (name + ".discovery.json"), discovery)])
+    if any(row["outcome"] not in ("passed", "failed", "skipped") for row in results):
+        violations.append("Unexpected test result outcome")
+    if violations: raise ValueError(f"Incomplete test evidence for {name}: " + "; ".join(violations))
+    return results
+
+
+def completed_test_failure(output, name, discovery):
+    try:
+        return any(row["outcome"] == "failed" for row in project_results(output, name, discovery))
+    except (OSError, ValueError, ET.ParseError):
+        return False
 
 
 def run(*args, cwd=ROOT, env=None):
@@ -25,20 +55,22 @@ def discovered_tests(output):
 def run_project(state_path, source, project, common, filter_value, output):
     import agent_ci
     name = Path(project).stem
-    base = [*common[:2], project, *common[3:], "--filter", filter_value]
+    base = [*common[:2], project, *common[3:]]
+    if filter_value: base += ["--filter", filter_value]
     log = output / (name + ".discovery.log")
     command = [*base, "--list-tests", "--verbosity", "quiet"]
     status = agent_ci.execute(state_path, command, log=log)
     if status: raise subprocess.CalledProcessError(status, command)
     cases = discovered_tests(log.read_text(encoding="utf-8"))
     _, environment = agent_ci.context(state_path)
-    (output / (name + ".discovery.json")).write_text(json.dumps({
+    discovery = {
         "schemaVersion": 1, "project": name, "filter": filter_value,
         "report": name + ".trx", "tests": cases,
         "prerequisites": {key: environment.get(key, "") for key in (
             "SUNDER_REQUIRE_TEST_PREREQUISITES", "SUNDER_DOCKER_INTEGRATION",
             "SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_AGENT_NATIVE_ARCHIVE_DIR")},
-    }, indent=2) + "\n", encoding="utf-8")
+    }
+    (output / (name + ".discovery.json")).write_text(json.dumps(discovery, indent=2) + "\n", encoding="utf-8")
     if not cases:
         return 0
     # The all-family case owns bounded child builds and the existing CI job budget;
@@ -47,7 +79,11 @@ def run_project(state_path, source, project, common, filter_value, output):
     command = [*base, "--logger", f"trx;LogFileName={name}.trx", "--results-directory", str(output),
                "--diag", str(output / (name + ".vstest.log")), *diagnostics]
     status = agent_ci.execute(state_path, command, log=output / (name + ".run.log"))
-    if status: raise subprocess.CalledProcessError(status, command)
+    if status:
+        error = TestProjectFailure if status == 1 and completed_test_failure(output, name, discovery) else subprocess.CalledProcessError
+        raise error(status, command)
+    if any(row["outcome"] == "failed" for row in project_results(output, name, discovery)):
+        raise ValueError(f"{name}: successful command has failed test results")
     return len(cases)
 
 
@@ -80,7 +116,17 @@ def tests(state_path, lane):
         output = source / "artifacts/stress" / str(attempt + 1) if lane == "stress" else directory
         if output.exists(): shutil.rmtree(output)
         output.mkdir(parents=True)
-        count = sum(run_project(state_path, source, project, common, filter_value, output) for project in projects)
+        count, failures = 0, []
+        for project in projects:
+            try:
+                count += run_project(state_path, source, project, common, filter_value, output)
+            except TestProjectFailure as error:
+                if lane not in ("source", "package"): raise
+                failures.append((project, error))
+        if failures:
+            error = failures[0][1]
+            agent_ci.note_error(error, "Failed independent projects: " + ", ".join(project for project, _ in failures))
+            raise error
         if not count: raise ValueError(f"{lane} selected zero tests")
     if lane in ("required-linux", "stress"):
         output = source / "artifacts/stress" if lane == "stress" else directory
@@ -123,20 +169,81 @@ def validate(state_path, mode, stress=False):
                     os.environ.update(SUNDER_DOCKER_INTEGRATION="1", SUNDER_REQUIRE_TEST_PREREQUISITES="1")
                     tests(state_path, "required-linux")
                     if stress: tests(state_path, "stress")
-        finally:
+        except BaseException as error:
+            try:
+                report(mode, platform)
+            except Exception as reporting:
+                agent_ci.note_error(error, "Report verification also failed: " + agent_ci.describe_error(reporting))
+            raise
+        else:
             report(mode, platform)
     finally:
         os.environ.clear()
         os.environ.update(previous)
 
 
-def report(mode, platform):
-    command = [sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", "artifacts/test-results",
-               "--inventory", "artifacts/reports/test-inventory.json", "--mode", mode, "--platform", platform,
+def builder_diagnostics(state_path, inventory_path):
+    import agent_ci
+    state, _ = agent_ci.context(state_path)
+    source = Path(state["source"])
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["projects"] = [row for row in inventory["projects"] if row["path"] == BUILDER_PROJECT]
+    if len(inventory["projects"]) != 1: raise ValueError("Builder project missing from diagnostic selection")
+    root = source / "artifacts/builder-diagnostics"
+    if root.exists(): shutil.rmtree(root)
+    root.mkdir(parents=True)
+    inventory_path = root / "test-inventory.json"
+    inventory_path.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
+    command = ["dotnet", "build", BUILDER_PROJECT, "-c", "Release", "--no-restore"]
+    status = agent_ci.execute(state_path, command, log=root / "build.log")
+    if status: raise subprocess.CalledProcessError(status, command)
+    common = ["dotnet", "test", BUILDER_PROJECT, "-c", "Release", "--no-build", "--no-restore"]
+    platform = "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux"
+    for stage, selection in (("focused", "|".join("FullyQualifiedName~" + name for name in BUILDER_FOCUS)), ("full", "")):
+        output = root / stage
+        output.mkdir()
+        report_args = dict(results=output, inventory=inventory_path, output=root / (stage + ".json"))
+        try:
+            if not run_project(state_path, source, BUILDER_PROJECT, common, selection, output):
+                raise ValueError("Builder diagnostics selected zero tests")
+        except BaseException as error:
+            try:
+                report("source", platform, **report_args)
+            except Exception as reporting:
+                agent_ci.note_error(error, "Report verification also failed: " + agent_ci.describe_error(reporting))
+            raise
+        else:
+            report("source", platform, **report_args)
+
+
+def report(mode, platform, *, results="artifacts/test-results", inventory="artifacts/reports/test-inventory.json", output=None):
+    import agent_ci
+    command = [sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", results,
+               "--inventory", inventory, "--mode", mode, "--platform", platform,
                 "--verify"]
     if mode == "package": command += ["--lane", "PackageCompatibility", "--exclude-category", "Artifact"]
-    with (ROOT / "artifacts/reports/results.json").open("w", encoding="utf-8") as stream:
-        subprocess.run([str(arg) for arg in command], cwd=ROOT, stdout=stream, check=True)
+    path = Path(output) if output is not None else ROOT / "artifacts/reports/results.json"
+    with path.open("w", encoding="utf-8") as stream:
+        result = subprocess.run([str(arg) for arg in command], cwd=ROOT, stdout=stream)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        summary = value["summary"]
+        lines = [f"{mode} / {platform}: {summary['passed']} passed, {summary['failed']} failed, {summary['skipped']} skipped. Evidence: {path}"]
+        for row in value["failures"][:20]:
+            message = (row.get("message") or "Test failed").splitlines()[0]
+            lines.append(f"  FAIL {row['test']}: {message} ({row['trx']})")
+        if len(value["failures"]) > 20: lines.append(f"  See results.json for {len(value['failures']) - 20} further failures.")
+        lines.extend("  EVIDENCE " + message for message in value["evidenceViolations"][:20])
+        if len(value["evidenceViolations"]) > 20:
+            lines.append(f"  See results.json for {len(value['evidenceViolations']) - 20} further evidence violations.")
+        agent_ci.console_write("\n".join(lines) + "\n", sys.stderr)
+    except Exception as error:
+        if result.returncode:
+            failure = subprocess.CalledProcessError(result.returncode, result.args)
+            agent_ci.note_error(failure, "Report summary could not be rendered: " + agent_ci.describe_error(error))
+            raise failure from error
+        raise
+    result.check_returncode()
 
 
 def retain_verifier():

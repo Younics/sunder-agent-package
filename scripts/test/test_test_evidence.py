@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET
 SCRIPT = Path(__file__).with_name("generate-test-duration-report.py")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
 import bash_runtime
+import agent_ci
+import test_lanes
 SPEC = importlib.util.spec_from_file_location("evidence", SCRIPT)
 evidence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(evidence)
@@ -179,6 +181,78 @@ public class Outer {
         self.assertEqual("unique failure", report["failures"][0]["message"])
         self.assertEqual("at Fixture.Tests.EvidenceTests", report["failures"][0]["stackTrace"])
         self.assertEqual("full/Fixture.Tests.trx", report["failures"][0]["trx"])
+
+    def test_assertion_notifications_are_bound_and_do_not_hide_platform_errors(self):
+        self.rows[1] = ("OrdinaryTest", None, "Failed", "assertion failure")
+        self.write_reports(outcome="Failed")
+        path = self.results / "Fixture.Tests.trx"
+        tree = ET.parse(path)
+        infos = ET.SubElement(tree.find("ResultSummary"), "RunInfos")
+        notification = "[xUnit.net 00:00:08.39]     Fixture.Tests.EvidenceTests.OrdinaryTest [FAIL]"
+        ET.SubElement(ET.SubElement(infos, "RunInfo", outcome="Error"), "Text").text = notification
+        tree.write(path)
+        self.assertEqual([], evidence.read_trx(self.results, path)[1]["violations"])
+        discovery = json.loads((self.results / "Fixture.Tests.discovery.json").read_text())
+        self.assertTrue(test_lanes.completed_test_failure(self.results, "Fixture.Tests", discovery))
+        for message in ("test platform failed", notification, notification.replace("OrdinaryTest", "UnknownCase"),
+                        notification.replace("OrdinaryTest", "LinuxTheory(value: 1)"), notification + "\nTest host crashed"):
+            with self.subTest(message=message):
+                info = ET.SubElement(infos, "RunInfo", outcome="Error")
+                ET.SubElement(info, "Text").text = message
+                tree.write(path)
+                self.assertFalse(test_lanes.completed_test_failure(self.results, "Fixture.Tests", discovery))
+                report = self.report(success=False)
+                self.assertTrue(any("test-platform errors" in error for error in report["evidenceViolations"]))
+                infos.remove(info)
+
+    def test_only_complete_assertion_runs_are_classified_as_project_failures(self):
+        self.rows[1] = ("OrdinaryTest", None, "Failed", "assertion failure")
+        path = self.results / "Fixture.Tests.trx"
+        common = ["dotnet", "test", "solution", "--no-restore", "--no-build"]
+        def execute(state, command, log):
+            if "--list-tests" in command:
+                log.write_text("The following Tests are available:\n" + "".join("    " + case + "\n" for case in discovery["tests"]))
+                return 0
+            return status
+        for defect in ("none", "missing", "malformed", "incomplete", "aborted", "counters", "platform", "unexpected-exit"):
+            with self.subTest(defect=defect):
+                self.write_reports(outcome="Failed")
+                discovery = json.loads((self.results / "Fixture.Tests.discovery.json").read_text())
+                status = 2 if defect == "unexpected-exit" else 1
+                tree = ET.parse(path)
+                if defect == "incomplete": tree.find("Results").remove(tree.find("Results")[0])
+                if defect == "aborted": tree.find("ResultSummary").set("outcome", "Aborted")
+                if defect == "counters": tree.find("ResultSummary/Counters").set("aborted", "1")
+                if defect == "platform": ET.SubElement(tree.find("ResultSummary"), "RunInfo", outcome="Error")
+                tree.write(path)
+                if defect == "malformed": path.write_text("<TestRun")
+                if defect == "missing": path.unlink()
+                with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+                    with self.assertRaises(subprocess.CalledProcessError) as caught:
+                        test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                self.assertEqual(defect == "none", isinstance(caught.exception, test_lanes.TestProjectFailure))
+                # Even exit zero must stop on absent, incomplete or inconsistent TRX.
+                status = 0
+                with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+                    with self.assertRaises((ValueError, OSError, ET.ParseError)):
+                        test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+        self.rows[1] = ("OrdinaryTest", None, "Passed", "")
+        self.write_reports()
+        with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+            self.assertEqual(len(self.rows), test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results))
+        for error in (OSError("capture failure"), ValueError("input integrity"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__), patch.object(agent_ci, "execute", side_effect=error):
+                with self.assertRaises(type(error)) as caught:
+                    test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                self.assertIs(error, caught.exception)
+
+    def test_successful_child_cannot_hide_capture_or_integrity_failure(self):
+        for stage in ("console", "log", "verification"):
+            with self.subTest(stage=stage):
+                (self.results / "Fixture.Tests.run.command.json").write_text(json.dumps({
+                    "exitCode": 0, "command": ["dotnet", "test"], "errors": {stage: "fixture failure"}}))
+                report = self.report(success=False)
+                self.assertTrue(any("command diagnostics failed" in error and stage in error for error in report["evidenceViolations"]))
 
     def test_malformed_missing_and_counter_only_reports_fail(self):
         path = self.results / "Fixture.Tests.trx"
