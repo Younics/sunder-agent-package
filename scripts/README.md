@@ -57,11 +57,18 @@ The same discovered script-check groups used by GitHub can be listed or executed
 python3 -B scripts/test/run-ci-checks.py source --list
 python3 -B scripts/test/run-ci-checks.py release
 python3 -B scripts/ci/agent_ci.py matrices --package-tests
+python3 -B scripts/ci/agent_ci.py preflight
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package
 ```
 
-`validate` is the workflow entry point: discover scripts/tests, resolve and hydrate
+`preflight` generates and validates the test inventory and runs dependency-independent
+script checks (source checks on each behavior platform, release checks on Linux).
+Actions gates dependency production on its Linux/Windows results after version
+selection. Both `preflight` and `validate` accept `--packages '[]'` to stop before
+tool execution when no versions are selected.
+
+`validate` discovers tests, resolves and hydrates
 exact inputs, build the projects and their provider dependency, execute the selected suites and
 verify combined evidence. Its temporary tools/cache are cleaned on success or
 failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
@@ -70,6 +77,14 @@ required Linux/Docker cases run once in their owning lane. `--stress` adds the
 scheduled Linux repetitions. Report directories replace prior CI runs; hosted
 reports expire after fourteen days, while immutable release handoffs keep their
 release-specific retention.
+
+Nested Python-to-Bash calls use `scripts/ci/bash_runtime.py`. Actions binds the
+running shell's absolute executable in `SUNDER_BASH_EXECUTABLE`; local Windows
+commands locate and validate Git Bash. A custom binding must be an existing
+absolute executable path. Inventory generation retains separate stdout/stderr and
+command diagnostics in `artifacts/reports/test-inventory.*`; the JSON inventory is
+installed atomically only after successful generation and validation. Failures
+remove stale inventories and retain the original subprocess exit code.
 
 Individual checks remain useful for focused iteration:
 

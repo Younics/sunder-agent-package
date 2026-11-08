@@ -6,6 +6,11 @@ on:
   schedule:
     - cron: "23 4 * * 1"
   workflow_dispatch:
+    inputs:
+      package-tests:
+        description: Include locked-package compatibility on the behavior runners
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       core_commit:
@@ -34,6 +39,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.behavior }}
+      preflight: ${{ steps.matrix.outputs.preflight }}
       core_commit: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
       packages: ${{ steps.selection.outputs.packages }}
       selected_count: ${{ steps.selection.outputs.selected_count }}
@@ -70,9 +76,48 @@ jobs:
           [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
           python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
 
+  preflight:
+    name: Check scripts · ${{ matrix.rid }}
+    needs: prepare
+    if: needs.prepare.outputs.selected_count != '0'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.preflight) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Check inventory and dependency-independent scripts
+        id: scripts
+        env:
+          PACKAGES: ${{ needs.prepare.outputs.packages }}
+        run: python3 -B scripts/ci/agent_ci.py preflight --packages "$PACKAGES"
+      - name: Retain preflight diagnostics
+        if: always() && steps.scripts.outcome != 'skipped' && steps.scripts.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sunder-agent-preflight-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/reports
+          if-no-files-found: error
+          retention-days: 14
+
   dependencies:
     name: Prepare exact dependencies
-    needs: prepare
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.selected_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -200,7 +245,7 @@ jobs:
   summary:
     name: Summary
     if: always()
-    needs: [prepare, dependencies, source]
+    needs: [prepare, preflight, dependencies, source]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

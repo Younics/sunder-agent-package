@@ -10,6 +10,8 @@ import sys
 import tempfile
 import time
 
+import bash_runtime
+
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
 import release_inputs as inputs
@@ -183,6 +185,62 @@ def execute(state_path, command, cwd=None, log=None):
         context(state_path)
 
 
+def generate_inventory(source, selected=None, mode="source"):
+    import version_selection
+    reports = source / "artifacts/reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    destination = reports / "test-inventory.json"
+    destination.unlink(missing_ok=True)
+    command, result, failure, temporary = [], None, None, None
+    started = time.monotonic()
+    try:
+        command = bash_runtime.command("scripts/test/generate-test-inventory.sh")
+        result = subprocess.run(command, cwd=source, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        result.check_returncode()
+        inventory = json.loads(result.stdout)
+        inputs.require(isinstance(inventory, dict) and inventory.get("schemaVersion") == 2
+                       and inventory.get("solution") == "Sunder.AgentPackage.slnx"
+                       and isinstance(inventory.get("projects"), list) and inventory["projects"], "Invalid test inventory header/projects")
+        for row in inventory["projects"]:
+            inputs.require(isinstance(row, dict) and isinstance(row.get("path"), str) and row["path"].endswith(".csproj")
+                           and isinstance(row.get("owner"), str) and row["owner"]
+                           and isinstance(row.get("modes"), list) and row["modes"]
+                           and all(mode in ("source", "package") for mode in row["modes"]), "Invalid test inventory project")
+        inputs.require(len({row["path"] for row in inventory["projects"]}) == len(inventory["projects"]), "Duplicate test inventory project")
+        if selected is not None:
+            inventory = version_selection.scope_inventory(inventory, selected, mode, sys.platform)
+        with tempfile.NamedTemporaryFile(dir=reports, prefix=".test-inventory-", suffix=".json", delete=False) as output:
+            temporary = Path(output.name)
+            output.write(inputs.canonical(inventory) + b"\n")
+        temporary.replace(destination)
+        return destination
+    except (ValueError, OSError, subprocess.SubprocessError) as error:
+        failure = str(error)
+        print(f"Test inventory failed: {failure}\nCommand: {command}\nDiagnostics: {reports}", file=sys.stderr)
+        if result is not None:
+            print(f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}", file=sys.stderr)
+        raise
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+        for stream in ("stdout", "stderr"):
+            (reports / f"test-inventory.{stream}.log").write_text(getattr(result, stream, ""), encoding="utf-8")
+        (reports / "test-inventory.command.json").write_text(json.dumps(dict(
+            command=command, cwd=str(source), exitCode=result.returncode if result is not None else None,
+            error=failure, elapsedMilliseconds=round((time.monotonic() - started) * 1000)), indent=2) + "\n", encoding="utf-8")
+
+
+def preflight(args):
+    import version_selection
+    source = Path(args.source).resolve()
+    if args.packages is not None and version_selection.package_ids(source, json.loads(args.packages)) == []:
+        print("No newer package versions; preflight skipped.")
+        return
+    generate_inventory(source)
+    for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
+        subprocess.run([sys.executable, "-B", "scripts/test/run-ci-checks.py", group], cwd=source, check=True)
+
+
 def validate(args):
     import test_lanes
     import version_selection
@@ -192,17 +250,7 @@ def validate(args):
     if selected == []:
         print("No newer package versions; validation skipped.")
         return
-    reports = source / "artifacts/reports"
-    reports.mkdir(parents=True, exist_ok=True)
-    with (reports / "test-inventory.json").open("w", encoding="utf-8") as stream:
-        subprocess.run(["bash", "scripts/test/generate-test-inventory.sh"], cwd=source, stdout=stream, check=True)
-    inventory_path = reports / "test-inventory.json"
-    if selected is not None:
-        inventory = version_selection.scope_inventory(inputs.load(inventory_path), selected, args.mode, sys.platform)
-        inventory_path.write_bytes(inputs.canonical(inventory) + b"\n")
-    if args.mode == "source":
-        for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
-            subprocess.run([sys.executable, "-B", "scripts/test/run-ci-checks.py", group], cwd=source, check=True)
+    inventory_path = generate_inventory(source, selected, args.mode)
     with tempfile.TemporaryDirectory(prefix="sunder-agent-ci-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         root = Path(temporary)
         if not args.inputs and not args.candidate:
@@ -249,6 +297,9 @@ def main():
     prepare_parser.add_argument("--candidate", action="append")
     prepare_parser.add_argument("--catalog")
     prepare_parser.add_argument("--mode", choices=("source", "package"), default="source")
+    preflight_parser = commands.add_parser("preflight")
+    preflight_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
+    preflight_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     validate_parser.add_argument("--core", required=True)
@@ -273,6 +324,7 @@ def main():
     elif args.action == "resolve": resolve(args.source, args.core, args.output)
     elif args.action == "coordinates": coordinates(args.source)
     elif args.action == "prepare": prepare(args)
+    elif args.action == "preflight": preflight(args)
     elif args.action == "validate": validate(args)
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -283,5 +335,8 @@ def main():
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+    except subprocess.CalledProcessError as error:
+        print("Agent CI preparation failed: " + str(error), file=sys.stderr)
+        raise SystemExit(error.returncode)
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
         raise SystemExit("Agent CI preparation failed: " + str(error))

@@ -45,7 +45,8 @@ There are three GitHub workflows:
 - `sunder-package-smoke.yml` (**Validate**): PR/merge-queue versions compare against
   the immutable event base before toolchain setup; weekly/manual full source and
   stress validation remains available. Releases supply their exact selected IDs
-  and additionally run locked-package compatibility.
+  and additionally run locked-package compatibility. Manual dispatch can also
+  select `package-tests` to qualify both reference modes without publication.
 - `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
 - `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
@@ -73,8 +74,9 @@ and [cold release inputs](cold-release-inputs.md).
 Workflow configuration has these owners:
 
 - `global.json` and the exact Core checkout supply .NET/Node/npm toolchains through
-  `.github/actions/setup/action.yml`.
-- `eng/ci/platforms.json` supplies native and source/package behavior matrices.
+  `.github/actions/setup/action.yml`. The action also binds native Bash for nested
+  Python script calls through `SUNDER_BASH_EXECUTABLE` (Git Bash on Windows).
+- `eng/ci/platforms.json` supplies native, preflight and source/package behavior matrices.
   Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables.
 - `scripts/test/ci-scenarios.json` owns required test selections; `agent_ci.py test`
   and `report` execute/check them. `run-ci-checks.py source|release` discovers script checks.
@@ -115,6 +117,14 @@ source/Core commits, locks and candidate/catalog bytes before hydration. Runners
 never independently regenerate the selected owner archive. A failed identity check
 retains the rejected bytes and original log and stops downstream work.
 
+Before dependency production, **Check scripts** runs inventory generation and
+dependency-independent script checks on Linux and Windows. It uses the same
+version-selection gate, so an empty selection installs no toolchains and runs no
+preflight. The Summary requires its successful outcome for every active selection.
+Behavior jobs generate their own scoped inventories from their actual checkout;
+script suites run once per preflight platform. Inventory failures print and retain
+stdout, stderr, command and exit status without leaving invalid/stale JSON evidence.
+
 This bundle is dependency evidence, not native release qualification. Final family
 verification still requires the composed native owner identity to equal every
 committed dependent selection. A missing/mismatched selected archive requires
@@ -140,6 +150,7 @@ execution; explicit denied-network/cold acceptance remains a separate profile.
 For local validation:
 
 ```sh
+python3 -B scripts/ci/agent_ci.py preflight
 python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output /tmp/agent-inputs
 python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core \
   --inputs /tmp/agent-inputs --work /tmp/agent-ci

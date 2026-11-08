@@ -65,18 +65,24 @@ class VersionSelectionTests(unittest.TestCase):
             dict(path="filesystem", owner="younics.ai.agent.execution.local", modes=["source", "package"], sourceOnlyTests=["ordinary"])])
         before = copy.deepcopy(inventory)
         selected = ["younics.ai.agent.provider.openai"]
-        value = selection.scope_inventory(inventory, selected, "source", "linux")
-        self.assertEqual(["family", "openai", "filesystem"], [row["path"] for row in value["projects"]])
-        self.assertEqual(True, value["projects"][-1]["requiredOnly"])
-        self.assertEqual([], value["projects"][-1]["sourceOnlyTests"])
-        self.assertEqual(["family", "openai"], [row["path"] for row in selection.scope_inventory(inventory, selected, "package", "linux")["projects"]])
-        self.assertEqual([], selection.projects(inventory, []))
-        self.assertEqual(inventory, selection.scope_inventory(inventory, ["younics.ai.agent"], "source", "linux"))
+        for platform in ("linux", "win32", "darwin"):
+            for mode in ("source", "package"):
+                with self.subTest(platform=platform, mode=mode):
+                    value = selection.scope_inventory(inventory, selected, mode, platform)
+                    required = mode == "source" and platform == "linux"
+                    self.assertEqual(["family", "openai"] + (["filesystem"] if required else []), [row["path"] for row in value["projects"]])
+                    if required:
+                        self.assertEqual(True, value["projects"][-1]["requiredOnly"])
+                        self.assertEqual([], value["projects"][-1]["sourceOnlyTests"])
+                    self.assertEqual([], selection.scope_inventory(inventory, [], mode, platform)["projects"])
+                    self.assertEqual(inventory, selection.scope_inventory(inventory, ["younics.ai.agent"], mode, platform))
+                    local = selection.scope_inventory(inventory, ["younics.ai.agent.execution.local"], mode, platform)
+                    self.assertEqual([inventory["projects"][0], inventory["projects"][-1]], local["projects"])
         self.assertEqual(before, inventory)
 
     def test_summary_rejects_failure_cancellation_and_unexpected_skips_in_every_selected_stage(self):
         for mode in ("validate", "release"):
-            names = ("dependencies", "source") if mode == "validate" else ("validation", "native", "fan-in", "publish", "release")
+            names = ("preflight", "dependencies", "source") if mode == "validate" else ("validation", "native", "fan-in", "publish", "release")
             for count, resume in ((0, False), (1, False), (15, False), (1, True)):
                 jobs = {"prepare": dict(result="success", outputs=dict(selected_count=str(count), resume=str(resume).lower()))}
                 for name in names:

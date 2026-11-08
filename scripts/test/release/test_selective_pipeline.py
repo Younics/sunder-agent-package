@@ -111,6 +111,7 @@ class SelectivePipelineTests(unittest.TestCase):
         stack.enter_context(patch.dict(os.environ, self.env))
         stack.enter_context(patch.object(pipeline, "verify_primary", return_value=dict(artifacts=self.records)))
         stack.enter_context(patch.object(pipeline, "stores", return_value=self.targets))
+        stack.enter_context(patch.object(pipeline.bash_runtime, "executable", return_value="/fixture/bash"))
         stack.enter_context(patch.object(pipeline.subprocess, "check_output", return_value=b"retained .NET toolchain\n"))
         return stack
 

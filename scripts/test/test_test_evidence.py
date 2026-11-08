@@ -11,6 +11,8 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 SCRIPT = Path(__file__).with_name("generate-test-duration-report.py")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
+import bash_runtime
 SPEC = importlib.util.spec_from_file_location("evidence", SCRIPT)
 evidence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(evidence)
@@ -202,10 +204,10 @@ public class Outer {
             path.write_text(saved)
 
     def test_inventory_propagates_solution_discovery_failure(self):
-        process = subprocess.run([
-            "bash", "-c", 'dotnet() { return 23; }; export -f dotnet; bash "$1"',
+        process = subprocess.run(bash_runtime.command(
+            "-c", 'dotnet() { return 23; }; export -f dotnet; "$BASH" "$1"',
             "inventory-fixture", str(SCRIPT.with_name("generate-test-inventory.sh")),
-        ], text=True, capture_output=True)
+        ), text=True, capture_output=True)
         self.assertEqual(23, process.returncode, process.stdout + process.stderr)
         self.assertEqual("", process.stdout)
 

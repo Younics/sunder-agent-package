@@ -10,6 +10,8 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
+import bash_runtime
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
 import agent_publication as publication
@@ -66,8 +68,8 @@ def verify_primary(core, directory, plan):
         plan["artifactSourceCommit"], os.environ["CORE_TAG"], os.environ["CORE_COMMIT"], os.environ["CORE_BUILD_VERSION"]], check=True)
     with tempfile.TemporaryDirectory() as temporary:
         audit = Path(temporary) / "audit.json"
-        subprocess.run(["bash", str(ROOT / "scripts/release/generate-package-output-audit.sh"), str(directory),
-            str(directory / "native-test-evidence.json"), str(ROOT), str(audit)], check=True)
+        subprocess.run(bash_runtime.command(ROOT / "scripts/release/generate-package-output-audit.sh", directory,
+            directory / "native-test-evidence.json", ROOT, audit), check=True)
         r.require(audit.read_bytes() == (directory / "package-output-audit.json").read_bytes(), "Native output audit changed")
     return r.verify_family(ROOT, directory, plan["registryOrigin"])
 
@@ -211,7 +213,7 @@ def registry_versions(directory, plan, value, availability=None):
             expected.write_bytes(r.canonical(retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))) + b"\n")
             result = Path(temporary) / (package_id + ".json")
             current = availability if package_id in selected_ids else "Listed"
-            command = ["bash", str(ROOT / "scripts/release/publish-registry-package.sh")]
+            command = bash_runtime.command(ROOT / "scripts/release/publish-registry-package.sh")
             if current:
                 command += ["--verify-only", "--current-availability", current]
             subprocess.run([*command, "--initial-yanked", str(expected), "--publication-output", str(result),

@@ -8,6 +8,7 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tempfile
 import textwrap
 import unittest
 from unittest.mock import patch
@@ -17,6 +18,7 @@ sys.path.insert(0, str(SCRIPTS / "ci"))
 import agent_ci as ci
 import test_lanes
 import ci_platforms
+import bash_runtime
 
 fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].setUp
 
@@ -51,7 +53,7 @@ class AgentCiTests(unittest.TestCase):
         stub = self.root / "scripts/release/release_inputs.py"
         stub.parent.mkdir(parents=True)
         stub.write_text('import sys\nprint("fixture: exact CI inputs missing", file=sys.stderr)\nsys.exit(7)\n')
-        result = subprocess.run(["bash", "-c", script], cwd=self.root, text=True, capture_output=True, timeout=10,
+        result = subprocess.run(bash_runtime.command("-c", script), cwd=self.root, text=True, capture_output=True, timeout=10,
                                  env={**os.environ, "GITHUB_SHA": self.source_sha, "CORE_COMMIT": self.core_sha, "RUNNER_TEMP": str(self.root)})
         self.assertEqual(7, result.returncode, result.stdout + result.stderr)
         self.assertIn("fixture: exact CI inputs missing", (self.root / "artifacts/reports/input-preparation.log").read_text())
@@ -65,26 +67,51 @@ class AgentCiTests(unittest.TestCase):
         args = argparse.Namespace(source=self.source, packages="[]")
         with patch.object(ci.subprocess, "run") as run, patch.object(ci, "prepare") as prepare:
             ci.validate(args)
+            ci.preflight(args)
         run.assert_not_called()
         prepare.assert_not_called()
         self.assertFalse((self.source / "artifacts/reports").exists())
 
     def test_selected_builds_and_reports_share_the_owned_project_inventory(self):
-        selected = self.rows[2]["packageId"]
-        inventory = dict(projects=[dict(path="tests/Selected.csproj", owner=selected, modes=["source"]),
-            dict(path="tests/Family.csproj", owner="agent-family", modes=["source"]),
-            dict(path="tests/Unchanged.csproj", owner=self.rows[3]["packageId"], modes=["source"])])
-        def run(command, **kwargs):
-            if "stdout" in kwargs: kwargs["stdout"].write(json.dumps(inventory))
-        args = argparse.Namespace(source=self.source, core=self.root / "sunder-core", mode="source", inputs=self.root,
-                                  candidate=None, packages=json.dumps([selected]), stress=False)
-        with patch.object(ci.subprocess, "run", side_effect=run), patch.object(ci, "prepare"), \
-             patch.object(ci, "execute", return_value=0) as build, patch.object(test_lanes, "validate") as tests:
-            ci.validate(args)
-        self.assertEqual(["tests/Selected.csproj", "tests/Family.csproj"], [call.args[1][2] for call in build.call_args_list])
-        observed = json.loads((self.source / "artifacts/reports/test-inventory.json").read_text())
-        self.assertEqual(inventory["projects"][:2], observed["projects"])
-        tests.assert_called_once()
+        selected = "younics.ai.agent.provider.openai"
+        inventory = dict(schemaVersion=2, solution="Sunder.AgentPackage.slnx", projects=[
+            dict(path="tests/Selected.csproj", owner=selected, modes=["source", "package"]),
+            dict(path="tests/Family.csproj", owner="agent-family", modes=["source", "package"]),
+            dict(path="tests/Unchanged.csproj", owner="younics.ai.agent.provider.gemini", modes=["source", "package"]),
+            dict(path="tests/Local.csproj", owner="younics.ai.agent.execution.local", modes=["source", "package"], sourceOnlyTests=["ordinary"])])
+        for platform in ("linux", "win32", "darwin"):
+            for mode in ("source", "package"):
+                for package in (selected, "younics.ai.agent"):
+                    with self.subTest(platform=platform, mode=mode, package=package):
+                        args = argparse.Namespace(source=self.source, core=self.root / "sunder-core", mode=mode, inputs=self.root,
+                                                  candidate=None, packages=json.dumps([package]), stress=False)
+                        result = subprocess.CompletedProcess(["fixture-bash"], 0, json.dumps(inventory), "")
+                        with patch.object(sys, "platform", platform), patch.object(bash_runtime, "command", return_value=["fixture-bash"]), \
+                             patch.object(ci.subprocess, "run", return_value=result), patch.object(ci, "prepare"), \
+                             patch.object(ci, "execute", return_value=0) as build, patch.object(test_lanes, "validate") as tests, \
+                             patch.object(test_lanes, "retain_verifier"):
+                            ci.validate(args)
+                        expected = inventory["projects"] if package == "younics.ai.agent" else inventory["projects"][:2]
+                        if package == selected and mode == "source" and platform == "linux":
+                            expected = [*expected, dict(inventory["projects"][-1], requiredOnly=True, sourceOnlyTests=[])]
+                        self.assertEqual([row["path"] for row in expected], [call.args[1][2] for call in build.call_args_list])
+                        observed = json.loads((self.source / "artifacts/reports/test-inventory.json").read_text())
+                        self.assertEqual(expected, observed["projects"])
+                        tests.assert_called_once()
+
+    def test_preflight_runs_platform_script_groups_without_dependency_preparation(self):
+        args = argparse.Namespace(source=self.source, packages=json.dumps(["younics.ai.agent.provider.openai"]))
+        for platform, groups in (("linux", ["source", "release"]), ("win32", ["source"]), ("darwin", ["source"])):
+            with self.subTest(platform=platform), patch.object(sys, "platform", platform), \
+                 patch.object(ci, "generate_inventory") as inventory, patch.object(ci.subprocess, "run") as run, \
+                 patch.object(ci, "prepare", side_effect=AssertionError("preflight must not hydrate dependencies")):
+                ci.preflight(args)
+                inventory.assert_called_once_with(self.source.resolve())
+                self.assertEqual(groups, [call.args[0][-1] for call in run.call_args_list])
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
+        dependencies = workflow.split("  dependencies:\n")[1].split("\n  source:")[0]
+        self.assertIn("needs: [prepare, preflight]", dependencies)
+        self.assertIn("needs: [prepare, preflight, dependencies, source]", workflow)
 
     def test_preparation_failure_cleans_temporary_state_and_does_not_report_unstarted_tests(self):
         work = []
@@ -92,7 +119,7 @@ class AgentCiTests(unittest.TestCase):
             work.append(args.work.parent)
             raise ValueError("preparation failed")
         args = argparse.Namespace(source=self.source, core=self.root / "sunder-core", mode="source", inputs=self.root, candidate=None)
-        with patch.object(ci.subprocess, "run"), patch.object(ci, "prepare", side_effect=fail), \
+        with patch.object(ci, "generate_inventory"), patch.object(ci, "prepare", side_effect=fail), \
                 patch.object(test_lanes, "validate") as tests:
             with self.assertRaisesRegex(ValueError, "preparation failed"): ci.validate(args)
             tests.assert_not_called()
@@ -229,6 +256,8 @@ class AgentCiTests(unittest.TestCase):
         value = ci_platforms.matrices(True, {"SUNDER_AGENT_RUNNER_LINUX_ARM64": '["self-hosted","linux","ARM64"]'})
         self.assertEqual(set(ci_platforms.RIDS), {row["rid"] for row in value["native"]["include"]})
         self.assertEqual(4, len(value["behavior"]["include"]))
+        self.assertEqual({"windows", "linux"}, {row["platform"] for row in value["preflight"]["include"]})
+        self.assertEqual(2, len(value["preflight"]["include"]))
         self.assertEqual(["self-hosted", "linux", "ARM64"], next(row["runner"] for row in value["native"]["include"] if row["rid"] == "linux-arm64"))
         for labels in ('[]', '"ubuntu-latest"', '["linux\\noutput=changed"]'):
             with self.assertRaises(ValueError): ci_platforms.matrices(variables={"SUNDER_AGENT_RUNNER_LINUX_ARM64": labels})
@@ -271,6 +300,53 @@ class AgentCiTests(unittest.TestCase):
             self.assertNotIn("--blame-hang", run.call_args.args[1])
         with self.assertRaisesRegex(ValueError, "no discovery header"):
             test_lanes.discovered_tests("adapter crashed")
+
+
+class InventoryProcessTests(unittest.TestCase):
+    def setUp(self):
+        scope = tempfile.TemporaryDirectory(prefix="agent inventory with spaces ")
+        self.addCleanup(scope.cleanup)
+        self.source = Path(scope.name)
+        self.script = self.source / "scripts/test/generate-test-inventory.sh"
+        self.script.parent.mkdir(parents=True)
+        self.reports = self.source / "artifacts/reports"
+        self.reports.mkdir(parents=True)
+        self.inventory = self.reports / "test-inventory.json"
+
+    def test_failure_removes_stale_inventory_and_keeps_stdout_stderr_and_exit_code(self):
+        for status, output in ((23, "fixture inventory discovery failed"), (0, "not JSON"), (0, '{}'),
+                               (0, '{"schemaVersion":2,"solution":"Sunder.AgentPackage.slnx","projects":[{}]}')):
+            with self.subTest(status=status, output=output):
+                self.inventory.write_text('{"stale":true}')
+                self.script.write_text(f"printf '%s\\n' '{output}'\nprintf 'fixture stderr\\n' >&2\nexit {status}\n", encoding="utf-8")
+                diagnostics = io.StringIO()
+                with patch("sys.stderr", diagnostics), self.assertRaises((ValueError, subprocess.CalledProcessError)) as failure:
+                    ci.generate_inventory(self.source)
+                if status:
+                    self.assertEqual(status, failure.exception.returncode)
+                self.assertFalse(self.inventory.exists())
+                self.assertFalse(list(self.reports.glob(".test-inventory-*")))
+                record = json.loads((self.reports / "test-inventory.command.json").read_text())
+                self.assertEqual(status, record["exitCode"])
+                self.assertTrue(record["error"])
+                self.assertIn(output, diagnostics.getvalue())
+                self.assertIn("fixture stderr", diagnostics.getvalue())
+                self.assertEqual(output + "\n", (self.reports / "test-inventory.stdout.log").read_text())
+                self.assertEqual("fixture stderr\n", (self.reports / "test-inventory.stderr.log").read_text())
+
+    def test_success_writes_only_valid_inventory_and_cli_preserves_failure_status(self):
+        value = dict(schemaVersion=2, solution="Sunder.AgentPackage.slnx",
+                     projects=[dict(path="tests/Fixture.csproj", owner="agent-family", modes=["source"])])
+        self.script.write_text("printf '%s\\n' '" + json.dumps(value) + "'\n", encoding="utf-8")
+        self.assertEqual(self.inventory, ci.generate_inventory(self.source))
+        self.assertEqual(value, json.loads(self.inventory.read_text()))
+        self.assertFalse(list(self.reports.glob(".test-inventory-*")))
+        self.script.write_text("printf 'original failure\\n' >&2\nexit 23\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "ci/agent_ci.py"), "preflight", "--source", str(self.source)],
+                                capture_output=True, text=True)
+        self.assertEqual(23, result.returncode, result.stdout + result.stderr)
+        self.assertIn("original failure", result.stderr)
+        self.assertFalse(self.inventory.exists())
 
 
 if __name__ == "__main__": unittest.main()

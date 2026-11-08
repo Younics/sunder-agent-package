@@ -14,7 +14,7 @@ def verify(jobs, mode):
         raise ValueError("Invalid package selection count")
     active = count > 0
     if mode == "validate":
-        expected = {"dependencies": active, "source": active}
+        expected = {"preflight": active, "dependencies": active, "source": active}
     elif mode == "release":
         build = active and outputs["resume"] != "true"
         expected = {"validation": build, "native": build, "fan-in": build, "publish": active, "release": active}

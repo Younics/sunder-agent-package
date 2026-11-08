@@ -21,7 +21,7 @@ RIDS = tuple(row["rid"] for row in platforms())
 
 def matrices(package_tests=False, variables=None):
     variables = variables or {}
-    native, behavior = [], []
+    native, behavior, preflight = [], [], []
     for row in platforms():
         key = "SUNDER_AGENT_RUNNER_" + row["rid"].upper().replace("-", "_")
         labels = json.loads(variables[key]) if variables.get(key) else row["runner"]
@@ -29,7 +29,9 @@ def matrices(package_tests=False, variables=None):
             raise ValueError("Invalid native runner labels: " + key)
         native.append(dict(rid=row["rid"], runner=labels))
         if row.get("behavior"):
+            platform = {"win": "windows", "linux": "linux", "osx": "macos"}[row["rid"].split("-")[0]]
+            preflight.append(dict(rid=row["rid"], runner=row["runner"], platform=platform))
             for mode in ("source", "package") if package_tests else ("source",):
                 behavior.append(dict(rid=row["rid"], runner=row["runner"], mode=mode,
-                    platform={"win": "windows", "linux": "linux", "osx": "macos"}[row["rid"].split("-")[0]]))
-    return dict(native=dict(include=native), behavior=dict(include=behavior))
+                    platform=platform))
+    return dict(native=dict(include=native), behavior=dict(include=behavior), preflight=dict(include=preflight))

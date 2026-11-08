@@ -23,6 +23,8 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ci"))
+import bash_runtime
 import native_release_inputs as inputs
 
 SCRIPT = Path(__file__).resolve().parents[2] / "release"
@@ -265,8 +267,8 @@ class NativeFamilyFixture(unittest.TestCase):
         # Run the actual audit over the transport fixture: framework/runtimeconfig,
         # changed SDK versions and installed metrics must survive extracted tooling.
         audit = self.work / "package-output-audit.json"
-        result = subprocess.run(["bash", str(SCRIPT / "generate-package-output-audit.sh"), str(self.output),
-            str(self.output / "native-test-evidence.json"), str(self.repository), str(audit)], capture_output=True, text=True)
+        result = subprocess.run(bash_runtime.command(SCRIPT / "generate-package-output-audit.sh", self.output,
+            self.output / "native-test-evidence.json", self.repository, audit), capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         report = json.loads(audit.read_bytes())
         self.assertEqual(set(family.FAMILY_PACKAGE_IDS), {row["packageId"] for row in report["packages"]})

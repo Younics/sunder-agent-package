@@ -15,6 +15,11 @@ if [[ "$(dotnet msbuild "$repository_root/tests/Sunder.Package.Agent.TestAnalyze
 fi
 fixture_root="$(mktemp -d "${TMPDIR:-/tmp}/sunder-silent-return.XXXXXX")"
 trap 'rm -rf "$fixture_root"' EXIT
+analyzer_project="$repository_root/tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj"
+if [[ "$OSTYPE" == msys ]]; then
+  # MSYS converts process arguments, but not paths embedded in project XML.
+  analyzer_project="$(cygpath -am "$analyzer_project")"
+fi
 
 cat > "$fixture_root/SilentReturnFixture.csproj" <<EOF
 <Project Sdk="Microsoft.NET.Sdk">
@@ -23,7 +28,7 @@ cat > "$fixture_root/SilentReturnFixture.csproj" <<EOF
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$repository_root/tests/Sunder.Package.Agent.TestAnalyzers/Sunder.Package.Agent.TestAnalyzers.csproj"
+    <ProjectReference Include="$analyzer_project"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
