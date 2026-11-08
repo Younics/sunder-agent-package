@@ -185,11 +185,21 @@ def execute(state_path, command, cwd=None, log=None):
 
 def validate(args):
     import test_lanes
+    import version_selection
     source = Path(args.source).resolve()
+    packages = getattr(args, "packages", None)
+    selected = None if packages is None else version_selection.package_ids(source, json.loads(packages))
+    if selected == []:
+        print("No newer package versions; validation skipped.")
+        return
     reports = source / "artifacts/reports"
     reports.mkdir(parents=True, exist_ok=True)
     with (reports / "test-inventory.json").open("w", encoding="utf-8") as stream:
         subprocess.run(["bash", "scripts/test/generate-test-inventory.sh"], cwd=source, stdout=stream, check=True)
+    inventory_path = reports / "test-inventory.json"
+    if selected is not None:
+        inventory = version_selection.scope_inventory(inputs.load(inventory_path), selected, args.mode, sys.platform)
+        inventory_path.write_bytes(inputs.canonical(inventory) + b"\n")
     if args.mode == "source":
         for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
             subprocess.run([sys.executable, "-B", "scripts/test/run-ci-checks.py", group], cwd=source, check=True)
@@ -201,8 +211,11 @@ def validate(args):
         args.work = root / "prepared"
         prepare(args)
         state = args.work / "ci-state.json"
-        status = execute(state, ["dotnet", "build", "Sunder.AgentPackage.slnx", "-c", "Release", "--no-restore"])
-        if status: raise subprocess.CalledProcessError(status, "dotnet build")
+        projects = ([row["path"] for row in inputs.load(inventory_path)["projects"] if args.mode in row["modes"]]
+                    if selected is not None else ["Sunder.AgentPackage.slnx"])
+        for project in projects:
+            status = execute(state, ["dotnet", "build", project, "-c", "Release", "--no-restore"])
+            if status: raise subprocess.CalledProcessError(status, "dotnet build " + project)
         test_lanes.validate(state, args.mode, args.stress)
         if args.mode == "package" and sys.platform == "linux": test_lanes.retain_verifier()
 
@@ -244,6 +257,7 @@ def main():
     validate_parser.add_argument("--catalog")
     validate_parser.add_argument("--mode", choices=("source", "package"), default="source")
     validate_parser.add_argument("--stress", action="store_true")
+    validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--state", required=True)
     run_parser.add_argument("--cwd")

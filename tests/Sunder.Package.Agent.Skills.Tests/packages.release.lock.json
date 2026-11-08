@@ -95,7 +95,7 @@
       "sunder.package.agent.testsupport": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Sdk": "[1.0.1, )"
+          "Sunder.Sdk": "[1.0.2, )"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {
@@ -109,9 +109,9 @@
       },
       "Sunder.Sdk": {
         "type": "CentralTransitive",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"

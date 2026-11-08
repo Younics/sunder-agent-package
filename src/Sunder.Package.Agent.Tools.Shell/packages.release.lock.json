@@ -13,15 +13,15 @@
       },
       "Sunder.Package.Build": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "Heop0POg605QxTM/nNWeim9sb0CNlS97XjS3KtK9+8gsTuc4H9ROts5eN670OlDAe/UH/9PeQRqhqs7EhLkQYQ=="
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "sKEGbiQsjd5v1QN6TtOEgcCekfm4H1zemE9Z2JHvzDN7oYMpclEYPS+4dUMiwx3f+FjP8MdGwa3Wh8S0EclgXw=="
       },
       "Sunder.Sdk": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
@@ -29,12 +29,12 @@
       },
       "Sunder.Sdk.Worker": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "T0vBgmEm++/TiDR1WsrLC29G55saJhZtqvxswf5RAQVaT1jGS/uvUgwVl1B/KHReZCnESZkKE6tZ9vHUjvxIDQ==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "02rKtv/iF7JeYtOgawkUf/9YVsinDAg+Z2NgqG1+eLPNOFixjynXSXaT4kpNm9yElhNAKG8sd1uccw3VNCs/CA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "10.0.13",
-          "Sunder.Sdk": "[1.0.1]"
+          "Sunder.Sdk": "[1.0.2]"
         }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {

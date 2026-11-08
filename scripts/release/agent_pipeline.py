@@ -235,15 +235,28 @@ def publish_versions(core, directory, plan):
     store.verify(infos[0]["id"], files_for(directory, plan, row, True))
 
 
-def cohort_request(plan, value, revision):
+def cohort_request(plan, value, revision, retained_tags=None):
     ids = {row["packageId"] for row in selection.selected(plan)}
     versions = [dict(package={key: item[key] for key in ("packageId", "version", "packageContentIdentity")},
         expectedAvailability="Yanked", availability="Listed") for item in value["artifacts"] if item["packageId"] in ids]
     versions.sort(key=lambda item: item["package"]["packageId"] + "/" + item["package"]["version"])
+    tags = [dict(packageId=item["package"]["packageId"], tag="latest" if r.version(item["package"]["version"])[1] else "preview",
+                 target=item["package"]) for item in versions]
+    if retained_tags is not None:
+        # Older supported majors can become Listed without moving a newer
+        # channel backwards. Recovery keeps that exact original tag subset.
+        r.require(all(tag in tags for tag in retained_tags), "Retained cohort contains a foreign channel/target")
+        tags = retained_tags
     return cohort.request(dict(idempotencyKey="agent-release-" + str(value["invocation"]["releaseId"]),
         expectedPackagePolicyRevision=revision, versions=versions,
-        distTags=[dict(packageId=item["package"]["packageId"], tag="latest" if r.version(item["package"]["version"])[1] else "preview",
-            target=item["package"]) for item in versions]))
+        distTags=tags))
+
+
+def advancing_tags(proposed, observed):
+    ids = {item["package"]["packageId"] for item in proposed["versions"]}
+    current = cohort.snapshots(observed, ids)
+    return [tag for tag in proposed["distTags"] if tag["tag"] not in current[tag["packageId"]]
+            or r.version(tag["target"]["version"]) >= r.version(current[tag["packageId"]][tag["tag"]]["target"]["version"])]
 
 
 def visibility(core, directory, plan):
@@ -255,7 +268,9 @@ def visibility(core, directory, plan):
     if not path.exists():
         r.require(all(info["draft"] for info in infos), "An announcement has no retained cohort request")
         registry_versions(directory, plan, value, "Yanked")
-        subjects = sorted([change["package"] for change in cohort_request(plan, value, 1)["versions"]],
+        proposed = cohort_request(plan, value, 1)
+        tags = advancing_tags(proposed, cohort.current_tags(plan["registryOrigin"], {item["package"]["packageId"] for item in proposed["versions"]}))
+        subjects = sorted([change["package"] for change in proposed["versions"]],
                           key=lambda item: (item["packageId"], item["version"], item["packageContentIdentity"]))
         synchronization = dict(nonce=secrets.token_hex(16), packages=subjects, platformCatalogs=[], minimumPackagePolicy=None)
         status, data, failed = cohort.http(plan["registryOrigin"], "/api/v1/policy/synchronize", r.encoded(synchronization))
@@ -263,10 +278,10 @@ def visibility(core, directory, plan):
         policy = cohort.policy_snapshot(r.decode(data), plan["registryOrigin"], synchronization)
         r.require(all(item["packageState"] == "Active" and item["versionAvailability"] == "Yanked" for item in policy["packages"]),
             "Selected cohort is not active and Yanked")
-        cohort.store(path, cohort_request(plan, value, policy["packagePolicy"]["revision"]))
+        cohort.store(path, cohort_request(plan, value, policy["packagePolicy"]["revision"], tags))
         store.upload(info["id"], [path])
     proposed = cohort.request(r.load(path))
-    r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"]), "Retained selected cohort differs")
+    r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"], proposed["distTags"]), "Retained selected cohort differs")
     receipt_name = "agent-family-cohort-" + cohort.request_hash(proposed) + ".json"
     with tempfile.TemporaryDirectory() as temporary:
         result_path = Path(temporary) / "result.json"
@@ -327,8 +342,8 @@ def main():
     else:
         targets, infos, value = verified(core, directory, plan)
         r.require(infos[0]["draft"], "Cohort mutation requires its coordinator draft")
-        proposed = r.load(directory / REQUEST)
-        r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"]), "Cohort source binding differs")
+        proposed = cohort.request(r.load(directory / REQUEST))
+        r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"], proposed["distTags"]), "Cohort source binding differs")
 
 
 if __name__ == "__main__":

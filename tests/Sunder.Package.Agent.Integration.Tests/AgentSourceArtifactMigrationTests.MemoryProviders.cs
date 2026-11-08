@@ -57,7 +57,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var load = new AssemblyLoadContext("memory-artifact-consumer", isCollectible: true);
         try
         {
-            using var consumerStream = File.OpenRead(Path.Combine(consumer, "bin/Debug/net10.0/AgentConsumer.dll"));
+            using var consumerStream = File.OpenRead(Path.Combine(consumer, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/AgentConsumer.dll"));
             var client = load.LoadFromStream(consumerStream).GetType("Consumer", true)!;
             VerifyMemoryProviderApp(directory, app);
             var probes = await BuildRoleProbes(directory, providers, fixture: null,

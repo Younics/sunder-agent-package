@@ -17,8 +17,8 @@ APIs and manifest-declared providers, not implementation assembly references.
 Declare ordinary NuGet dependency versions for each Core package independently:
 
 ```xml
-<PackageReference Include="Sunder.Sdk" Version="1.0.1" />
-<PackageReference Include="Sunder.Package.Build" Version="1.0.1" PrivateAssets="all" />
+<PackageReference Include="Sunder.Sdk" Version="1.0.2" />
+<PackageReference Include="Sunder.Package.Build" Version="1.0.2" PrivateAssets="all" />
 ```
 
 Commit the resolved NuGet lock for reproducible release builds. Build dependency

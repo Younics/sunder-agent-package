@@ -43,7 +43,8 @@ class SelectionTests(unittest.TestCase):
             canonicalArtifact=dict(sha256="c" * 64)) for row in self.rows}
 
     def plan(self):
-        with patch.object(selection, "evaluated_packages", return_value=r.inventory(self.source)["packages"]), \
+        with patch.object(selection, "evaluated_packages", side_effect=AssertionError("selection must not invoke MSBuild")), \
+             patch.object(selection.subprocess, "check_output", side_effect=AssertionError("selection must not start a toolchain")), \
              patch.object(selection, "releases", return_value=self.remote), \
              patch.object(selection, "registry_version", side_effect=lambda _, row: self.registry.get(row["packageId"])):
             return selection.plan(self.source, "a" * 40, "https://registry.test")
@@ -68,7 +69,7 @@ class SelectionTests(unittest.TestCase):
                 output = self.source / "outputs"
                 with patch.dict(os.environ, dict(GITHUB_SHA="a" * 40, REGISTRY_API_URL="https://registry.test", GITHUB_OUTPUT=str(output)), clear=True), \
                      patch.object(sys, "argv", ["agent_selection.py", "plan", "--source", str(self.source), "--plan", str(destination)]), \
-                     patch.object(selection, "evaluated_packages", return_value=r.inventory(self.source)["packages"]), \
+                     patch.object(selection, "evaluated_packages", side_effect=AssertionError("selection must not invoke MSBuild")), \
                      patch.object(selection, "releases", return_value=self.remote), \
                      patch.object(selection, "registry_version", side_effect=lambda _, row: self.registry.get(row["packageId"])):
                     selection.main()
@@ -84,6 +85,15 @@ class SelectionTests(unittest.TestCase):
         result = self.plan()
         self.assertEqual([(row["packageId"], "2.1.0")], [(p["packageId"], p["version"]) for p in selection.selected(result)])
         self.assertEqual(14, sum(p["retainedArchive"] is not None for p in result["packages"]))
+
+    def test_newer_major_does_not_block_a_supported_major_patch(self):
+        self.published()
+        row = self.rows[0]
+        self.remote.append(self.release(row, "3.0.0", id=999))
+        self.assertEqual([], selection.selected(self.plan()))
+        (self.source / row["projectPath"]).write_text('<Project><PropertyGroup><Version>2.0.1</Version></PropertyGroup></Project>')
+        self.registry.pop(row["packageId"])
+        self.assertEqual([row["packageId"]], [item["packageId"] for item in selection.selected(self.plan())])
 
     def test_missing_release_is_not_inferred_from_a_tag_or_registry_upload(self):
         self.registry = {row["packageId"]: dict(isYanked=True) for row in self.rows}
@@ -177,6 +187,10 @@ class SelectionTests(unittest.TestCase):
             return r.encoded(dict(Properties=dict(Version="2.0.0", PackageVersion="2.0.0", InformationalVersion="2.0.0", SunderAgentVersion="")))
         with patch.object(selection.subprocess, "check_output", side_effect=evaluate):
             self.assertEqual(15, len(selection.evaluated_packages(self.source)))
+            self.assertEqual([self.rows[0]], selection.evaluated_packages(self.source, [self.rows[0]["packageId"]]))
+        with patch.object(selection.subprocess, "check_output") as evaluate:
+            self.assertEqual([], selection.evaluated_packages(self.source, []))
+            evaluate.assert_not_called()
         with patch.object(selection.subprocess, "check_output", return_value=r.encoded(dict(Properties=dict(
             Version="9.0.0", PackageVersion="9.0.0", InformationalVersion="9.0.0", SunderAgentVersion="9.0.0")))), self.assertRaises(r.Invalid):
             selection.evaluated_packages(self.source)

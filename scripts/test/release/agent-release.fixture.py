@@ -898,6 +898,7 @@ class CohortTests(unittest.TestCase):
                             releaseId=424242, request=proposed, result=committed)
         with patch.dict(os.environ), patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
                 patch.object(pipeline, "registry_versions") as versions, patch.object(cohort, "http", side_effect=http), \
+                patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                 patch.object(cohort, "apply", side_effect=apply) as mutate, patch.object(receipts, "upload"), \
                 patch.object(receipts, "download_bytes", side_effect=lambda *args: retained), patch.object(cohort, "confirm") as confirm:
             pipeline.visibility(self.root / "core", self.root, plan)
@@ -932,6 +933,7 @@ class CohortTests(unittest.TestCase):
             return 200, release.encoded(value), 0
         with patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
                 patch.object(pipeline, "registry_versions"), patch.object(cohort, "http", side_effect=http), \
+                patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                 patch.object(cohort, "apply") as apply:
             for name, mutate in mutations.items():
                 with self.subTest(case=name), self.assertRaises(release.Invalid):

@@ -27,7 +27,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         WriteControlledWorkerEntry(worker, directory);
         await Run(directory, "restore", "Backend.csproj", "--disable-parallel");
         await Run(directory, "build", "Backend.csproj", "--no-restore");
-        using var stream = File.OpenRead(Path.Combine(directory, "bin/Debug/net10.0/Sunder.Package.Agent.Tests.dll"));
+        using var stream = File.OpenRead(Path.Combine(directory, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/Sunder.Package.Agent.Tests.dll"));
         return load.LoadFromStream(stream).GetType("ArtifactDockerCli", true)!;
     }
 

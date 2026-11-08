@@ -17,8 +17,11 @@ REPOSITORY = "Younics/sunder-agent-package"
 PLAN = "release-plan.json"
 
 
-def evaluated_packages(source):
+def evaluated_packages(source, package_ids=None):
     rows = r.inventory(source)["packages"]
+    if package_ids is not None:
+        r.require(set(package_ids) <= {row["packageId"] for row in rows}, "Unknown version validation selection")
+        rows = [row for row in rows if row["packageId"] in package_ids]
     env = {key: value for key, value in os.environ.items() if key not in
         ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN")}
     for row in rows:
@@ -124,7 +127,11 @@ def selected(plan):
 
 def plan(source, source_sha, registry, published=None):
     r.digest(source_sha, 40)
-    rows = evaluated_packages(source)
+    # Selection is deliberately toolchain-free. Evaluate only selected projects
+    # later, in validation, before trusting their build output.
+    rows = r.inventory(source)["packages"]
+    for row in rows:
+        r.source_file(source, row["projectPath"])
     published = releases() if published is None else published
     # A draft, or a partially announced batch, keeps its original selection and
     # immutable inputs across workflow reruns. Never turn it into a fresh build.
@@ -175,6 +182,9 @@ def plan(source, source_sha, registry, published=None):
             r.require(release.get("prerelease") is (not r.version(text)[1]), "GitHub prerelease flag differs from SemVer")
             if not release["draft"]:
                 matches.append((r.version(text), text, release))
+        # A maintained major can advance while a newer major coexists.
+        major = r.version(row["version"])[0][0]
+        matches = [item for item in matches if item[0][0][0] == major]
         latest = max(matches, default=None, key=lambda item: item[0])
         is_new = latest is None or r.version(row["version"]) > latest[0]
         exact = [release for _, text, release in matches if text == row["version"]]
@@ -275,7 +285,9 @@ def main():
             and any(asset["name"] == PLAN for asset in release["assets"]) for release in remote)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-                output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n")
+                package_ids = [row["packageId"] for row in selected(value)]
+                output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n"
+                             + "packages=" + r.canonical(package_ids).decode() + "\n")
         print(f"Selected {count} version-bumped packages." if count else "No package version is newer; nothing to release.")
     else:
         value = load(args.plan, source)

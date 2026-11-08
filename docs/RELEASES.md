@@ -9,15 +9,20 @@ There is no Protocol NuGet or Agent NuGet publishing credential.
 The owner `younics.ai.agent` publishes first. The explicit family includes
 `younics.sunder.package.maker` (Sunder Package Maker) alongside the AI Agent
 extensions; a shared runtime-ID prefix is not the family inventory. Release
-workflow uses **AI Agent Family Release**. It runs on protected `main` pushes or
-manual dispatch on `main`, compares evaluated Release versions with paginated
+workflow uses **Release**. It runs on protected `main` pushes or
+manual dispatch on `main`, compares authored literal versions with paginated
 **published GitHub releases**, and automatically creates `<inventory-key>/v<version>`
 tags/releases only for newer versions (for example `agent-provider-openai/v2.1.0`).
 Tags without a published release do not count as completed publication. A run with
-no newer versions succeeds without native builds or publication.
+no newer versions succeeds without SDK setup, dependency preparation, component
+validation/tests, builds, packaging or publication. Comparison is within each
+package's authored major, so supported-major maintenance can coexist with newer
+majors. A lower/equal version within that major reuses exact published bytes.
 GitHub hides draft releases from callers without push access, so the protected
 planning job needs `contents:write` to discover interrupted drafts. The planner
-issues only reads and removes GitHub/Registry credentials from MSBuild evaluation.
+issues only reads and invokes no build tooling. Selected versions are subsequently
+checked against evaluated Release/CI properties in the dependency-preparation job,
+with GitHub/Registry credentials removed from MSBuild's environment.
 
 `packages.json` records the predicted package-wide capability union. Local
 Execution drops `background-services.v1` and `runtime-generations.v1`; Files,
@@ -37,12 +42,26 @@ silently replace selected candidates or rewrite locks to match a new archive.
 
 There are three GitHub workflows:
 
-- `sunder-package-smoke.yml`: Linux/Windows source CI, scheduled/manual stress,
-  plus locked-package compatibility when called by a release.
-- `sunder-package-release.yml`: the version-selected protected-main pipeline from validation
+- `sunder-package-smoke.yml` (**Validate**): PR/merge-queue versions compare against
+  the immutable event base before toolchain setup; weekly/manual full source and
+  stress validation remains available. Releases supply their exact selected IDs
+  and additionally run locked-package compatibility.
+- `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
 - `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
   cohort, sharing the release concurrency group.
+
+Both workflows end with **Summary**, which rejects failed, cancelled or unexpectedly
+skipped selected jobs. Interrupted publication recovers the retained plan and bytes
+and skips validation/build. A completed same-source publication becomes a no-op.
+
+Test ownership comes from the existing `SunderTestOwner` metadata. A selected
+extension runs its owned suites plus `agent-family` boundary suites; an owner
+version bump selects all consumer suites. Linux retains the required filesystem
+security and real-Docker cases. The all-fifteen source-artifact lane remains an
+integration requirement for nonempty source validation; its project dependency
+closure and full-graph restore are required even for a single selected extension.
+Per-project discovery, reports and their expected inventory use the same selection.
 
 Agent CircleCI and the separate acceptance/promotion dispatch workflows are retired.
 Native byte qualification, exact input validation, package/platform policy and
@@ -89,6 +108,20 @@ version, substitutes mismatched bytes or rewrites a lock. Missing published byte
 without matching authored source are a genuine dependency error, not a request for
 an operator-supplied SHA or asset locator.
 
+Actions runs this resolver once in **Prepare exact dependencies** on Linux. It
+retains `agent-dependency-inputs` and passes the `cold-inputs.json` SHA-256 to source,
+package-mode, all six native and assembly jobs. Each consumer checks that digest,
+source/Core commits, locks and candidate/catalog bytes before hydration. Runners
+never independently regenerate the selected owner archive. A failed identity check
+retains the rejected bytes and original log and stops downstream work.
+
+This bundle is dependency evidence, not native release qualification. Final family
+verification still requires the composed native owner identity to equal every
+committed dependent selection. A missing/mismatched selected archive requires
+restoring its exact bytes or explicit authoring-tool selection review before a
+release can succeed; the pipeline does not rewrite locks or substitute merely
+descriptor-compatible archives.
+
 CI package builds normalize generated-role compiler paths and omit debug symbols
 and commit-dependent assembly/Source Link metadata. This makes unchanged payloads
 reproducible across checkout locations and lock-only commits; the exact source
@@ -97,7 +130,9 @@ repository's LF checkout policy preserves source bytes across operating systems.
 Use a clean checkout, or `dotnet clean` before switching an existing output tree
 to these CI settings, so stale portable symbols cannot enter the archive.
 
-The resolver generates `ci-inputs.json` with local `{name,size,sha256}` records.
+The local resolver generates `ci-inputs.json` with local `{name,size,sha256}` records.
+The shared Actions producer binds those records to source/Core/locks in
+`cold-inputs.json`; the same verifier also accepts historical durable input bundles.
 No `SUNDER_AGENT_CI_INPUTS`, approval reference or per-release input manifest needs
 configuration. Ordinary CI and production native preparation use normal prepared
 execution; explicit denied-network/cold acceptance remains a separate profile.
@@ -119,6 +154,13 @@ when invoking package projects beneath `/var` (`/private/var`). No baseline or l
 selection is updated by these commands. `--mode package` is the focused compatibility
 profile against the final locked SDK packages. Explicit `--candidate` and `--catalog`
 files remain available for local authoring checks; their identities are checked too.
+
+For selected local behavior validation, add
+`--packages '["younics.ai.agent.provider.openai"]'` to `agent_ci.py validate`.
+`--packages '[]'` stops before SDK/dependency work; omitting the option runs the full
+profile. Temporary integration probe projects explicitly use the Debug configuration
+required by Core 1.0.2's fixture driver; canonical source outputs, toolsets and role
+snapshots follow the test assembly's configuration, including Release CI.
 
 ## Core Coordination
 
@@ -204,8 +246,10 @@ source and bytes throughout the pipeline.
 ## Promotion
 
 Visibility and finalization are jobs in the main workflow, not separate dispatches.
-Stable releases set Registry `latest`; prereleases set `preview`. Forward visibility
-cannot downgrade a tag. A fresh policy fence can fail if another operation changed
+Stable releases advance Registry `latest`; prereleases advance `preview`. Publishing
+an older supported major lists its exact version while preserving any newer channel
+target. The chosen tag subset is retained with the original atomic request and
+replayed unchanged. Forward visibility cannot downgrade a tag. A fresh policy fence can fail if another operation changed
 the Registry; an unknown outcome must retain the original request/key/revision.
 
 Synchronization uses a fresh nonce, the pinned HTTPS Registry origin and the complete

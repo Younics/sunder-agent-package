@@ -1,4 +1,4 @@
-name: AI Agent Family Release
+name: Release
 
 on:
   push:
@@ -14,16 +14,18 @@ env:
 
 jobs:
   prepare:
+    name: Select versions
     if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: sunder-agent-release-promotion
     permissions:
       # GitHub exposes drafts only with push access. Planning itself is read-only,
-      # and its token is never inherited by MSBuild version evaluation.
+      # and no toolchain or build executes in this job.
       contents: write
     outputs:
       selected_count: ${{ steps.selection.outputs.selected_count }}
       resume: ${{ steps.selection.outputs.resume }}
+      packages: ${{ steps.selection.outputs.packages }}
       plan_sha256: ${{ steps.selection.outputs.plan_sha256 }}
       core_commit: ${{ steps.release.outputs.core_commit }}
       core_tag: ${{ steps.release.outputs.core_tag }}
@@ -33,14 +35,11 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          global-json-file: global.json
       - id: matrix
         env:
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
         run: python3 -B scripts/ci/agent_ci.py matrices
-      - name: Select evaluated package versions against published releases
+      - name: Compare authored versions against published releases
         id: selection
         env:
           GH_TOKEN: ${{ github.token }}
@@ -64,16 +63,19 @@ jobs:
           python3 -B scripts/ci/agent_ci.py coordinates
 
   validation:
+    name: Validate selected packages
     needs: prepare
-    if: needs.prepare.outputs.resume != 'true'
+    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
     uses: ./.github/workflows/sunder-package-smoke.yml
     permissions:
       contents: read
     with:
       core_commit: ${{ needs.prepare.outputs.core_commit }}
       package-tests: ${{ needs.prepare.outputs.selected_count != '0' }}
+      packages: ${{ needs.prepare.outputs.packages }}
 
   native:
+    name: Package · ${{ matrix.rid }}
     needs: [prepare, validation]
     if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
     runs-on: ${{ matrix.runner }}
@@ -118,7 +120,14 @@ jobs:
           bash scripts/release/verify-release-locks.sh
           test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
           python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/release-inputs
+      - name: Verify shared dependency inventory
+        env:
+          INPUTS_SHA256: ${{ needs.validation.outputs.inputs_sha256 }}
+        run: test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/release-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
       - name: Build and qualify only version-selected native leaves
         shell: pwsh
         run: |
@@ -141,7 +150,8 @@ jobs:
           compression-level: 0
 
   fan-in:
-    needs: [prepare, native]
+    name: Assemble and verify family
+    needs: [prepare, validation, native]
     if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -185,7 +195,16 @@ jobs:
           set -euo pipefail
           test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
           python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/release-inputs" "$GITHUB_SHA" "$CORE_COMMIT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/release-inputs
+      - name: Compose tested native bytes with the shared exact dependencies
+        env:
+          INPUTS_SHA256: ${{ needs.validation.outputs.inputs_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/release-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
           python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core --inputs "$RUNNER_TEMP/release-inputs" --work "$RUNNER_TEMP/fanin" --mode package
           python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/fanin/ci-state.json" -- \
             python3 -B scripts/release/native-family.py assemble ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
@@ -231,6 +250,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    name: Publish selected versions
     needs: [prepare, fan-in]
     if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.selected_count != '0' && (needs.fan-in.result == 'success' || needs.prepare.outputs.resume == 'true')
     runs-on: ubuntu-24.04
@@ -288,6 +308,7 @@ jobs:
         run: python3 -B scripts/release/agent_pipeline.py publish --core ../sunder-core --directory artifacts/release
 
   release:
+    name: Activate family and announce
     needs: [prepare, publish]
     if: always() && needs.publish.result == 'success'
     runs-on: ubuntu-24.04
@@ -336,3 +357,19 @@ jobs:
         env:
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
         run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release
+
+  summary:
+    name: Summary
+    if: always()
+    needs: [prepare, validation, native, fan-in, publish, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require all selected release jobs
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci/workflow_summary.py release

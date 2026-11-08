@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -47,11 +48,11 @@ class AgentCiTests(unittest.TestCase):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
         section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("\n      - ")[0]
         script = textwrap.dedent(section.split("        run: |\n")[1])
-        stub = self.root / "scripts/ci/agent_ci.py"
+        stub = self.root / "scripts/release/release_inputs.py"
         stub.parent.mkdir(parents=True)
         stub.write_text('import sys\nprint("fixture: exact CI inputs missing", file=sys.stderr)\nsys.exit(7)\n')
         result = subprocess.run(["bash", "-c", script], cwd=self.root, text=True, capture_output=True, timeout=10,
-                                env={**os.environ, "COLD_INPUTS": "", "CORE_COMMIT": "", "RUNNER_TEMP": str(self.root)})
+                                 env={**os.environ, "GITHUB_SHA": self.source_sha, "CORE_COMMIT": self.core_sha, "RUNNER_TEMP": str(self.root)})
         self.assertEqual(7, result.returncode, result.stdout + result.stderr)
         self.assertIn("fixture: exact CI inputs missing", (self.root / "artifacts/reports/input-preparation.log").read_text())
         self.assertIn("agent_ci.py validate", workflow)
@@ -59,6 +60,31 @@ class AgentCiTests(unittest.TestCase):
         upload = workflow.split("      - name: Retain CI reports\n")[1]
         self.assertIn("steps.inputs.outcome != 'skipped'", upload)
         self.assertIn("steps.inputs.outcome != ''", upload)
+
+    def test_empty_selection_stops_before_inventory_sdk_or_dependency_preparation(self):
+        args = argparse.Namespace(source=self.source, packages="[]")
+        with patch.object(ci.subprocess, "run") as run, patch.object(ci, "prepare") as prepare:
+            ci.validate(args)
+        run.assert_not_called()
+        prepare.assert_not_called()
+        self.assertFalse((self.source / "artifacts/reports").exists())
+
+    def test_selected_builds_and_reports_share_the_owned_project_inventory(self):
+        selected = self.rows[2]["packageId"]
+        inventory = dict(projects=[dict(path="tests/Selected.csproj", owner=selected, modes=["source"]),
+            dict(path="tests/Family.csproj", owner="agent-family", modes=["source"]),
+            dict(path="tests/Unchanged.csproj", owner=self.rows[3]["packageId"], modes=["source"])])
+        def run(command, **kwargs):
+            if "stdout" in kwargs: kwargs["stdout"].write(json.dumps(inventory))
+        args = argparse.Namespace(source=self.source, core=self.root / "sunder-core", mode="source", inputs=self.root,
+                                  candidate=None, packages=json.dumps([selected]), stress=False)
+        with patch.object(ci.subprocess, "run", side_effect=run), patch.object(ci, "prepare"), \
+             patch.object(ci, "execute", return_value=0) as build, patch.object(test_lanes, "validate") as tests:
+            ci.validate(args)
+        self.assertEqual(["tests/Selected.csproj", "tests/Family.csproj"], [call.args[1][2] for call in build.call_args_list])
+        observed = json.loads((self.source / "artifacts/reports/test-inventory.json").read_text())
+        self.assertEqual(inventory["projects"][:2], observed["projects"])
+        tests.assert_called_once()
 
     def test_preparation_failure_cleans_temporary_state_and_does_not_report_unstarted_tests(self):
         work = []
@@ -145,6 +171,19 @@ class AgentCiTests(unittest.TestCase):
         self.catalog_path.write_bytes(self.catalog_path.read_bytes() + b" ")
         with self.assertRaisesRegex(ValueError, "Catalog bytes"):
             ci.inputs.verify_selected_files(self.source, [self.archive], self.catalog_path)
+
+    def test_shared_dependency_bundle_is_portable_and_reverified_without_runner_local_seeds(self):
+        transported = self.root / "another-runner"
+        shutil.copytree(self.bundle, transported)
+        core = self.root / "sunder-core"
+        args = argparse.Namespace(inputs=transported)
+        with patch.object(ci, "head", side_effect=lambda root: self.core_sha if root == core else self.source_sha), \
+             patch.object(ci, "resolve", side_effect=AssertionError("consumers must reuse shared bytes")):
+            candidates, catalog = ci.selected_files(args, self.source, core)
+            self.assertEqual(self.archive.read_bytes(), candidates[0].read_bytes())
+            self.assertEqual(self.catalog_path.read_bytes(), catalog.read_bytes())
+            candidates[0].write_bytes(candidates[0].read_bytes() + b"changed in transport")
+            with self.assertRaises(ValueError): ci.selected_files(args, self.source, core)
 
     def test_command_failure_and_input_mutation_are_not_hidden(self):
         state_path = self.prepare()

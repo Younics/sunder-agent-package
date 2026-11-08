@@ -31,9 +31,9 @@
       },
       "Sunder.Sdk": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
@@ -41,12 +41,12 @@
       },
       "Sunder.Sdk.Worker": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "T0vBgmEm++/TiDR1WsrLC29G55saJhZtqvxswf5RAQVaT1jGS/uvUgwVl1B/KHReZCnESZkKE6tZ9vHUjvxIDQ==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "02rKtv/iF7JeYtOgawkUf/9YVsinDAg+Z2NgqG1+eLPNOFixjynXSXaT4kpNm9yElhNAKG8sd1uccw3VNCs/CA==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "10.0.13",
-          "Sunder.Sdk": "[1.0.1]"
+          "Sunder.Sdk": "[1.0.2]"
         }
       },
       "xunit": {
@@ -162,14 +162,14 @@
         "type": "Project",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection": "[10.0.13, )",
-          "Sunder.Sdk": "[1.0.1, )",
-          "Sunder.Sdk.Worker": "[1.0.1, )"
+          "Sunder.Sdk": "[1.0.2, )",
+          "Sunder.Sdk.Worker": "[1.0.2, )"
         }
       },
       "sunder.package.agent.testsupport": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Sdk": "[1.0.1, )"
+          "Sunder.Sdk": "[1.0.2, )"
         }
       },
       "Microsoft.Extensions.DependencyInjection": {

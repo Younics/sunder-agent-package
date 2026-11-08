@@ -39,12 +39,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(before, File.ReadAllBytes(lockPath));
         Assert.Equal(generated, Snapshot());
 
-        string[] Snapshot() => Directory.GetFiles(Path.Combine(consumer, "obj/Debug/net10.0/sunder-rpc"), "*", SearchOption.AllDirectories)
+        string[] Snapshot() => Directory.GetFiles(Path.Combine(consumer, "obj", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/sunder-rpc"), "*", SearchOption.AllDirectories)
             .Order(StringComparer.Ordinal).Select(path => Path.GetRelativePath(consumer, path) + ":" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))).ToArray();
         async Task Reject(string expected, params string[] arguments)
         {
             var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = consumer, RedirectStandardOutput = true, RedirectStandardError = true };
             foreach (var argument in new[] { "msbuild", "Imported.csproj", "-nodeReuse:false", "-v:minimal" }.Concat(arguments)) start.ArgumentList.Add(argument);
+            start.ArgumentList.Add("-p:Configuration=" + BuilderSourceMigrationTests.FixtureConfiguration);
             using var process = Process.Start(start)!;
             using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3));
             var output = process.StandardOutput.ReadToEndAsync(timeout.Token);

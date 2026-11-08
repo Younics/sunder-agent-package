@@ -15,13 +15,13 @@
       },
       "Sunder.Sdk.Avalonia": {
         "type": "Direct",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "ijltGfwKUuPhoih4NETdFfjUx+2yYBmUoz3k3dDtJ3jFoqVFuL3Ur3dc6ZS3BjlbTr5JgE0o2QKud0v8qGl3FA==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "Y0jUvbmvoZpRyHy2butYmriOfAfaP+VzFzP9LHw//J0V5lcTNKFcVccW4RrgRW9T3DKjc/dv3pdo/F54M+nI4A==",
         "dependencies": {
           "Avalonia": "12.1.4",
           "Microsoft.Extensions.DependencyInjection": "10.0.13",
-          "Sunder.Sdk": "[1.0.1]"
+          "Sunder.Sdk": "[1.0.2]"
         }
       },
       "Avalonia.BuildServices": {
@@ -47,7 +47,7 @@
       "sunder.package.agent.testsupport": {
         "type": "Project",
         "dependencies": {
-          "Sunder.Sdk": "[1.0.1, )"
+          "Sunder.Sdk": "[1.0.2, )"
         }
       },
       "Microsoft.Extensions.DependencyInjection": {
@@ -70,9 +70,9 @@
       },
       "Sunder.Sdk": {
         "type": "CentralTransitive",
-        "requested": "[1.0.1, )",
-        "resolved": "1.0.1",
-        "contentHash": "QP+ap9pqspEv+aTzmCoQm8eM8E6sZYTM87lNVeXh1PYWLukCidTEZkpBEjOGnJ7FWHqvXnPqe6UMu/gSVAbTuw==",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
         "dependencies": {
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
           "Microsoft.Extensions.Logging.Abstractions": "10.0.13"

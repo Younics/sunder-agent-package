@@ -1,10 +1,10 @@
-name: AI Agent CI
+name: Validate
 
 on:
   pull_request:
   merge_group:
   schedule:
-    - cron: "23 4 * * *"
+    - cron: "23 4 * * 1"
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -14,6 +14,14 @@ on:
       package-tests:
         type: boolean
         default: false
+      packages:
+        description: JSON package IDs selected by the release planner
+        type: string
+        default: ""
+    outputs:
+      inputs_sha256:
+        description: Digest of the one shared exact dependency inventory
+        value: ${{ jobs.dependencies.outputs.sha256 }}
 
 permissions:
   contents: read
@@ -22,21 +30,39 @@ env:
 
 jobs:
   prepare:
+    name: Select versions
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.behavior }}
       core_commit: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
+      packages: ${{ steps.selection.outputs.packages }}
+      selected_count: ${{ steps.selection.outputs.selected_count }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Compare authored versions before toolchain setup
+        id: selection
+        env:
+          PACKAGES: ${{ inputs.packages }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          FULL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+        run: |
+          if [[ -n "$PACKAGES" ]]; then
+            python3 -B scripts/ci/version_selection.py --packages "$PACKAGES"
+          elif [[ "$FULL" == true ]]; then
+            python3 -B scripts/ci/version_selection.py --all
+          else
+            python3 -B scripts/ci/version_selection.py --base "$BASE"
+          fi
       - name: Resolve Core source from the declared build-tool dependency
         id: core
-        if: inputs.core_commit == ''
+        if: steps.selection.outputs.selected_count != '0' && inputs.core_commit == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B scripts/ci/agent_ci.py coordinates
       - id: matrix
+        if: steps.selection.outputs.selected_count != '0'
         env:
           PACKAGE_TESTS: ${{ inputs.package-tests }}
         run: |
@@ -44,9 +70,69 @@ jobs:
           [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
           python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
 
-  source:
-    name: ${{ matrix.mode }} behavior (${{ matrix.rid }})
+  dependencies:
+    name: Prepare exact dependencies
     needs: prepare
+    if: needs.prepare.outputs.selected_count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    outputs:
+      sha256: ${{ steps.inputs.outputs.sha256 }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - name: Verify evaluated versions only for selected packages
+        env:
+          PACKAGES: ${{ needs.prepare.outputs.packages }}
+        run: python3 -B scripts/ci/version_selection.py --packages "$PACKAGES" --verify-versions
+      - name: Resolve exact selected archives, catalog and Core source
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/reports
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" "$CORE_COMMIT" 2>&1 | tee artifacts/reports/input-preparation.log
+          echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
+      - name: Retain shared exact dependency bytes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs/
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Retain rejected dependency bytes for identity diagnostics
+        if: failure() && steps.inputs.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-input-diagnostics-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/agent-inputs/
+            sunder-agent-package/artifacts/reports/input-preparation.log
+          if-no-files-found: error
+          retention-days: 14
+
+  source:
+    name: Test ${{ matrix.mode }} · ${{ matrix.rid }}
+    needs: [prepare, dependencies]
+    if: needs.prepare.outputs.selected_count != '0'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
@@ -68,31 +154,27 @@ jobs:
           path: sunder-core
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
-      - name: Resolve exact selected archives, catalog and Core source
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - name: Verify shared dependency inputs
         id: inputs
         env:
-          GH_TOKEN: ${{ github.token }}
+          INPUTS_SHA256: ${{ needs.dependencies.outputs.sha256 }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/reports
-          python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output "$RUNNER_TEMP/agent-inputs" 2>&1 | tee artifacts/reports/input-preparation.log
-      - name: Retain rejected dependency bytes for identity diagnostics
-        if: failure() && steps.inputs.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-input-diagnostics-${{ matrix.mode }}-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/agent-inputs/
-          if-no-files-found: warn
-          retention-days: 14
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
       - name: Build and test selected reference mode
         env:
           MODE: ${{ matrix.mode }}
+          PACKAGES: ${{ needs.prepare.outputs.packages }}
           STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
           args=()
           [[ "$STRESS" != true ]] || args+=(--stress)
           python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
-            --inputs "$RUNNER_TEMP/agent-inputs" --mode "$MODE" "${args[@]}"
+            --inputs "$RUNNER_TEMP/agent-inputs" --mode "$MODE" --packages "$PACKAGES" "${args[@]}"
       - name: Retain the tested package-mode archive verifier for fan-in
         if: matrix.mode == 'package' && matrix.platform == 'linux'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -114,3 +196,17 @@ jobs:
             sunder-agent-package/artifacts/source-commands
           if-no-files-found: error
           retention-days: 14
+
+  summary:
+    name: Summary
+    if: always()
+    needs: [prepare, dependencies, source]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Require all selected validation jobs
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: python3 -B scripts/ci/workflow_summary.py validate

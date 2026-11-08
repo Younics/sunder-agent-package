@@ -192,6 +192,22 @@ class SelectivePipelineTests(unittest.TestCase):
         self.assertEqual(["latest", "preview"], [item["tag"] for item in proposed["distTags"]])
         self.assertEqual(proposed, pipeline.cohort_request(self.plan, {**value, "artifacts": list(reversed(self.records))}, 8))
 
+    def test_supported_major_publication_keeps_newer_channels_and_replays_original_tag_subset(self):
+        value = dict(invocation=dict(releaseId=42), artifacts=self.records)
+        proposed = pipeline.cohort_request(self.plan, value, 8)
+        observed = [dict(packageId=tag["packageId"], tags=[dict(tag, target=dict(tag["target"], version="3.0.0"))])
+                    for tag in proposed["distTags"]]
+        tags = pipeline.advancing_tags(proposed, observed)
+        self.assertEqual([], tags)
+        retained = pipeline.cohort_request(self.plan, value, 8, tags)
+        self.assertEqual(proposed["versions"], retained["versions"])
+        self.assertEqual([], retained["distTags"])
+        self.assertEqual(retained, pipeline.cohort_request(self.plan, value, 8, retained["distTags"]))
+        for snapshot in observed: snapshot["tags"][0]["target"]["version"] = "1.0.0"
+        self.assertEqual(proposed["distTags"], pipeline.advancing_tags(proposed, observed))
+        with self.assertRaisesRegex(ValueError, "foreign channel"):
+            pipeline.cohort_request(self.plan, value, 8, [dict(proposed["distTags"][0], tag="unreviewed")])
+
     def test_main_and_manual_require_protected_exact_clean_source_without_manual_approvals(self):
         def git(root, *args): return (("b" if root == self.core else "a") * 40).encode() if args[0] == "rev-parse" else b""
         with patch.dict(os.environ, self.env, clear=True), patch.object(pipeline.r, "git", side_effect=git), \
@@ -202,6 +218,26 @@ class SelectivePipelineTests(unittest.TestCase):
                 ("GITHUB_REF_PROTECTED", "false"), ("GITHUB_WORKFLOW_SHA", "f" * 40)):
                 with self.subTest(key=key), patch.dict(os.environ, {key: value}), self.assertRaises(ValueError):
                     pipeline.source_guard(self.core, self.plan)
+
+    def test_mutation_guard_accepts_retained_channel_subsets_but_binds_every_selected_version(self):
+        value = dict(invocation=dict(releaseId=42), artifacts=self.records)
+        proposed = pipeline.cohort_request(self.plan, value, 8)
+        path = self.directory / pipeline.REQUEST
+        with patch.object(sys, "argv", ["agent_pipeline.py", "guard", "--core", str(self.directory), "--directory", str(self.directory)]), \
+             patch.object(selection, "load", return_value=self.plan), \
+             patch.object(pipeline, "verified", return_value=(self.targets, [dict(draft=True)], value)):
+            for tags in ([], proposed["distTags"][:1], proposed["distTags"]):
+                retained = pipeline.cohort_request(self.plan, value, 8, tags)
+                path.write_bytes(r.canonical(retained))
+                pipeline.main()
+            for mutate in (lambda v: v["versions"].pop(),
+                           lambda v: v["versions"][0]["package"].update(packageContentIdentity="f" * 64),
+                           lambda v: v["distTags"][0].update(tag="unreviewed"),
+                           lambda v: v.update(idempotencyKey="another-release")):
+                changed = copy.deepcopy(proposed)
+                mutate(changed)
+                path.write_bytes(r.canonical(changed))
+                with self.assertRaises(ValueError): pipeline.main()
 
     def test_recovery_reuses_original_invocation_and_never_rebuilds_after_missing_bytes(self):
         with self.mocks():

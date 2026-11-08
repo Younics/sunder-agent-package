@@ -75,7 +75,8 @@ public sealed class AgentCatalogSourceMigrationTests
                 {
                     semanticProbes = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime,
                         "MemoryRoleLocalProbes.cs.txt", output: output);
-                    semanticProbePath = Path.Combine(root, family + "Probes/bin/Debug/net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll");
+                    semanticProbePath = Path.Combine(root, family + "Probes/bin", BuilderSourceMigrationTests.FixtureConfiguration,
+                        "net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll");
                     semanticProbeBytes = File.ReadAllBytes(semanticProbePath);
                 }
                 var probe = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime, fixture,
@@ -176,7 +177,7 @@ public sealed class AgentCatalogSourceMigrationTests
                 """);
             await BuilderSourceMigrationTests.Run(root, "restore", "Catalog.csproj", "--disable-parallel");
             await BuilderSourceMigrationTests.Run(root, "build", "Catalog.csproj", "--no-restore");
-            using var content = File.OpenRead(Path.Combine(root, "bin/Debug/net10.0/AgentCatalogSource.dll"));
+            using var content = File.OpenRead(Path.Combine(root, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/AgentCatalogSource.dll"));
             var assembly = load.LoadFromStream(content);
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal));
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Agent.Execution.Common");

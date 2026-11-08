@@ -31,7 +31,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var selected = File.ReadAllBytes(Path.Combine(fixture, "sunder-contracts.lock.json"));
         await Run(fixture, "build", "Imported.csproj", "--no-restore");
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(fixture, "sunder-contracts.lock.json")));
-        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(fixture, "obj/Debug/net10.0/sunder-rpc/authoring-receipt.v1.json")));
+        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(fixture, "obj", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/sunder-rpc/authoring-receipt.v1.json")));
         Assert.Single(receipt.RootElement.GetProperty("bundles").EnumerateArray());
         Assert.Single(receipt.RootElement.GetProperty("providers").EnumerateArray());
         Assert.Empty(receipt.RootElement.GetProperty("uses").EnumerateArray());
@@ -42,8 +42,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
         {
             var owner = Load(Path.Combine(SingleProjectRoleOutput(Path.Combine(root, "Worker"), "worker"), "Sunder.Package.Agent.dll"));
             var memory = Load(Path.Combine(SingleProjectRoleOutput(Path.Combine(root, "MemoryWorker"), "worker"), "Sunder.Package.Agent.Memory.Semantic.dll"));
-            var memoryProbes = Load(Path.Combine(root, "MemoryWorkerProbes/bin/Debug/net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll"));
-            var prompts = Load(Path.Combine(fixture, "bin/Debug/net10.0/AgentPromptProvider.dll"));
+            var memoryProbes = Load(Path.Combine(root, "MemoryWorkerProbes/bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll"));
+            var prompts = Load(Path.Combine(fixture, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/AgentPromptProvider.dll"));
             Assert.DoesNotContain(prompts.GetReferencedAssemblies(), reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal));
             await VerifyAgentProfileCapabilities(owner, memory, memoryProbes);
             await VerifyAgentSystemPrompts(owner, prompts);

@@ -63,6 +63,7 @@ def tests(state_path, lane):
     artifact = POLICY["artifactProducer"]
     directory = source / "artifacts/test-results" / ("artifact" if lane == "artifact" else "required" if lane == "required-linux" else "full")
     if lane == "source":
+        projects = [row["path"] for row in inventory["projects"] if mode in row["modes"] and not row.get("requiredOnly")]
         filter_value = "FullyQualifiedName!~" + artifact
         if sys.platform == "linux":
             filter_value += "".join("&FullyQualifiedName!~" + name for name in POLICY["requiredLinux"])
