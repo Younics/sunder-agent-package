@@ -211,6 +211,47 @@ public class Outer {
         self.assertEqual(23, process.returncode, process.stdout + process.stderr)
         self.assertEqual("", process.stdout)
 
+    def test_inventory_streams_large_source_lists_and_complete_project_inventory(self):
+        repository = SCRIPT.resolve().parents[2]
+        projects = [f"tests/{name}.Tests/{name}.Tests.csproj" for name in ("First", "Second")]
+        expected = []
+        for index, project in enumerate(projects):
+            directory = repository / Path(project).parent
+            sources = [directory / ("LongSourceFileName" * 4 + str(number) + ".cs") for number in range(600)]
+            value = dict(Properties=dict(MSBuildProjectDirectory=str(directory), IsTestProject="true",
+                SunderTestOwner="agent-family", SunderTestCategory="Unit", SunderTestCapabilities="None",
+                SunderTestOS="Any", SunderTestSize="Small", SunderTestSourceMode="true", SunderTestPackageMode="false",
+                SunderTestLanes="", SunderTestSourceOnlyTests=""), Items=dict(Compile=[dict(FullPath=str(path)) for path in sources]))
+            (self.root / f"metadata-{index}.json").write_bytes(json.dumps(value).encode("utf-8"))
+            expected.append(sorted(path.relative_to(repository).as_posix() for path in sources))
+        # Model Windows' native command-line bound even on Unix, before invoking jq.
+        script = '''
+          jq() {
+            local bytes=0 value
+            for value; do bytes=$((bytes + ${#value} + 1)); done
+            if (( bytes > 30000 )); then printf 'fixture: native argv limit exceeded\\n' >&2; return 126; fi
+            command jq "$@"
+          }
+          dotnet() {
+            if [[ "$1" == sln ]]; then
+              printf '%s\\n' tests/First.Tests/First.Tests.csproj tests/Second.Tests/Second.Tests.csproj
+            elif [[ "$2" == tests/First.Tests/First.Tests.csproj ]]; then
+              cat "$INVENTORY_FIXTURE_METADATA/metadata-0.json"
+            else
+              cat "$INVENTORY_FIXTURE_METADATA/metadata-1.json"
+            fi
+          }
+          export -f jq dotnet
+          "$BASH" "$1"
+        '''
+        result = subprocess.run(bash_runtime.command("-c", script, "inventory-fixture", SCRIPT.with_name("generate-test-inventory.sh")),
+                                env={**os.environ, "INVENTORY_FIXTURE_METADATA": str(self.root)}, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        inventory = json.loads(result.stdout)
+        self.assertEqual(projects, [row["path"] for row in inventory["projects"]])
+        self.assertEqual(expected, [row["sources"] for row in inventory["projects"]])
+        self.assertGreater(len(result.stdout), 100000)
+
     def test_result_definition_and_execution_completeness(self):
         path = self.results / "Fixture.Tests.trx"
         for mutate in (lambda tree: tree.find("Results").remove(tree.find("Results")[0]),

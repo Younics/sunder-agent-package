@@ -10,7 +10,8 @@ allowed_lanes='["PackageCompatibility"]'
 allowed_os='["Any","Linux","macOS","Windows"]'
 allowed_sizes='["Small","Medium","Large"]'
 package_ids="$(jq -c '[.packages[] | select(.artifactType == "sunderpkg") | .packageId]' packages.json)"
-projects='[]'
+projects_file="$(mktemp "${TMPDIR:-/tmp}/sunder-test-inventory.XXXXXX")"
+trap 'rm -f "$projects_file"' EXIT
 project_list="$(dotnet sln Sunder.AgentPackage.slnx list)"
 
 while IFS= read -r project_path; do
@@ -67,7 +68,9 @@ while IFS= read -r project_path; do
     --argjson source "$source_mode" \
     --argjson package "$package_mode" \
     '[if $source then "source" else empty end, if $package then "package" else empty end]')"
-  entry="$(jq -cn \
+  # Source lists and the accumulated inventory can exceed Windows' argv limit.
+  # Keep unbounded JSON on stdin/files, not in native process arguments.
+  jq -c \
     --arg path "$project_path" \
     --arg owner "$owner" \
     --arg category "$category" \
@@ -77,13 +80,11 @@ while IFS= read -r project_path; do
     --arg size "$size" \
     --argjson modes "$modes" \
     --argjson sourceOnlyTests "$source_only_tests" \
-    --argjson sources "$sources" \
-    '{path: $path, owner: $owner, category: $category, capabilities: $capabilities, operatingSystems: $operatingSystems, size: $size, modes: $modes, lanes: $lanes, sourceOnlyTests: $sourceOnlyTests, sources: $sources}')"
-  projects="$(jq -cn --argjson projects "$projects" --argjson entry "$entry" '$projects + [$entry]')"
+    '{path: $path, owner: $owner, category: $category, capabilities: $capabilities, operatingSystems: $operatingSystems, size: $size, modes: $modes, lanes: $lanes, sourceOnlyTests: $sourceOnlyTests, sources: .}' \
+    <<< "$sources" >> "$projects_file"
 done <<< "$project_list"
 
-jq -n \
+jq -s \
   --argjson schemaVersion 2 \
   --arg solution "Sunder.AgentPackage.slnx" \
-  --argjson projects "$projects" \
-  '{schemaVersion: $schemaVersion, solution: $solution, projects: $projects}'
+  '{schemaVersion: $schemaVersion, solution: $solution, projects: .}' < "$projects_file"
