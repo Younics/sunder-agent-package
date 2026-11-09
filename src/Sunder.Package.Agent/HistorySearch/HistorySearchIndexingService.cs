@@ -125,6 +125,7 @@ internal sealed partial class HistorySearchIndexingService :
 
     // Concurrency tests can pause work at an owned resource boundary without relying on scheduler timing.
     internal Func<ValueTask>? BeforeTurnProjectionWriteAsync { get; set; }
+    internal Func<int, CancellationToken, ValueTask>? AfterSessionScanAsync { get; set; }
 
     internal void ReportSemanticUnavailable(string failureCode, string message)
     {

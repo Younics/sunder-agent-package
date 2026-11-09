@@ -1,9 +1,10 @@
 extern alias SkillsApp;
+extern alias SkillsWorker;
 
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
+using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Services;

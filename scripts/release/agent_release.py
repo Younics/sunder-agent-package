@@ -390,6 +390,29 @@ def has_public_evidence(contract):
     return any(snapshot["exposure"] == "public" for snapshot in snapshots(contract))
 
 
+def owned_projection_reviews(record):
+    reviews = record["projectionReviews"]
+    require(type(reviews) is list and 1 <= len(reviews) <= 257, "Invalid owned projection review count")
+    previous = None
+    for review in reviews:
+        closed(review, "contractVersion descriptorSha256 abiSha256 reviewKind canonicalProjection projectionSha256")
+        current = version(review["contractVersion"])
+        require(previous is None or current > previous, "Owned projection reviews are not strictly ordered")
+        previous = current
+        retained = [item for item in snapshots(record) if item["contractVersion"] == review["contractVersion"]]
+        require(len(retained) == 1 and all(review[key] == retained[0][key] for key in ("descriptorSha256", "abiSha256")),
+                "Owned projection review has no exact retained snapshot")
+        for field in ("descriptorSha256", "abiSha256", "projectionSha256"): digest(review[field])
+        require(review["reviewKind"] in ("accepted-source", "initial-source") and type(review["canonicalProjection"]) is str,
+                "Invalid owned source projection review")
+        data = review["canonicalProjection"].encode("utf-8")
+        require(0 < len(data) <= 4194304 and sha(data) == review["projectionSha256"], "Owned projection bytes/hash differ")
+        projection = decode(data)
+        closed(projection, "modelProjection" + (" methodPolicies" if "methodPolicies" in projection else ""))
+        # Core's normal Build/prebuilt Pack validates canonical projection semantics
+        # against the descriptor. This preflight binds the retained opaque bytes.
+
+
 def owned_contracts(baseline, package_id):
     fields = "schemaVersion authorityKind authorityId packageId contracts"
     closed(baseline, fields + (" retiredPrivateContracts" if "retiredPrivateContracts" in baseline else ""))
@@ -401,13 +424,15 @@ def owned_contracts(baseline, package_id):
             "Invalid combined active/retired baseline maps")
     for contracts in (active, retired):
         for record in contracts.values():
-            closed(record, "contractId history" + (" current" if "current" in record else ""))
+            closed(record, "contractId history" + (" current" if "current" in record else "")
+                   + (" projectionReviews" if "projectionReviews" in record else ""))
             require(type(record["history"]) is list and len(record["history"]) <= 256
                     and ("current" in record or record["history"]), "Invalid owned contract history")
             for snapshot in snapshots(record):
                 require(type(snapshot) is dict and snapshot["exposure"] in ("public", "package")
                         and snapshot["state"] in ("draft", "release-frozen", "published"), "Invalid owned snapshot")
                 require(contracts is not retired or snapshot["exposure"] == "package", "Retired private record contains public evidence")
+            if "projectionReviews" in record: owned_projection_reviews(record)
     return active
 
 
@@ -507,14 +532,14 @@ def native_source_role_uses(assets, records):
     from native_release_inputs import RIDS, json_file
     regular(path)
     evidence = json_file(path.parent.resolve() / path.name, 256 * 1024 * 1024, 4 * 1024 * 1024)
-    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] in (3, 4), "Expected native source-use evidence schema 3 or 4")
+    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] in (3, 4, 5), "Expected native source-use evidence schema 3, 4 or 5")
     expected = {item["path"]: {field: item[field] for field in ("path", "size", "sha256")} for item in records}
     final = evidence["finalArtifacts"]
     require(len(final) == len(expected) and {item["path"]: item for item in final} == expected,
             "Source role-use evidence belongs to different final archives")
     runs = evidence["nativeRuns"]
     require(len(runs) == len(RIDS) and {run["rid"] for run in runs} == set(RIDS), "Incomplete native source-use RID evidence")
-    package_ids = set(evidence["packageVersions"]) if evidence["schemaVersion"] == 4 else {item["packageId"] for item in records}
+    package_ids = set(evidence["packageVersions"]) if evidence["schemaVersion"] in (4, 5) else {item["packageId"] for item in records}
     result = dict(evidence.get("retainedSourceRoleUses", {}))
     for run in runs:
         require(len(run["packages"]) == len(package_ids) and {item["packageId"] for item in run["packages"]} == package_ids,

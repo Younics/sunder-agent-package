@@ -61,11 +61,19 @@ public sealed partial class RepositoryArchitectureTests
         Assert.DoesNotContain("IPackageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.DoesNotContain("IPackageStorageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.Equal(
-            5,
+            new[]
+            {
+                "internal partial class RegressionTestExtensionCatalog",
+                "internal sealed class RegressionTestRpcCallScope",
+                "internal sealed class RegressionTestRpcClient",
+                "internal sealed partial class RegressionTestRpcState",
+                "public class RegressionTestInvocationAuthority",
+            },
             Regex.Matches(
                 rpcInfrastructure,
-                "^internal (?:(?:sealed|partial) )*class ",
-                RegexOptions.Multiline | RegexOptions.CultureInvariant).Count);
+                "^(?:internal|public) (?:(?:sealed|partial) )*class \\w+",
+                RegexOptions.Multiline | RegexOptions.CultureInvariant)
+                .Select(match => match.Value).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -763,11 +771,11 @@ public sealed partial class RepositoryArchitectureTests
     public void Workflows_DoNotPropagateAgentVersionThroughCoreVersionProperties()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
-        foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml" })
+        foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml", "sunder-package-component.yml" })
         {
             var source = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", workflow));
             source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/ci/agent_ci.py"));
-            if (workflow == "sunder-package-release.yml")
+            if (workflow == "sunder-package-component.yml")
             {
                 Assert.Contains("scripts/release/build-native-family.ps1", source, StringComparison.Ordinal);
                 source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/build-native-family.ps1"));

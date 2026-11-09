@@ -36,6 +36,11 @@ internal sealed partial class HistorySearchIndexingService
                     }
                     completedSessions++;
                     _state.Publish(status => status with { ProgressCompleted = completedSessions });
+                    if (AfterSessionScanAsync is { } afterSessionScan)
+                    {
+                        await afterSessionScan(completedSessions, cancellationToken).ConfigureAwait(false);
+                        cancellationToken.ThrowIfCancellationRequested();
+                    }
                 }
                 sessionContinuation = page.Continuation;
             } while (sessionContinuation is not null);

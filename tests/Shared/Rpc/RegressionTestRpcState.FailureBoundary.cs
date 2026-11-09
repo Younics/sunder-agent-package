@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.Json;
 using Sunder.Sdk.Rpc;
 
@@ -5,6 +6,10 @@ namespace Sunder.Package.Agent.Tests;
 
 internal sealed partial class RegressionTestRpcState
 {
+    private static readonly Func<SunderRpcException, bool> IsHostAuthenticated = typeof(SunderRpcException)
+        .GetProperty("IsHostAuthenticated", BindingFlags.Instance | BindingFlags.NonPublic)!.GetMethod!
+        .CreateDelegate<Func<SunderRpcException, bool>>();
+
     private void ValidateProviderOutput(Entry entry, string serviceId, string methodId, JsonElement payload)
     {
         try { ValidatePayload(entry, serviceId, methodId, payload, output: true); }
@@ -26,9 +31,9 @@ internal sealed partial class RegressionTestRpcState
         if (!_workerStyleProviderBoundary
             || exception is SunderRpcException
             {
-                IsHostAuthenticated: false,
                 Error.Kind: SunderRpcErrorKind.Domain,
             } rpcException
+            && !IsHostAuthenticated(rpcException)
             && entry.Descriptor.FindService(serviceId)?.FindMethod(methodId)?.Errors.Contains(
                 rpcException.Error.Code,
                 StringComparer.Ordinal) == true)

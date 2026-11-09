@@ -4,6 +4,10 @@
     "ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback",
     "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
   ],
+  "requiredLinuxOwners": {
+    "ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback": "younics.ai.agent.tools.files",
+    "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation": "younics.ai.agent.execution.docker"
+  },
   "stress": {
     "repetitions": 3,
     "filter": "(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsMutations_FailClosedBeforeFinalSyscallCheckpoints&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"

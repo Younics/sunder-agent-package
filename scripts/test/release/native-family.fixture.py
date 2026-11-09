@@ -373,6 +373,49 @@ class NativeFamilyFixture(unittest.TestCase):
         bad["nativeRuns"][0]["familyTests"].pop()
         with self.assertRaisesRegex(ValueError, "all fifteen Worker tests"):
             family.verify_document(bad, output, family.release_rows(self.repository, str(plan_path)), expected)
+
+        # The new producer retains one package/RID without a provisional archive.
+        # Compose each selected package once, then bind all six smoke runs to those
+        # exact final bytes and the fourteen/thirteen unchanged family members.
+        leaves, candidates, final, smoke = (self.work / name for name in ("component-leaves", "component-candidates", "component-final", "component-smoke"))
+        with patch.dict(os.environ, env):
+            for row in plan_rows:
+                if not row["selected"]: continue
+                component = family.component_identity(self.repository, row["packageId"], *VERSIONS[1:])
+                for rid in inputs.RIDS:
+                    family.collect_component(self.repository, leaves, rid, component)
+                family.compose_component(self.repository, leaves, candidates, component)
+                with self.assertRaisesRegex(ValueError, "immutable"):
+                    family.compose_component(self.repository, leaves, candidates, component)
+            final_identity = dict(expected, schemaVersion=5)
+            records = family.gather_candidates(self.repository, candidates, final, final_identity)
+            before_smoke = {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")}
+            for rid in inputs.RIDS:
+                metrics = self.work / "metrics" / rid
+                for path in metrics.glob("*.json"):
+                    metric = json.loads(path.read_bytes())
+                    metric["measurement"]["archiveBytes"] = (final / metric["measurement"]["archive"]).stat().st_size
+                    write(path, metric)
+                family.record_final(self.repository, candidates, final, metrics, smoke, rid, final_identity)
+            family.finalize_candidates(self.repository, smoke, final, final_identity)
+            self.assertEqual(4, len(self.log.read_text().splitlines()), "Only two legacy and two new component packs may execute")
+            self.assertEqual(before_smoke, {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")})
+            final_document = json.loads((final / "native-test-evidence.json").read_bytes())
+            self.assertEqual(records, final_document["finalArtifacts"])
+            changed = copy.deepcopy(final_document)
+            run = changed["nativeRuns"][0]
+            selected_package = run["packages"][0]
+            selected_package["testedArchive"]["sha256"] = "f" * 64
+            next(test for test in run["familyTests"] if test["packageId"] == selected_package["packageId"])["testedArchive"]["sha256"] = "f" * 64
+            with self.assertRaisesRegex(ValueError, "exact final archive"):
+                family.verify_document(changed, final, family.release_rows(self.repository, str(plan_path)), final_identity)
+            component = family.component_identity(self.repository, next(iter(selected_ids)), *VERSIONS[1:])
+            receipt = candidates / (component["packageId"] + ".candidate.json")
+            value = json.loads(receipt.read_bytes())
+            value["nativeRuns"].pop()
+            write(receipt, value)
+            with self.assertRaisesRegex(ValueError, "exactly six"):
+                family.candidate_receipt(candidates, component)
         unchanged = next(row for row in plan_rows if not row["selected"])
         path = self.output / selection.archive_name(unchanged)
         path.write_bytes(path.read_bytes() + b"changed retained archive")
@@ -380,7 +423,7 @@ class NativeFamilyFixture(unittest.TestCase):
             str(plan_path), *VERSIONS[1:], str(self.repository)], env=env, capture_output=True, text=True)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("Retained archive differs from the release plan", result.stderr)
-        self.assertEqual(2, len(self.log.read_text().splitlines()), "Pack ran after retained-byte substitution")
+        self.assertEqual(4, len(self.log.read_text().splitlines()), "Pack ran after retained-byte substitution")
 
     def test_source_use_projection_cannot_be_changed_apart_from_qualified_receipt(self):
         path = self.handoff / ("native-leaf-evidence-" + inputs.RIDS[0] + ".json")

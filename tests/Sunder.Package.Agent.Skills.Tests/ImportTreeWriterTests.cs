@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Shared.Importing;
+extern alias SkillsWorker;
+
+using SkillsWorker::Sunder.Package.Agent.Shared.Importing;
 using Xunit;
 
 namespace Sunder.Package.Agent.Skills.Tests;

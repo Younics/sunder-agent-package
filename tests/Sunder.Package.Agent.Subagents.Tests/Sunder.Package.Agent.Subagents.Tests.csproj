@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderTestOwner>younics.ai.agent.subagents</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
-    <SunderTestCapabilities>Filesystem;Worker</SunderTestCapabilities>
+    <SunderTestCapabilities>Filesystem;SQLite;Worker</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>
     <SunderTestSize>Medium</SunderTestSize>
     <SunderTestSourceMode>true</SunderTestSourceMode>
@@ -12,24 +14,33 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentApp" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SubagentsPackage,SubagentsApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
-                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,SubagentsWorker" />
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs"
-             Link="TestSupport\AgentPackageRepositoryInventory.cs" />
-    <Compile Include="../Shared/Packages/TestPackageStorageFakes.cs"
-             Link="TestSupport\TestPackageStorageFakes.cs" />
+    <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs;../Shared/Consumers/RegressionTestFamilyConsumers.Subagents.cs;../Shared/Consumers/SubagentsWorkerAliases.cs;../Shared/Presentation/*.cs;../Shared/Execution/AgentRoleRunControls.cs"
+             Link="TestSupport/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
   </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
 </Project>

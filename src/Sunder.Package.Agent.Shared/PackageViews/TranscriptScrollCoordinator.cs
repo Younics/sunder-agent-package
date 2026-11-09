@@ -53,6 +53,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     private bool _isRestoringAnchor;
     private bool _scrollToBottomPending;
     private bool _presentationActive = true;
+    private long _presentationRevision;
     private bool _bottomPlacementLockActive;
     private bool _restoreAnchorPending;
     private bool _loadOlderPending;
@@ -252,6 +253,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
         }
 
         _presentationActive = isActive;
+        _presentationRevision++;
         if (isActive)
         {
             if (_presentationPagingCancellation.IsCancellationRequested)

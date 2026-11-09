@@ -18,6 +18,14 @@
     <Project Path="src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj" />
   </Folder>
   <Folder Name="/Tests/">
+    <Project Path="tests/Sunder.Package.Agent.View.Tests/Sunder.Package.Agent.View.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Runtime.Tests/Sunder.Package.Agent.Runtime.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Archive.Tests/Sunder.Package.Agent.Archive.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.History.Tests/Sunder.Package.Agent.History.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Execution.Docker.Tests/Sunder.Package.Agent.Execution.Docker.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Tools.Files.Tests/Sunder.Package.Agent.Tools.Files.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Tools.Shell.Tests/Sunder.Package.Agent.Tools.Shell.Tests.csproj" />
+    <Project Path="tests/Sunder.Package.Agent.Tools.Web.Tests/Sunder.Package.Agent.Tools.Web.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Builder.Tests/Sunder.Package.Agent.Builder.Tests.csproj" />
     <Project Path="tests/Sunder.Package.Agent.Mcp.Tests/Sunder.Package.Agent.Mcp.Tests.csproj" />

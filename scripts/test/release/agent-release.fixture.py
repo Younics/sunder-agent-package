@@ -231,6 +231,33 @@ class ReleaseTests(unittest.TestCase):
         path.write_bytes(path.read_bytes() + b"\n")
         self.assertNotEqual(expected, release.locks(self.source))
 
+    def test_current_owned_projection_reviews_are_bound_to_exact_retained_snapshots(self):
+        source = Path(__file__).resolve().parents[3]
+        paths = sorted((source / "src").glob("*/sunder-contracts.owned.json"))
+        self.assertTrue(paths)
+        for path in paths:
+            baseline = release.load(path)
+            release.owned_contracts(baseline, baseline["packageId"])
+        baseline = release.load(source / "src/Sunder.Package.Agent/sunder-contracts.owned.json")
+        original = release.canonical(baseline)
+        key = next(key for key, record in baseline["contracts"].items() if "projectionReviews" in record)
+        changes = {
+            "unknown field": lambda record: record.update(foreign=True),
+            "empty": lambda record: record.update(projectionReviews=[]),
+            "duplicate": lambda record: record["projectionReviews"].append(copy.deepcopy(record["projectionReviews"][0])),
+            "snapshot": lambda record: record["projectionReviews"][0].update(contractVersion="99.0.0"),
+            "descriptor": lambda record: record["projectionReviews"][0].update(descriptorSha256="a" * 64),
+            "kind": lambda record: record["projectionReviews"][0].update(reviewKind="unreviewed"),
+            "bytes": lambda record: record["projectionReviews"][0].update(canonicalProjection="{}"),
+            "projection fields": lambda record: record["projectionReviews"][0].update(canonicalProjection="{}", projectionSha256=release.sha(b"{}")),
+        }
+        for label, mutate in changes.items():
+            with self.subTest(label=label):
+                bad = copy.deepcopy(baseline)
+                mutate(bad["contracts"][key])
+                with self.assertRaises(release.Invalid): release.owned_contracts(bad, bad["packageId"])
+        self.assertEqual(original, release.canonical(baseline))
+
     def test_consumer_roles_are_closed_and_readiness_is_coalesced_per_role(self):
         contract = {"authorityKind": "package", "resolvedContractVersion": "1.0.0"}
         bundle = {"contractId": "example.shared", "contractVersion": "1.0.0"}

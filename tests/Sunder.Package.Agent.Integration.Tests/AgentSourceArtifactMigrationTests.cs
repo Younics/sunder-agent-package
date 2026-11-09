@@ -13,30 +13,28 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var repository = BuilderSourceMigrationTests.FindRepository();
         var core = Path.GetFullPath(Path.Combine(repository, "..", "sunder-core"));
         var configuration = CanonicalPackageRoles.Configuration;
-        var driver = Path.Combine(core, "languages/csharp/dotnet/tests/Sunder.Package.Build.Tests/bin", configuration, "net10.0/Sunder.Package.Build.Tests.dll");
-        Assert.True(File.Exists(driver), "Build Core Package.Build.Tests before the required artifact source lane.");
+        var driver = Environment.GetEnvironmentVariable("SUNDER_AGENT_CORE_TEST_DRIVER")
+            ?? Path.Combine(core, "languages/csharp/dotnet/tests/Sunder.Package.Build.Tests/bin", configuration, "net10.0/Sunder.Package.Build.Tests.dll");
+        Assert.True(File.Exists(driver), "Prepare the verified Core test driver before the required artifact source lane: " + driver);
         var root = Directory.CreateTempSubdirectory("sunder-agent-source-artifact-").FullName;
         var completed = false;
         try
         {
             var cache = Path.Combine(root, "fixture-cache");
-            var canonical = await BuildCanonicalFamily(root, "Agent", "Worker", cache);
+            var canonical = await PrepareOwnerArtifact(root, driver, cache);
             var worker = canonical.Directory;
             var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
             var owned = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json"));
-            await VerifyGeneratedAppView(worker, "Agent");
-            await VerifyOwnerAppRole(worker);
             var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");
-            // Pack independently rechecks the actual canonical source and selections.
-            await canonical.Pack();
-            Assert.True(File.Exists(archive));
             var before = File.ReadAllBytes(archive);
-            VerifyArchive(archive);
-            await ProjectCanonicalWorker(worker, driver);
-            await VerifyOwnerProcess(root, worker, archive);
-            await VerifyImports(root, core, driver, archive, cache);
-            await VerifyAgentWorkspaceAndPermissionConsumers(root);
+            await PrepareOwnerImports(root, core, driver, archive, cache);
+            await VerifySelectedPackageArtifacts(root, core, driver, archive, cache,
+                CurrentContractInventory.Packages.Select(package => package.PackageId).ToHashSet(StringComparer.Ordinal));
+            // Full acceptance requires all fifteen archives before cross-package
+            // probes run. Component selections cannot stand in for this gate.
             VerifyFamilyPolicies(root, repository, core);
+            await VerifyCombinedImports(root, core, driver, archive, cache);
+            await VerifyAgentWorkspaceAndPermissionConsumers(root);
             await canonical.Pack();
             Assert.Equal(before, File.ReadAllBytes(archive));
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
@@ -50,6 +48,22 @@ public sealed partial class AgentSourceArtifactMigrationTests
             try { RetainArtifactAttempt(root, completed); }
             finally { Directory.Delete(root, recursive: true); }
         }
+    }
+
+    private static async Task<CanonicalFamilyBuild> PrepareOwnerArtifact(string root, string driver, string cache)
+    {
+        var canonical = await BuildCanonicalFamily(root, "Agent", "Worker", cache);
+        var worker = canonical.Directory;
+        await VerifyGeneratedAppView(worker, "Agent");
+        await VerifyOwnerAppRole(worker);
+        // Pack independently rechecks the actual canonical source and selections.
+        await canonical.Pack();
+        var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");
+        Assert.True(File.Exists(archive));
+        VerifyArchive(archive);
+        await ProjectCanonicalWorker(worker, driver);
+        await VerifyOwnerProcess(root, worker, archive);
+        return canonical;
     }
 
     private static void RetainArtifactEvidence(string root)

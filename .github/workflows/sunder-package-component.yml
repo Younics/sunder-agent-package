@@ -1,0 +1,340 @@
+name: Package component
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        type: string
+        default: test
+      bootstrap:
+        type: boolean
+        default: false
+      package:
+        description: One selected canonical package ID
+        required: true
+        type: string
+      core_commit:
+        required: true
+        type: string
+      inputs_sha256:
+        type: string
+        default: ""
+      core_tag:
+        type: string
+        default: ""
+      core_version:
+        type: string
+        default: ""
+      matrix:
+        description: Behavior platforms and reference modes
+        type: string
+        default: '{}'
+      plan_sha256:
+        type: string
+        default: ""
+      owner_selected:
+        type: boolean
+        default: false
+      stress:
+        type: boolean
+        default: false
+    secrets:
+      publish_token:
+        required: false
+
+# The caller supplies read-only validation/production permissions or publication
+# write permission. A reusable workflow cannot elevate its caller's token.
+
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+
+jobs:
+  test:
+    if: inputs.operation == 'test'
+    name: ${{ inputs.package }} · ${{ matrix.mode }} · ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ inputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-core-tools-${{ matrix.rid }}
+          path: ${{ runner.temp }}/core-tools
+      - name: Verify the shared dependency handoff
+        id: inputs
+        env:
+          INPUTS_SHA256: ${{ inputs.inputs_sha256 }}
+        run: test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+      - name: Build and test the selected component
+        env:
+          PACKAGE: ${{ inputs.package }}
+          MODE: ${{ matrix.mode }}
+          STRESS: ${{ inputs.stress && matrix.mode == 'source' }}
+        run: |
+          set -euo pipefail
+          packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"
+          args=()
+          [[ "$STRESS" != true ]] || args+=(--stress)
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
+            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" \
+            --mode "$MODE" --packages "$packages" "${args[@]}"
+      - name: Retain component diagnostics
+        if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-component-${{ inputs.package }}-${{ matrix.mode }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-components
+          if-no-files-found: error
+          retention-days: 14
+
+  native:
+    if: inputs.operation == 'native'
+    name: ${{ inputs.package }} · produce · ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.matrix) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      PACKAGE: ${{ inputs.package }}
+      CORE_COMMIT: ${{ inputs.core_commit }}
+      CORE_TAG: ${{ inputs.core_tag }}
+      CORE_VERSION: ${{ inputs.core_version }}
+      RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ inputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-core-tools-${{ matrix.rid }}
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.bootstrap && 'agent-prepared-dependencies' || 'agent-dependency-inputs' }}
+          path: ${{ runner.temp }}/agent-inputs
+      - name: Bind the selected version and dependency handoff
+        env:
+          INPUTS_SHA256: ${{ inputs.inputs_sha256 }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        run: |
+          set -euo pipefail
+          if [[ "$BOOTSTRAP" != true ]]; then
+            test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+          fi
+          echo "PACKAGE_VERSION=$(python3 -B scripts/release/native-family.py version "$PWD" "$PACKAGE")" >> "$GITHUB_ENV"
+      - name: Build only this native component
+        shell: pwsh
+        env:
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+        run: |
+          $arguments = @{
+            Rid = $env:RID; Version = $env:PACKAGE_VERSION; Package = $env:PACKAGE
+            OutputDirectory = "artifacts/native-build/$env:PACKAGE/$env:RID"
+            ToolsDirectory = "$env:RUNNER_TEMP/core-tools"
+          }
+          if ($env:BOOTSTRAP -ceq 'true') { $arguments.CatalogPath = "$env:RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json" }
+          else { $arguments.InputsDirectory = "$env:RUNNER_TEMP/agent-inputs" }
+          ./scripts/release/build-native-family.ps1 @arguments
+      - name: Retain the qualified bytes without packing or rebuilding
+        run: >-
+          python3 -B scripts/release/native-family.py collect-component "$PWD" artifacts/native-leaf "$RID"
+          "$PACKAGE" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-leaf-${{ inputs.package }}-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/native-leaf
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  compose:
+    if: inputs.operation == 'native'
+    name: ${{ inputs.package }} · compose once
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      PACKAGE: ${{ inputs.package }}
+      CORE_COMMIT: ${{ inputs.core_commit }}
+      CORE_TAG: ${{ inputs.core_tag }}
+      CORE_VERSION: ${{ inputs.core_version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ inputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-core-tools-linux-x64
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: ${{ inputs.bootstrap && 'agent-prepared-dependencies' || 'agent-dependency-inputs' }}
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-leaf-${{ inputs.package }}-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/leaves
+      - name: Compose exactly the six qualified native inputs
+        env:
+          INPUTS_SHA256: ${{ inputs.inputs_sha256 }}
+          BOOTSTRAP: ${{ inputs.bootstrap }}
+          SUNDER_NATIVE_TASK_ASSEMBLY: ${{ runner.temp }}/core-tools/Sunder.Package.Build.dll
+        run: |
+          set -euo pipefail
+          packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"
+          if [[ "$BOOTSTRAP" == true ]]; then
+            args=(--catalog "$RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json")
+          else
+            test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+            args=(--inputs "$RUNNER_TEMP/agent-inputs")
+          fi
+          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core --work "$RUNNER_TEMP/composition" \
+            --mode package --packages "$packages" --tools "$RUNNER_TEMP/core-tools" "${args[@]}"
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/composition/ci-state.json" -- \
+            python3 -B scripts/release/native-family.py compose-component "$PWD" "$RUNNER_TEMP/leaves" artifacts/candidate \
+              "$PACKAGE" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_VERSION"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-candidate-${{ inputs.package }}
+          path: sunder-agent-package/artifacts/candidate
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  publish:
+    if: inputs.operation == 'publish'
+    name: ${{ inputs.package }} · publish immutable version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: sunder-agent-release-promotion
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGE: ${{ inputs.package }}
+      CORE_COMMIT: ${{ inputs.core_commit }}
+      CORE_TAG: ${{ inputs.core_tag }}
+      CORE_BUILD_VERSION: ${{ inputs.core_version }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ inputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts/release
+      - name: Recover the exact staged bytes and source-bound plan
+        env:
+          PLAN_SHA256: ${{ inputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "$PLAN_SHA256"
+          python3 -B scripts/release/agent_pipeline.py recover --core ../sunder-core --directory artifacts/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.owner_selected && inputs.package != 'younics.ai.agent'
+        with:
+          name: agent-publication-younics.ai.agent
+          path: ${{ runner.temp }}/owner-receipt
+      - name: Publish this component and write its immutable receipt
+        env:
+          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.publish_token }}
+          OWNER_SELECTED: ${{ inputs.owner_selected }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "$OWNER_SELECTED" == true && "$PACKAGE" != younics.ai.agent ]]; then
+            args+=(--owner-receipts "$RUNNER_TEMP/owner-receipt")
+          fi
+          python3 -B scripts/release/agent_pipeline.py publish-component --core ../sunder-core --directory artifacts/release \
+            --package "$PACKAGE" --receipts artifacts/publication-receipt "${args[@]}"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-publication-${{ inputs.package }}
+          path: sunder-agent-package/artifacts/publication-receipt
+          if-no-files-found: error
+          retention-days: 90
+
+  summary:
+    if: always()
+    needs: [test, native, compose, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+          OPERATION: ${{ inputs.operation }}
+        run: python3 -B scripts/ci/workflow_summary.py component

@@ -30,6 +30,7 @@ internal sealed partial class TranscriptScrollCoordinator
             _interactionRevision,
             _viewportAuthorityRevision,
             _programmaticOffsetWriteCount,
+            _presentationRevision,
             _anchorHost?.AnchoringSuspensionDepth ?? 0,
             HasPendingRenderedContent(),
             _bottomPlacementLockActive,

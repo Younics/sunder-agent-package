@@ -29,7 +29,7 @@ class AgentCiTests(unittest.TestCase):
     def write_test_inventory(self):
         path = self.source / "artifacts/reports/test-inventory.json"
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"projects": [{"path": "tests/Fixture.Tests/Fixture.Tests.csproj", "modes": ["source"]}]}))
+        path.write_text(json.dumps({"projects": [{"path": "tests/Fixture.Tests/Fixture.Tests.csproj", "modes": ["source"], "owner": "younics.ai.agent.tools.files"}]}))
 
     def test_windows_checkout_preserves_reviewed_inventory_and_contract_record_bytes(self):
         for path in ("compatibility/agent-current-inventory.json", "compatibility/agent-current-contracts.json"):
@@ -43,18 +43,18 @@ class AgentCiTests(unittest.TestCase):
         with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--source", str(self.source), "--core", "../sunder-core", "--output", str(output)]), \
              patch.dict(os.environ, {}, clear=True), patch.object(ci, "resolve") as resolve:
             ci.main()
-        resolve.assert_called_once_with(str(self.source), "../sunder-core", str(output))
+        resolve.assert_called_once_with(str(self.source), "../sunder-core", str(output), None, allow_missing=False)
         self.assertFalse(output.exists())
 
     def test_workflow_retains_input_failure_without_masking_exit_or_reporting_unstarted_tests(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
         section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("\n      - ")[0]
         script = textwrap.dedent(section.split("        run: |\n")[1])
-        stub = self.root / "scripts/release/release_inputs.py"
+        stub = self.root / "scripts/ci/agent_ci.py"
         stub.parent.mkdir(parents=True)
         stub.write_text('import sys\nprint("fixture: exact CI inputs missing", file=sys.stderr)\nsys.exit(7)\n')
         result = subprocess.run(bash_runtime.command("-c", script), cwd=self.root, text=True, capture_output=True, timeout=10,
-                                 env={**os.environ, "GITHUB_SHA": self.source_sha, "CORE_COMMIT": self.core_sha, "RUNNER_TEMP": str(self.root)})
+                                 env={**os.environ, "GITHUB_SHA": self.source_sha, "CORE_COMMIT": self.core_sha, "RUNNER_TEMP": str(self.root), "PACKAGES": '["younics.ai.agent"]'})
         self.assertEqual(7, result.returncode, result.stdout + result.stderr)
         self.assertIn("fixture: exact CI inputs missing", (self.root / "artifacts/reports/input-preparation.log").read_text())
         self.assertIn("agent_ci.py validate", workflow)
@@ -77,8 +77,11 @@ class AgentCiTests(unittest.TestCase):
         inventory = dict(schemaVersion=2, solution="Sunder.AgentPackage.slnx", projects=[
             dict(path="tests/Selected.csproj", owner=selected, modes=["source", "package"]),
             dict(path="tests/Family.csproj", owner="agent-family", modes=["source", "package"]),
+            dict(path="tests/Agent.csproj", owner="younics.ai.agent", modes=["source", "package"]),
             dict(path="tests/Unchanged.csproj", owner="younics.ai.agent.provider.gemini", modes=["source", "package"]),
             dict(path="tests/Local.csproj", owner="younics.ai.agent.execution.local", modes=["source", "package"], sourceOnlyTests=["ordinary"])])
+        for row in inventory["projects"]:
+            row["lanes"] = ["PackageCompatibility"]
         for platform in ("linux", "win32", "darwin"):
             for mode in ("source", "package"):
                 for package in (selected, "younics.ai.agent"):
@@ -91,13 +94,30 @@ class AgentCiTests(unittest.TestCase):
                              patch.object(ci, "execute", return_value=0) as build, patch.object(test_lanes, "validate") as tests, \
                              patch.object(test_lanes, "retain_verifier"):
                             ci.validate(args)
-                        expected = inventory["projects"] if package == "younics.ai.agent" else inventory["projects"][:2]
-                        if package == selected and mode == "source" and platform == "linux":
-                            expected = [*expected, dict(inventory["projects"][-1], requiredOnly=True, sourceOnlyTests=[])]
-                        self.assertEqual([row["path"] for row in expected], [call.args[1][2] for call in build.call_args_list])
+                        expected = [row for row in inventory["projects"] if row["owner"] == package]
+                        canonical = next(row["projectPath"] for row in self.rows if row["packageId"] == package)
+                        self.assertEqual(sorted([canonical, *[row["path"] for row in expected]]), [call.args[1][2] for call in build.call_args_list])
                         observed = json.loads((self.source / "artifacts/reports/test-inventory.json").read_text())
                         self.assertEqual(expected, observed["projects"])
                         tests.assert_called_once()
+
+    def test_component_without_owned_compatibility_stops_before_restore_or_build(self):
+        inventory = dict(projects=[dict(path="tests/SourceOnly.csproj", modes=["source"], lanes=[]),
+                                   dict(path="tests/Ordinary.csproj", modes=["source", "package"], lanes=[])])
+        path = self.source / "artifacts/reports/test-inventory.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(inventory))
+        args = argparse.Namespace(source=self.source, mode="package", packages=json.dumps([self.rows[0]["packageId"]]))
+        with patch.object(ci, "generate_inventory", return_value=path), patch.object(ci, "prepare") as prepare, \
+             patch.object(ci, "execute") as execute, patch.object(test_lanes, "validate") as validate:
+            ci.validate(args)
+        prepare.assert_not_called()
+        execute.assert_not_called()
+        validate.assert_not_called()
+        self.assertEqual([], json.loads(path.read_text())["projects"])
+        receipt = json.loads((path.parent / "compatibility-selection.json").read_text())
+        self.assertEqual("no-owned-compatibility", receipt["disposition"])
+        self.assertEqual([self.rows[0]["packageId"]], receipt["packageIds"])
 
     def test_preflight_runs_platform_script_groups_without_dependency_preparation(self):
         args = argparse.Namespace(source=self.source, packages=json.dumps(["younics.ai.agent.provider.openai"]))
@@ -109,9 +129,9 @@ class AgentCiTests(unittest.TestCase):
                 inventory.assert_called_once_with(self.source.resolve())
                 self.assertEqual(groups, [call.args[0][-1] for call in run.call_args_list])
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
-        dependencies = workflow.split("  dependencies:\n")[1].split("\n  source:")[0]
+        dependencies = workflow.split("  dependency-discovery:\n")[1].split("\n  tools:")[0]
         self.assertIn("needs: [prepare, preflight]", dependencies)
-        self.assertIn("needs: [prepare, preflight, dependencies, source]", workflow)
+        self.assertIn("needs: [prepare, preflight, dependency-discovery, tools, bootstrap, dependencies, components, verifier, source]", workflow)
 
     def test_preparation_failure_cleans_temporary_state_and_does_not_report_unstarted_tests(self):
         work = []
@@ -127,7 +147,7 @@ class AgentCiTests(unittest.TestCase):
 
     def test_family_results_are_uploaded_only_after_archive_tests_were_attempted(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
-        upload = workflow.split("      - name: Retain family test results\n")[1].split("\n  publish:")[0]
+        upload = workflow.split("      - name: Retain family test results\n")[1].split("\n  stage:")[0]
         self.assertIn("id: archive_tests", workflow)
         for outcome in ("success", "failure", "cancelled"):
             self.assertIn(f"steps.archive_tests.outcome == '{outcome}'", upload)
@@ -138,6 +158,7 @@ class AgentCiTests(unittest.TestCase):
         self.core = self.root / "sunder-core"
         self.core.mkdir()
         self.work = self.root / "ordinary-ci"
+        (self.source / "Sunder.AgentPackage.slnx").write_text("<Solution />")
         self.commands = []
         def run(command, **kwargs):
             self.commands.append(command)
@@ -191,6 +212,29 @@ class AgentCiTests(unittest.TestCase):
                 run.assert_not_called()
             path.write_bytes(before)
 
+    def test_component_preparation_reuses_tools_and_only_restores_and_hydrates_its_graph(self):
+        full_state = self.prepare()
+        tools = ci.inputs.load(full_state)["tools"]
+        component = self.rows[1]
+        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "component-ci",
+                                  inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="package",
+                                  packages=json.dumps([component["packageId"]]), tools=tools)
+        commands = []
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
+        with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            ci.prepare(args)
+            state, _ = ci.context(args.work / "ci-state.json")
+            with self.assertRaisesRegex(ValueError, "outside the prepared component scope"):
+                ci.execute(args.work / "ci-state.json", ["dotnet", "build", self.rows[2]["projectPath"], "--no-restore"])
+        self.assertEqual([component["packageId"]], state["packages"])
+        self.assertEqual([component["projectPath"]], state["projects"])
+        self.assertEqual(1, sum(command[:2] == ["dotnet", "restore"] for command in commands))
+        self.assertEqual(1, sum("-t:RestoreSunderContracts" in command for command in commands))
+        self.assertFalse(any(command[:2] == ["dotnet", "build"] or command[2].endswith(".slnx") for command in commands))
+
     def test_wrong_or_missing_candidates_fail_before_any_restore_or_state_creation(self):
         self.assertEqual({"younics.ai.agent"}, set(ci.inputs.verify_selected_files(self.source, [self.archive], self.catalog_path)))
         for paths in ([], [self.archive, self.archive]):
@@ -198,6 +242,31 @@ class AgentCiTests(unittest.TestCase):
         self.catalog_path.write_bytes(self.catalog_path.read_bytes() + b" ")
         with self.assertRaisesRegex(ValueError, "Catalog bytes"):
             ci.inputs.verify_selected_files(self.source, [self.archive], self.catalog_path)
+
+    def test_archive_only_preparation_has_no_canonical_restore_or_contract_hydration(self):
+        full_state = self.prepare()
+        tools = ci.inputs.load(full_state)["tools"]
+        project = "tests/Archive.Tests/Archive.Tests.csproj"
+        path = self.source / project
+        path.parent.mkdir(parents=True)
+        path.write_text('<Project Sdk="Microsoft.NET.Sdk" />')
+        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "archive-ci", mode="package",
+                                  packages="[]", project=[project], tools=tools, inputs=None, candidate=None, catalog=None)
+        commands = []
+        def run(command, **kwargs):
+            commands.append(command)
+            return subprocess.CompletedProcess(command, 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
+        with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
+             patch.object(ci, "selected_files", side_effect=AssertionError("No package-contract dependency exists")), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            ci.prepare(args)
+            state, env = ci.context(args.work / "ci-state.json")
+        self.assertEqual([], state["packages"])
+        self.assertIsNone(state["catalog"])
+        self.assertNotIn("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG", env)
+        self.assertEqual([project], state["projects"])
+        self.assertEqual([str(path.resolve())], [command[2] for command in commands if command[:2] == ["dotnet", "restore"]])
+        self.assertFalse(any("-t:RestoreSunderContracts" in command for command in commands))
 
     def test_shared_dependency_bundle_is_portable_and_reverified_without_runner_local_seeds(self):
         transported = self.root / "another-runner"
@@ -225,6 +294,7 @@ class AgentCiTests(unittest.TestCase):
                 ci.execute(state_path, ["dotnet", "build", "Sunder.AgentPackage.slnx", "--no-restore"])
 
     def test_source_runner_orders_readers_artifact_producer_and_required_cases_with_combined_evidence(self):
+        self.write_test_inventory()
         lanes = []
         def run(state, lane):
             lanes.append(lane)
@@ -266,6 +336,68 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual(["self-hosted", "linux", "ARM64"], next(row["runner"] for row in value["native"]["include"] if row["rid"] == "linux-arm64"))
         for labels in ('[]', '"ubuntu-latest"', '["linux\\noutput=changed"]'):
             with self.assertRaises(ValueError): ci_platforms.matrices(variables={"SUNDER_AGENT_RUNNER_LINUX_ARM64": labels})
+
+    def test_scoped_source_archives_preserve_tested_payloads_and_reject_rebuilt_bytes(self):
+        fixture = runpy.run_path(str(Path(__file__).with_name("native-family.fixture.py")))
+        root = self.root / "component-archives"
+        source = fixture["create_producer"](root)
+        inventory = json.loads((source / "packages.json").read_text())
+        inventory["packages"] = [dict(row, version=fixture["VERSION"]) for row in inventory["packages"]]
+        row = inventory["packages"][0]
+        state = dict(source=str(source), selectedPackages=[row["packageId"]])
+        target = source / Path(row["projectPath"]).parent / "bin/Release/net10.0"
+        leaf = target / "sunder-targets/osx-arm64/sunder-dev"
+        output = source / "artifacts/source-components"
+        payload = next(leaf.rglob("*.dll"))
+        original = payload.read_bytes()
+        for fault in (None, "pack", "rebuilt"):
+            with self.subTest(fault=fault):
+                if output.exists(): shutil.rmtree(output)
+                payload.write_bytes(original)
+                def execute(state_path, command, log):
+                    self.assertEqual(row["projectPath"], command[2])
+                    if any(item.startswith("-getProperty:") for item in command):
+                        log.write_text(json.dumps(dict(Properties=dict(NETCoreSdkRuntimeIdentifier="osx-arm64", TargetDir=str(target)))))
+                        return 0
+                    self.assertIn("-t:PackSunderPackage", command)
+                    self.assertIn("-p:RuntimeIdentifier=osx-arm64", command)
+                    self.assertIn("-p:BuildProjectReferences=false", command)
+                    if fault == "pack": return 19
+                    if fault == "rebuilt": payload.write_bytes(b"new bytes after tests")
+                    archive = next(item.split("=", 1)[1] for item in command if item.startswith("-p:SunderPackageOutputPath="))
+                    fixture["zip_bytes"](archive, {path.relative_to(leaf).as_posix(): path.read_bytes() for path in leaf.rglob("*") if path.is_file()})
+                    log.write_text("packed\n")
+                    return 0
+                with patch.object(ci, "context", return_value=(state, {})), patch.object(ci.inputs, "inventory", return_value=inventory), \
+                     patch.object(ci, "execute", side_effect=execute) as run:
+                    if fault == "pack":
+                        with self.assertRaises(subprocess.CalledProcessError) as caught: test_lanes.source_artifacts("state")
+                        self.assertEqual(19, caught.exception.returncode)
+                    elif fault == "rebuilt":
+                        with self.assertRaisesRegex(ValueError, "Source role bytes changed"): test_lanes.source_artifacts("state")
+                    else:
+                        test_lanes.source_artifacts("state")
+                    self.assertEqual(2, run.call_count)
+                self.assertTrue((output / (row["packageId"] + ".source.json")).exists())
+                receipt = output / "source-artifact-evidence.json"
+                self.assertEqual(fault is None, receipt.exists())
+                if fault is None:
+                    value = json.loads(receipt.read_text())
+                    self.assertEqual(state["selectedPackages"], value["packageIds"])
+                    self.assertEqual([row["packageId"]], [item["packageId"] for item in value["packages"]])
+                    self.assertEqual(1, len(list(output.glob("*.sunderpkg"))))
+
+    def test_component_source_artifacts_follow_owned_required_and_stress_tests_only(self):
+        self.write_test_inventory()
+        selected = ["younics.ai.agent.tools.files"]
+        state = dict(source=str(self.source), selectedPackages=selected)
+        calls = []
+        with patch.object(ci, "context", return_value=(state, {})), patch.object(sys, "platform", "linux"), \
+             patch.object(test_lanes, "tests", side_effect=lambda state, lane: calls.append(lane)), \
+             patch.object(test_lanes, "source_artifacts", side_effect=lambda state: calls.append("source-artifacts")), \
+             patch.object(test_lanes, "report"):
+            test_lanes.validate("state", "source", stress=True)
+        self.assertEqual(["source", "required-linux", "stress", "source-artifacts"], calls)
 
     def test_required_linux_lane_rejects_missing_test_identity_even_with_successful_command(self):
         self.write_test_inventory()
@@ -360,7 +492,7 @@ class AgentCiTests(unittest.TestCase):
         self.write_test_inventory()
         projects = [f"tests/{name}.Tests.csproj" for name in ("First", "Second", "Third")]
         (self.source / "artifacts/reports/test-inventory.json").write_text(json.dumps({"projects": [
-            dict(path=path, modes=["source", "package"], lanes=["PackageCompatibility"]) for path in projects]}))
+            dict(path=path, modes=["source", "package"], lanes=["PackageCompatibility"], owner="younics.ai.agent.tools.files") for path in projects]}))
         for lane in ("source", "package"):
             failures = [test_lanes.TestProjectFailure(1, project) for project in (projects[0], projects[2])]
             with self.subTest(lane=lane), patch.object(ci, "context", return_value=({"source": str(self.source)}, {})), \
@@ -385,6 +517,7 @@ class AgentCiTests(unittest.TestCase):
                     self.assertEqual(1, run.call_count)
 
     def test_report_failure_retains_primary_execution_error_and_restores_environment(self):
+        self.write_test_inventory()
         for primary in (OSError("output mirror failed"), KeyboardInterrupt(), test_lanes.TestProjectFailure(1, "assertions"), None):
             report_error = subprocess.CalledProcessError(9, "evidence report")
             previous = dict(os.environ)

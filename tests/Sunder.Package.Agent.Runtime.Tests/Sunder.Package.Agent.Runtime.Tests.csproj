@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderTestOwner>younics.ai.agent</SunderTestOwner>
+    <SunderTestCategory>Component</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;SQLite;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Large</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/Execution/MutationToolSource.cs" Link="TestSupport/MutationToolSource.cs" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentCore,AgentApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
+    <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs;../Shared/Composition/AppRoleAliases.cs;../Shared/Presentation/*.cs;../Shared/Workspace/WorkspaceServiceFixture.cs;../Shared/Workspace/WorkspaceStorageFixture.cs"
+             Exclude="../Shared/Presentation/WorkerBackedSubagentManagementGateway.cs" Link="TestSupport/%(Filename)%(Extension)" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="LiveMarkdown.Avalonia" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
+</Project>

@@ -13,8 +13,8 @@ native_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.cs"
 
 lock_report="$(bash "$lock_verifier" "$repository_root")"
 printf '%s\n' "$lock_report"
-grep -Fq 'Verified 35 release locks and 15 primary package projects' <<< "$lock_report" \
-  || { printf 'Canonical release fixture requires the current 35-project lock inventory.\n' >&2; exit 1; }
+grep -Fq 'Verified 43 release locks and 15 primary package projects' <<< "$lock_report" \
+  || { printf 'Canonical release fixture requires the current 43-project lock inventory.\n' >&2; exit 1; }
 test ! -e "$script_dir/Sunder.Agent.ReleaseSigning.targets"
 test ! -e "$script_dir/sign-worker-apphost.ps1"
 grep -Fq 'expectedEntryPoint' "$native_builder"
@@ -77,4 +77,4 @@ grep -Fq 'Release lock does not resolve Sunder.Sdk.Worker within declared' "$fai
 
 python3 -B "$fixture_scripts/native-family.fixture.py"
 
-printf 'Native release source fixture passed: 35 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'
+printf 'Native release source fixture passed: 43 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'

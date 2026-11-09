@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Agent schema-3/4 native provenance and Core V1 prebuilt Pack orchestration."""
+"""Native component production, immutable composition and exact final-archive evidence."""
 
 import math
 import os
@@ -87,7 +87,7 @@ def release_rows(repository, coordinate):
 
 
 def package_version(expected, package_id):
-    return expected["packageVersions"][package_id] if expected["schemaVersion"] == 4 else expected["version"]
+    return expected["packageVersions"][package_id] if expected["schemaVersion"] in (4, 5) else expected["version"]
 
 
 def identity_keys(expected):
@@ -197,7 +197,7 @@ def leaf_record(package_id, project, rid, files, has_app):
 
 
 def validate_run(run, expected, rows):
-    keys(run, identity_keys(expected) + " rid bundle packages" + (" familyTests" if expected["schemaVersion"] == 4 else ""))
+    keys(run, identity_keys(expected) + " rid bundle packages" + (" familyTests" if expected["schemaVersion"] in (4, 5) else ""))
     require(all(run[key] == value for key, value in expected.items()) and run["rid"] in RIDS,
             "Native evidence schema/identity differs from the approved selection")
     rid = run["rid"]
@@ -226,7 +226,7 @@ def validate_run(run, expected, rows):
         files = file_set(leaf["files"])
         require(leaf == leaf_record(package_id, project, rid, files, leaf["hasApp"]), "Mixed native leaf/module projection")
         validate_metrics(package, rid)
-    if expected["schemaVersion"] == 4:
+    if expected["schemaVersion"] in (4, 5):
         tests = run["familyTests"]
         require(type(tests) is list and len(tests) == len(expected["familyVersions"]) and {test["packageId"] for test in tests} == set(expected["familyVersions"]),
                 "Selective native builds still require all fifteen Worker tests")
@@ -258,9 +258,10 @@ def transport(run, bundle, destination=None):
         for record in package["leaf"]["files"]:
             expected[package["leaf"]["path"] + "/" + record["path"]] = record
         metadata[package["leaf"]["path"] + "/manifest/sunder-package.json"] = ("manifest", package)
-        metric_path = "metrics/" + package["packageId"] + "." + run["rid"] + ".json"
-        expected[metric_path] = {"sha256": package["metricsSha256"], "size": package["metricsSize"]}
-        metadata[metric_path] = ("metrics", package)
+        if "metrics" in package:
+            metric_path = "metrics/" + package["packageId"] + "." + run["rid"] + ".json"
+            expected[metric_path] = {"sha256": package["metricsSha256"], "size": package["metricsSize"]}
+            metadata[metric_path] = ("metrics", package)
     for test in run.get("familyTests", []):
         metric_path = "metrics/" + test["packageId"] + "." + run["rid"] + ".json"
         expected[metric_path] = {"sha256": test["metricsSha256"], "size": test["metricsSize"]}
@@ -416,12 +417,191 @@ def verify_document(document, artifacts, rows, expected):
         record_shape(record, record["path"])
         require(file_record(artifacts / record["path"]) == record, "Native family archive differs from evidence: " + record["path"])
         package_id = next(package_id for package_id, version in versions.items() if record["path"] == package_id + "." + version + ".sunderpkg")
-        if expected["schemaVersion"] == 4 and package_id not in expected["packageVersions"]:
+        if expected["schemaVersion"] in (4, 5) and package_id not in expected["packageVersions"]:
             require(record in expected["retainedArtifacts"] and all(next(test for test in run["familyTests"]
                 if test["packageId"] == package_id)["testedArchive"] == record for run in runs), "Retained archive differs from native-tested bytes")
             continue
         packages = [(run["rid"], next(p for p in run["packages"] if p["packageId"] == package_id)) for run in runs]
+        if expected["schemaVersion"] == 5:
+            require(all(package["testedArchive"] == record for _, package in packages),
+                    "Native smoke must exercise the exact final archive on every RID")
         verify_archive(artifacts / record["path"], packages, versions[package_id])
+
+
+def component_identity(repository, package_id, agent_commit, core_tag, core_commit, core_version):
+    from agent_release import inventory as source_inventory
+    row = next(row for row in source_inventory(repository)["packages"] if row["packageId"] == package_id)
+    expected = identity(row["version"], agent_commit, core_tag, core_commit, core_version)
+    return dict(expected, schemaVersion=1, packageId=package_id, workerProject=row["projectPath"])
+
+
+def validate_component(run, expected):
+    keys(run, identity_keys(expected) + " rid bundle packages")
+    require(all(run[key] == value for key, value in expected.items()) and run["rid"] in RIDS,
+            "Component leaf source, version or native platform differs")
+    rid, package_id = run["rid"], expected["packageId"]
+    record_shape(run["bundle"], "native-leaves-" + package_id + "-" + rid + ".tar.gz", MAX_RUN)
+    require(type(run["packages"]) is list and len(run["packages"]) == 1, "A native component must contain one package")
+    package = run["packages"][0]
+    keys(package, "packageId workerProject qualification leaf sourceRoleUses")
+    require(package["packageId"] == package_id and package["workerProject"] == expected["workerProject"], "Wrong native component project")
+    record_shape(package["qualification"], package_id + "/" + rid + "/" + ROLE_INPUTS, MAX_DOCUMENT)
+    keys(package["sourceRoleUses"], "lockSha256 roleUses")
+    sha(package["sourceRoleUses"]["lockSha256"])
+    validate_role_uses(package["sourceRoleUses"]["roleUses"])
+    leaf = package["leaf"]
+    require(leaf == leaf_record(package_id, expected["workerProject"], rid, file_set(leaf["files"]), leaf["hasApp"]),
+            "Invalid component role projection")
+
+
+def collect_component(repository, output, rid, expected):
+    """Retain one Core-qualified leaf. Testing happens after six-RID composition."""
+    package_id, project = expected["packageId"], expected["workerProject"]
+    root = native_root(repository, project, rid)
+    data = read_bytes(root / ROLE_INPUTS)
+    q, files = qualification(data, package_id, project, rid, expected["version"])
+    require(tree(root / "sunder-dev") == files, "Component bytes changed after Core qualification")
+    prefix = package_id + "/" + rid + "/"
+    package = dict(packageId=package_id, workerProject=project,
+        qualification=file_record(root / ROLE_INPUTS, prefix + ROLE_INPUTS, MAX_DOCUMENT),
+        sourceRoleUses=source_role_use_evidence(q), leaf=leaf_record(package_id, project, rid, files, q["rolePlan"]["hasApp"]))
+    sources = {prefix + ROLE_INPUTS: root / ROLE_INPUTS, prefix + ROLE_INPUTS + ".sha256": root / (ROLE_INPUTS + ".sha256")}
+    sources.update({prefix + "sunder-dev/" + name: root / "sunder-dev" / name for name in files})
+    output = artifact_output(output, repository)
+    bundle = output / ("native-leaves-" + package_id + "-" + rid + ".tar.gz")
+    require(not bundle.exists(), "Component leaf handoff is immutable")
+    write_tar(bundle, sources)
+    run = dict(expected, rid=rid, bundle=file_record(bundle, maximum=MAX_RUN), packages=[package])
+    validate_component(run, expected)
+    transport(run, bundle)
+    require(tree(root / "sunder-dev") == files, "Component bytes changed during capture")
+    (output / ("native-leaf-evidence-" + package_id + "-" + rid + ".json")).write_bytes(compact(run))
+
+
+def candidate_receipt(inputs, expected):
+    path = inputs / (expected["packageId"] + ".candidate.json")
+    value = json_file(path, MAX_PROVENANCE, 4 * 1024 * 1024)
+    keys(value, identity_keys(expected) + " nativeRuns archive")
+    require(all(value[key] == item for key, item in expected.items()), "Candidate source/version differs")
+    runs = value["nativeRuns"]
+    require(type(runs) is list and sorted(run["rid"] for run in runs) == sorted(RIDS), "Candidate requires exactly six native leaves")
+    for run in runs:
+        validate_component(run, expected)
+        transport(run, inputs / run["bundle"]["path"])
+    record = value["archive"]
+    record_shape(record, expected["packageId"] + "." + expected["version"] + ".sunderpkg")
+    require(file_record(inputs / record["path"]) == record, "Immutable composed candidate changed")
+    verify_archive(inputs / record["path"], [(run["rid"], run["packages"][0]) for run in runs], expected["version"])
+    return value
+
+
+def compose_component(repository, inputs, output, expected):
+    """Preflight all six leaves, then call Core's no-build prebuilt pack once."""
+    package_id = expected["packageId"]
+    runs = []
+    for rid in RIDS:
+        run = json_file(inputs / ("native-leaf-evidence-" + package_id + "-" + rid + ".json"), MAX_PROVENANCE, 4 * 1024 * 1024)
+        validate_component(run, expected)
+        require(run["rid"] == rid, "Mixed component native RID")
+        transport(run, inputs / run["bundle"]["path"])
+        runs.append(run)
+    output = artifact_output(output, repository)
+    require(not (output / (package_id + ".candidate.json")).exists(), "Composed candidates are immutable")
+    with tempfile.TemporaryDirectory(prefix=".component-pack-", dir=output) as temporary:
+        work = Path(temporary)
+        for run in runs: transport(run, inputs / run["bundle"]["path"], work)
+        selection = work / "selection.json"
+        selection.write_bytes(compact(dict(schemaVersion=1, inputs=[dict(runtimeIdentifier=run["rid"],
+            path=run["packages"][0]["qualification"]["path"], sha256=run["packages"][0]["qualification"]["sha256"]) for run in runs])))
+        archive = work / (package_id + "." + expected["version"] + ".sunderpkg")
+        subprocess.run(["dotnet", "msbuild", str(repository / expected["workerProject"]), "-t:PackSunderPackage",
+            "-p:Configuration=Release", "-p:BuildProjectReferences=false", "-p:SunderPackageUsePrebuiltLeaves=true",
+            "-p:SunderPackageComposeRuntimeIdentifiers=" + "%3B".join(RIDS),
+            "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection), "-p:SunderPackageOutputPath=" + str(archive),
+            *tool_properties(repository)], cwd=repository, check=True)
+        verify_archive(archive, [(run["rid"], run["packages"][0]) for run in runs], expected["version"])
+        receipt = dict(expected, nativeRuns=runs, archive=file_record(archive))
+        for run in runs:
+            shutil.copyfile(inputs / run["bundle"]["path"], output / run["bundle"]["path"])
+        shutil.copyfile(archive, output / archive.name)
+        (output / (package_id + ".candidate.json")).write_bytes(compact(receipt))
+    candidate_receipt(output, expected)
+
+
+def gather_candidates(repository, candidates, output, expected):
+    """Copy selected immutable candidates and retained unchanged versions; no packing."""
+    output = artifact_output(output, repository)
+    records = []
+    for row in inventory(repository):
+        package_id = row["packageId"]
+        if package_id in expected["packageVersions"]:
+            component = component_identity(repository, package_id, expected["agentCommit"],
+                expected["core"]["tag"], expected["core"]["commit"], expected["core"]["packageVersion"])
+            require(component["version"] == expected["packageVersions"][package_id], "Candidate version differs from release selection")
+            receipt = candidate_receipt(candidates, component)
+            record, source = receipt["archive"], candidates
+        else:
+            name = package_id + "." + expected["familyVersions"][package_id] + ".sunderpkg"
+            record = next(record for record in expected["retainedArtifacts"] if record["path"] == name)
+            source = Path(os.environ["SUNDER_AGENT_RETAINED_ARCHIVE_DIR"])
+        require(file_record(source / record["path"]) == record, "Family input archive changed")
+        target = output / record["path"]
+        if target.exists(): require(file_record(target) == record, "Cannot replace another composed candidate")
+        else: shutil.copyfile(source / record["path"], target)
+        records.append(record)
+    require({path.name for path in output.glob("*.sunderpkg")} == {record["path"] for record in records}, "Unexpected family candidate archive")
+    return sorted(records, key=lambda item: item["path"])
+
+
+def record_final(repository, candidates, archives, metrics, output, rid, expected):
+    require(rid in RIDS, "Unknown native smoke platform")
+    require({path.name for path in archives.glob("*.sunderpkg")} ==
+            {key + "." + version + ".sunderpkg" for key, version in expected["familyVersions"].items()},
+            "Record only a complete, already-smoked final family")
+    records = gather_candidates(repository, candidates, archives, expected)
+    output = artifact_output(output, repository)
+    with tempfile.TemporaryDirectory(prefix=".native-final-", dir=output) as temporary:
+        work, packages, tests = Path(temporary), [], []
+        for record in records:
+            package_id = next(key for key, version in expected["familyVersions"].items() if record["path"] == key + "." + version + ".sunderpkg")
+            metric_name = package_id + "." + rid + ".json"
+            metric_data = read_bytes(metrics / metric_name)
+            test = dict(packageId=package_id, testedArchive=record, metricsSha256=digest(metric_data),
+                metricsSize=len(metric_data), metrics=parse(metric_data))
+            validate_metrics(test, rid)
+            tests.append(test)
+            if package_id in expected["packageVersions"]:
+                component = component_identity(repository, package_id, expected["agentCommit"], expected["core"]["tag"],
+                    expected["core"]["commit"], expected["core"]["packageVersion"])
+                receipt = candidate_receipt(candidates, component)
+                leaf = next(run for run in receipt["nativeRuns"] if run["rid"] == rid)
+                transport(leaf, candidates / leaf["bundle"]["path"], work)
+                packages.append(dict(leaf["packages"][0], **{key: value for key, value in test.items() if key != "packageId"}))
+            (work / "metrics").mkdir(exist_ok=True)
+            (work / "metrics" / metric_name).write_bytes(metric_data)
+        bundle = output / ("native-leaves-" + rid + ".tar.gz")
+        write_tar(bundle, {path.relative_to(work).as_posix(): path for path in work.rglob("*") if path.is_file()})
+        run = dict(expected, rid=rid, bundle=file_record(bundle, maximum=MAX_RUN), packages=packages, familyTests=tests)
+        rows = [row for row in inventory(repository) if row["packageId"] in expected["packageVersions"]]
+        validate_run(run, expected, rows)
+        transport(run, bundle)
+        (output / ("native-leaf-evidence-" + rid + ".json")).write_bytes(compact(run))
+
+
+def finalize_candidates(repository, native_input, archives, expected):
+    require({path.name for path in native_input.iterdir()} == {"native-" + kind + "-" + rid + suffix
+        for rid in RIDS for kind, suffix in (("leaf-evidence", ".json"), ("leaves", ".tar.gz"))}, "Missing/extra final native smoke handoffs")
+    rows = [row for row in inventory(repository) if row["packageId"] in expected["packageVersions"]]
+    runs = []
+    for rid in RIDS:
+        run = json_file(native_input / ("native-leaf-evidence-" + rid + ".json"), MAX_PROVENANCE, 4 * 1024 * 1024)
+        validate_run(run, expected, rows)
+        require(run["rid"] == rid, "Mixed final native evidence")
+        transport(run, native_input / run["bundle"]["path"])
+        runs.append(run)
+    document = dict(expected, nativeRuns=runs, finalArtifacts=[file_record(path) for path in sorted(archives.glob("*.sunderpkg"))])
+    verify_document(document, archives, rows, expected)
+    (archives / "native-test-evidence.json").write_bytes(compact(document))
 
 
 def assemble(args):
@@ -501,14 +681,41 @@ def assemble(args):
 
 def main():
     command, *args = sys.argv[1:]
-    if command == "record" and len(args) == 10:
+    if command == "version" and len(args) == 2:
+        from agent_release import inventory as source_inventory
+        print(next(row["version"] for row in source_inventory(Path(args[0]))["packages"] if row["packageId"] == args[1]))
+    elif command in ("collect-component", "compose-component") and len(args) == 8:
+        repository, source, destination, package_id, *versions = args
+        repository = Path(repository).resolve()
+        expected = component_identity(repository, package_id, *versions)
+        if command == "collect-component": collect_component(repository, source, destination, expected)
+        else: compose_component(repository, Path(source).resolve(), destination, expected)
+    elif command in ("gather", "finalize") and len(args) == 8:
+        source, destination, version, *versions, repository = args
+        repository = Path(repository).resolve()
+        expected = identity(version, *versions)
+        require(expected["schemaVersion"] == 4, "Final candidates require an explicit package selection")
+        expected["schemaVersion"] = 5
+        if command == "gather": gather_candidates(repository, Path(source).resolve(), destination, expected)
+        else: finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
+    elif command == "record-final" and len(args) == 11:
+        rid, version, agent_commit, core_tag, core_commit, core_version, candidates, archives, metrics, output, repository = args
+        expected = identity(version, agent_commit, core_tag, core_commit, core_version)
+        require(expected["schemaVersion"] == 4, "Final native smoke requires an explicit package selection")
+        expected["schemaVersion"] = 5
+        record_final(Path(repository).resolve(), Path(candidates).resolve(), Path(archives).resolve(), Path(metrics).resolve(), output, rid, expected)
+    elif command == "record" and len(args) == 10:
         capture(args)
     elif command == "assemble" and len(args) == 8:
         assemble(args)
     elif command == "verify" and len(args) == 8:
         evidence, artifacts, inventory_path, *versions = args
         document = json_file(Path(evidence).resolve(), MAX_PROVENANCE, 24 * 1024 * 1024)
-        verify_document(document, Path(artifacts).resolve(), release_rows(Path(inventory_path).resolve().parent, versions[0]), identity(*versions))
+        expected = identity(*versions)
+        if document.get("schemaVersion") == 5:
+            require(expected["schemaVersion"] == 4, "Final archive evidence requires a package selection")
+            expected["schemaVersion"] = 5
+        verify_document(document, Path(artifacts).resolve(), release_rows(Path(inventory_path).resolve().parent, versions[0]), expected)
         print(f"Verified schema-version-{document['schemaVersion']} native evidence, Core qualifications and {len(document['finalArtifacts'])} exact family archives.")
     elif command == "select-native" and len(args) == 4:
         print(select_native(Path(args[0]).resolve(), *args[1:]))
@@ -516,10 +723,14 @@ def main():
         repository = Path(args[0]).resolve()
         row = next(row for row in inventory(repository) if row["packageId"] == args[1])
         print(native_root(repository, row["projectPath"], args[2]))
-    elif command == "producer-preflight" and len(args) == 2:
+    elif command == "producer-preflight" and len(args) in (2, 3):
         repository = Path(args[0]).resolve()
         tool_properties(repository)
-        frozen_baselines(repository, release_rows(repository, args[1]), args[1])
+        rows = release_rows(repository, args[1])
+        if len(args) == 3:
+            rows = [row for row in rows if row["packageId"] == args[2]]
+            require(len(rows) == 1, "Native producer is outside the selected component scope")
+        frozen_baselines(repository, rows, args[1])
     else:
         raise ValueError("Invalid native-family command/arguments")
 

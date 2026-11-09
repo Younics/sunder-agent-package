@@ -49,7 +49,8 @@ class ColdInputsTests(unittest.TestCase):
         self.archive = self.bundle / "younics.ai.agent.2.0.0.sunderpkg"
         with zipfile.ZipFile(self.archive, "w") as archive:
             archive.writestr("manifest/sunder-package.json", release.encoded({
-                "id": "younics.ai.agent", "version": "2.0.0", "contractBundles": [
+                "id": "younics.ai.agent", "version": "2.0.0",
+                "targets": [{"role": "runtime", "rid": rid, "kind": "worker"} for rid in inputs.RIDS], "contractBundles": [
                     {"contractId": "sunder.fixture.api", "version": "1.0.0", "source": "owned", "authorityKind": "package", "authorityId": "younics.ai.agent",
                      "descriptorPath": "contracts/api.json", "descriptorSha256": release.sha(descriptor), "abiSha256": "d" * 64, "exposure": "public"},
                     {"contractId": "sunder.stack.contributor", "version": "2.0.0", "source": "imported", "authorityKind": "platform", "authorityId": "sunder.core",
@@ -150,6 +151,32 @@ class ColdInputsTests(unittest.TestCase):
         self.archive.write_bytes(original + b"tamper")
         with self.assertRaisesRegex(release.Invalid, "bytes changed"):
             self.verify()
+
+    def test_scoped_owner_preparation_needs_no_candidates_and_cannot_cover_consumers(self):
+        owner = [self.rows[0]["packageId"]]
+        self.assertEqual({}, inputs.verify_selected_files(self.source, [], self.catalog_path, owner))
+        with self.assertRaisesRegex(release.Invalid, "Candidates"):
+            inputs.verify_selected_files(self.source, [], self.catalog_path, [self.rows[1]["packageId"]])
+        scoped = copy.deepcopy(self.manifest)
+        scoped.update(schemaVersion=3, packageIds=owner, candidates=[])
+        scoped["core"] = dict(artifactSourceCommit=self.core_sha, buildToolVersion="1.0.2")
+        scoped["platformCatalog"]["asset"] = {key: scoped["platformCatalog"]["asset"][key] for key in ("name", "size", "sha256")}
+        self.assertEqual(scoped, inputs.validate_manifest(self.source, scoped, self.source_sha, self.core_sha, owner))
+        for requested in (None, [self.rows[1]["packageId"]], []):
+            with self.subTest(requested=requested), self.assertRaises(release.Invalid):
+                inputs.validate_manifest(self.source, scoped, self.source_sha, self.core_sha, requested)
+        with self.assertRaises(release.Invalid):
+            inputs.verify_selected_files(self.source, [self.archive], self.catalog_path, owner)
+
+    def test_scoped_candidate_admission_still_checks_the_complete_selected_lock_entry(self):
+        scope = [self.rows[1]["packageId"]]
+        self.assertEqual({"younics.ai.agent"}, set(inputs.verify_selected_files(self.source, [self.archive], self.catalog_path, scope)))
+        path = self.source / Path(self.rows[1]["projectPath"]).parent / "sunder-contracts.lock.json"
+        lock = release.load(path)
+        lock["packageArtifacts"]["younics.ai.agent"]["contracts"]["sunder.fixture.api"]["descriptorBytes"] += 1
+        write(path, lock)
+        with self.assertRaisesRegex(release.Invalid, "complete committed lock"):
+            inputs.verify_selected_files(self.source, [self.archive], self.catalog_path, scope)
 
     def test_missing_extra_wrong_identity_and_catalog_are_rejected_before_restore(self):
         mutations = [lambda v: v.update(unknown=True), lambda v: v.update(artifactSourceCommit="f" * 40),
@@ -302,10 +329,12 @@ class ColdInputsTests(unittest.TestCase):
         # PowerShell execution is owned by native CI; inspect the actual producer's
         # integration boundary here, and execute the shared prepare/exec paths above.
         producer = (RELEASE / "build-native-family.ps1").read_text()
-        self.assertIn("$ciHelper prepare", producer)
+        self.assertIn('$prepareArguments = @("prepare", "--source", $repositoryRoot', producer)
+        self.assertIn('$ciHelper @prepareArguments', producer)
+        self.assertIn('"--packages", (ConvertTo-Json -InputObject @($packages.packageId) -Compress)', producer)
         self.assertIn("$ciHelper run --state $ciState -- dotnet @Arguments", producer)
         self.assertNotIn('$restoreArguments = @("restore"', producer)
-        self.assertLess(producer.index("$ciHelper prepare"), producer.index("foreach ($package in $packages)"))
+        self.assertLess(producer.index("$ciHelper @prepareArguments"), producer.index("foreach ($entry in $packages)"))
         self.assertIn('"--no-restore"', producer)
         self.assertIn('"-p:SunderPackageUsePrebuiltLeaves=true"', producer)
 

@@ -91,9 +91,19 @@ def download(selected, output, maximum=268435456):
         process.stdout.close()
 
 
-def lock_documents(source):
+def package_scope(source, packages=None):
+    known = {row["packageId"] for row in inventory(source)["packages"]}
+    if packages is None:
+        return sorted(known)
+    require(type(packages) is list and packages and all(type(item) is str for item in packages)
+            and len(packages) == len(set(packages)) and set(packages) <= known, "Invalid dependency package scope")
+    return sorted(packages)
+
+
+def lock_documents(source, packages=None):
+    selected = set(package_scope(source, packages))
     documents = [(p, load(source_file(source, str(PurePosixPath(p["projectPath"]).parent / "sunder-contracts.lock.json"))))
-                 for p in inventory(source)["packages"]]
+                 for p in inventory(source)["packages"] if p["packageId"] in selected]
     for _, lock in documents:
         package_imports(lock)
     return documents
@@ -106,19 +116,23 @@ def catalog_requirements(lock):
     return values
 
 
-def validate_manifest(source, value, source_sha, core_sha):
-    closed(value, "schemaVersion artifactSourceCommit lockSetSha256 core candidates platformCatalog")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (1, 2), "Unknown cold-input manifest schema")
+def validate_manifest(source, value, source_sha, core_sha, packages=None):
+    closed(value, "schemaVersion artifactSourceCommit lockSetSha256 core candidates platformCatalog"
+           + (" packageIds" if value.get("schemaVersion") == 3 else ""))
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (1, 2, 3), "Unknown cold-input manifest schema")
+    declared = package_scope(source, value.get("packageIds"))
+    require(value.get("packageIds", declared) == declared and set(package_scope(source, packages)) <= set(declared),
+            "Dependency manifest does not cover the requested package scope")
     require(value["artifactSourceCommit"] == digest(source_sha, 40)
             and value["lockSetSha256"] == locks(source), "Cold inputs do not bind the exact source/production locks")
     version_field = "sdkVersion" if value["schemaVersion"] == 1 else "buildToolVersion"
     closed(value["core"], "artifactSourceCommit " + version_field)
     require(value["core"]["artifactSourceCommit"] == digest(core_sha, 40), "Cold Core source differs")
     version(value["core"][version_field])
-    require(type(value["candidates"]) is list and 0 < len(value["candidates"]) <= 128, "Invalid candidate inventory")
+    require(type(value["candidates"]) is list and len(value["candidates"]) <= 128, "Invalid candidate inventory")
     selected = {}
     platforms = set()
-    for _, lock in lock_documents(source):
+    for _, lock in lock_documents(source, declared):
         for package_id, item in lock["packageArtifacts"].items():
             if "registryOrigin" in item:
                 authoring_origin(item["registryOrigin"])
@@ -136,7 +150,7 @@ def validate_manifest(source, value, source_sha, core_sha):
         digest(item["packageContentIdentity"])
         digest(item["publicInventorySha256"])
         input_asset(item["asset"], value["schemaVersion"])
-        require((value["schemaVersion"] == 2 or item["asset"]["repository"] == "Younics/sunder-agent-package")
+        require((value["schemaVersion"] != 1 or item["asset"]["repository"] == "Younics/sunder-agent-package")
                 and item["asset"]["name"].endswith(".sunderpkg"), "Candidate must be an Agent archive")
         actual.append(tuple(item[k] for k in ("packageId", "version", "packageContentIdentity", "publicInventorySha256")))
     require(actual == sorted(selected), "Missing/extra/duplicate or differently selected cold candidates")
@@ -148,7 +162,7 @@ def validate_manifest(source, value, source_sha, core_sha):
     digest(catalog["catalogSha256"])
     version(catalog["releaseVersion"])
     input_asset(catalog["asset"], value["schemaVersion"], 67108864)
-    require((value["schemaVersion"] == 2 or catalog["asset"]["repository"] == "Younics/sunder-core") and catalog["asset"]["sha256"] == catalog["catalogSha256"],
+    require((value["schemaVersion"] != 1 or catalog["asset"]["repository"] == "Younics/sunder-core") and catalog["asset"]["sha256"] == catalog["catalogSha256"],
             "Core catalog asset/content identity differs")
     names = [i["asset"]["name"] for i in [*value["candidates"], catalog]]
     require(len(names) == len({n.casefold() for n in names}) and MANIFEST not in names, "Cold input filename collision")
@@ -165,27 +179,27 @@ def input_asset(value, schema, maximum=268435456):
     return value
 
 
-def verify(source, bundle, approved_sha, source_sha, core_sha):
+def verify(source, bundle, approved_sha, source_sha, core_sha, packages=None):
     bundle = directory(bundle)
     require(file_sha(bundle / MANIFEST) == digest(approved_sha), "Cold manifest differs from its approved hash")
-    value = validate_manifest(source, load(bundle / MANIFEST), source_sha, core_sha)
+    value = validate_manifest(source, load(bundle / MANIFEST), source_sha, core_sha, packages)
     expected = {MANIFEST, *[i["asset"]["name"] for i in [*value["candidates"], value["platformCatalog"]]]}
     require({p.name for p in bundle.iterdir()} == expected, "Cold bundle has missing/extra members")
     for item in [*value["candidates"], value["platformCatalog"]]:
         path = regular(bundle / item["asset"]["name"])
         require(path.stat().st_size == item["asset"]["size"] and file_sha(path) == item["asset"]["sha256"], "Cold input bytes changed")
     verify_selected_files(source, [bundle / item["asset"]["name"] for item in value["candidates"]],
-                          bundle / value["platformCatalog"]["asset"]["name"])
+                          bundle / value["platformCatalog"]["asset"]["name"], value.get("packageIds"))
     return value
 
 
-def verify_candidate_file(source, path):
+def verify_candidate_file(source, path, packages=None):
     """Admit one exact dependency before any downstream build may consume it."""
     path = regular(path).resolve()
     require(path.stat().st_size <= 268435456, "Candidate exceeds the archive bound")
     manifest, public, public_sha = archive_metadata(path)
     key = (manifest["id"], manifest["version"], public["packageContentIdentity"], public_sha)
-    entries = [entry for _, lock in lock_documents(source) for package_id, entry in lock["packageArtifacts"].items() if package_id == manifest["id"]]
+    entries = [entry for _, lock in lock_documents(source, packages) for package_id, entry in lock["packageArtifacts"].items() if package_id == manifest["id"]]
     expected_selections = sorted({(item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"]) for item in entries})
     require(expected_selections == [key[1:]],
             "Candidates do not match every exact committed package selection: " + manifest["id"]
@@ -201,18 +215,18 @@ def verify_candidate_file(source, path):
     return key, path
 
 
-def verify_selected_files(source, candidates, catalog_path):
+def verify_selected_files(source, candidates, catalog_path, packages=None):
     """Shared local/CI/release admission against complete committed lock selections.
 
     This validates bytes, not production approval. Release callers additionally
     bind their source, lock set and durable asset coordinates in validate_manifest.
     """
-    documents = lock_documents(source)
+    documents = lock_documents(source, packages)
     expected = {(package_id, item["selectedPackageVersion"], item["selectedPackageContentIdentity"], item["publicInventorySha256"])
                 for _, lock in documents for package_id, item in lock["packageArtifacts"].items()}
     paths, actual = {}, set()
     for path in candidates:
-        key, path = verify_candidate_file(source, path)
+        key, path = verify_candidate_file(source, path, packages)
         require(key[0] not in paths, "Duplicate selected candidate")
         actual.add(key)
         paths[key[0]] = path
@@ -236,15 +250,24 @@ def verify_selected_files(source, candidates, catalog_path):
     return paths
 
 
-def fetch(source, destination, source_sha, core_sha, selected=None):
+def fetch(source, destination, source_sha, core_sha, selected=None, *, packages=None, prepared=False):
     if selected is None:
         # Dependencies and hashes are discovered/generated, not operator approvals.
         import dependency_inputs
         source, destination = Path(source).resolve(), Path(destination).resolve()
         core = source.parent / "sunder-core"
         require(subprocess.check_output(["git", "-C", str(core), "rev-parse", "HEAD"], text=True).strip() == core_sha, "Core checkout differs")
-        resolved = dependency_inputs.resolve(source, core, destination)
-        versions = {release for name, release in dependency_inputs.core_packages(source) if name == "Sunder.Package.Build"}
+        resolved = load(destination / "ci-inputs.json") if prepared else dependency_inputs.resolve(source, core, destination, packages=packages)
+        if prepared:
+            closed(resolved, "schemaVersion coreCommit candidates platformCatalog" + (" packageIds" if resolved.get("schemaVersion") == 3 else ""))
+            require(resolved["schemaVersion"] in (2, 3) and resolved["coreCommit"] == core_sha
+                and resolved.get("packageIds", package_scope(source)) == package_scope(source, packages), "Prepared dependency scope or Core differs")
+            for asset in [*resolved["candidates"], resolved["platformCatalog"]]:
+                input_asset(asset, resolved["schemaVersion"])
+                require(dependency_inputs.record(destination / asset["name"]) == asset, "Prepared dependency bytes changed")
+            verify_selected_files(source, [destination / item["name"] for item in resolved["candidates"]],
+                destination / resolved["platformCatalog"]["name"], packages)
+        versions = {release for name, release in dependency_inputs.core_packages(source, packages) if name == "Sunder.Package.Build"}
         require(len(versions) == 1, "Expected one declared Build tool version")
         candidates = []
         for asset in resolved["candidates"]:
@@ -256,9 +279,11 @@ def fetch(source, destination, source_sha, core_sha, selected=None):
             core=dict(artifactSourceCommit=core_sha, buildToolVersion=next(iter(versions))), candidates=sorted(candidates, key=lambda item: item["packageId"]),
             platformCatalog=dict(authorityId=catalog["authorityId"], releaseVersion=catalog["releaseVersion"],
                 catalogSha256=resolved["platformCatalog"]["sha256"], asset=resolved["platformCatalog"]))
+        if packages is not None:
+            value.update(schemaVersion=3, packageIds=package_scope(source, packages))
         (destination / "ci-inputs.json").unlink()  # Replace our transient CI index, not a source file.
         (destination / MANIFEST).write_bytes(canonical(value) + b"\n")
-        verify(source, destination, file_sha(destination / MANIFEST), source_sha, core_sha)
+        verify(source, destination, file_sha(destination / MANIFEST), source_sha, core_sha, packages)
         print("Resolved authored dependencies and generated the input inventory automatically.")
         return value
     selected = locator(selected, MAX_MANIFEST)
@@ -266,10 +291,10 @@ def fetch(source, destination, source_sha, core_sha, selected=None):
     require(not destination.exists() and not destination.is_symlink(), "Cold input destination must be new")
     destination.mkdir()
     download(selected, destination / MANIFEST, MAX_MANIFEST)
-    value = validate_manifest(source, load(destination / MANIFEST), source_sha, core_sha)
+    value = validate_manifest(source, load(destination / MANIFEST), source_sha, core_sha, packages)
     for item in [*value["candidates"], value["platformCatalog"]]:
         download(item["asset"], destination / item["asset"]["name"], 67108864 if item is value["platformCatalog"] else 268435456)
-    verify(source, destination, selected["sha256"], source_sha, core_sha)
+    verify(source, destination, selected["sha256"], source_sha, core_sha, packages)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             stream.write("locator=" + canonical(selected).decode() + "\n")
@@ -487,7 +512,14 @@ def main():
         verify_network_denial(offline_prefix(), isolated_env(args[0], str(Path(args[0]) / "contracts/v1/sha256")), Path.cwd())
         print("Network-denied child process verified")
     elif command == "fetch":
-        fetch(*args)
+        packages = None
+        prepared = "--prepared" in args
+        if prepared: args.remove("--prepared")
+        if "--packages" in args:
+            index = args.index("--packages")
+            packages = decode(args[index + 1].encode())
+            del args[index:index + 2]
+        fetch(*args, packages=packages, prepared=prepared)
     elif command == "verify":
         verify(*args)
     elif command == "prepare":

@@ -44,9 +44,9 @@
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.11.0" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <!-- Preserve the existing VSTest lanes; xunit.v3 4.x defaults to MTP v2. -->
-    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.2" Condition="'$(MSBuildProjectName)' != 'Sunder.Package.Agent.Presentation.Tests'" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="4.0.2" Condition="'$(MSBuildProjectName)' != 'Sunder.Package.Agent.Presentation.Tests' and '$(MSBuildProjectName)' != 'Sunder.Package.Agent.View.Tests'" />
     <!-- Avalonia.Headless.XUnit 12.1.4 calls the 3.2 discovery ABI, removed in xUnit 4. -->
-    <PackageVersion Include="xunit.v3.mtp-off" Version="3.2.2" Condition="'$(MSBuildProjectName)' == 'Sunder.Package.Agent.Presentation.Tests'" />
+    <PackageVersion Include="xunit.v3.mtp-off" Version="3.2.2" Condition="'$(MSBuildProjectName)' == 'Sunder.Package.Agent.Presentation.Tests' or '$(MSBuildProjectName)' == 'Sunder.Package.Agent.View.Tests'" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.1" />
   </ItemGroup>
 </Project>

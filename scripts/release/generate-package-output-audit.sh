@@ -50,7 +50,7 @@ while IFS= read -r rid; do rids+=("$rid"); done < <(jq -r '.[]' <<< "$rid_policy
 family_count="$(jq '.packageIds | length' <<< "$policy")"
 version="$(jq -r '.version // empty' "$native_evidence")"
 coordinate="$version"
-if [[ "$(jq -r .schemaVersion "$native_evidence")" == 4 ]]; then
+if [[ "$(jq -r .schemaVersion "$native_evidence")" =~ ^(4|5)$ ]]; then
   coordinate="$archive_directory/release-plan.json"
 fi
 agent_commit="$(jq -er '.agentCommit' "$native_evidence")"

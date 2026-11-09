@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -277,8 +278,8 @@ internal sealed class RegressionTestRpcCallScope(
         return ValueTask.CompletedTask;
     }
 
-    internal ISunderRpcInvocationAuthority CreateInvocationAuthority(SunderRpcEndpointReference endpoint)
-        => new RegressionTestInvocationAuthority(this, endpoint);
+    internal object CreateInvocationAuthority(SunderRpcEndpointReference endpoint)
+        => RegressionTestInvocationAuthority.Create(this, endpoint);
 
     internal ValueTask<Stream> OpenRequestContentAsync(
         SunderRpcEndpointReference endpoint,
@@ -413,11 +414,41 @@ internal sealed class RegressionTestRpcCallScope(
     }
 }
 
-internal sealed class RegressionTestInvocationAuthority(
-    RegressionTestRpcCallScope scope,
-    SunderRpcEndpointReference endpoint) : ISunderRpcInvocationAuthority
+// The published SDK deliberately keeps host authority internal. Bind that exact
+// test seam at runtime so a new owning suite does not need a new SDK friend grant.
+// All content, endpoint, lifetime and revocation checks remain in the real scope.
+public class RegressionTestInvocationAuthority : DispatchProxy
 {
+    internal static readonly Type AuthorityType = typeof(SunderRpcInvocationContext).Assembly
+        .GetType("Sunder.Sdk.Rpc.ISunderRpcInvocationAuthority", throwOnError: true)!;
+    private RegressionTestRpcCallScope _scope = null!;
+    private SunderRpcEndpointReference _endpoint = null!;
     private readonly CancellationTokenSource _revocation = new();
+
+    internal static object Create(RegressionTestRpcCallScope scope, SunderRpcEndpointReference endpoint)
+    {
+        var authority = (RegressionTestInvocationAuthority)Create(AuthorityType, typeof(RegressionTestInvocationAuthority));
+        authority._scope = scope;
+        authority._endpoint = endpoint;
+        return authority;
+    }
+
+    protected override object? Invoke(MethodInfo? targetMethod, object?[]? args)
+        => targetMethod?.Name switch
+        {
+            "get_RevocationToken" => RevocationToken,
+            nameof(RegisterContentAsync) => RegisterContentAsync((Stream)args![0]!, (SunderRpcContentRegistrationOptions)args[1]!, (CancellationToken)args[2]!),
+            nameof(RegisterContentFileAsync) => RegisterContentFileAsync((string)args![0]!, (SunderRpcContentRegistrationOptions)args[1]!, (CancellationToken)args[2]!),
+            nameof(OpenContentAsync) => OpenContentAsync((SunderRpcContentReference)args![0]!, (CancellationToken)args[1]!),
+            nameof(Revoke) => RevokeInvocation(),
+            _ => throw new MissingMethodException(AuthorityType.FullName, targetMethod?.Name),
+        };
+
+    private object? RevokeInvocation()
+    {
+        Revoke();
+        return null;
+    }
 
     public CancellationToken RevocationToken => _revocation.Token;
 
@@ -427,7 +458,7 @@ internal sealed class RegressionTestInvocationAuthority(
         CancellationToken cancellationToken)
     {
         ThrowIfRevoked();
-        return scope.RegisterResponseContentAsync(source, options, cancellationToken);
+        return _scope.RegisterResponseContentAsync(source, options, cancellationToken);
     }
 
     public async ValueTask<SunderRpcContentReference> RegisterContentFileAsync(
@@ -445,7 +476,7 @@ internal sealed class RegressionTestInvocationAuthority(
         CancellationToken cancellationToken)
     {
         ThrowIfRevoked();
-        return scope.OpenRequestContentAsync(endpoint, reference, cancellationToken);
+        return _scope.OpenRequestContentAsync(_endpoint, reference, cancellationToken);
     }
 
     public void Revoke() => _revocation.Cancel();
@@ -792,7 +823,7 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
         }
         finally
         {
-            context.Revoke();
+            RevokeContext(context);
             Release(entry);
         }
     }
@@ -836,7 +867,7 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
         }
         finally
         {
-            context.Revoke();
+            RevokeContext(context);
             Release(entry);
         }
     }
@@ -927,19 +958,29 @@ internal sealed partial class RegressionTestRpcState(bool workerStyleProviderBou
         foreach (var watcher in _watchers.ToArray()) watcher.TryWrite(item);
     }
 
-    private static SunderRpcInvocationContext CreateContext(
+    private static readonly ConstructorInfo ContextConstructor = typeof(SunderRpcInvocationContext).GetConstructor(
+        BindingFlags.Instance | BindingFlags.NonPublic, binder: null,
+        [typeof(string), typeof(string), typeof(SunderRpcProviderSnapshot), typeof(DateTimeOffset),
+         typeof(int), typeof(CancellationToken), RegressionTestInvocationAuthority.AuthorityType], modifiers: null)
+        ?? throw new MissingMethodException(typeof(SunderRpcInvocationContext).FullName, ".ctor");
+    internal static readonly Action<SunderRpcInvocationContext> RevokeContext = typeof(SunderRpcInvocationContext)
+        .GetMethod("Revoke", BindingFlags.Instance | BindingFlags.NonPublic)!
+        .CreateDelegate<Action<SunderRpcInvocationContext>>();
+
+    internal static SunderRpcInvocationContext CreateContext(
         string callerPackageId,
         SunderRpcProviderSnapshot provider,
         CancellationToken cancellationToken,
-        RegressionTestRpcCallScope? scope)
-        => new(
+        RegressionTestRpcCallScope? scope = null,
+        string callerPackageVersion = "1.0.0")
+        => (SunderRpcInvocationContext)ContextConstructor.Invoke([
             callerPackageId,
-            "1.0.0",
+            callerPackageVersion,
             provider,
             scope?.DeadlineUtc ?? DateTimeOffset.UtcNow.AddMinutes(1),
             1,
             cancellationToken,
-            scope?.CreateInvocationAuthority(provider.Endpoint));
+            scope?.CreateInvocationAuthority(provider.Endpoint)]);
 
     private sealed class Entry(
         object implementation,

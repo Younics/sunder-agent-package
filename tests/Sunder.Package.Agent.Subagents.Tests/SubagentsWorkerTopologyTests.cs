@@ -1,11 +1,15 @@
+extern alias SubagentsWorker;
+
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using Sunder.Package.Agent.Subagents.Models;
-using Sunder.Package.Agent.Subagents.Services;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Models;
+using SubagentsWorker::Sunder.Package.Agent.Subagents.Services;
 using Sunder.Package.Agent.Tests;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Xunit;
+using InMemoryPackageSecrets = Sunder.Package.Agent.TestSupport.InMemoryPackageSecrets;
+using TestPackageRoleLocalWorkspace = Sunder.Package.Agent.TestSupport.TestPackageRoleLocalWorkspace;
 
 namespace Sunder.Package.Agent.Subagents.Tests;
 

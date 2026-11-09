@@ -1,8 +1,8 @@
 # Qualified native release inputs
 
 The Agent native scripts consume Core's **qualified generated-role inputs V1**.
-Current selective native provenance is **schema 4**; the legacy single-version
-schema 3 reader remains supported. Schema-2 marker-only native evidence is
+Current final-archive native provenance is **schema 5**; the schema-3 single-version
+and schema-4 selective readers remain supported. Schema-2 marker-only native evidence is
 rejected; it cannot be upgraded by relabeling or rehashing an old handoff.
 
 Core's authoritative contract is
@@ -23,26 +23,28 @@ source, locks and tools unchanged during the complete native operation.
 From the Agent repository root:
 
 ```powershell
-./scripts/release/build-native-family.ps1 -Rid osx-arm64 -Version artifacts/release-plan.json `
-  -OutputDirectory artifacts/native-build/osx-arm64 `
-  -InputsDirectory /resolved/agent-inputs
+./scripts/release/build-native-family.ps1 -Rid osx-arm64 -Version 2.0.0 `
+  -Package younics.ai.agent.tools.web -OutputDirectory artifacts/native-build/web/osx-arm64 `
+  -InputsDirectory /resolved/agent-inputs -ToolsDirectory /verified/core-tools
 ```
 
 First use `agent_selection.py retain` to fetch unchanged archive/evidence assets into
 `SUNDER_AGENT_RETAINED_ARCHIVE_DIR`. The canonical, source/lock-bound plan is produced
 by `agent_selection.py plan`; do not hand-author or modify it during release.
-The producer explicitly restores the locked graph, builds each selected canonical project
-for the exact native RID, then uses a compact Core V1 selection and prebuilt Pack
-to produce selected `current-rid-archives`, then adds exact unchanged universal
-archives. Native lifecycle/metric tests still require fifteen Workers.
+The component producer explicitly restores its locked project graph and builds one
+selected canonical project for the exact native RID. `collect-component` retains
+the qualified bytes. After all six leaves finish, `compose-component` uses a compact
+Core V1 selection and prebuilt Pack to compose that package exactly once. `gather`
+adds exact unchanged archives to the selected candidates, and the native lifecycle/
+metric gate tests the same final fifteen archives on every platform.
 It does not call `GetSunderPackageRoleInputs` after Build: that target depends on
 Build. NuGet mode is the default (`SunderUseSourceSdk=false`). `NUGET_SOURCE`, when
 set, selects the explicit producer restore source.
 
 The producer invokes `agent_ci.py prepare` before its first Build. It allocates a
 new isolated Sunder home/cache, validates automatically resolved candidates/catalog
-against the committed locks, hydrates through Core, and routes Build/prebuilt Pack
-through that same prepared state. No operator manifest locator, source SHA or
+against the committed locks, hydrates through Core, and routes Build through that
+same prepared state. Composition uses the same verified Core tool handoff. No operator manifest locator, source SHA or
 offline-runner hash is required. A warm cache cannot replace selected input bytes.
 Explicit denied-network diagnostics remain in [cold acceptance](cold-release-inputs.md),
 not in the ordinary production native path.
@@ -65,16 +67,16 @@ Apply native signing using Core's **pre-index Worker signing hooks**, before thi
 qualification is exported. Subsequent signing, reindexing or editing invalidates
 the qualified bytes. Native tests must consume the producer's retained archives.
 
-After the existing native lifecycle/metric gate, call
-`python3 -B scripts/release/native-family.py record` with its ten positional arguments. It:
+The reusable component workflow calls `collect-component` and `compose-component`;
+the release workflow then calls `record-final` after the native lifecycle/metric gate. It:
 
 1. Checks the whole qualified leaf against Core's exact file list and digest sidecar.
-2. Matches every non-composed native file to the tested archive, allowing Core's
+2. Matches every non-composed native file to the final tested archive, allowing Core's
    package-shared/role-shared/RID storage projection without changing any bytes.
 3. Checks exact Core metric identity, counts and thresholds.
 4. Writes `native-leaves-<rid>.tar.gz`, `native-leaf-evidence-<rid>.json` and metric copies.
 
-Each selected package in native schema 3/4 retains `workerProject`, `leaf`, `testedArchive`,
+Each selected package in native schema 3/4/5 retains `workerProject`, `leaf`, `testedArchive`,
 `metricsSha256` and `metrics`. It adds:
 
 ```json
@@ -111,18 +113,21 @@ execution-target discovery does not grant invocation, subscription or App use.
 Older schema-3 captures without this projection are usable only when their qualified
 receipts contain no separately authored role uses.
 
-Schema 4 binds `planSha256`, selected `packageVersions`, all fifteen `familyVersions`,
+Schemas 4 and 5 bind `planSha256`, selected `packageVersions`, all fifteen `familyVersions`,
 exact `retainedArtifacts` and their previously authenticated `retainedSourceRoleUses`.
 Every RID run includes `familyTests` for all fifteen archive/measurement identities,
 including unchanged packages. Selected leaves still require Core qualifications on
 all six RIDs. Missing unchanged-worker tests, mismatched versions, substituted
-retained bytes or lost source-backed use evidence reject fan-in before Pack.
+retained bytes or lost source-backed use evidence reject fan-in. Schema 5 additionally
+requires each RID's `testedArchive` hash and size to equal the final published
+archive, including selected packages. Earlier schemas bind the qualified role
+bytes but may have tested a current-RID projection.
 
 ## Fan-in prerequisites and execution
 
-Before invoking the assembler, the owning workflow must explicitly restore every
+Before composing a selected package, `agent_ci.py prepare` explicitly restores its
 canonical project with the same SDK, dependency locks and source mode used by the
-producers, including all declared RID graphs. For the normal NuGet release mode:
+producers, including all declared RID graphs. The equivalent NuGet restore is:
 
 ```sh
 dotnet restore <canonical-project.csproj> --locked-mode --source "$NUGET_SOURCE" \
@@ -130,11 +135,11 @@ dotnet restore <canonical-project.csproj> --locked-mode --source "$NUGET_SOURCE"
    -p:ContinuousIntegrationBuild=true
 ```
 
-Then call `python3 -B scripts/release/native-family.py assemble` with its eight positional arguments.
-The assembler performs **no Restore, Build, Compile, source generation, package
+Then `compose-component` validates all six retained leaves and packs the package once.
+The composer performs **no Restore, Build, Compile, source generation, package
 execution or Host launch**. It validates all six uploaded bundles before extracting
 any of them, extracts into a fresh private directory beneath the artifact output,
-and emits a compact Core selection per package. Every Pack call uses:
+and emits a compact Core selection for the package. Its Pack call uses:
 
 ```text
 -t:PackSunderPackage
@@ -148,6 +153,11 @@ and emits a compact Core selection per package. Every Pack call uses:
 All six RID selections are explicit; evidence paths, property order, compact UTF-8,
 no BOM and no terminal newline follow Core V1. There is no current-machine fallback.
 Core rejection ends the operation, without an ordinary-Pack or build retry.
+
+After all six platforms have smoked the exact final family, `finalize` verifies
+their complete schema-5 handoffs and writes `native-test-evidence.json`. It does
+not Pack again. `verify` rechecks those archives before publication. The retained
+`record`/`assemble` commands support earlier current-RID schema-3/4 callers.
 
 ### Explicit immutable tools for workspace callers
 
@@ -184,7 +194,8 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 - Final verification compares **all** retained non-composed files, including App
   bytes, through the final archive's shared/RID projection. Manifest and content
   index composition remain Core-owned.
-- Pack/verification failure preserves the prior family. Publication is serialized
+- The retained schema-3/4 assembler preserves the prior family on Pack/verification
+  failure. Its local publication is serialized
   by `.native-family-publication.lock`, replaces archives individually, and writes
   `native-test-evidence.json` last. A process interruption during publication can
   leave an incomplete family: verification fails closed and the same handoff can
@@ -194,22 +205,23 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 
 ## Release-owner integration
 
-The owned workflow/publish/promote/acceptance/handoff changes are separate:
+The entry points in [releases](RELEASES.md) enforce this ordering:
 
 1. Provision Python 3.9+ on producer and fan-in runners, alongside existing tools.
 2. Use the same reviewed/frozen source, exact restored SDK/tool inputs and source
-   mode on all native jobs and fan-in. Add the explicit fan-in restore step **before**
-   `native-family.py assemble`; restore is never hidden inside the assembler.
-3. Keep existing native artifact names (`sunder-agent-native-leaves-<rid>`) and
-   `native-leaf-evidence-<rid>.json` / `native-leaves-<rid>.tar.gz` upload/download
-   names. Merge all six artifacts, including their metric directories.
+   mode on all native jobs and composition. Prepare Core tools once per platform.
+3. Retain `agent-leaf-<package>-<rid>` and `agent-candidate-<package>` artifacts.
+   Final smoke uses `sunder-agent-native-<rid>` containing
+   `native-leaf-evidence-<rid>.json` and `native-leaves-<rid>.tar.gz`. Merge exactly
+   six final smoke handoffs before `finalize`.
 4. The promotion fixture now creates fresh qualification, metric, leaf and bundle
    bytes through `native-promotion.fixture.py`, captures them with the real native
    implementation and invokes the actual schema-3 final verifier. It includes
    qualification digests, sizes, portable paths and `leaf.hasApp`; marker-only
    schema-2 data is not relabeled or accepted.
-5. Continue the existing native lifecycle, metric, output-audit, publication and
-   provenance checks; qualifying inputs does not waive those gates.
+5. Keep native lifecycle, metric, output-audit, publication and provenance gates.
+   The selected owner publishes first; component receipts are merged by one
+   coordinator before atomic family activation.
 
 ## Local checks and qualification scope
 

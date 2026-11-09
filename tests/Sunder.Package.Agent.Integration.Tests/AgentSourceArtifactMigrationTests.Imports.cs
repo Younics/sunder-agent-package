@@ -15,7 +15,7 @@ using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     internal const string MemoryCleanerSource = "src/Sunder.Package.Agent.Memory.Semantic/Rpc/SessionCleanerProvider.cs";
-    private static async Task VerifyImports(string root, string core, string driver, string archive, string cache)
+    private static async Task PrepareOwnerImports(string root, string core, string driver, string archive, string cache)
     {
         var consumer = Path.Combine(root, "Consumer");
         var provider = Path.Combine(root, "Provider");
@@ -53,22 +53,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyControlledReferenceParticipantsAsync(root, core, driver, archive, cache);
         await VerifyScriptedToolProvider(root, core, driver, archive, cache);
         await VerifyRejectedImports(root, consumer, archive, cache);
-        await VerifyWebArtifact(root, core, driver, archive, cache);
-        await VerifyLocalArtifact(root, core, driver, archive, cache);
-        await VerifyFilesArtifact(root, core, driver, archive, cache);
-        await VerifyShellArtifact(root, core, driver, archive, cache);
-        await VerifyBuilderArtifact(root, core, driver, archive, cache);
-        await VerifySubagentsArtifact(root, core, driver, archive, cache);
-        await VerifySkillsArtifact(root, core, driver, archive, cache);
-        await VerifyMemoryWorkerArtifact(root, core, driver, cache);
+    }
+
+    private static async Task VerifyCombinedImports(string root, string core, string driver, string archive, string cache)
+    {
+        var consumer = Path.Combine(root, "Consumer");
+        var provider = Path.Combine(root, "Provider");
         await VerifyMemoryProviders(root, consumer);
         await VerifyMemoryConsumers(root);
-        await VerifyMcpArtifact(root, core, driver, archive, cache);
-        await VerifyOpenAiArtifact(root, core, driver, archive, cache);
-        await VerifyDockerArtifact(root, core, driver, archive, cache);
-        await VerifyGeminiArtifact(root, core, driver, archive, cache);
-        await VerifyAnthropicArtifact(root, core, driver, archive, cache);
-        await VerifyLMStudioArtifact(root, core, driver, archive, cache);
         var memoryProvider = Path.Combine(root, "MemoryProvider");
         Directory.CreateDirectory(memoryProvider);
         WriteImportProject(memoryProvider, core, driver, cache, archive, provider: true, packageId: "younics.ai.agent.memory.semantic");

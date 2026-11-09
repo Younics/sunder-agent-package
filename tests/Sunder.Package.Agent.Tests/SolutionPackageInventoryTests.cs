@@ -137,7 +137,7 @@ public sealed class SolutionPackageInventoryTests
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        Assert.Equal(14, executableTests.Length);
+        Assert.Equal(22, executableTests.Length);
         foreach (var projectPath in executableTests)
         {
             var project = XDocument.Load(projectPath);
@@ -359,6 +359,7 @@ public sealed class SolutionPackageInventoryTests
         var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
         var workflow = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-release.yml"));
         var ci = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-smoke.yml"));
+        var component = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-component.yml"));
         var pipeline = File.ReadAllText(Path.Combine(root, "scripts/release/agent_pipeline.py"));
         var postchecks = File.ReadAllText(Path.Combine(root, "scripts/release/agent_publication.py"));
         var native = File.ReadAllText(Path.Combine(root, "scripts/release/native-family.py"));
@@ -367,7 +368,7 @@ public sealed class SolutionPackageInventoryTests
         var lanes = File.ReadAllText(Path.Combine(root, "scripts/ci/test_lanes.py"));
         using var platforms = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "eng/ci/platforms.json")));
         Assert.False(File.Exists(Path.Combine(root, ".circleci/config.yml")));
-        Assert.Equal(new[] { "sunder-agent-cohort-rollback.yml", "sunder-package-release.yml", "sunder-package-smoke.yml" },
+        Assert.Equal(new[] { "sunder-agent-cohort-rollback.yml", "sunder-package-component.yml", "sunder-package-release.yml", "sunder-package-smoke.yml" },
             Directory.EnumerateFiles(Path.Combine(root, ".github/workflows"), "*.yml").Select(Path.GetFileName).Order(StringComparer.Ordinal));
         Assert.Contains("branches: [main]", workflow, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", workflow, StringComparison.Ordinal);
@@ -380,6 +381,7 @@ public sealed class SolutionPackageInventoryTests
         {
             Assert.Contains("agent_ci.py matrices", scheduledWorkflow, StringComparison.Ordinal);
             Assert.Contains("matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}", scheduledWorkflow, StringComparison.Ordinal);
+            Assert.Contains("uses: ./.github/workflows/sunder-package-component.yml", scheduledWorkflow, StringComparison.Ordinal);
         }
         Assert.Contains("scripts/ci/agent_ci.py validate", ci, StringComparison.Ordinal);
         Assert.Contains("Lane=PackageCompatibility&Category!=Artifact", lanes, StringComparison.Ordinal);
@@ -387,15 +389,19 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("agent_ci.py test-family", workflow, StringComparison.Ordinal);
         Assert.Contains("\"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE\": \"1\"", lanes, StringComparison.Ordinal);
         Assert.Contains("\"SUNDER_REQUIRE_AGENT_UI_SNAPSHOT\": \"1\"", lanes, StringComparison.Ordinal);
-        Assert.Contains("agent_ci.py prepare", workflow, StringComparison.Ordinal);
-        Assert.Contains("agent_ci.py run", workflow, StringComparison.Ordinal);
+        Assert.Contains("agent_ci.py prepare", component, StringComparison.Ordinal);
+        Assert.Contains("agent_ci.py run", component, StringComparison.Ordinal);
         Assert.DoesNotContain("SUNDER_AGENT_COLD_INPUT_MANIFEST", workflow, StringComparison.Ordinal);
-        Assert.Contains("native-family.py assemble", workflow, StringComparison.Ordinal);
+        Assert.Contains("native-family.py compose-component", component, StringComparison.Ordinal);
+        Assert.Contains("native-family.py record-final", workflow, StringComparison.Ordinal);
+        Assert.Contains("native-family.py finalize", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("native-family.py assemble", workflow, StringComparison.Ordinal);
         Assert.Contains("SunderPackageUsePrebuiltLeaves=true", native, StringComparison.Ordinal);
         Assert.Contains("SunderPackagePrebuiltRoleInputsFile", native, StringComparison.Ordinal);
         Assert.Contains("SunderPackageRoleInputSourceRoot", builder, StringComparison.Ordinal);
-        foreach (var stage in new[] { "stage", "recover", "publish", "visibility", "finalize" })
+        foreach (var stage in new[] { "stage", "recover", "merge-publications", "visibility", "finalize" })
             Assert.Contains("agent_pipeline.py " + stage, workflow, StringComparison.Ordinal);
+        Assert.Contains("agent_pipeline.py publish-component", component, StringComparison.Ordinal);
         Assert.Contains("cohort.apply", pipeline, StringComparison.Ordinal);
         Assert.Contains("cohort.confirm", pipeline, StringComparison.Ordinal);
         Assert.Contains("resolve-package-changes", postchecks, StringComparison.Ordinal);
@@ -404,7 +410,7 @@ public sealed class SolutionPackageInventoryTests
         Assert.Contains("/api/v1/me/package-cohorts/availability", cohort, StringComparison.Ordinal);
         Assert.DoesNotContain("dotnet nuget push", pipeline, StringComparison.Ordinal);
         Assert.DoesNotContain("ACCEPTANCE_DRIVER", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("-m:1", workflow + ci + native + builder, StringComparison.Ordinal);
+        Assert.DoesNotContain("-m:1", workflow + ci + component + native + builder, StringComparison.Ordinal);
         Assert.Equal(new[] { "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64" }.Order(StringComparer.Ordinal),
             platforms.RootElement.GetProperty("platforms").EnumerateArray().Select(row => row.GetProperty("rid").GetString()).Order(StringComparer.Ordinal));
 

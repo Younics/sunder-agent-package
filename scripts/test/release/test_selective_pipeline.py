@@ -186,6 +186,54 @@ class SelectivePipelineTests(unittest.TestCase):
                 pipeline.visibility(self.core, self.directory, self.plan)
             http.assert_not_called(); apply.assert_not_called()
 
+    def test_component_receipts_gate_the_single_writer_and_bind_exact_tested_bytes(self):
+        receipt_directory = self.directory / "receipts"
+        with self.mocks():
+            self.stage()
+            row = selection.selected(self.plan)[0]
+            calls = []
+            with patch.object(pipeline.subprocess, "run", side_effect=self.publisher(calls)):
+                receipt = pipeline.publish_component(self.core, self.directory, self.plan, row["packageId"], receipt_directory)
+                self.assertEqual([row["packageId"]], [call[-2] for call in calls])
+                self.assertFalse((self.directory / r.PUBLICATIONS).exists())
+                self.assertNotIn(r.PUBLICATIONS, self.targets[0][1].data)
+                with self.assertRaisesRegex(ValueError, "receipts"):
+                    pipeline.merge_component_publications(self.core, self.directory, self.plan, receipt_directory)
+                for other in selection.selected(self.plan)[1:]:
+                    pipeline.publish_component(self.core, self.directory, self.plan, other["packageId"], receipt_directory)
+                original = receipt.read_bytes()
+                for field in ("artifactSourceCommit", "planSha256", "registryOrigin"):
+                    value = r.decode(original)
+                    value[field] = "wrong-source-or-selection"
+                    receipt.write_bytes(r.canonical(value) + b"\n")
+                    with self.subTest(field=field), self.assertRaisesRegex(ValueError, "receipt"):
+                        pipeline.merge_component_publications(self.core, self.directory, self.plan, receipt_directory)
+                    self.assertFalse((self.directory / r.PUBLICATIONS).exists())
+                receipt.write_bytes(original)
+                pipeline.merge_component_publications(self.core, self.directory, self.plan, receipt_directory)
+                self.assertEqual(self.publications, r.decode(self.targets[0][1].data[r.PUBLICATIONS]))
+
+    def test_selected_owner_receipt_is_required_before_any_consumer_publication(self):
+        owner = self.plan["packages"][0]
+        self.assertEqual("younics.ai.agent", owner["packageId"])
+        owner["selected"] = True
+        (self.directory / selection.PLAN).write_bytes(r.canonical(self.plan) + b"\n")
+        self.targets = [(row, MemoryRelease(row, 42 + index)) for index, row in enumerate(selection.selected(self.plan))]
+        receipt_directory = self.directory / "receipts"
+        with self.mocks():
+            self.stage()
+            consumer = selection.selected(self.plan)[1]["packageId"]
+            calls = []
+            with patch.object(pipeline.subprocess, "run", side_effect=self.publisher(calls)):
+                with self.assertRaisesRegex(ValueError, "owner must finish"):
+                    pipeline.publish_component(self.core, self.directory, self.plan, consumer, receipt_directory)
+                self.assertEqual([], calls)
+                pipeline.publish_component(self.core, self.directory, self.plan, owner["packageId"], receipt_directory)
+                pipeline.publish_component(self.core, self.directory, self.plan, consumer, receipt_directory, receipt_directory)
+                self.assertEqual([owner["packageId"], consumer], [call[-2] for call in calls])
+                with self.assertRaisesRegex(ValueError, "unselected"):
+                    pipeline.publish_component(self.core, self.directory, self.plan, self.plan["packages"][-1]["packageId"], receipt_directory)
+
     def test_cohort_is_only_the_selected_mixed_version_batch_with_per_package_channels(self):
         value = dict(invocation=dict(releaseId=42), artifacts=self.records)
         proposed = pipeline.cohort_request(self.plan, value, 8)

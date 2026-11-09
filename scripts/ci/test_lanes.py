@@ -7,11 +7,14 @@ import runpy
 import shutil
 import subprocess
 import sys
+import tempfile
+from argparse import Namespace
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = json.loads((ROOT / "scripts/test/ci-scenarios.json").read_text())
 BUILDER_PROJECT = "tests/Sunder.Package.Agent.Builder.Tests/Sunder.Package.Agent.Builder.Tests.csproj"
+ARCHIVE_PROJECT = "tests/Sunder.Package.Agent.Archive.Tests/Sunder.Package.Agent.Archive.Tests.csproj"
 BUILDER_FOCUS = ("BuilderLocalNuGetTests", "BuilderTemplateCacheTests", "BuilderProjectMetadataTests", "BuilderToolSourceTests", "BuilderToolchainTests")
 
 
@@ -97,6 +100,9 @@ def tests(state_path, lane):
     projects = [row["path"] for row in inventory["projects"] if mode in row["modes"]
                 and (lane != "package" or "PackageCompatibility" in row.get("lanes", []))]
     artifact = POLICY["artifactProducer"]
+    owners = {row["owner"] for row in inventory["projects"]}
+    required_linux = [name for name in POLICY["requiredLinux"] if POLICY["requiredLinuxOwners"][name] in owners
+                      and (state.get("selectedPackages") is None or POLICY["requiredLinuxOwners"][name] in state["selectedPackages"])]
     directory = source / "artifacts/test-results" / ("artifact" if lane == "artifact" else "required" if lane == "required-linux" else "full")
     if lane == "source":
         projects = [row["path"] for row in inventory["projects"] if mode in row["modes"] and not row.get("requiredOnly")]
@@ -107,7 +113,9 @@ def tests(state_path, lane):
         projects = ["tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj"]
         filter_value = "FullyQualifiedName~" + artifact
     elif lane == "package": filter_value = "Lane=PackageCompatibility&Category!=Artifact"
-    elif lane == "required-linux": filter_value = "|".join("FullyQualifiedName~" + name for name in POLICY["requiredLinux"])
+    elif lane == "required-linux":
+        if not required_linux: raise ValueError("No required Linux cases belong to this component")
+        filter_value = "|".join("FullyQualifiedName~" + name for name in required_linux)
     elif lane == "stress": filter_value = POLICY["stress"]["filter"]
     else: raise ValueError("Unknown Agent test lane")
     repetitions = POLICY["stress"]["repetitions"] if lane == "stress" else 1
@@ -127,6 +135,9 @@ def tests(state_path, lane):
             error = failures[0][1]
             agent_ci.note_error(error, "Failed independent projects: " + ", ".join(project for project, _ in failures))
             raise error
+        if not count and lane == "stress":
+            print("No stress cases belong to the selected component; discovery retained.")
+            return
         if not count: raise ValueError(f"{lane} selected zero tests")
     if lane in ("required-linux", "stress"):
         output = source / "artifacts/stress" if lane == "stress" else directory
@@ -139,8 +150,45 @@ def tests(state_path, lane):
                 for definition in document.findall(".//{*}UnitTest"):
                     if definition.get("id") in passed:
                         observed.add(definition.find("./{*}TestMethod").get("name"))
-            if not set(POLICY["requiredLinux"]) <= observed:
+            if not set(required_linux) <= observed:
                 raise ValueError("Required Linux test identity missing; passing counts alone are insufficient")
+
+
+def source_artifacts(state_path):
+    """Pack selected source outputs and preserve the bytes used by their tests."""
+    import agent_ci
+    import native_release_inputs as native
+    state, _ = agent_ci.context(state_path)
+    source = Path(state["source"])
+    selected = state["selectedPackages"]
+    rows = [row for row in agent_ci.inputs.inventory(source)["packages"] if row["packageId"] in selected]
+    native.require(selected and len(rows) == len(selected), "Empty or unknown source-artifact selection")
+    output = agent_ci.new_directory(source / "artifacts/source-components")
+    evidence = dict(schemaVersion=1, packageIds=selected, packages=[])
+    for row in rows:
+        package_id, project, version = row["packageId"], row["projectPath"], row["version"]
+        log = output / (package_id + ".evaluation.log")
+        command = ["dotnet", "msbuild", project, "-nologo", "-getProperty:NETCoreSdkRuntimeIdentifier,TargetDir"]
+        status = agent_ci.execute(state_path, command, log=log)
+        if status: raise subprocess.CalledProcessError(status, command)
+        properties = json.loads(log.read_text(encoding="utf-8"))["Properties"]
+        rid, target = properties["NETCoreSdkRuntimeIdentifier"], Path(properties["TargetDir"])
+        native.require(rid in native.RIDS and target.is_absolute(), "Invalid evaluated source-artifact output")
+        leaf = target.resolve(strict=True) / "sunder-targets" / rid / "sunder-dev"
+        files = native.tree(leaf)
+        manifest = native.validate_manifest(native.read_bytes(leaf / "manifest/sunder-package.json"), package_id, version, [rid])
+        package = dict(packageId=package_id, leaf=dict(hasApp=any(item["role"] == "app" for item in manifest["targets"]), files=list(files.values())))
+        (output / (package_id + ".source.json")).write_bytes(native.compact(dict(runtimeIdentifier=rid, **package)) + b"\n")
+        archive = output / (package_id + "." + version + ".sunderpkg")
+        command = ["dotnet", "msbuild", project, "-t:PackSunderPackage", "-p:RuntimeIdentifier=" + rid,
+                   "-p:BuildProjectReferences=false", "-p:SunderPackageOutputPath=" + str(archive),
+                   "-bl:" + str(output / (package_id + ".pack.binlog"))]
+        status = agent_ci.execute(state_path, command, log=output / (package_id + ".pack.log"))
+        if status: raise subprocess.CalledProcessError(status, command)
+        native.require(native.tree(leaf) == files, "Source role bytes changed after component tests")
+        native.verify_archive(archive, [(rid, package)], version)
+        evidence["packages"].append(dict(packageId=package_id, version=version, runtimeIdentifier=rid, archive=native.file_record(archive)))
+    (output / "source-artifact-evidence.json").write_bytes(native.compact(evidence) + b"\n")
 
 
 def validate(state_path, mode, stress=False):
@@ -155,7 +203,7 @@ def validate(state_path, mode, stress=False):
             os.environ.update(SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION="1",
                 SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE=str(source / "artifacts/source-family"),
                 SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE=str(source / "artifacts/source-commands"))
-            for directory in ("test-results", "stress", "source-family", "source-commands"):
+            for directory in ("test-results", "stress", "source-family", "source-commands", "source-components"):
                 path = source / "artifacts" / directory
                 if path.exists(): shutil.rmtree(path)
         else:
@@ -164,11 +212,16 @@ def validate(state_path, mode, stress=False):
         try:
             tests(state_path, mode)
             if mode == "source":
-                tests(state_path, "artifact")
+                if state.get("selectedPackages") is None:
+                    tests(state_path, "artifact")
                 if platform == "linux":
                     os.environ.update(SUNDER_DOCKER_INTEGRATION="1", SUNDER_REQUIRE_TEST_PREREQUISITES="1")
-                    tests(state_path, "required-linux")
+                    owners = {row["owner"] for row in json.loads((source / "artifacts/reports/test-inventory.json").read_text())["projects"]}
+                    if owners & set(POLICY["requiredLinuxOwners"].values()):
+                        tests(state_path, "required-linux")
                     if stress: tests(state_path, "stress")
+                if state.get("selectedPackages") is not None:
+                    source_artifacts(state_path)
         except BaseException as error:
             try:
                 report(mode, platform)
@@ -246,10 +299,31 @@ def report(mode, platform, *, results="artifacts/test-results", inventory="artif
     result.check_returncode()
 
 
-def retain_verifier():
+def prepare_verifier(core, tools):
+    """Build the archive-only verifier once, without any package implementation."""
     import agent_ci
-    project = ROOT / "tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj"
-    output = agent_ci.output_directory(project, os.environ)
+    output = ROOT / "artifacts/verifier-results"
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="sunder-archive-verifier-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        args = Namespace(source=ROOT, core=core, work=Path(temporary) / "prepared", mode="package",
+                         packages="[]", project=[ARCHIVE_PROJECT], tools=tools, inputs=None, candidate=None, catalog=None)
+        agent_ci.prepare(args)
+        state = args.work / "ci-state.json"
+        command = ["dotnet", "build", ARCHIVE_PROJECT, "-c", "Release", "--no-restore"]
+        status = agent_ci.execute(state, command, log=output / "build.log")
+        if status: raise subprocess.CalledProcessError(status, command)
+        common = ["dotnet", "test", ARCHIVE_PROJECT, "-c", "Release", "--no-build", "--no-restore"]
+        if not run_project(state, ROOT, ARCHIVE_PROJECT, common, "Category!=Artifact", output):
+            raise ValueError("Archive verifier selected no dependency-independent assertions")
+        run(sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", output, "--expected-skips", "0")
+        _, env = agent_ci.context(state)
+        retain_verifier(env)
+
+
+def retain_verifier(env=None):
+    import agent_ci
+    project = ROOT / ARCHIVE_PROJECT
+    output = agent_ci.output_directory(project, os.environ if env is None else env)
     destination = ROOT / "artifacts/package-test-binaries"
     if destination.exists(): shutil.rmtree(destination)
     shutil.copytree(output, destination)

@@ -15,6 +15,7 @@ using Xunit;
 using AppModels = AgentApp::Sunder.Package.Agent.Contracts.Models;
 using static Sunder.Package.Agent.Presentation.Tests.RenderedExtensionFixture;
 using static Sunder.Package.Agent.Presentation.Tests.RenderedSubsessionFixture;
+using static Sunder.Package.Agent.Presentation.Tests.RenderedChatFixture;
 using static Sunder.Package.Agent.Presentation.Tests.RenderedTranscriptGeometry;
 using static Sunder.Package.Agent.Presentation.Tests.RenderedViewComposition;
 using static Sunder.Package.Agent.Presentation.Tests.RenderedViewWaits;

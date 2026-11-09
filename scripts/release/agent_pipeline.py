@@ -200,41 +200,103 @@ def verified(core, directory, plan):
     return targets, infos, value
 
 
+def registry_version(directory, plan, record, expected, availability=None):
+    with tempfile.TemporaryDirectory() as temporary:
+        expectation = Path(temporary) / "expected.json"
+        expectation.write_bytes(r.canonical(expected) + b"\n")
+        result = Path(temporary) / "publication.json"
+        command = bash_runtime.command(ROOT / "scripts/release/publish-registry-package.sh")
+        if availability:
+            command += ["--verify-only", "--current-availability", availability]
+        subprocess.run([*command, "--initial-yanked", str(expectation), "--publication-output", str(result),
+            plan["registryOrigin"], str(directory / record["path"]), record["packageId"], record["version"]], check=True)
+        return r.publication_evidence(r.load(result), record)
+
+
 def registry_versions(directory, plan, value, availability=None):
     selected_ids = {row["packageId"] for row in selection.selected(plan)}
     order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
     records = {item["packageId"]: item for item in value["artifacts"]}
     retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2 and availability is not None)
     observed = []
-    with tempfile.TemporaryDirectory() as temporary:
-        for package_id in order:
-            record = records[package_id]
-            expected = Path(temporary) / "expected.json"
-            expected.write_bytes(r.canonical(retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))) + b"\n")
-            result = Path(temporary) / (package_id + ".json")
-            current = availability if package_id in selected_ids else "Listed"
-            command = bash_runtime.command(ROOT / "scripts/release/publish-registry-package.sh")
-            if current:
-                command += ["--verify-only", "--current-availability", current]
-            subprocess.run([*command, "--initial-yanked", str(expected), "--publication-output", str(result),
-                plan["registryOrigin"], str(directory / record["path"]),
-                package_id, record["version"]], check=True)
-            observed.append(r.publication_evidence(r.load(result), record))
+    for package_id in order:
+        record = records[package_id]
+        expected = retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))
+        observed.append(registry_version(directory, plan, record, expected, availability if package_id in selected_ids else "Listed"))
     # Ownership is observed from the Registry, per package. A later run compares
     # the same immutable evidence, including owners, instead of supplying an owner.
     persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
 
 
-def publish_versions(core, directory, plan):
-    targets, infos, value = verified(core, directory, plan)
+def publication_receipt(directory, plan, record, publication):
+    return dict(schemaVersion=1, artifactSourceCommit=plan["artifactSourceCommit"], registryOrigin=plan["registryOrigin"],
+        planSha256=r.file_sha(directory / selection.PLAN), archive=record,
+        publication=r.publication_evidence(publication, record))
+
+
+def read_component_receipt(directory, plan, record, path):
+    data = r.regular(path).read_bytes()
+    value = r.decode(data)
+    r.require(value == publication_receipt(directory, plan, record, value["publication"])
+              and data == r.canonical(value) + b"\n", "Component publication receipt source, selection or archive differs")
+    return value["publication"]
+
+
+def publish_component(core, directory, plan, package_id, receipts_directory, owner_receipts=None):
+    _, infos, value = verified(core, directory, plan)
+    selected_ids = {row["packageId"] for row in selection.selected(plan)}
+    r.require(package_id in selected_ids, "Cannot publish an unselected component")
+    records = {item["packageId"]: item for item in value["artifacts"]}
+    record = records[package_id]
+    retained = r.read_publications(directory, value["artifacts"], required=(directory / REQUEST).exists())
     if (directory / REQUEST).exists():
-        visibility(core, directory, plan)
-        return
-    r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
-    registry_versions(directory, plan, value)
+        # A recovered visibility attempt already has durable per-package identity
+        # evidence. Only the coordinator may reconcile or change shared visibility.
+        observed = retained[package_id]
+    else:
+        r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
+        owner = "younics.ai.agent"
+        if package_id != owner and owner in selected_ids:
+            r.require(owner_receipts is not None, "Selected owner must finish publication before its consumers")
+            read_component_receipt(directory, plan, records[owner], Path(owner_receipts) / (owner + ".json"))
+        observed = registry_version(directory, plan, record,
+            retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId"))))
+    path = Path(receipts_directory) / (package_id + ".json")
+    persist(path, r.canonical(publication_receipt(directory, plan, record, observed)) + b"\n")
+    return path
+
+
+def merge_component_publications(core, directory, plan, receipts_directory):
+    """The only writer of shared recovery metadata; leaves write separate receipts."""
+    targets, infos, value = verified(core, directory, plan)
+    selected_ids = {row["packageId"] for row in selection.selected(plan)}
+    receipts_directory = Path(receipts_directory)
+    r.require({path.name for path in receipts_directory.iterdir()} == {package_id + ".json" for package_id in selected_ids},
+              "Missing, extra or duplicate component publication receipts")
+    retained = r.read_publications(directory, value["artifacts"])
+    observed = []
+    for record in value["artifacts"]:
+        package_id = record["packageId"]
+        if package_id in selected_ids:
+            observed.append(read_component_receipt(directory, plan, record, receipts_directory / (package_id + ".json")))
+        else:
+            observed.append(registry_version(directory, plan, record,
+                retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId"))), "Listed"))
+    persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
     row, store = targets[0]
     store.upload(infos[0]["id"], [directory / r.PUBLICATIONS])
     store.verify(infos[0]["id"], files_for(directory, plan, row, True))
+
+
+def publish_versions(core, directory, plan):
+    # Local/recovery entry point uses the same leaves and single-writer merge as CI.
+    with tempfile.TemporaryDirectory(prefix="sunder-component-publications-") as temporary:
+        order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
+        selected_ids = {row["packageId"] for row in selection.selected(plan)}
+        for package_id in order:
+            if package_id in selected_ids:
+                publish_component(core, directory, plan, package_id, temporary, temporary)
+        merge_component_publications(core, directory, plan, temporary)
 
 
 def cohort_request(plan, value, revision, retained_tags=None):
@@ -330,15 +392,24 @@ def finalize(core, directory, plan):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("stage", "recover", "publish", "visibility", "guard", "finalize"))
+    parser.add_argument("action", choices=("stage", "recover", "publish", "publish-component", "merge-publications", "visibility", "guard", "finalize"))
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--package")
+    parser.add_argument("--receipts", type=Path)
+    parser.add_argument("--owner-receipts", type=Path)
     args = parser.parse_args()
     directory, core = args.directory.resolve(), args.core.resolve(strict=True)
     plan = selection.load(directory / selection.PLAN, ROOT)
     if args.action == "stage": stage(core, directory, plan)
     elif args.action == "recover": recover(core, directory, plan)
     elif args.action == "publish": publish_versions(core, directory, plan)
+    elif args.action == "publish-component":
+        r.require(args.package and args.receipts, "Component publication needs --package and --receipts")
+        publish_component(core, directory, plan, args.package, args.receipts, args.owner_receipts)
+    elif args.action == "merge-publications":
+        r.require(args.receipts, "Publication merge needs --receipts")
+        merge_component_publications(core, directory, plan, args.receipts)
     elif args.action == "visibility": visibility(core, directory, plan)
     elif args.action == "finalize": finalize(core, directory, plan)
     else:

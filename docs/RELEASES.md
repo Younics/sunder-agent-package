@@ -40,29 +40,45 @@ silently replace selected candidates or rewrite locks to match a new archive.
 
 ## Active Release Boundaries
 
-There are three GitHub workflows:
+The GitHub entry points are:
 
 - `sunder-package-smoke.yml` (**Validate**): PR/merge-queue versions compare against
   the immutable event base before toolchain setup; weekly/manual full source and
   stress validation remains available. Releases supply their exact selected IDs
   and additionally run locked-package compatibility. Manual dispatch can also
-  select `package-tests` to qualify both reference modes without publication.
+  select comma-separated `packages` or `all`; full selection includes locked-SDK
+  compatibility. `package-tests` adds compatibility to a partial selection, and
+  `builder-diagnostics` selects the separate focused/full Builder diagnostic lane.
 - `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
 - `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
   cohort, sharing the release concurrency group.
 
+They share `sunder-package-component.yml` for component tests, native production/
+composition and per-package publication. Each operation has a strict outcome summary.
+
 Both workflows end with **Summary**, which rejects failed, cancelled or unexpectedly
 skipped selected jobs. Interrupted publication recovers the retained plan and bytes
 and skips validation/build. A completed same-source publication becomes a no-op.
 
-Test ownership comes from the existing `SunderTestOwner` metadata. A selected
-extension runs its owned suites plus `agent-family` boundary suites; an owner
-version bump selects all consumer suites. Linux retains the required filesystem
-security and real-Docker cases. The all-fifteen source-artifact lane remains an
-integration requirement for nonempty source validation; its project dependency
-closure and full-graph restore are required even for a single selected extension.
-Per-project discovery, reports and their expected inventory use the same selection.
+Test ownership comes from `SunderTestOwner`. Component jobs select exactly their
+owned suites and evaluate their real project-reference closure for restore and
+contract hydration. Shared `agent-family` assertions run once per reference mode
+and behavior platform during full validation. Linux retains the owning filesystem
+security and real-Docker cases. Per-project discovery, reports and their expected
+inventory use the same selection. The all-fifteen source-artifact lane remains a
+required full-validation integration checkpoint.
+
+After owned source tests and any required/stress cases pass, each selected canonical
+project runs `PackSunderPackage`. Its archive payload must match the existing role
+outputs used by those tests, and packing must leave those outputs unchanged. The
+scoped archives, payload inventories, pack logs and hash/size receipt are retained
+under `artifacts/source-components`. The full-family lane additionally exercises
+the combined behavioral probes and requires all fifteen archives.
+
+Locked-SDK compatibility uses each suite's declared `PackageCompatibility` cases.
+A component with no owned compatibility cases retains `compatibility-selection.json`
+and exits before restore or build. A declared lane that discovers zero tests fails.
 
 Agent CircleCI and the separate acceptance/promotion dispatch workflows are retired.
 Native byte qualification, exact input validation, package/platform policy and
@@ -100,19 +116,21 @@ source commit. Other SDK packages retain their independent locked versions.
 Published Agent archive/catalog assets are located from their actual identities;
 identical coordinator copies are allowed, conflicting copies are rejected.
 
-If an exact selected dependency was never published, the resolver can build its
-same-version canonical source against its locked NuGet dependencies, in dependency
-order, and export the local Core catalog. This uses the production Release/CI
-package build mode even when preparing source-mode tests. Full content identities,
-public inventories and descriptor/ABI tuples must still reproduce the committed
-locks. It never silently selects another
+If an exact selected owner was never published, discovery retains its exact catalog
+and schedules six native package/RID leaves against locked NuGet dependencies.
+One composition job verifies all six qualified leaves and produces the immutable
+owner candidate. Admission checks full content identities, public inventories and
+descriptor/ABI tuples against the committed locks before any consumer build.
+It never silently selects another
 version, substitutes mismatched bytes or rewrites a lock. Missing published bytes
 without matching authored source are a genuine dependency error, not a request for
 an operator-supplied SHA or asset locator.
 
-Actions runs this resolver once in **Prepare exact dependencies** on Linux. It
-retains `agent-dependency-inputs` and passes the `cold-inputs.json` SHA-256 to source,
-package-mode, all six native and assembly jobs. Each consumer checks that digest,
+Actions runs discovery once on Linux and prepares verified Core tools once per
+needed platform. It retains `agent-prepared-dependencies`, optional
+`agent-candidate-<package>` bootstrap outputs, then seals `agent-dependency-inputs`.
+The `cold-inputs.json` SHA-256 is passed to source, package-mode and native jobs.
+Each consumer checks that digest,
 source/Core commits, locks and candidate/catalog bytes before hydration. Runners
 never independently regenerate the selected owner archive. A failed identity check
 retains the rejected bytes and original log and stops downstream work.
@@ -196,19 +214,22 @@ apphost, SDK or toolchain. Generated App roles are retained where authored.
 Unchanged packages are downloaded from exact numeric published-release assets,
 with their original hash/size and six-RID native evidence. They are not rebuilt or
 repacked. Every native smoke test still installs and exercises **all fifteen**
-packages: selected current-RID outputs plus unchanged universal archives. Mixed
+packages: the exact final selected archives plus unchanged universal archives. Mixed
 package versions are expected. The final output audit and Runtime/App gates still
 inspect all fifteen archives. Exact reviewed dependency candidates/catalogs remain
 separate dependency inputs; changing a version never regenerates a dependency lock.
 
-Release restore preserves the complete six-RID graph. Native Build selects its RID
-only after locked restore and explicit contract hydration. Current-RID smoke archives
-and final fan-in consume Core-qualified role inputs with
+Release restore preserves the complete six-RID graph. One package × RID job selects
+its native RID after locked restore and explicit contract hydration. Each package
+is composed once from all six Core-qualified leaves with
 `SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false` and an explicit
 `SunderPackagePrebuiltRoleInputsFile`; they never rebuild captured role bytes.
 
-`native-family.py record`, `assemble` and `verify` own bounded transport and exact
-module/runtimeconfig/deps/shared/App byte comparisons. Native smoke exercises real
+`native-family.py collect-component`, `compose-component`, `gather`, `record-final`
+and `finalize` own bounded transport and exact module/runtimeconfig/deps/shared/App
+byte comparisons. Schema 5 binds every native smoke record to the final archive
+hash and size; fan-in verifies and copies those bytes without another Pack. The
+schema-3/4 readers remain for retained evidence. Native smoke exercises real
 official .NET installation, every Worker lifecycle, domain RPC/auth/SQLite behavior,
 crash recovery, cleanup and Builder's separate SDK path. Core metric budgets and
 the current-RID installed-projection gate remain enforced. Fan-in runs the retained
@@ -233,9 +254,11 @@ and public install-plan postchecks. The pipeline:
    is the coordinator and retains all selected tested archives for recovery; other
    drafts retain their own archive. Each retains the plan, full-family reports,
    source/material/byte provenance, checksums, SBOM and original toolchain record.
-3. Calls `publish-registry-package.sh --initial-yanked` in dependency order. Each
-   selected immutable version is downloaded and verified before advancing.
-   Unchanged versions are verified read-only as Listed. The coordinator retains
+3. Publishes the selected owner first, then independent consumer leaves through
+   `publish-registry-package.sh --initial-yanked`. Each leaf retains an immutable
+   `agent-publication-<package>` receipt; consumers require the selected owner's
+   receipt. Unchanged versions are verified read-only as Listed. A single writer
+   merges the exact receipt set, and the coordinator retains
    `registry-publications.json`: the Registry-returned publication evidence for
    every tested package, including its actual owner. Retries and later readback
    compare that immutable evidence before visibility changes or announcement.

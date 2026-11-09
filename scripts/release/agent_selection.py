@@ -287,7 +287,9 @@ def main():
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 package_ids = [row["packageId"] for row in selected(value)]
                 output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n"
-                             + "packages=" + r.canonical(package_ids).decode() + "\n")
+                             + "packages=" + r.canonical(package_ids).decode() + "\n"
+                             + "owner_selected=" + str("younics.ai.agent" in package_ids).lower() + "\n"
+                             + "consumers=" + r.canonical([package_id for package_id in package_ids if package_id != "younics.ai.agent"]).decode() + "\n")
         print(f"Selected {count} version-bumped packages." if count else "No package version is newer; nothing to release.")
     else:
         value = load(args.plan, source)

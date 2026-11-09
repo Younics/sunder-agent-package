@@ -1,0 +1,2054 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+extern alias FilesWorker;
+
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Sunder.Package.Agent.Contracts;
+using Sunder.Package.Agent.Contracts.Contracts;
+using Sunder.Package.Agent.Contracts.Models;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.Protocol;
+using Sunder.Package.Agent.Tests;
+using FilesWorker::Sunder.Package.Agent.Tools.Files;
+using DockerModels = DockerWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
+using HostSecurePathEngine = DockerWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine;
+using HostResourceClaim = DockerWorker::Sunder.Agent.Execution.Common.HostResourceClaim;
+using LocalSecureApprovalLease = DockerWorker::Sunder.Agent.Execution.Common.LocalSecureApprovalLease;
+using Sunder.Sdk.Abstractions;
+using Sunder.Sdk.Rpc;
+using Xunit;
+
+namespace Sunder.Package.Agent.Execution.Local.Tests;
+
+public sealed partial class FilesToolSourceRefactorTests : IDisposable
+{
+    private readonly RegressionTestPackageScope _packageScope = RegressionTestPackageScope.Create();
+    private readonly List<RegressionTestExtensionCatalog> _catalogs = [];
+    private readonly List<GeneratedToolSourceProbe> _sources = [];
+
+    [Fact]
+    public void Constructor_RequiresPackageContextWithoutCompatibilityShim()
+    {
+        var constructor = Assert.Single(typeof(FilesToolSource).GetConstructors());
+
+        Assert.Equal([typeof(IPackageContext)], constructor.GetParameters().Select(static parameter => parameter.ParameterType));
+        Assert.Throws<ArgumentNullException>(() => new FilesToolSource(null!));
+    }
+
+    [Theory]
+    [InlineData("read", "{\"path\":\"file.txt\",\"offset\":0}", "offset")]
+    [InlineData("read", "{\"path\":\"file.txt\",\"limit\":2001}", "limit")]
+    [InlineData("read", "{\"path\":\"   \"}", "path")]
+    [InlineData("grep", "{\"pattern\":\"\"}", "pattern")]
+    [InlineData("apply_patch", "{\"patchText\":\"   \"}", "patchText")]
+    public async Task ExecuteAsync_ReportsFocusedParserErrors(string toolId, string argumentsJson, string parameter)
+    {
+        var (source, _, context) = CreateSource(new MemoryExecutionTarget());
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest(toolId, argumentsJson));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-arguments-invalid", result.ErrorCode);
+        Assert.Contains(parameter, result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Read_DelegatesNormalizedRangeToCapableTarget_AndPreservesLineNumbers()
+    {
+        var target = new RangedMemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["nested/file.txt"] = "one\ntwo\nthree\nfour",
+        });
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("read", "{\"path\":\"nested/file.txt\",\"offset\":2,\"limit\":2}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Equal(new AgentFileReadRequest("nested/file.txt", 2, 2), target.LastReadRequest);
+        Assert.StartsWith($"2: two{Environment.NewLine}3: three", result.Content, StringComparison.Ordinal);
+        Assert.Contains("offset=4", result.Content, StringComparison.Ordinal);
+        Assert.True(result.WasTruncated);
+    }
+
+    [Fact]
+    public async Task Read_SlicesWholeFileTarget_WhenOptionalRangedReadFacetIsAbsent()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["file.txt"] = "one\ntwo\nthree",
+        });
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("read", "{\"path\":\"file.txt\",\"offset\":2,\"limit\":1}"));
+
+        Assert.StartsWith("2: two", result.Content, StringComparison.Ordinal);
+        Assert.Contains("offset=3", result.Content, StringComparison.Ordinal);
+        Assert.True(result.WasTruncated);
+    }
+
+    [Fact]
+    public async Task Read_MapsStructuredTargetFailureToTypedToolError()
+    {
+        var target = new StructuredReadErrorTarget();
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("read", "{\"path\":\"missing.txt\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.FileNotFound, result.ErrorCode);
+        Assert.Contains("File not found", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("1: File not found", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_PreflightFailure_PerformsNoMutations()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "actual second",
+        });
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -missing second
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-preflight-failed", result.ErrorCode);
+        Assert.Contains("No files were changed", result.Content, StringComparison.Ordinal);
+        Assert.Equal(0, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("actual second", target.Files["second.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_PartialFailure_IsReportedAndSafelyCompensated()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "old second",
+        })
+        {
+            FailMutationCall = 2,
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -old second
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-partial-application", result.ErrorCode);
+        Assert.Contains("partially applied", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Compensation restored 1 operation", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Applied patch file changes were restored", result.Content, StringComparison.Ordinal);
+        Assert.Contains("directory cleanup is not proved by file restoration", result.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("No applied patch changes remain", result.Content, StringComparison.Ordinal);
+        Assert.Equal(3, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("old second", target.Files["second.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_FailedTargetReprobeUnavailable_StillCompensatesPriorOperations()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+        })
+        {
+            FailMutationCall = 2,
+            ReprobeUnavailablePath = "missing/second.txt",
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Add File: missing/second.txt
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-partial-application", result.ErrorCode);
+        Assert.Contains("Compensation restored 1 operation", result.Content, StringComparison.Ordinal);
+        Assert.Contains("diagnostic probing was unavailable", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("missing parent/backend unavailable", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("may remain partially modified", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.DoesNotContain("missing/second.txt", target.Files.Keys);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_CancellationAfterMutation_CompensatesAndPropagates()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "old second",
+        })
+        { CancelMutationCall = 2 };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -old second
+            +new second
+            *** End Patch
+            """);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch)));
+
+        Assert.Equal(3, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("old second", target.Files["second.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_CancellationAfterMutationWithRollbackConflict_ReturnsPartialResult()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "old second",
+        })
+        {
+            CancelAfterMutationCall = 2,
+            BeforeMutationCall = 3,
+            BeforeMutation = current => current.Files["second.txt"] = "concurrent rollback conflict",
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -old second
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-partial-application", result.ErrorCode);
+        Assert.Contains("canceled", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Completed rollbacks: 'first.txt'", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Failed rollbacks: 'second.txt'", result.Content, StringComparison.Ordinal);
+        Assert.Contains("changed after patch preflight", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("concurrent rollback conflict", target.Files["second.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_CancellationAfterMutationWithProbeFailure_ReturnsPartialResult()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "old second",
+        })
+        {
+            CancelAfterMutationCall = 2,
+            ReprobeUnavailablePath = "second.txt",
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -old second
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-partial-application", result.ErrorCode);
+        Assert.Contains("Completed rollbacks: 'first.txt'", result.Content, StringComparison.Ordinal);
+        Assert.Contains("Failed rollbacks: none", result.Content, StringComparison.Ordinal);
+        Assert.Contains("operation 'second.txt'", result.Content, StringComparison.Ordinal);
+        Assert.Contains("diagnostic probing was unavailable", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("missing parent/backend unavailable", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("new second", target.Files["second.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_ConcurrentEditAfterPreflight_IsRejectedByTargetCas()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+        })
+        {
+            BeforeMutationCall = 1,
+            BeforeMutation = current => current.Files["first.txt"] = "concurrent edit",
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-apply-failed", result.ErrorCode);
+        Assert.Contains("changed after patch preflight", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("concurrent edit", target.Files["first.txt"]);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_FailedTargetThatReachedNextState_IsAlsoCompensated()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string>
+        {
+            ["first.txt"] = "old first",
+            ["second.txt"] = "old second",
+        })
+        {
+            FailAfterMutationCall = 2,
+        };
+        var (source, _, context) = CreateSource(target);
+        var patch = PatchArguments("""
+            *** Begin Patch
+            *** Update File: first.txt
+            @@
+            -old first
+            +new first
+            *** Update File: second.txt
+            @@
+            -old second
+            +new second
+            *** End Patch
+            """);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("apply_patch", patch));
+
+        Assert.True(result.IsError);
+        Assert.Equal("patch-partial-application", result.ErrorCode);
+        Assert.Contains("Compensation restored 2 operations", result.Content, StringComparison.Ordinal);
+        Assert.Equal(4, target.MutationCallCount);
+        Assert.Equal("old first", target.Files["first.txt"]);
+        Assert.Equal("old second", target.Files["second.txt"]);
+    }
+
+    [PlatformFact(TestPlatform.Linux, "This verifies Linux anonymous-file publication fallback.")]
+    public async Task ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var root = Path.Combine(scope.RootPath, "workspace");
+        Directory.CreateDirectory(root);
+        var targetPath = Path.Combine(root, "target.txt");
+        await File.WriteAllTextAsync(targetPath, "old content");
+        var (source, context) = await CreateLocalSourceAsync(scope, root);
+        var methods = new List<LocalUnixAnonymousPublishMethod>();
+        AgentToolResult result;
+        using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
+               {
+                   methods.Add(method);
+                   return method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : null;
+               }))
+        {
+            result = await source.ExecuteAsync(
+                context,
+                new AgentToolRequest("apply_patch", PatchArguments("""
+                    *** Begin Patch
+                    *** Update File: target.txt
+                    @@
+                    -old content
+                    +new content
+                    *** End Patch
+                    """)));
+        }
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Equal("new content", await File.ReadAllTextAsync(targetPath));
+        Assert.Equal(
+            [LocalUnixAnonymousPublishMethod.EmptyPath, LocalUnixAnonymousPublishMethod.ProcSelfFd],
+            methods);
+        Assert.DoesNotContain(
+            Directory.EnumerateFileSystemEntries(root),
+            path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
+    }
+
+    [PlatformTheory(TestPlatform.Unix, "Post-mutation compensation requires supported strict filesystem mutations.")]
+    [InlineData("local", "add")]
+    [InlineData("local", "update")]
+    [InlineData("local", "delete")]
+    [InlineData("local", "move")]
+    [InlineData("docker", "add")]
+    [InlineData("docker", "update")]
+    [InlineData("docker", "delete")]
+    [InlineData("docker", "move")]
+    public async Task ApplyPatch_StrictTargets_CompensateWithExactPostMutationResource(
+        string targetKind,
+        string operationKind)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var configuredRoot = Path.Combine(scope.RootPath, "configured");
+        var targetRoot = Path.Combine(scope.RootPath, "target");
+        Directory.CreateDirectory(configuredRoot);
+        Directory.CreateDirectory(targetRoot);
+        var now = DateTimeOffset.UtcNow;
+        var workspaceRoot = targetKind == "local" ? configuredRoot : targetRoot;
+        var workspace = new AgentWorkspaceRecord(
+            "workspace",
+            "Workspace",
+            null,
+            now,
+            now,
+            [new AgentWorkspacePathRecord("path", "workspace", workspaceRoot, true, 0, now, now)]);
+        IAgentExecutionTarget strictTarget;
+        if (targetKind == "local")
+        {
+            var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
+            strictTarget = new GeneratedLocalExecutionTargetAdapter(new LocalExecutionTarget(
+                scope.Context,
+                configService,
+                new LocalShellCatalogService(scope.Context)));
+        }
+        else
+        {
+            strictTarget = new StrictDockerHostExecutionTarget(targetRoot);
+        }
+
+        var target = new FailSecondMutationExecutionTarget(strictTarget);
+        var catalog = CreateTargetCatalog(target);
+        var source = CreateSourceProbe(catalog, scope.Context);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            RegressionTestBindings.ExecutionTargets,
+            target.Descriptor.TargetId,
+            "primary-execution-target",
+            true,
+            0,
+            now,
+            now);
+        var subjectPath = targetKind == "local"
+            ? Path.Combine(targetRoot, "subject.txt")
+            : "/workspace/subject.txt";
+        var triggerPath = targetKind == "local"
+            ? Path.Combine(targetRoot, "trigger.txt")
+            : "/workspace/trigger.txt";
+        var subjectHostPath = Path.Combine(targetRoot, "subject.txt");
+        var triggerHostPath = Path.Combine(targetRoot, "trigger.txt");
+        if (operationKind is "update" or "delete" or "move")
+        {
+            await File.WriteAllTextAsync(subjectHostPath, "old subject");
+        }
+        await File.WriteAllTextAsync(triggerHostPath, "old trigger");
+        var firstOperation = operationKind switch
+        {
+            "add" => $"*** Add File: {subjectPath}\n+new subject",
+            "update" => $"*** Update File: {subjectPath}\n@@\n-old subject\n+new subject",
+            "delete" => $"*** Delete File: {subjectPath}",
+            "move" => $"*** Update File: {subjectPath}\n*** Move to: {Path.GetDirectoryName(subjectPath)!.Replace('\\', '/')}/moved.txt\n@@\n-old subject\n+new subject",
+            _ => throw new ArgumentOutOfRangeException(nameof(operationKind)),
+        };
+        var request = new AgentToolRequest(
+            "apply_patch",
+            PatchArguments($"""
+                *** Begin Patch
+                {firstOperation}
+                *** Update File: {triggerPath}
+                @@
+                -old trigger
+                +new trigger
+                *** End Patch
+                """));
+        var runId = Guid.NewGuid();
+        var operation = new AgentResourceOperationContext(
+            runId,
+            1,
+            "patch-call",
+            "files.mutate",
+            ResourceIndex: -1,
+            "workspace-generation",
+            "binding-generation",
+            "younics.ai.agent.tools.files",
+            $"younics.ai.agent.execution.{targetKind}",
+            Guid.NewGuid().ToString("N"),
+            AuthorityUseCount: 1,
+            CanIssueOutsideAuthority: true);
+        var planningContext = new AgentToolExecutionContext(
+            Guid.NewGuid(),
+            "profile",
+            workspace,
+            binding,
+            RunId: runId,
+            RunRevision: 1,
+            UserTurnId: Guid.NewGuid(),
+            ToolCallId: operation.ToolCallId)
+        {
+            ResourceOperation = operation,
+            ExecutionTarget = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference,
+        };
+        var permission = Assert.IsType<AgentPermissionRequest>(
+            await source.BuildPermissionRequestAsync(planningContext, request));
+        var executionContext = planningContext with
+        {
+            AllowOutsideConfiguredScope = string.Equals(
+                permission.BoundaryId,
+                AgentPermissionBoundaryIds.OutsideConfiguredScope,
+                StringComparison.Ordinal),
+            ApprovedResourceReferences = permission.ResourceReferences,
+            ApprovedResourceClaims = permission.ResourceClaims,
+            ApprovedResourceCapabilities = permission.ResourceCapabilities,
+            ResourceOperation = operation with { CanIssueOutsideAuthority = false },
+        };
+
+        var result = await source.ExecuteAsync(executionContext, request);
+
+        Assert.True(result.IsError);
+        Assert.True(
+            string.Equals(result.ErrorCode, "patch-partial-application", StringComparison.Ordinal),
+            $"{result.ErrorCode}: {result.Content}");
+        Assert.Contains("Compensation restored 1 operation", result.Content, StringComparison.Ordinal);
+        Assert.Equal(3, target.MutationCallCount);
+        if (operationKind == "add")
+        {
+            Assert.False(File.Exists(subjectHostPath));
+        }
+        else
+        {
+            Assert.Equal("old subject", await File.ReadAllTextAsync(subjectHostPath));
+        }
+        Assert.Equal("old trigger", await File.ReadAllTextAsync(triggerHostPath));
+        Assert.False(File.Exists(Path.Combine(targetRoot, "moved.txt")));
+    }
+
+    [Fact]
+    public async Task ApplyPatchPermission_OverOperationLimit_DoesNotResolveResources()
+    {
+        var target = new TrackingPlanningExecutionTarget();
+        var (source, context) = CreateSourceForTarget(target);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(BuildAddPatch(65)));
+
+        var permission = await source.BuildPermissionRequestAsync(context, request);
+
+        Assert.NotNull(permission);
+        Assert.Equal(AgentPermissionBoundaryIds.Unknown, permission!.BoundaryId);
+        Assert.Equal(0, target.ResolveCallCount);
+        Assert.Empty(permission.ResourceCapabilities);
+    }
+
+    [Fact]
+    public async Task ApplyPatchPermission_LaterResolutionFailure_ReleasesEarlierAuthority()
+    {
+        var target = new TrackingPlanningExecutionTarget
+        {
+            ThrowOnResolveCall = 2,
+            CapabilitiesPerResource = 2,
+        };
+        var (source, context) = CreateSourceForTarget(target);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(BuildAddPatch(2)));
+
+        var permission = await source.BuildPermissionRequestAsync(context, request);
+
+        Assert.NotNull(permission);
+        Assert.Equal(AgentPermissionBoundaryIds.Unknown, permission!.BoundaryId);
+        Assert.Equal(["cap-1-0", "cap-1-1"], target.ReleasedCapabilities);
+        Assert.Empty(permission.ResourceCapabilities);
+    }
+
+    [Fact]
+    public async Task ApplyPatchPermission_Cancellation_ReleasesEarlierAuthority()
+    {
+        var target = new TrackingPlanningExecutionTarget
+        {
+            CancelOnResolveCall = 2,
+            CapabilitiesPerResource = 2,
+        };
+        var (source, context) = CreateSourceForTarget(target);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(BuildAddPatch(2)));
+
+        await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            await source.BuildPermissionRequestAsync(context, request));
+
+        Assert.Equal(["cap-1-0", "cap-1-1"], target.ReleasedCapabilities);
+    }
+
+    [Fact]
+    public async Task ApplyPatchPermission_CapabilityOverflow_ReleasesEveryIssuedCapability()
+    {
+        var target = new TrackingPlanningExecutionTarget
+        {
+            CapabilitiesPerResource = 129,
+        };
+        var (source, context) = CreateSourceForTarget(target);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(BuildAddPatch(1)));
+
+        var permission = await source.BuildPermissionRequestAsync(context, request);
+
+        Assert.NotNull(permission);
+        Assert.Equal(AgentPermissionBoundaryIds.Unknown, permission!.BoundaryId);
+        Assert.Equal(129, target.ReleasedCapabilities.Count);
+        Assert.Equal(129, target.ReleasedCapabilities.Distinct(StringComparer.Ordinal).Count());
+        Assert.Empty(permission.ResourceCapabilities);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ApplyPatchPermission_AtPathLimit_RequestsAtMost128Capabilities(bool moves)
+    {
+        var target = new TrackingPlanningExecutionTarget
+        {
+            CapabilitiesPerResource = 2,
+        };
+        var (source, context) = CreateSourceForTarget(target);
+        context = context with
+        {
+            ResourceOperation = new AgentResourceOperationContext(
+                Guid.NewGuid(),
+                1,
+                "patch-limit-call",
+                "files.mutate",
+                ResourceIndex: -1,
+                "workspace-generation",
+                "binding-generation",
+                "test.tools.files",
+                "test.execution.target",
+                Guid.NewGuid().ToString("N"),
+                CanIssueOutsideAuthority: true),
+        };
+        var patch = moves ? "*** Begin Patch\n" + string.Concat(Enumerable.Range(0, 32)
+            .Select(index => $"*** Update File: old-{index}.txt\n*** Move to: new-{index}.txt\n")) + "*** End Patch" : BuildAddPatch(64);
+        var request = new AgentToolRequest("apply_patch", PatchArguments(patch));
+
+        var permission = await source.BuildPermissionRequestAsync(context, request);
+
+        Assert.NotNull(permission);
+        Assert.Equal(64, target.ResolveCallCount);
+        Assert.Equal(128, permission!.ResourceCapabilities.Count);
+        Assert.All(target.RequestedAuthorityUseCounts, count => Assert.Equal(2, count));
+        target.ReleaseResourceAuthority(permission.ResourceCapabilities);
+    }
+
+    [Fact]
+    public async Task ApplyPatch_Success_ReleasesUnusedPostMutationAuthority()
+    {
+        var target = new ReceiptMemoryExecutionTarget();
+        var (source, _, context) = CreateSource(target);
+        var request = new AgentToolRequest("apply_patch", PatchArguments("""
+            *** Begin Patch
+            *** Add File: added.txt
+            +content
+            *** End Patch
+            """));
+
+        var result = await source.ExecuteAsync(context, request);
+
+        Assert.False(result.IsError, result.Content);
+        Assert.Equal(["post-mutation-capability"], target.ReleasedCapabilities);
+    }
+
+    [Fact]
+    public async Task Glob_BoundsResultsAndReportsTruncation()
+    {
+        var target = new MemoryExecutionTarget
+        {
+            ProcessOutput = string.Join('\n', Enumerable.Range(1, 1005).Select(index =>
+                Path.Combine(MemoryExecutionTarget.SearchRoot, $"file-{((index - 1) % 64) + 1:D4}.txt"))),
+        };
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("glob", "{\"pattern\":\"*.txt\"}"));
+
+        Assert.False(result.IsError, result.Content);
+        Assert.True(result.WasTruncated);
+        Assert.Contains("truncated", result.Summary, StringComparison.OrdinalIgnoreCase);
+        using var payload = JsonDocument.Parse(result.StructuredPayloadJson!);
+        Assert.Equal(100, payload.RootElement.GetArrayLength());
+        Assert.DoesNotContain("file-0065.txt", result.Content, StringComparison.Ordinal);
+    }
+
+    [PlatformTheory(TestPlatform.Unix, "The fallback fixture uses a POSIX executable shim.")]
+    [System.Runtime.Versioning.SupportedOSPlatform("linux")]
+    [System.Runtime.Versioning.SupportedOSPlatform("macos")]
+    [InlineData("-delete")]
+    [InlineData("line\nbreak")]
+    [InlineData("quote'name")]
+    [InlineData("-dash-name")]
+    public async Task LocalStructuredGlob_PreservesHostileDirectoryNameWithoutProcessArguments(string directoryName)
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var root = Path.Combine(scope.RootPath, "workspace");
+        var searchDirectory = Path.Combine(root, directoryName);
+        var sibling = Path.Combine(root, "must-survive.txt");
+        var bin = Path.Combine(scope.RootPath, "bin");
+        Directory.CreateDirectory(searchDirectory);
+        Directory.CreateDirectory(bin);
+        await File.WriteAllTextAsync(Path.Combine(searchDirectory, "match.txt"), "match");
+        await File.WriteAllTextAsync(sibling, "sentinel");
+        var rg = Path.Combine(bin, "rg");
+        await File.WriteAllTextAsync(rg, "#!/bin/sh\nexit 127\n");
+        File.SetUnixFileMode(rg, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        var (source, context) = await CreateLocalSourceAsync(scope, root, [bin]);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("glob", JsonSerializer.Serialize(new { pattern = "**/*.txt", path = directoryName })));
+
+        Assert.False(result.IsError, result.Content);
+        using var payload = JsonDocument.Parse(result.StructuredPayloadJson!);
+        Assert.Contains(
+            payload.RootElement.EnumerateArray(),
+            match => match.GetProperty("Path").GetString() == Path.Combine(searchDirectory, "match.txt"));
+        Assert.True(File.Exists(sibling));
+        Assert.Equal("sentinel", await File.ReadAllTextAsync(sibling));
+    }
+
+    [FileSystemFact(
+        TestFileSystemCapability.DirectorySymbolicLinks,
+        "Linked search-path planning requires directory symbolic links.")]
+    public async Task SearchOutsideApproval_RejectsLinkedPathDuringPermissionPlanning()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var root = Path.Combine(scope.RootPath, "workspace");
+        var outside = Path.Combine(scope.RootPath, "outside");
+        var first = Path.Combine(outside, "first");
+        var second = Path.Combine(outside, "second");
+        Directory.CreateDirectory(root);
+        Directory.CreateDirectory(first);
+        Directory.CreateDirectory(second);
+        await File.WriteAllTextAsync(Path.Combine(first, "approved.txt"), "approved");
+        await File.WriteAllTextAsync(Path.Combine(second, "secret.txt"), "RETARGETED_SEARCH_SECRET");
+        var link = Path.Combine(root, "outside-link");
+        Directory.CreateSymbolicLink(link, first);
+        var (source, baseContext) = await CreateLocalSourceAsync(scope, root);
+        var request = new AgentToolRequest("glob", JsonSerializer.Serialize(new { pattern = "**/*.txt", path = link }));
+        await Assert.ThrowsAsync<LocalSecureSymbolicLinkException>(async () =>
+            await source.BuildPermissionRequestAsync(baseContext, request));
+        Assert.Equal("RETARGETED_SEARCH_SECRET", await File.ReadAllTextAsync(Path.Combine(second, "secret.txt")));
+    }
+
+    [Fact]
+    public async Task DirectoryGlob_ClaimsInstructionsInsideMatchedDirectoryBeforeReturningResults()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        var root = Path.Combine(scope.RootPath, "workspace");
+        var feature = Path.Combine(root, "feature");
+        Directory.CreateDirectory(feature);
+        await File.WriteAllTextAsync(Path.Combine(feature, "AGENTS.md"), "directory-specific instructions");
+        var (source, context) = await CreateLocalSourceAsync(scope, root);
+        context = context with { SessionId = Guid.NewGuid(), TranscriptEpoch = 1 };
+
+        var result = await source.ExecuteAsync(context, new AgentToolRequest("glob", "{\"pattern\":\"*/\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-prompt-context-refresh-required", result.ErrorCode);
+        Assert.Null(result.StructuredPayloadJson);
+        Assert.Contains("AGENTS.md", result.Content, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SearchTargetWithoutStructuredSearch_FailsClosedWithoutExecutingShell()
+    {
+        var target = new UnboundSearchExecutionTarget();
+        var (source, context) = CreateSourceForTarget(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("glob", "{\"pattern\":\"*.txt\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-search-binding-unavailable", result.ErrorCode);
+        Assert.False(target.WasExecuted);
+    }
+
+    [Fact]
+    public async Task Glob_RejectsMalformedStructuredMatch()
+    {
+        var target = new MemoryExecutionTarget
+        {
+            SearchResult = new AgentFileSearchResult([new AgentFileSearchMatch(string.Empty)]),
+        };
+        var (source, _, context) = CreateSource(target);
+
+        var result = await source.ExecuteAsync(
+            context,
+            new AgentToolRequest("glob", "{\"pattern\":\"*.txt\"}"));
+
+        Assert.True(result.IsError);
+        Assert.Equal("files-search-result-invalid", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task InvalidRequestPresentation_UsesSharedMarkdownShape()
+    {
+        const string malformedJson = "{";
+        var (files, _, _) = CreateSource(new MemoryExecutionTarget());
+        var filesDetail = (await files.PresentationAsync(PresentationRequest("read", malformedJson)))!.DetailMarkdown!;
+        Assert.Equal("```json\n{\n```", RawRequestBlock(filesDetail).ReplaceLineEndings("\n"));
+        Assert.StartsWith("**Request**", filesDetail, StringComparison.Ordinal);
+        Assert.Contains("```json", filesDetail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Files_PreserveBackendTruncationContract()
+    {
+        var target = new MemoryExecutionTarget(new Dictionary<string, string> { ["file.txt"] = "content" })
+        {
+            ResultsTruncated = true,
+            ShellTimedOut = true,
+        };
+        var (files, _, context) = CreateSource(target);
+        var result = await files.ExecuteAsync(context, new AgentToolRequest("read", "{\"path\":\"file.txt\"}"));
+
+        Assert.False(result.IsError);
+        Assert.True(result.WasTruncated);
+        Assert.Equal("memory:memory", result.BackendId);
+    }
+
+    private (GeneratedToolSourceProbe Source, MemoryExecutionTarget Target, AgentToolExecutionContext Context) CreateSource(MemoryExecutionTarget target)
+    {
+        var catalog = CreateTargetCatalog(target);
+        var now = DateTimeOffset.UtcNow;
+        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            RegressionTestBindings.ExecutionTargets,
+            target.Descriptor.TargetId,
+            "primary-execution-target",
+            true,
+            0,
+            now,
+            now);
+        return (
+            CreateSourceProbe(catalog, _packageScope.Context),
+            target,
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTarget = catalog.GetRequiredProviderAsync(catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
+            });
+    }
+
+    private (GeneratedToolSourceProbe Source, AgentToolExecutionContext Context) CreateSourceForTarget(IAgentExecutionTarget target)
+    {
+        var catalog = CreateTargetCatalog(target);
+        var now = DateTimeOffset.UtcNow;
+        var workspace = new AgentWorkspaceRecord("workspace", "Workspace", null, now, now);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            RegressionTestBindings.ExecutionTargets,
+            target.Descriptor.TargetId,
+            "primary-execution-target",
+            true,
+            0,
+            now,
+            now);
+        return (
+            CreateSourceProbe(catalog, _packageScope.Context),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTarget = catalog.GetRequiredProviderAsync(catalog.ExecutionTargets).AsTask().GetAwaiter().GetResult().Reference,
+            });
+    }
+
+    private async Task<(GeneratedToolSourceProbe Source, AgentToolExecutionContext Context)> CreateLocalSourceAsync(
+        RegressionTestPackageScope scope,
+        string root,
+        IReadOnlyList<string>? pathEntries = null)
+    {
+        Directory.CreateDirectory(root);
+        var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
+        var target = new LocalExecutionTarget(
+            scope.Context,
+            configService,
+            new LocalShellCatalogService(scope.Context));
+        var now = DateTimeOffset.UtcNow;
+        var workspace = new AgentWorkspaceRecord(
+            "workspace",
+            "Workspace",
+            null,
+            now,
+            now,
+            [new AgentWorkspacePathRecord("path", "workspace", root, true, 0, now, now)]);
+        var binding = new AgentWorkspaceBindingRecord(
+            "binding",
+            workspace.WorkspaceId,
+            RegressionTestBindings.ExecutionTargets,
+            target.Descriptor.TargetId,
+            "primary-execution-target",
+            true,
+            0,
+            now,
+            now);
+        await configService.SaveConfigAsync(
+            binding.BindingId,
+            new LocalExecutionWorkspaceConfig(null, pathEntries));
+        var catalog = CreateTargetCatalog(target);
+        return (
+            CreateSourceProbe(catalog, scope.Context),
+            new AgentToolExecutionContext(null, Workspace: workspace, ExecutionBinding: binding)
+            {
+                ExecutionTarget = (await catalog.GetRequiredProviderAsync(catalog.ExecutionTargets)).Reference,
+            });
+    }
+
+    private RegressionTestExtensionCatalog CreateTargetCatalog(object target)
+    {
+        var catalog = new RegressionTestExtensionCatalog();
+        catalog.AddProvider(RegressionTestBindings.ExecutionTargets, target);
+        _catalogs.Add(catalog);
+        return catalog;
+    }
+
+    public void Dispose()
+    {
+        foreach (var source in _sources) source.Dispose();
+        foreach (var catalog in _catalogs)
+        {
+            catalog.Dispose();
+        }
+        _packageScope.Dispose();
+    }
+
+    private GeneratedToolSourceProbe CreateSourceProbe(RegressionTestExtensionCatalog catalog, IPackageContext context)
+    {
+        var source = new GeneratedToolSourceProbe(catalog, new FilesToolSource(context), "younics.ai.agent.tools.files");
+        _sources.Add(source);
+        return source;
+    }
+
+    private static string PatchArguments(string patchText)
+        => JsonSerializer.Serialize(new { patchText });
+
+    private static string BuildAddPatch(int operationCount)
+    {
+        var patch = new StringBuilder("*** Begin Patch\n");
+        for (var index = 0; index < operationCount; index++)
+        {
+            patch.Append("*** Add File: file-")
+                .Append(index)
+                .Append(".txt\n+content\n");
+        }
+        return patch.Append("*** End Patch").ToString();
+    }
+
+    private static AgentToolPresentationRequest PresentationRequest(string toolId, string argumentsJson)
+        => new(toolId, argumentsJson, null, null, null, null, false, null, null);
+
+    private static DockerModels.AgentExecutionTargetContext ToDockerContext(AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = new DockerModels.AgentWorkspaceRecord
+            {
+                WorkspaceId = context.Workspace.WorkspaceId,
+                DisplayName = context.Workspace.DisplayName,
+                Description = context.Workspace.Description,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.UpdatedAtUtc.ToString("O")),
+                Paths = context.Workspace.Paths.Select(path => new DockerModels.AgentWorkspacePathRecord
+                {
+                    PathId = path.PathId,
+                    WorkspaceId = path.WorkspaceId,
+                    HostPath = path.HostPath,
+                    IsDefault = path.IsDefault,
+                    SortOrder = path.SortOrder,
+                    CreatedAtUtc = new SunderRpcOffsetDateTime(path.CreatedAtUtc.ToString("O")),
+                    UpdatedAtUtc = new SunderRpcOffsetDateTime(path.UpdatedAtUtc.ToString("O")),
+                }).ToArray(),
+                Documents = [],
+            },
+            Binding = new DockerModels.AgentWorkspaceBindingRecord
+            {
+                BindingId = context.Binding.BindingId,
+                WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId,
+                ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role,
+                IsEnabled = context.Binding.IsEnabled,
+                SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.UpdatedAtUtc.ToString("O")),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = context.ApprovedResourceClaims.Select(ToDockerClaim).ToArray(),
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = context.ResourceOperation is null ? null : new DockerModels.AgentResourceOperationContext
+            {
+                RunId = context.ResourceOperation.RunId,
+                RunRevision = context.ResourceOperation.RunRevision,
+                ToolCallId = context.ResourceOperation.ToolCallId,
+                ActionId = context.ResourceOperation.ActionId,
+                ResourceIndex = context.ResourceOperation.ResourceIndex,
+                WorkspaceGeneration = context.ResourceOperation.WorkspaceGeneration,
+                BindingGeneration = context.ResourceOperation.BindingGeneration,
+                ToolOwnerPackageId = context.ResourceOperation.ToolOwnerPackageId,
+                ExecutionTargetOwnerPackageId = context.ResourceOperation.ExecutionTargetOwnerPackageId,
+                AuthorityActivationId = context.ResourceOperation.AuthorityActivationId,
+                AuthorityUseCount = context.ResourceOperation.AuthorityUseCount,
+                CanIssueOutsideAuthority = context.ResourceOperation.CanIssueOutsideAuthority,
+            },
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static DockerModels.AgentResourceClaim ToDockerClaim(AgentResourceClaim claim)
+        => new()
+        {
+            Version = claim.Version,
+            NamespaceId = claim.NamespaceId,
+            LogicalPath = claim.LogicalPath,
+            ConfiguredRoot = claim.ConfiguredRoot,
+            RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+            TargetExists = claim.TargetExists,
+            TargetKind = claim.TargetKind,
+            TargetIdentity = claim.TargetIdentity,
+            TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot,
+            CaseSensitivePath = claim.CaseSensitivePath,
+            ActionId = claim.ActionId,
+            WorkspaceId = claim.WorkspaceId,
+            WorkspaceGeneration = claim.WorkspaceGeneration,
+            BindingId = claim.BindingId,
+            BindingGeneration = claim.BindingGeneration,
+            ToolCallId = claim.ToolCallId,
+            ResourceIndex = claim.ResourceIndex,
+            ToolOwnerPackageId = claim.ToolOwnerPackageId,
+            ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+        };
+
+    private static DockerModels.AgentFileReadRequest ToDockerRequest(AgentFileReadRequest request)
+        => new() { Path = request.Path, Offset = request.Offset, Limit = request.Limit };
+
+    private static DockerModels.AgentFileWriteRequest ToDockerRequest(AgentFileWriteRequest request)
+        => new() { Path = request.Path, Content = request.Content, Overwrite = request.Overwrite, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static DockerModels.AgentFileDeleteRequest ToDockerRequest(AgentFileDeleteRequest request)
+        => new() { Path = request.Path, Recursive = request.Recursive, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static AgentFileReadResult ToAgentResult(DockerModels.AgentFileReadResult result)
+        => new(result.Path, result.Content, result.IsDirectory, result.WasTruncated)
+        {
+            IsError = result.IsError,
+            ErrorCode = result.ErrorCode,
+            ErrorMessage = result.ErrorMessage,
+            StartLine = result.StartLine is long startLine ? checked((int)startLine) : null,
+            EndLine = result.EndLine is long endLine ? checked((int)endLine) : null,
+            TotalLines = result.TotalLines is long totalLines ? checked((int)totalLines) : null,
+        };
+
+    private static AgentFileMutationResult ToAgentResult(DockerModels.AgentFileMutationResult result)
+        => new(result.Path, result.Summary, result.IsError, result.ErrorCode);
+
+    private static AgentResolvedResource ToAgentResource(DockerModels.AgentResolvedResource resource)
+        => new(resource.ResourceKind, resource.DisplayName, resource.CanonicalReference, resource.PermissionBoundaryId, resource.Exists)
+        {
+            ScopeClassificationBasis = (AgentPermissionScopeClassificationBasis)(int)resource.ScopeClassificationBasis,
+            ResourceClaim = resource.ResourceClaim is null ? null : ToAgentClaim(resource.ResourceClaim),
+            AuthorityReferences = resource.AuthorityReferences,
+            DeleteCanonicalReference = resource.DeleteCanonicalReference,
+            DeleteResourceClaim = resource.DeleteResourceClaim is null ? null : ToAgentClaim(resource.DeleteResourceClaim),
+            DeleteAuthorityReferences = resource.DeleteAuthorityReferences,
+            DeletePermissionBoundaryId = resource.DeletePermissionBoundaryId,
+            IsScopedInstructionDocument = resource.IsScopedInstructionDocument,
+        };
+
+    private static AgentResourceClaim ToAgentClaim(DockerModels.AgentResourceClaim claim)
+        => new(checked((int)claim.Version), claim.NamespaceId, claim.LogicalPath, claim.ConfiguredRoot,
+            claim.RootIdentityChainFingerprint, claim.TargetExists, claim.TargetKind, claim.TargetIdentity,
+            claim.TargetIsAuthorityRoot, claim.CaseSensitivePath, claim.ActionId, claim.WorkspaceId,
+            claim.WorkspaceGeneration, claim.BindingId, claim.BindingGeneration, claim.ToolCallId,
+            checked((int)claim.ResourceIndex), claim.ToolOwnerPackageId, claim.ExecutionTargetOwnerPackageId);
+
+    private static LocalModels.AgentExecutionTargetContext ToLocalContext(AgentExecutionTargetContext context)
+        => new()
+        {
+            SessionId = context.SessionId,
+            ProfileId = context.ProfileId,
+            Workspace = new LocalModels.AgentWorkspaceRecord
+            {
+                WorkspaceId = context.Workspace.WorkspaceId,
+                DisplayName = context.Workspace.DisplayName,
+                Description = context.Workspace.Description,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Workspace.UpdatedAtUtc.ToString("O")),
+                Paths = context.Workspace.Paths.Select(path => new LocalModels.AgentWorkspacePathRecord
+                {
+                    PathId = path.PathId, WorkspaceId = path.WorkspaceId, HostPath = path.HostPath,
+                    IsDefault = path.IsDefault, SortOrder = path.SortOrder,
+                    CreatedAtUtc = new SunderRpcOffsetDateTime(path.CreatedAtUtc.ToString("O")),
+                    UpdatedAtUtc = new SunderRpcOffsetDateTime(path.UpdatedAtUtc.ToString("O")),
+                }).ToArray(),
+                Documents = [],
+            },
+            Binding = new LocalModels.AgentWorkspaceBindingRecord
+            {
+                BindingId = context.Binding.BindingId, WorkspaceId = context.Binding.WorkspaceId,
+                ExtensionPointId = context.Binding.ExtensionPointId, ContributionId = context.Binding.ContributionId,
+                Role = context.Binding.Role, IsEnabled = context.Binding.IsEnabled, SortOrder = context.Binding.SortOrder,
+                CreatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.CreatedAtUtc.ToString("O")),
+                UpdatedAtUtc = new SunderRpcOffsetDateTime(context.Binding.UpdatedAtUtc.ToString("O")),
+            },
+            AllowOutsideConfiguredScope = context.AllowOutsideConfiguredScope,
+            ApprovedResourceReferences = context.ApprovedResourceReferences,
+            ApprovedResourceClaims = context.ApprovedResourceClaims.Select(ToLocalClaim).ToArray(),
+            ApprovedResourceCapabilities = context.ApprovedResourceCapabilities,
+            ResourceOperation = context.ResourceOperation is null ? null : new LocalModels.AgentResourceOperationContext
+            {
+                RunId = context.ResourceOperation.RunId, RunRevision = context.ResourceOperation.RunRevision,
+                ToolCallId = context.ResourceOperation.ToolCallId, ActionId = context.ResourceOperation.ActionId,
+                ResourceIndex = context.ResourceOperation.ResourceIndex,
+                WorkspaceGeneration = context.ResourceOperation.WorkspaceGeneration,
+                BindingGeneration = context.ResourceOperation.BindingGeneration,
+                ToolOwnerPackageId = context.ResourceOperation.ToolOwnerPackageId,
+                ExecutionTargetOwnerPackageId = context.ResourceOperation.ExecutionTargetOwnerPackageId,
+                AuthorityActivationId = context.ResourceOperation.AuthorityActivationId,
+                AuthorityUseCount = context.ResourceOperation.AuthorityUseCount,
+                CanIssueOutsideAuthority = context.ResourceOperation.CanIssueOutsideAuthority,
+            },
+            CapturePostMutationResource = context.CapturePostMutationResource,
+            ExpectedConfigurationGeneration = context.ExpectedConfigurationGeneration,
+        };
+
+    private static LocalModels.AgentResourceClaim ToLocalClaim(AgentResourceClaim claim)
+        => new()
+        {
+            Version = claim.Version, NamespaceId = claim.NamespaceId, LogicalPath = claim.LogicalPath,
+            ConfiguredRoot = claim.ConfiguredRoot, RootIdentityChainFingerprint = claim.RootIdentityChainFingerprint,
+            TargetExists = claim.TargetExists, TargetKind = claim.TargetKind, TargetIdentity = claim.TargetIdentity,
+            TargetIsAuthorityRoot = claim.TargetIsAuthorityRoot, CaseSensitivePath = claim.CaseSensitivePath,
+            ActionId = claim.ActionId, WorkspaceId = claim.WorkspaceId, WorkspaceGeneration = claim.WorkspaceGeneration,
+            BindingId = claim.BindingId, BindingGeneration = claim.BindingGeneration, ToolCallId = claim.ToolCallId,
+            ResourceIndex = claim.ResourceIndex, ToolOwnerPackageId = claim.ToolOwnerPackageId,
+            ExecutionTargetOwnerPackageId = claim.ExecutionTargetOwnerPackageId,
+        };
+
+    private static LocalModels.AgentFileReadRequest ToLocalRequest(AgentFileReadRequest request)
+        => new() { Path = request.Path, Offset = request.Offset, Limit = request.Limit };
+
+    private static LocalModels.AgentFileWriteRequest ToLocalRequest(AgentFileWriteRequest request)
+        => new() { Path = request.Path, Content = request.Content, Overwrite = request.Overwrite, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static LocalModels.AgentFileDeleteRequest ToLocalRequest(AgentFileDeleteRequest request)
+        => new() { Path = request.Path, Recursive = request.Recursive, ExpectedContentHash = request.ExpectedContentHash };
+
+    private static AgentFileReadResult ToAgentResult(LocalModels.AgentFileReadResult result)
+        => new(result.Path, result.Content, result.IsDirectory, result.WasTruncated)
+        {
+            IsError = result.IsError, ErrorCode = result.ErrorCode, ErrorMessage = result.ErrorMessage,
+            StartLine = result.StartLine is long startLine ? checked((int)startLine) : null,
+            EndLine = result.EndLine is long endLine ? checked((int)endLine) : null,
+            TotalLines = result.TotalLines is long totalLines ? checked((int)totalLines) : null,
+        };
+
+    private static AgentFileMutationResult ToAgentResult(LocalModels.AgentFileMutationResult result)
+        => new(result.Path, result.Summary, result.IsError, result.ErrorCode)
+        {
+            PostMutationResource = result.PostMutationResource is null ? null : ToAgentResource(result.PostMutationResource),
+        };
+
+    private static AgentResolvedResource ToAgentResource(LocalModels.AgentResolvedResource resource)
+        => new(resource.ResourceKind, resource.DisplayName, resource.CanonicalReference, resource.PermissionBoundaryId, resource.Exists)
+        {
+            ScopeClassificationBasis = (AgentPermissionScopeClassificationBasis)(int)resource.ScopeClassificationBasis,
+            ResourceClaim = resource.ResourceClaim is null ? null : ToAgentClaim(resource.ResourceClaim),
+            AuthorityReferences = resource.AuthorityReferences,
+            DeleteCanonicalReference = resource.DeleteCanonicalReference,
+            DeleteResourceClaim = resource.DeleteResourceClaim is null ? null : ToAgentClaim(resource.DeleteResourceClaim),
+            DeleteAuthorityReferences = resource.DeleteAuthorityReferences,
+            DeletePermissionBoundaryId = resource.DeletePermissionBoundaryId,
+            IsScopedInstructionDocument = resource.IsScopedInstructionDocument,
+        };
+
+    private static AgentResourceClaim ToAgentClaim(LocalModels.AgentResourceClaim claim)
+        => new(checked((int)claim.Version), claim.NamespaceId, claim.LogicalPath, claim.ConfiguredRoot,
+            claim.RootIdentityChainFingerprint, claim.TargetExists, claim.TargetKind, claim.TargetIdentity,
+            claim.TargetIsAuthorityRoot, claim.CaseSensitivePath, claim.ActionId, claim.WorkspaceId,
+            claim.WorkspaceGeneration, claim.BindingId, claim.BindingGeneration, claim.ToolCallId,
+            checked((int)claim.ResourceIndex), claim.ToolOwnerPackageId, claim.ExecutionTargetOwnerPackageId);
+
+    private static string RawRequestBlock(string markdown)
+    {
+        var fence = markdown.IndexOf("```json", StringComparison.Ordinal);
+        Assert.True(fence >= 0);
+        return markdown[fence..];
+    }
+
+    private class MemoryExecutionTarget : IAgentProcessExecutionTarget, IAgentStructuredFileSearchExecutionTarget
+    {
+        public static string SearchRoot { get; } = Path.Combine(Path.GetTempPath(), "sunder-memory-search");
+
+        public MemoryExecutionTarget(Dictionary<string, string>? files = null)
+        {
+            Files = files ?? new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "memory",
+            "memory",
+            "Memory",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
+
+        public Dictionary<string, string> Files { get; }
+
+        public int MutationCallCount { get; private set; }
+
+        public int? FailMutationCall { get; init; }
+
+        public int? CancelMutationCall { get; init; }
+
+        public int? CancelAfterMutationCall { get; init; }
+
+        public int? FailAfterMutationCall { get; init; }
+
+        public string? ReprobeUnavailablePath { get; init; }
+
+        public int? BeforeMutationCall { get; init; }
+
+        public Action<MemoryExecutionTarget>? BeforeMutation { get; init; }
+
+        public string ProcessOutput { get; init; } = string.Empty;
+
+        public AgentFileSearchResult? SearchResult { get; init; }
+
+        public bool ResultsTruncated { get; init; }
+
+        public bool ShellTimedOut { get; init; }
+
+        public AgentFileReadRequest? LastReadRequest { get; protected set; }
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionTargetReadiness("memory", "memory", AgentExecutionTargetReadinessStatus.Ready, "Ready."));
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(AgentExecutionTargetContext context, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionShellDescriptor("sh", "sh", "/bin/sh", AgentShellSyntaxKinds.PosixSh, "POSIX sh"));
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(AgentExecutionTargetContext context, string path, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (MutationCallCount > 0
+                && string.Equals(path, ReprobeUnavailablePath, StringComparison.Ordinal))
+            {
+                throw new DirectoryNotFoundException("Scripted missing parent/backend unavailable.");
+            }
+            return ValueTask.FromResult(new AgentResolvedResource("file", path, path, AgentPermissionBoundaryIds.ConfiguredScope, Files.ContainsKey(path)));
+        }
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(AgentExecutionTargetContext context, AgentShellCommandRequest request, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentShellCommandResult(
+                ShellTimedOut ? 124 : 0,
+                ProcessOutput,
+                ShellTimedOut,
+                WasTruncated: ResultsTruncated));
+
+        public virtual ValueTask<AgentShellCommandResult> ExecuteProcessAsync(AgentExecutionTargetContext context, AgentProcessCommandRequest request, CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentShellCommandResult(0, ProcessOutput));
+
+        public ValueTask<AgentFileSearchResult> ExecuteFileSearchAsync(
+            AgentExecutionTargetContext context,
+            AgentFileSearchRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (SearchResult is not null)
+            {
+                return ValueTask.FromResult(SearchResult);
+            }
+
+            var matches = ProcessOutput
+                .Split(['\0', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(static path => new AgentFileSearchMatch(path))
+                .ToArray();
+            return ValueTask.FromResult(new AgentFileSearchResult(matches, ResultsTruncated));
+        }
+
+        public virtual ValueTask<AgentFileReadResult> ReadFileAsync(AgentExecutionTargetContext context, AgentFileReadRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LastReadRequest = request;
+            return ValueTask.FromResult(new AgentFileReadResult(request.Path, Files[request.Path], WasTruncated: ResultsTruncated));
+        }
+
+        public virtual ValueTask<AgentFileMutationResult> WriteFileAsync(AgentExecutionTargetContext context, AgentFileWriteRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            MutationCallCount++;
+            if (MutationCallCount == BeforeMutationCall)
+            {
+                BeforeMutation?.Invoke(this);
+            }
+
+            if (MutationCallCount == CancelMutationCall)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            if (MutationCallCount == FailMutationCall)
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
+            }
+
+            if (!request.Overwrite && Files.ContainsKey(request.Path))
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "File already exists.", IsError: true, ErrorCode: "file-exists"));
+            }
+
+            if (request.ExpectedContentHash is not null
+                && (!Files.TryGetValue(request.Path, out var current)
+                    || !string.Equals(ContentHash(current), request.ExpectedContentHash, StringComparison.OrdinalIgnoreCase)))
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "The file changed after patch preflight; no mutation was applied.", IsError: true, ErrorCode: "file-content-changed"));
+            }
+
+            Files[request.Path] = request.Content;
+            if (MutationCallCount == CancelAfterMutationCall)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            if (MutationCallCount == FailAfterMutationCall)
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted post-mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
+            }
+
+            return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Written."));
+        }
+
+        public virtual ValueTask<AgentFileMutationResult> DeleteFileAsync(AgentExecutionTargetContext context, AgentFileDeleteRequest request, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            MutationCallCount++;
+            if (MutationCallCount == BeforeMutationCall)
+            {
+                BeforeMutation?.Invoke(this);
+            }
+
+            if (MutationCallCount == CancelMutationCall)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+
+            if (MutationCallCount == FailMutationCall)
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
+            }
+
+            if (request.ExpectedContentHash is not null
+                && (!Files.TryGetValue(request.Path, out var current)
+                    || !string.Equals(ContentHash(current), request.ExpectedContentHash, StringComparison.OrdinalIgnoreCase)))
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "The file changed after patch preflight; no mutation was applied.", IsError: true, ErrorCode: "file-content-changed"));
+            }
+
+            var removed = Files.Remove(request.Path);
+            if (removed && MutationCallCount == CancelAfterMutationCall)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            if (removed && MutationCallCount == FailAfterMutationCall)
+            {
+                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted post-mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
+            }
+
+            return ValueTask.FromResult(removed
+                ? new AgentFileMutationResult(request.Path, "Deleted.")
+                : new AgentFileMutationResult(request.Path, "Path does not exist.", IsError: true, ErrorCode: "path-not-found"));
+        }
+
+        private static string ContentHash(string content)
+            => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+    }
+
+    private sealed class RangedMemoryExecutionTarget(Dictionary<string, string> files)
+        : MemoryExecutionTarget(files), IAgentRangedFileExecutionTarget
+    {
+        public override ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            LastReadRequest = request;
+            var lines = Files[request.Path].Split('\n');
+            var offset = request.Offset ?? 1;
+            var limit = request.Limit ?? lines.Length;
+            var content = string.Join('\n', lines.Skip(offset - 1).Take(limit));
+            return ValueTask.FromResult(new AgentFileReadResult(
+                request.Path,
+                content,
+                WasTruncated: offset - 1 + limit < lines.Length));
+        }
+    }
+
+    private sealed class ReceiptMemoryExecutionTarget
+        : MemoryExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        public List<string> ReleasedCapabilities { get; } = [];
+
+        public override async ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var result = await base.WriteFileAsync(context, request, cancellationToken);
+            return !result.IsError && context.CapturePostMutationResource
+                ? result with
+                {
+                    PostMutationResource = new AgentResolvedResource(
+                        "file",
+                        request.Path,
+                        request.Path,
+                        AgentPermissionBoundaryIds.ConfiguredScope,
+                        Exists: true)
+                    {
+                        AuthorityReferences = ["post-mutation-capability"],
+                    },
+                }
+                : result;
+        }
+
+        public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentResourceAuthorityValidation(true));
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+            => ReleasedCapabilities.AddRange(resourceCapabilities);
+    }
+
+    private sealed class StructuredReadErrorTarget : MemoryExecutionTarget
+    {
+        public override ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(AgentFileReadResult.Failure(
+                request.Path,
+                AgentFileReadErrorCodes.FileNotFound,
+                $"File not found: {request.Path}"));
+    }
+
+    private sealed class UnboundSearchExecutionTarget : IAgentExecutionTarget
+    {
+        public bool WasExecuted { get; private set; }
+
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "unbound",
+            "unbound",
+            "Unbound",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionTargetReadiness(
+                "unbound",
+                "unbound",
+                AgentExecutionTargetReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionShellDescriptor(
+                "sh",
+                "sh",
+                "/bin/sh",
+                AgentShellSyntaxKinds.PosixSh,
+                "POSIX sh"));
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentResolvedResource(
+                "file",
+                path,
+                path,
+                AgentPermissionBoundaryIds.ConfiguredScope,
+                Exists: true));
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            WasExecuted = true;
+            return ValueTask.FromResult(new AgentShellCommandResult(0, string.Empty));
+        }
+
+        public ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+    }
+
+    private sealed class FailSecondMutationExecutionTarget(IAgentExecutionTarget inner)
+        : IAgentExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        public int MutationCallCount { get; private set; }
+
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "local",
+            "local",
+            "Local",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => inner.GetReadinessAsync(context, cancellationToken);
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => inner.GetShellAsync(context, cancellationToken);
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+            => inner.ResolveFileResourceAsync(context, path, cancellationToken);
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+            => inner.ExecuteShellAsync(context, request, cancellationToken);
+
+        public ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => inner.ReadFileAsync(context, request, cancellationToken);
+
+        public ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            MutationCallCount++;
+            return MutationCallCount == 2
+                ? ValueTask.FromResult(new AgentFileMutationResult(
+                    request.Path,
+                    "Scripted mutation failure.",
+                    IsError: true,
+                    ErrorCode: "scripted-failure"))
+                : inner.WriteFileAsync(context, request, cancellationToken);
+        }
+
+        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            MutationCallCount++;
+            return MutationCallCount == 2
+                ? ValueTask.FromResult(new AgentFileMutationResult(
+                    request.Path,
+                    "Scripted mutation failure.",
+                    IsError: true,
+                    ErrorCode: "scripted-failure"))
+                : inner.DeleteFileAsync(context, request, cancellationToken);
+        }
+
+        public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => inner is IAgentResourceAuthorityExecutionTarget authorityTarget
+                ? authorityTarget.ValidateResourceAuthorityAsync(context, cancellationToken)
+                : ValueTask.FromResult(new AgentResourceAuthorityValidation(true));
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+        {
+            if (inner is IAgentResourceAuthorityExecutionTarget authorityTarget)
+            {
+                authorityTarget.ReleaseResourceAuthority(resourceCapabilities);
+            }
+        }
+    }
+
+    private sealed class StrictDockerHostExecutionTarget(string hostRoot)
+        : IAgentExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        private const string NamespaceFingerprint = "strict-patch-test";
+        private readonly DockerFileSystemExecutor _executor = new();
+        private readonly DockerExecutionRuntimeConfig _config = new(
+            "image",
+            "container",
+            "/bin/sh",
+            [],
+            [new DockerExecutionMount(hostRoot, "/workspace")],
+            "/workspace");
+
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "docker",
+            "docker",
+            "Strict Docker Host",
+            null,
+            SupportsShell: false,
+            SupportsFiles: true);
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionTargetReadiness(
+                "docker",
+                "docker",
+                AgentExecutionTargetReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(ToAgentResource(_executor.ResolveFileResource(
+                _config,
+                path,
+                NamespaceFingerprint,
+                cancellationToken,
+                context: ToDockerContext(context))));
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var (authority, _) = CaptureAndValidate(context, request.Path, cancellationToken);
+            return ToAgentResult(await _executor.ReadFileAsync(_config,
+                ToDockerRequest(request), authority, cancellationToken));
+        }
+
+        public async ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var (authority, chains) = CaptureAndValidate(context, request.Path, cancellationToken);
+            LocalSecureApprovalLease? postMutationAuthority = null;
+            try
+            {
+                var result = ToAgentResult(await _executor.WriteFileAsync(
+                    _config,
+                    ToDockerRequest(request),
+                    authority,
+                    cancellationToken,
+                    postMutationAuthoritySink: context.CapturePostMutationResource
+                        ? captured => postMutationAuthority = captured
+                        : null));
+                return AttachPostMutationResource(
+                    context,
+                    request.Path,
+                    chains,
+                    result,
+                    ref postMutationAuthority);
+            }
+            finally
+            {
+                postMutationAuthority?.Dispose();
+            }
+        }
+
+        public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            var (authority, chains) = CaptureAndValidate(context, request.Path, cancellationToken);
+            LocalSecureApprovalLease? postMutationAuthority = null;
+            try
+            {
+                var result = ToAgentResult(await _executor.DeleteFileAsync(
+                    _config,
+                    ToDockerRequest(request),
+                    authority,
+                    chains,
+                    cancellationToken,
+                    postMutationAuthoritySink: context.CapturePostMutationResource
+                        ? captured => postMutationAuthority = captured
+                        : null));
+                return AttachPostMutationResource(
+                    context,
+                    request.Path,
+                    chains,
+                    result,
+                    ref postMutationAuthority);
+            }
+            finally
+            {
+                postMutationAuthority?.Dispose();
+            }
+        }
+
+        public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentResourceAuthorityValidation(
+                context.ApprovedResourceClaims.Count <= 128
+                && context.ApprovedResourceClaims.All(claim => string.Equals(
+                    claim.NamespaceId,
+                    DockerFileSystemExecutor.ClaimNamespacePrefix + NamespaceFingerprint,
+                    StringComparison.Ordinal))));
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+        {
+        }
+
+        private (LocalSecureApprovalLease Authority, IReadOnlyList<DockerMountRootIdentityChain> Chains)
+            CaptureAndValidate(
+                AgentExecutionTargetContext context,
+                string requestedPath,
+                CancellationToken cancellationToken)
+        {
+            var path = DockerPathResolver.ResolveHostBinding(_config, requestedPath);
+            var root = HostSecurePathEngine.OpenRoot(path.Mount.HostPath, cancellationToken: cancellationToken);
+            var chains = DockerMountRootIdentityChains.Capture([new DockerVerifiedMount(path.Mount, root)]);
+            LocalSecureApprovalLease? authority = null;
+            try
+            {
+                authority = HostSecurePathEngine.CaptureFromRoot(
+                    root,
+                    path.HostPath,
+                    cancellationToken: cancellationToken,
+                    allowMissingSuffix: true);
+                var claim = context.ApprovedResourceClaims.Single(candidate =>
+                    string.Equals(
+                        candidate.NamespaceId,
+                        DockerFileSystemExecutor.ClaimNamespacePrefix + NamespaceFingerprint,
+                        StringComparison.Ordinal)
+                    && string.Equals(candidate.LogicalPath, path.ContainerPath, StringComparison.Ordinal));
+                var exactContext = context with
+                {
+                    ResourceOperation = context.ResourceOperation is { } operation
+                        ? operation with { ResourceIndex = claim.ResourceIndex }
+                        : null,
+                };
+                HostResourceClaim.Validate(
+                    ToDockerClaim(claim),
+                    DockerFileSystemExecutor.ClaimNamespacePrefix + NamespaceFingerprint,
+                    path.ContainerPath,
+                    path.Mount.ContainerPath,
+                    authority,
+                    ToDockerContext(exactContext));
+                return (authority, chains);
+            }
+            catch
+            {
+                if (authority is null)
+                {
+                    root.Dispose();
+                }
+                else
+                {
+                    authority.Dispose();
+                }
+                throw;
+            }
+        }
+
+        private AgentFileMutationResult AttachPostMutationResource(
+            AgentExecutionTargetContext context,
+            string path,
+            IReadOnlyList<DockerMountRootIdentityChain> chains,
+            AgentFileMutationResult result,
+            ref LocalSecureApprovalLease? postMutationAuthority)
+        {
+            if (postMutationAuthority is null)
+            {
+                return result;
+            }
+
+            var authority = postMutationAuthority;
+            postMutationAuthority = null;
+            return result with
+            {
+                PostMutationResource = ToAgentResource(_executor.ResolveFileResource(
+                    _config,
+                    path,
+                    NamespaceFingerprint,
+                    CancellationToken.None,
+                    authority,
+                    chains,
+                    ToDockerContext(context))),
+            };
+        }
+    }
+
+    private sealed class GeneratedLocalExecutionTargetAdapter(LocalExecutionTarget target)
+        : IAgentExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "local",
+            "local",
+            "Local",
+            null,
+            SupportsShell: true,
+            SupportsFiles: true);
+
+        public async ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var readiness = await target.ReadinessAsync(ToLocalContext(context), cancellationToken);
+            return new AgentExecutionTargetReadiness(
+                readiness.TargetId,
+                readiness.TargetKind,
+                (AgentExecutionTargetReadinessStatus)(int)readiness.Status,
+                readiness.Message);
+        }
+
+        public async ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var shell = await target.ShellAsync(ToLocalContext(context), cancellationToken);
+            return new AgentExecutionShellDescriptor(shell.ShellId, shell.DisplayName, shell.ExecutablePath,
+                shell.SyntaxKind, shell.Description);
+        }
+
+        public async ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+            => ToAgentResource(await target.ResolveFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetResolveFileRequest
+            {
+                Context = ToLocalContext(context),
+                Path = path,
+            }, cancellationToken));
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public async ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.ReadFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetReadFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.WriteFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetWriteFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+            => ToAgentResult(await target.DeleteFileAsync(new LocalModels.CYounics_Ai_Agent_Execution_Target_ExecutionTargetDeleteFileRequest
+            {
+                Context = ToLocalContext(context),
+                Request = ToLocalRequest(request),
+            }, cancellationToken));
+
+        public async ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+        {
+            var validation = await target.ValidateResourceAuthorityAsync(ToLocalContext(context), cancellationToken);
+            return new AgentResourceAuthorityValidation(validation.IsValid, validation.ErrorCode, validation.ErrorMessage);
+        }
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+            => target.ReleaseResourceAuthorityAsync(resourceCapabilities).AsTask().GetAwaiter().GetResult();
+    }
+
+    private sealed class TrackingPlanningExecutionTarget
+        : IAgentExecutionTarget, IAgentResourceAuthorityExecutionTarget
+    {
+        public int ResolveCallCount { get; private set; }
+
+        public int? ThrowOnResolveCall { get; init; }
+
+        public int? CancelOnResolveCall { get; init; }
+
+        public int CapabilitiesPerResource { get; init; }
+
+        public List<string> ReleasedCapabilities { get; } = [];
+
+        public List<int?> RequestedAuthorityUseCounts { get; } = [];
+
+        public AgentExecutionTargetDescriptor Descriptor { get; } = new(
+            "tracking",
+            "tracking",
+            "Tracking",
+            null,
+            SupportsShell: false,
+            SupportsFiles: true);
+
+        public ValueTask<AgentExecutionTargetReadiness> GetReadinessAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentExecutionTargetReadiness(
+                "tracking",
+                "tracking",
+                AgentExecutionTargetReadinessStatus.Ready,
+                "Ready."));
+
+        public ValueTask<AgentExecutionShellDescriptor> GetShellAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentResolvedResource> ResolveFileResourceAsync(
+            AgentExecutionTargetContext context,
+            string path,
+            CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ResolveCallCount++;
+            RequestedAuthorityUseCounts.Add(context.ResourceOperation?.AuthorityUseCount);
+            if (ResolveCallCount == CancelOnResolveCall)
+            {
+                throw new OperationCanceledException(cancellationToken);
+            }
+            if (ResolveCallCount == ThrowOnResolveCall)
+            {
+                throw new InvalidOperationException("Scripted resource-resolution failure.");
+            }
+
+            return ValueTask.FromResult(new AgentResolvedResource(
+                "file",
+                path,
+                path,
+                AgentPermissionBoundaryIds.ConfiguredScope,
+                Exists: false)
+            {
+                AuthorityReferences = Enumerable.Range(0, CapabilitiesPerResource)
+                    .Select(index => $"cap-{ResolveCallCount}-{index}")
+                    .ToArray(),
+            });
+        }
+
+        public ValueTask<AgentShellCommandResult> ExecuteShellAsync(
+            AgentExecutionTargetContext context,
+            AgentShellCommandRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileReadResult> ReadFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileReadRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileMutationResult> WriteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileWriteRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentFileMutationResult> DeleteFileAsync(
+            AgentExecutionTargetContext context,
+            AgentFileDeleteRequest request,
+            CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public ValueTask<AgentResourceAuthorityValidation> ValidateResourceAuthorityAsync(
+            AgentExecutionTargetContext context,
+            CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(new AgentResourceAuthorityValidation(true));
+
+        public void ReleaseResourceAuthority(IReadOnlyList<string> resourceCapabilities)
+            => ReleasedCapabilities.AddRange(resourceCapabilities);
+    }
+}

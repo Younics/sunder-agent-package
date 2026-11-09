@@ -15,7 +15,7 @@
     <SunderTestPackageMode>false</SunderTestPackageMode>
   </PropertyGroup>
   <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
-    <Compile Include="../Shared/Repository/*.cs;../Shared/Canonical/*.cs;../Shared/Composition/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs;../Shared/Platform/*.cs;../Shared/Execution/*.cs"
+    <Compile Include="../Shared/Repository/*.cs;../Shared/Canonical/*.cs;../Shared/Composition/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs;../Shared/Platform/*.cs;../Shared/Execution/GeneratedToolSourceProbe.cs;../Shared/Execution/AgentRoleRunControls.cs"
              Link="TestSupport/%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
     <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj" Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentCore,AgentApp" />
