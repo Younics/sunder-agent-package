@@ -136,7 +136,7 @@ def mock_dotnet(args):
     assert not any(arg.lower() in ("build", "compile", "restore", "-restore", "-t:build", "-t:getsunderpackageroleinputs") for arg in args)
     props = dict(arg[3:].split("=", 1) for arg in args if arg.startswith("-p:"))
     assert props["Configuration"] == "Release" and props["ContinuousIntegrationBuild"] == "true"
-    assert props["SunderPackageComposeRuntimeIdentifiers"].split("%3B") == list(inputs.RIDS)
+    assert props["SunderPackageComposeRuntimeIdentifiers"].strip('"').split(";") == list(inputs.RIDS)
     if props["SunderUseSourceSdk"] == "true":
         assert props["SunderPackageBuildTaskSourceIsImmutable"] == "true" and props["SunderPackageBuildTaskAssembly"]
     if os.environ.get("NATIVE_FIXTURE_CORE_FAILURE"):
@@ -254,6 +254,18 @@ class NativeFamilyFixture(unittest.TestCase):
         self.assemble()
         self.verify()
         self.assertEqual(len(self.log.read_text().splitlines()), 15)
+        # Exercise the real CLI/item boundary that the transport mock cannot model.
+        # Percent-escaped semicolons look correct as text but evaluate as one RID.
+        command = json.loads(self.log.read_text().splitlines()[0])
+        rid_property = next(arg for arg in command if arg.startswith("-p:SunderPackageComposeRuntimeIdentifiers="))
+        probe = self.work / "rid-list.proj"
+        probe.write_text('<Project><Target Name="Probe"><ItemGroup>'
+            '<Rid Include="$(SunderPackageComposeRuntimeIdentifiers)" />'
+            '</ItemGroup></Target></Project>')
+        result = subprocess.run(["dotnet", "msbuild", str(probe), "-t:Probe", "-getItem:Rid", rid_property],
+            capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(list(inputs.RIDS), [item["Identity"] for item in json.loads(result.stdout)["Items"]["Rid"]])
         document = json.loads((self.output / "native-test-evidence.json").read_bytes())
         self.assertEqual(document["schemaVersion"], 3)
         self.assertEqual(len(document["finalArtifacts"]), 15)

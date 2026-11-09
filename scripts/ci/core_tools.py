@@ -36,6 +36,30 @@ def verify(core, root):
     return root
 
 
+def package_tasks(source, projects, properties, env):
+    """Use the locked installed Build package's bytes for every package-mode RID."""
+    import agent_ci
+    selected = None
+    env = {key: value for key, value in env.items() if key.lower() not in
+           ("sunderpackagebuildtaskassembly", "sunderpackagebuildtasksourceisimmutable")}
+    target = "_CollectSunderPackageBuildTaskDependencyFiles"
+    for project in projects:
+        result = subprocess.run(["dotnet", "msbuild", str(Path(source) / project), *agent_ci.arguments(properties),
+            "-getProperty:SunderPackageBuildTaskSourceIsImmutable", "-getTargetResult:" + target],
+            cwd=source, env=env, check=True, capture_output=True, text=True)
+        value = inputs.decode(result.stdout.encode())
+        inputs.require(value["Properties"]["SunderPackageBuildTaskSourceIsImmutable"] == "true"
+                       and value["TargetResults"][target]["Result"] == "Success", "Package mode requires installed immutable Build tasks")
+        items = value["TargetResults"][target]["Items"]
+        inputs.require(len(items) == len(inputs.TOOL_FILES) and {item["TargetFileName"] for item in items} == set(inputs.TOOL_FILES),
+                       "Installed Build task dependencies are incomplete or ambiguous")
+        files = {item["TargetFileName"]: inputs.regular(item["FullPath"]).resolve() for item in items}
+        inputs.require(selected is None or files == selected, "Selected projects require different installed Build toolsets")
+        selected = files
+    inputs.require(selected is not None, "No restored package project selected its Build toolset")
+    return selected
+
+
 def prepare(core, output):
     import agent_ci
     core = Path(core).resolve(strict=True)

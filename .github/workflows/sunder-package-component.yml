@@ -233,7 +233,6 @@ jobs:
         env:
           INPUTS_SHA256: ${{ inputs.inputs_sha256 }}
           BOOTSTRAP: ${{ inputs.bootstrap }}
-          SUNDER_NATIVE_TASK_ASSEMBLY: ${{ runner.temp }}/core-tools/Sunder.Package.Build.dll
         run: |
           set -euo pipefail
           packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"

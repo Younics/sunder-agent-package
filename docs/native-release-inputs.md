@@ -44,7 +44,10 @@ set, selects the explicit producer restore source.
 The producer invokes `agent_ci.py prepare` before its first Build. It allocates a
 new isolated Sunder home/cache, validates automatically resolved candidates/catalog
 against the committed locks, hydrates through Core, and routes Build through that
-same prepared state. Composition uses the same verified Core tool handoff. No operator manifest locator, source SHA or
+same prepared state. In NuGet mode, preparation selects and hash-binds the complete
+installed Build task set from the locked package, including its analyzer. All six
+producers and composition use those identical published bytes. The platform-specific
+Core handoff supplies the test driver and source-mode tools. No operator manifest locator, source SHA or
 offline-runner hash is required. A warm cache cannot replace selected input bytes.
 Explicit denied-network diagnostics remain in [cold acceptance](cold-release-inputs.md),
 not in the ordinary production native path.
@@ -208,7 +211,7 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 The entry points in [releases](RELEASES.md) enforce this ordering:
 
 1. Provision Python 3.9+ on producer and fan-in runners, alongside existing tools.
-2. Use the same reviewed/frozen source, exact restored SDK/tool inputs and source
+2. Use the same reviewed/frozen source, exact restored SDK/tool inputs and reference
    mode on all native jobs and composition. Prepare Core tools once per platform.
 3. Retain `agent-leaf-<package>-<rid>` and `agent-candidate-<package>` artifacts.
    Final smoke uses `sunder-agent-native-<rid>` containing
@@ -230,8 +233,8 @@ python3 -B scripts/test/release/native-family.fixture.py
 bash scripts/test/release/native-release.fixture.sh
 ```
 
-The Python fixture exercises actual capture/transport/verification and a mocked
-MSBuild process: relocation after deleting producer outputs, preserved Worker/App
+The Python fixture exercises actual capture/transport/verification, a real MSBuild
+RID-list boundary probe and mocked packing: relocation after deleting producer outputs, preserved Worker/App
 and shared payloads, bounded long paths, unsafe tar inputs, tamper/missing/extra/
 mixed/stale inputs, immutable-tool selection, Core rejection without fallback,
 failure preservation and resume. It does not execute real Workers, compile a family,

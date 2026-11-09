@@ -165,7 +165,11 @@ def prepare(args):
             subprocess.run(["dotnet", "restore", str(source / project), "--locked-mode", *arguments(props)], env=env, check=True)
         tools = (core_tools.verify(core, args.tools) if getattr(args, "tools", None)
                  else core_tools.prepare(core, root / "tools"))
-        props.update(SunderPackageBuildTaskAssembly=str(tools / "Sunder.Package.Build.dll"), SunderPackageBuildTaskSourceIsImmutable="true")
+        package_tools = (core_tools.package_tasks(source,
+            [row["projectPath"] for row, _ in inputs.lock_documents(source, scope)], props, env)
+            if args.mode == "package" and scope else {})
+        props.update(SunderPackageBuildTaskAssembly=str(package_tools.get("Sunder.Package.Build.dll", tools / "Sunder.Package.Build.dll")),
+                     SunderPackageBuildTaskSourceIsImmutable="true")
         for package, lock in inputs.lock_documents(source, scope) if scope else []:
             command = ["dotnet", "msbuild", str(source / package["projectPath"]), "-t:RestoreSunderContracts", *arguments(props)]
             paths = [str(selected[key]) for key in sorted(lock["packageArtifacts"])]
@@ -175,9 +179,9 @@ def prepare(args):
             if paths or inputs.catalog_requirements(lock): subprocess.run(command, cwd=source, env=env, check=True)
         state = dict(schemaVersion=2, source=str(source), core=str(core), sourceCommit=head(source), coreCommit=head(core),
                       home=str(home), cache=str(cache), properties=props, sourceInputs=before,
-                       candidates=[str(path) for path in candidates], catalog=str(catalog) if catalog else None,
+                      candidates=[str(path) for path in candidates], catalog=str(catalog) if catalog else None,
                       packages=scope, selectedPackages=selection, projects=projects, tools=str(tools),
-                       inputHashes={str(path): inputs.file_sha(path) for path in [*candidates, *([catalog] if catalog else []), tools / core_tools.MANIFEST,
+                      inputHashes={str(path): inputs.file_sha(path) for path in [*candidates, *([catalog] if catalog else []), *package_tools.values(), tools / core_tools.MANIFEST,
                                    *[path for path in sorted(tools.rglob("*")) if path.is_file()]]})
         (root / "ci-state.json").write_bytes(inputs.canonical(state) + b"\n")
         print(root / "ci-state.json")

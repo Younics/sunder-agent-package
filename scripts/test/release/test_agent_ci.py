@@ -219,9 +219,19 @@ class AgentCiTests(unittest.TestCase):
         args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "component-ci",
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="package",
                                   packages=json.dumps([component["packageId"]]), tools=tools)
+        published = (self.root / "nuget/tasks").resolve()
+        published.mkdir(parents=True)
+        for name in ci.inputs.TOOL_FILES:
+            (published / name).write_bytes(b"published immutable " + name.encode())
         commands = []
         def run(command, **kwargs):
             commands.append(command)
+            target = "_CollectSunderPackageBuildTaskDependencyFiles"
+            if "-getTargetResult:" + target in command:
+                return subprocess.CompletedProcess(command, 0, json.dumps(dict(
+                    Properties=dict(SunderPackageBuildTaskSourceIsImmutable="true"),
+                    TargetResults={target: dict(Result="Success", Items=[dict(TargetFileName=name, FullPath=str(published / name))
+                        for name in ci.inputs.TOOL_FILES])})))
             return subprocess.CompletedProcess(command, 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
              patch("sys.stdout", new_callable=io.StringIO):
@@ -234,6 +244,12 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual(1, sum(command[:2] == ["dotnet", "restore"] for command in commands))
         self.assertEqual(1, sum("-t:RestoreSunderContracts" in command for command in commands))
         self.assertFalse(any(command[:2] == ["dotnet", "build"] or command[2].endswith(".slnx") for command in commands))
+        self.assertEqual(str(published / "Sunder.Package.Build.dll"), state["properties"]["SunderPackageBuildTaskAssembly"])
+        self.assertTrue(all(str(published / name) in state["inputHashes"] for name in ci.inputs.TOOL_FILES))
+        (published / "Sunder.Package.Build.Editor.dll").write_bytes(b"changed published analyzer")
+        with patch.object(ci, "head", return_value=self.source_sha):
+            with self.assertRaisesRegex(ValueError, "bytes changed"):
+                ci.context(args.work / "ci-state.json")
 
     def test_wrong_or_missing_candidates_fail_before_any_restore_or_state_creation(self):
         self.assertEqual({"younics.ai.agent"}, set(ci.inputs.verify_selected_files(self.source, [self.archive], self.catalog_path)))

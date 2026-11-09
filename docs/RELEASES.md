@@ -109,6 +109,10 @@ validator. It invokes Core's `RestoreSunderContracts`, uses an isolated cache an
 retained toolset, and runs normal parallel builds. Generated test providers are a
 project dependency built with the tests; discovery and execution retain per-run
 evidence. It does not write approval or cold-release receipts.
+Package-mode preparation selects the installed locked NuGet Build tasks and binds
+all their hashes into the prepared state. Native producers and composition therefore
+use identical published tooling across operating systems; platform-built Core tools
+remain the source-mode toolset and test-driver handoff.
 
 `dependency_inputs.py` discovers dependencies automatically. The locked
 `Sunder.Package.Build` NuGet version identifies its published Core release/tag and

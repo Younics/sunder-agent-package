@@ -514,9 +514,10 @@ def compose_component(repository, inputs, output, expected):
         selection.write_bytes(compact(dict(schemaVersion=1, inputs=[dict(runtimeIdentifier=run["rid"],
             path=run["packages"][0]["qualification"]["path"], sha256=run["packages"][0]["qualification"]["sha256"]) for run in runs])))
         archive = work / (package_id + "." + expected["version"] + ".sunderpkg")
+        # Keep MSBuild's list separator literal; %3B produces one escaped RID item.
         subprocess.run(["dotnet", "msbuild", str(repository / expected["workerProject"]), "-t:PackSunderPackage",
             "-p:Configuration=Release", "-p:BuildProjectReferences=false", "-p:SunderPackageUsePrebuiltLeaves=true",
-            "-p:SunderPackageComposeRuntimeIdentifiers=" + "%3B".join(RIDS),
+            '-p:SunderPackageComposeRuntimeIdentifiers="' + ";".join(RIDS) + '"',
             "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection), "-p:SunderPackageOutputPath=" + str(archive),
             *tool_properties(repository)], cwd=repository, check=True)
         verify_archive(archive, [(run["rid"], run["packages"][0]) for run in runs], expected["version"])
@@ -660,7 +661,7 @@ def assemble(args):
             # performs transactional Pack; it never bootstraps mutable source tools.
             subprocess.run(["dotnet", "msbuild", str(repository / row["projectPath"]), "-t:PackSunderPackage",
                             "-p:Configuration=Release", "-p:BuildProjectReferences=false", "-p:SunderPackageUsePrebuiltLeaves=true",
-                            "-p:SunderPackageComposeRuntimeIdentifiers=" + "%3B".join(RIDS),
+                             '-p:SunderPackageComposeRuntimeIdentifiers="' + ";".join(RIDS) + '"',
                              "-p:SunderPackagePrebuiltRoleInputsFile=" + str(selection),
                             "-p:SunderPackageOutputPath=" + str(archive)] + properties, cwd=repository, check=True)
         records = [file_record(path) for path in sorted(archives.glob("*.sunderpkg"))]

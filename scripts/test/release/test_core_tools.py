@@ -1,7 +1,9 @@
 """A downloaded executable handoff must bind its source, platform and complete bytes."""
+import json
 import os
 from pathlib import Path
 import platform
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -14,6 +16,22 @@ import core_tools
 
 
 class CoreToolsTests(unittest.TestCase):
+    def test_package_tasks_reject_incomplete_mutable_or_mixed_evaluated_toolsets(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in core_tools.inputs.TOOL_FILES:
+                (root / name).write_bytes(b"published fixture tool")
+            target = "_CollectSunderPackageBuildTaskDependencyFiles"
+            items = [dict(TargetFileName=name, FullPath=str(root / name)) for name in core_tools.inputs.TOOL_FILES]
+            def result(selected=items, immutable="true"):
+                return subprocess.CompletedProcess([], 0, json.dumps(dict(Properties=dict(SunderPackageBuildTaskSourceIsImmutable=immutable),
+                    TargetResults={target: dict(Result="Success", Items=selected)})))
+            for results in ([result(items[:-1])], [result(immutable="false")],
+                            [result(), result([dict(item, FullPath=str(root / "Sunder.Sdk.dll")) if item["TargetFileName"] == "Sunder.Package.Build.dll" else item for item in items])]):
+                with self.subTest(results=results), patch.object(core_tools.subprocess, "run", side_effect=results):
+                    with self.assertRaises(ValueError):
+                        core_tools.package_tasks(root, ["package.csproj"] * len(results), {}, {})
+
     def test_handoff_rejects_changed_missing_extra_and_foreign_tools(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(agent_ci, "head", return_value="a" * 40):
             root = Path(temporary)
