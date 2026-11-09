@@ -42,6 +42,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
         // Use one physical identity for the cloned project and its resource
         // inputs; macOS exposes the temporary directory through /var as well.
         if (OperatingSystem.IsMacOS() && sandbox.StartsWith("/var/", StringComparison.Ordinal)) sandbox = "/private" + sandbox;
+        Exception? failure = null;
+        string? lastCommandDiagnostic = null;
         try
         {
             // An unchanged copy of the authored repository topology, not a test
@@ -70,6 +72,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "-p:SunderPackageBuildTaskSourceIsImmutable=true",
                 "-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(sandbox, "artifacts/task-shadows"),
                 "-p:SunderPackageBuildTaskShadowStamp=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(taskAssembly))),
+                // A persistent compiler can retain this temporary working directory on Windows.
+                "--disable-build-servers", "-p:UseSharedCompilation=false",
                 "-nodeReuse:false", "-nologo",
             };
             await Command("restore", ["--disable-parallel", "--no-dependencies"]);
@@ -106,6 +110,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
             {
                 TraceOwnerPhase("stack-evidence:start:" + command + " " + string.Join(" ", arguments));
                 var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
+                start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+                start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
                 foreach (var argument in new[] { command, project }.Concat(arguments).Concat(common)) start.ArgumentList.Add(argument);
                 if (command == "msbuild")
                 {
@@ -121,6 +127,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 var text = await output + await error;
                 TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
                 var diagnostic = $"{start.FileName} {string.Join(" ", start.ArgumentList)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n{text}";
+                lastCommandDiagnostic = diagnostic;
                 foreach (var (path, bytes) in producerLocks)
                     Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)),
                         "Consumer command changed a Core producer lock: " + Path.GetRelativePath(core, path));
@@ -133,7 +140,21 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 }
             }
         }
-        finally { Directory.Delete(sandbox, recursive: true); }
+        catch (Exception exception)
+        {
+            failure = exception;
+            throw;
+        }
+        finally
+        {
+            try { Directory.Delete(sandbox, recursive: true); }
+            catch (Exception exception)
+            {
+                var cleanup = new IOException($"Owner input probe cleanup failed for '{sandbox}'.\nLast completed command:\n{lastCommandDiagnostic}", exception);
+                if (failure is not null) throw new AggregateException("Owner input probe and cleanup both failed.", failure, cleanup);
+                throw cleanup;
+            }
+        }
     }
 
     private static void CopySources(string source, string destination)
