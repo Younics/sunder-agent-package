@@ -49,12 +49,14 @@ public sealed class AgentLocalStoreDurableRunTests
 
         const int writerCount = 8;
         using var startBarrier = new Barrier(writerCount + 1);
+        // Every writer blocks at the barrier; dedicated threads preserve the race
+        // without starving unrelated service cancellation on small thread pools.
         var reservations = Enumerable.Range(0, writerCount)
-            .Select(index => Task.Run(() =>
+            .Select(index => Task.Factory.StartNew(() =>
             {
                 startBarrier.SignalAndWait();
                 return store.ReserveRun(session.SessionId, "profile.test", $"message-{index}");
-            }))
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default))
             .ToArray();
 
         startBarrier.SignalAndWait();

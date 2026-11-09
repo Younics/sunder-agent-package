@@ -89,7 +89,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             finally { File.WriteAllBytes(cachedCatalog, original); }
             var missing = JsonNode.Parse(locked)!;
             missing["platformImports"] = new JsonObject();
-            File.WriteAllText(lockPath, missing.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
+            File.WriteAllText(lockPath, missing.ToJsonString(new JsonSerializerOptions { WriteIndented = true, NewLine = "\n" }) + "\n");
             try { await Reject("platform-api.import-not-found"); }
             finally { File.WriteAllBytes(lockPath, locked); }
             await Command("build", ["--no-restore"]);
