@@ -302,6 +302,7 @@ internal sealed partial class TranscriptScrollCoordinator : IDisposable
     {
         if (!_disposed)
         {
+            _userDetached = true;
             InvalidatePendingScrollOperations();
         }
     }

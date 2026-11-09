@@ -1486,8 +1486,10 @@ public sealed class HistorySearchHardeningTests
             TimeSpan.FromSeconds(expectedSeconds),
             HistorySearchIndexingService.GetTextRebuildRetryDelay(failureCount));
 
-    [Fact]
-    public async Task RuntimeSearch_RecoversPostStartupSchemaCorruptionWithoutPropagatingFailure()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RuntimeSearch_RecoversPostStartupSchemaCorruptionWithoutPropagatingFailure(bool holdMaintenanceConnection)
     {
         using var scope = RegressionTestPackageScope.Create();
         var catalog = new RegressionTestExtensionCatalog();
@@ -1501,14 +1503,44 @@ public sealed class HistorySearchHardeningTests
         var search = services.GetRequiredService<HistorySearchService>();
         await indexer.StartAsync();
         await WaitUntilAsync(() => projection.GetSnapshot().DocumentCount == 1);
-        using (var connection = Open(projection.DatabasePath))
-        using (var command = connection.CreateCommand())
+        var checkpointOpened = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseCheckpoint = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (holdMaintenanceConnection)
         {
-            command.CommandText = "DROP TABLE HistoryDocumentsFts;";
-            command.ExecuteNonQuery();
+            await projection.WaitForWalCheckpointIdleAsync();
+            projection.BeforeWalCheckpoint = () =>
+            {
+                checkpointOpened.TrySetResult();
+                releaseCheckpoint.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
+            };
         }
+        HistorySearchResponse response;
+        try
+        {
+            using (var connection = Open(projection.DatabasePath))
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "DROP TABLE HistoryDocumentsFts;";
+                command.ExecuteNonQuery();
+                if (holdMaintenanceConnection)
+                {
+                    projection.RetryWalCheckpoint();
+                    await checkpointOpened.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                }
+            }
 
-        var response = await search.SearchAsync(new HistorySearchRequest("recovery"));
+            var query = Task.Run(() => search.SearchAsync(new HistorySearchRequest("recovery")));
+            var completedWhilePinned = holdMaintenanceConnection
+                && await Task.WhenAny(query, Task.Delay(250)) == query;
+            releaseCheckpoint.TrySetResult();
+            response = await query.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(completedWhilePinned, "Recovery must drain the maintenance connection before replacing the database.");
+        }
+        finally
+        {
+            releaseCheckpoint.TrySetResult();
+            projection.BeforeWalCheckpoint = null;
+        }
 
         Assert.Empty(response.Results);
         Assert.True(response.IsPartial);

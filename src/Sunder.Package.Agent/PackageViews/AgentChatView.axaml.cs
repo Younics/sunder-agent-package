@@ -291,7 +291,7 @@ public partial class AgentChatView : UserControl,
         {
             CancelPendingToolExpansion();
             _pendingToolRefreshHeaders.Clear();
-            _transcriptBehavior.MarkInitialPlacementPending(_navigationCancellation?.Token ?? default);
+            _transcriptBehavior.OnTranscriptSelectionChanging(_navigationCancellation?.Token ?? default);
         }
 
         if (string.Equals(e.PropertyName, nameof(AgentChatViewModel.IsComposerExpanded), StringComparison.Ordinal))

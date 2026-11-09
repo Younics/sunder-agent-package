@@ -12,6 +12,71 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 
 public sealed partial class TranscriptViewportMutationTests
 {
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CancelledInitialPlacement_IgnoresLateTranscriptEventsUntilExplicitRetry(bool stillLoading)
+    {
+        var row = CreateRow("row", 1000);
+        var tail = CreateRow("tail", 1, role: TranscriptAnchorItemRole.TailSentinel);
+        var rows = new StackPanel { Children = { row, tail } };
+        var host = CreateAnchorHost(rows, row, tail);
+        var viewer = new ScrollViewer { Content = host };
+        var owner = new Grid { Children = { viewer } };
+        var loading = true;
+        using var behavior = new TranscriptViewBehavior(owner, viewer, rows, new Button(),
+            () => false, (_, _) => Task.FromResult(false),
+            () => false, (_, _) => Task.FromResult(false), () => false, () => true,
+            () => loading, () => true, () => true, () => true, () => true,
+            anchorHost: host);
+        var coordinator = Assert.IsType<TranscriptScrollCoordinator>(
+            RenderedTranscriptGeometry.GetPrivateField(behavior, "_scrollCoordinator"));
+        var window = new Window { Width = 320, Height = 240, Content = owner };
+        window.Show();
+        try
+        {
+            using var cancellation = new CancellationTokenSource();
+            behavior.MarkInitialPlacementPending(cancellation.Token);
+            var presentation = behavior.WaitForInitialPresentationAsync();
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => presentation);
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(3));
+            var cancelled = behavior.DiagnosticSnapshot;
+            var writes = RenderedTranscriptGeometry.GetCoordinatorProgrammaticOffsetWrites(coordinator);
+            var authority = RenderedTranscriptGeometry.GetCoordinatorAuthorityRevision(coordinator);
+
+            loading = stillLoading;
+            behavior.OnTranscriptSelectionChanging();
+            behavior.OnTranscriptChanging(isPaging: false);
+            behavior.OnTranscriptChanged();
+            Assert.Equal(authority, RenderedTranscriptGeometry.GetCoordinatorAuthorityRevision(coordinator));
+            owner.IsVisible = false;
+            owner.IsVisible = true;
+            loading = false;
+            behavior.OnTranscriptChanged();
+            await LayoutAsync(window);
+            await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(3));
+
+            Assert.False(behavior.DiagnosticSnapshot.InitialPlacementPending);
+            Assert.Equal(cancelled.InitialPlacementVersion, behavior.DiagnosticSnapshot.InitialPlacementVersion);
+            Assert.Equal(writes, RenderedTranscriptGeometry.GetCoordinatorProgrammaticOffsetWrites(coordinator));
+            // Visibility changes have their own authority; late transcript events must not restart placement.
+            Assert.False(RenderedTranscriptGeometry.GetPrivateBoolean(coordinator, "_bottomPlacementLockActive"));
+            Assert.Equal(1, viewer.Opacity);
+
+            behavior.MarkInitialPlacementPending();
+            behavior.OnTranscriptChanged();
+            await behavior.WaitForInitialPresentationAsync().WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.True(behavior.DiagnosticSnapshot.InitialPlacementVersion > cancelled.InitialPlacementVersion);
+            Assert.True(RenderedTranscriptGeometry.GetCoordinatorProgrammaticOffsetWrites(coordinator) > writes);
+            Assert.Equal(1, viewer.Opacity);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public async Task StalledInitialGeometryRevealsFallbackAndCompletesPlacement()
     {

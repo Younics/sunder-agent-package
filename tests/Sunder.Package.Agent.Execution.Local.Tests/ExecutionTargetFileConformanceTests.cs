@@ -332,9 +332,10 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         AssertReadError(read, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         AssertReadError(ranged, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         AssertMutationError(write, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
-        AssertMutationError(delete, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
+        // Delete inspects configured roots before entering the strict mutation gate.
+        AssertMutationError(delete, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.False(File.Exists(Path.Combine(outside, "new.txt")));
-        Assert.True(File.Exists(Path.Combine(outside, "secret.txt")));
+        Assert.Equal("secret", await File.ReadAllTextAsync(Path.Combine(outside, "secret.txt")));
     }
 
     [FileSystemFact(
@@ -353,7 +354,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         AssertMutationError(write, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
         AssertReadError(read, AgentFileReadErrorCodes.PathCanonicalizationFailed);
-        AssertMutationError(delete, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
+        AssertMutationError(delete, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.False(File.Exists(Path.Combine(target, "file.txt")));
     }
 

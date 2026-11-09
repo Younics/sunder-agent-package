@@ -85,10 +85,11 @@ public partial class AgentChatView
         CancelPendingToolExpansion();
         _pendingToolRefreshHeaders.Clear();
         var wasInitialized = viewModel.IsInitialized;
+        var needsInitialPlacement = !wasInitialized || _transcriptBehavior.IsInitialPlacementCanceled;
         var displayedTranscriptSessionId = viewModel.DisplayedTranscriptSessionId;
         var usesLoadedHistoryWindow = target is not null
             && viewModel.TryResolveLoadedHistoryAnchor(target, out _);
-        if (!wasInitialized || target is not null)
+        if (needsInitialPlacement || target is not null)
         {
             object? preliminaryAnchor = target is null
                 ? null
@@ -159,13 +160,13 @@ public partial class AgentChatView
             }
         }
 
-        if (wasInitialized
+        if (!needsInitialPlacement
             && displayedTranscriptSessionId == viewModel.DisplayedTranscriptSessionId)
         {
             return true;
         }
 
-        if (wasInitialized)
+        if (!needsInitialPlacement)
         {
             _transcriptBehavior.MarkInitialPlacementPending(cancellationToken);
         }

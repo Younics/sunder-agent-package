@@ -67,6 +67,7 @@ public sealed partial class LocalFileRangeReadTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var config = new LocalExecutionRuntimeConfig([_root], _root);
+        using var root = HostSecurePathEngine.OpenRoot(_root);
 
         for (var index = 0; index < 100; index++)
         {
@@ -81,9 +82,8 @@ public sealed partial class LocalFileRangeReadTests : IDisposable
                 Assert.False(File.Exists(Path.Combine(_root, $"file-{index}.txt")));
             }
             else Assert.False(result.IsError, result.Summary);
+            Assert.False(HostMutationCoordinator.IsEntered(root.Handle.Identity));
         }
-
-        Assert.Equal(0, LocalFileSystemExecutor.MutationGateCount);
     }
 
     [Fact]

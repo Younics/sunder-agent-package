@@ -57,6 +57,12 @@ internal sealed partial class HistorySearchStore
         }
     }
 
+    internal Action? BeforeWalCheckpoint
+    {
+        get => _walCheckpointMaintenance.BeforeCheckpoint;
+        set => _walCheckpointMaintenance.BeforeCheckpoint = value;
+    }
+
     private void ScheduleCheckpointTruncate()
         => _walCheckpointMaintenance.ScheduleCheckpoint();
 

@@ -613,11 +613,13 @@ public sealed class AgentChatNavigationTests
         var writesAfterCancellation = GetCoordinatorProgrammaticOffsetWrites(coordinator);
         var authorityAfterCancellation = GetCoordinatorAuthorityRevision(coordinator);
         await WaitForTranscriptGeometrySettledAsync(window, transcript, coordinator);
-        Assert.Equal(writesAfterCancellation, GetCoordinatorProgrammaticOffsetWrites(coordinator));
-        Assert.Equal(authorityAfterCancellation, GetCoordinatorAuthorityRevision(coordinator));
         RecordDiagnostic(
             lifecycleTrace,
             DescribeAgentTranscriptState(view, transcript, coordinator, "geometry-established"));
+        Assert.True(writesAfterCancellation == GetCoordinatorProgrammaticOffsetWrites(coordinator),
+            $"A coordinator write occurred while geometry settled after cancellation.{Environment.NewLine}{string.Join(Environment.NewLine, lifecycleTrace)}");
+        Assert.True(authorityAfterCancellation == GetCoordinatorAuthorityRevision(coordinator),
+            $"Viewport authority changed while geometry settled after cancellation.{Environment.NewLine}{string.Join(Environment.NewLine, lifecycleTrace)}");
         var updatesAfterCancellation = layoutUpdates;
         var offsetAfterCancellation = transcript.Offset.Y;
         for (var pass = 0; pass < 3; pass++)

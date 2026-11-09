@@ -60,8 +60,10 @@ public sealed class WorkspaceEditingTests
             new AppRuntime.AgentOwnerResources(owners, rpc));
         using var viewModel = new AgentWorkspacesViewModel(gateway, gateway, catalog.WorkspaceEditors);
         await viewModel.InitializeAsync();
+        await WaitUntilAsync(() => gateway.ConnectionState == AppRuntime.AgentRuntimeConnectionState.Connected);
 
-        viewModel.CreateWorkspaceCommand.Execute(null);
+        await viewModel.CreateWorkspaceCommand.ExecuteAsync(null);
+        Assert.NotNull(viewModel.SelectedWorkspace);
         Assert.False(viewModel.HasExecutionTargetChoices);
         Assert.True(viewModel.HasNoExecutionTargetChoices);
 

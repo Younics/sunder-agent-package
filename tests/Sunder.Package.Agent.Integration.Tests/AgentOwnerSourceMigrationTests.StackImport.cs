@@ -120,11 +120,17 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
                 var text = await output + await error;
                 TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
+                var diagnostic = $"{start.FileName} {string.Join(" ", start.ArgumentList)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n{text}";
                 foreach (var (path, bytes) in producerLocks)
                     Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)),
                         "Consumer command changed a Core producer lock: " + Path.GetRelativePath(core, path));
-                if (expectedError is null) Assert.True(process.ExitCode == 0, text);
-                else { Assert.NotEqual(0, process.ExitCode); Assert.Contains(expectedError, text, StringComparison.OrdinalIgnoreCase); }
+                if (expectedError is null) Assert.True(process.ExitCode == 0, diagnostic);
+                else
+                {
+                    Assert.True(process.ExitCode != 0, diagnostic);
+                    Assert.True(text.Contains(expectedError, StringComparison.OrdinalIgnoreCase),
+                        $"Expected diagnostic '{expectedError}'.\n{diagnostic}");
+                }
             }
         }
         finally { Directory.Delete(sandbox, recursive: true); }
