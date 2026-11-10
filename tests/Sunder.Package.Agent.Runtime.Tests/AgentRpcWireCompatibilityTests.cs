@@ -492,12 +492,20 @@ public sealed class AgentRpcWireCompatibilityTests
         IDisposable lifetime, JsonElement request)
     {
         var snapshot = state.AddGenerated("test.package", registration, registration, lifetime, registration.ProviderId);
-        await foreach (var _ in new RegressionTestRpcClient(state, "test.caller").SubscribeAsync(
-                           snapshot.Endpoint,
-                           "chat-provider",
-                           "stream-chat",
-                           request))
+        try
         {
+            await foreach (var _ in new RegressionTestRpcClient(state, "test.caller").SubscribeAsync(
+                               snapshot.Endpoint,
+                               "chat-provider",
+                               "stream-chat",
+                               request))
+            {
+            }
+        }
+        catch (SunderRpcException exception) when (state.LastInvocationFailure is { } failure
+                                                  && !ReferenceEquals(failure, exception))
+        {
+            throw new AggregateException("Chat provider stream failed before wire assertions.", failure, exception);
         }
     }
 

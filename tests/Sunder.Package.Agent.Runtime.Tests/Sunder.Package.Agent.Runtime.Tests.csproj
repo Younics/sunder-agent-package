@@ -18,6 +18,9 @@
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
     <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentCore,AgentApp" />
+    <!-- Wire tests exercise the real shared provider stream through this role. -->
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Provider.Gemini/Sunder.Package.Agent.Provider.Gemini.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="GeminiWorker" />
     <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
     <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
     <Compile Include="../Shared/Repository/AgentPackageRepositoryInventory.cs;../Shared/Composition/AppRoleAliases.cs;../Shared/Presentation/*.cs;../Shared/Workspace/WorkspaceServiceFixture.cs;../Shared/Workspace/WorkspaceStorageFixture.cs"

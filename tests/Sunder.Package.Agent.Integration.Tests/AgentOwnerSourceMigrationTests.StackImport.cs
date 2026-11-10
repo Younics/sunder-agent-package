@@ -112,6 +112,9 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
                 start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
                 start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+                // Avalonia's detached telemetry collector inherits this temporary
+                // directory and can hold it open after a successful Windows build.
+                start.Environment["AVALONIA_TELEMETRY_OPTOUT"] = "1";
                 foreach (var argument in new[] { command, project }.Concat(arguments).Concat(common)) start.ArgumentList.Add(argument);
                 if (command == "msbuild")
                 {
