@@ -62,6 +62,8 @@ public sealed class MemoryAppSourceMigrationTests
     {
         using var package = RegressionTestPackageScope.Create();
         using var state = new RegressionTestRpcState(workerStyleProviderBoundary: true);
+        var catalogResetRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var catalog = AgentSourceArtifactMigrationTests.AddMemoryInspectorRuntime(state, catalogResetRelease.Task);
         var rpc = new RegressionTestRpcClient(state, "younics.ai.agent.memory.semantic");
         var (options, workerLifetime, workerServices) = AgentSourceArtifactMigrationTests.CreateGeneratedWorker(worker, package.Context, rpc);
         await using var workerOwner = workerLifetime;
@@ -133,12 +135,25 @@ public sealed class MemoryAppSourceMigrationTests
             Assert.True(acceptedProjection.Sum(value => value.Content.Length) >= 2 * 1024 * 1024);
             Assert.Equal(largeContent.Length, acceptedProjection.Single(value => value.MemoryId == largeMemory.MemoryId).Content.Length);
 
+            var resetCount = 0;
             var resets = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            gateway.ResetRequired += () => resets.TrySetResult();
+            var catalogResetDelivered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            gateway.ResetRequired += () =>
+            {
+                if (Interlocked.Increment(ref resetCount) == 1) resets.TrySetResult();
+                else catalogResetDelivered.TrySetResult();
+            };
             await gateway.InitializeAsync();
             await resets.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.True((bool)available.GetValue(instance)!);
             Assert.Contains(true, transitions);
+            // The inspector's own reset is not a fence for its Runtime catalog.
+            // Deliver that bootstrap separately before requiring worker detail, which
+            // a pending reset is explicitly allowed to coalesce.
+            await catalog.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(catalogResetDelivered.Task.IsCompleted);
+            catalogResetRelease.TrySetResult();
+            await catalogResetDelivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             var workerChanged = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             gateway.SemanticWorkerStatusChanged += () => workerChanged.TrySetResult();
             var indexing = workerServices.GetRequiredService(worker.GetType(

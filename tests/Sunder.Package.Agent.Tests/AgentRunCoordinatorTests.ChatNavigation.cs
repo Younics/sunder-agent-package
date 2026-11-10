@@ -360,37 +360,73 @@ public sealed partial class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
+        var dispatcher = new InlineAgentPresentationDispatcher();
         using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
             runtime.PermissionService,
-            runtime.RunCoordinator
+            runtime.RunCoordinator,
+            dispatcher
         );
         await viewModel.InitializeAsync();
-        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
-        var secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspace.WorkspaceId);
-        await WaitUntilAsync(() => viewModel.Workspaces.Any(workspace => workspace.WorkspaceId == secondWorkspace.WorkspaceId));
-
-        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
-            workspace.WorkspaceId == secondWorkspace.WorkspaceId
-        );
+        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var publicationRelease = new ManualResetEventSlim();
+        NotifyCollectionChangedEventHandler onWorkspaceAdded = (_, _) =>
+        {
+            if (viewModel.Workspaces.Count > 1 && published.TrySetResult())
+            {
+                Assert.True(dispatcher.CheckAccess());
+                Assert.True(publicationRelease.Wait(TimeSpan.FromSeconds(5)), "Snapshot publication was not released.");
+            }
+        };
+        await dispatcher.InvokeAsync(() => viewModel.Workspaces.CollectionChanged += onWorkspaceAdded);
+        var selectSecondWorkspace = Task.CompletedTask;
+        AgentSessionRecord secondSession;
+        string secondWorkspaceId;
+        try
+        {
+            var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
+            secondWorkspaceId = secondWorkspace.WorkspaceId;
+            secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspaceId);
+            await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            // A collection item is visible before its snapshot finishes applying. User
+            // navigation must queue behind that publication, not write into suppression.
+            var selectionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            selectSecondWorkspace = Task.Run(() =>
+            {
+                selectionStarted.TrySetResult();
+                return dispatcher.InvokeAsync(() => viewModel.SelectedWorkspace = viewModel.Workspaces.Single(
+                    workspace => workspace.WorkspaceId == secondWorkspaceId));
+            });
+            await selectionStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(selectSecondWorkspace.IsCompleted);
+        }
+        finally
+        {
+            publicationRelease.Set();
+            await selectSecondWorkspace;
+            await dispatcher.InvokeAsync(() => viewModel.Workspaces.CollectionChanged -= onWorkspaceAdded);
+        }
         await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == secondSession.SessionId);
 
-        Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
-        Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == sessionId);
-        Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
-        Assert.True(viewModel.CanUseChat);
-
-        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
-            workspace.WorkspaceId == runtime.CurrentWorkspaceId
-        );
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(secondWorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+            Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == sessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+            Assert.True(viewModel.CanUseChat);
+            viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace => workspace.WorkspaceId == runtime.CurrentWorkspaceId);
+        });
         await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == sessionId);
 
-        Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
-        Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
-        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        });
     }
 
     [Fact]
