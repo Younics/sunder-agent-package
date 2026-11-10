@@ -99,7 +99,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.DoesNotContain("3: third", read.Content, StringComparison.Ordinal);
             Assert.False((await Tool("execute", "grep", new { pattern = "needle", path = "." })).IsError);
             Assert.False((await Tool("execute", "glob", new { pattern = "*.txt", path = "." })).IsError);
-            Assert.False((await Tool("execute", "write", new { path = "created.txt", content = "created" })).IsError);
+            var written = await Tool("execute", "write", new { path = "created.txt", content = "created" });
+            Assert.False(written.IsError, $"{written.ErrorCode}: {written.Content}");
             Assert.False((await Tool("execute", "edit", new { path = "created.txt", oldString = "created", newString = "edited" })).IsError);
             Assert.Equal("edited", await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "created.txt")));
             Assert.Equal("files-arguments-invalid", (await Tool("preflight", "read", new { path = "file.txt", offset = 0 })).ErrorCode);
