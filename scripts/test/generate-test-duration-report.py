@@ -28,6 +28,8 @@ SKIP_ATTRIBUTE_NAMES = {
     "UnixFact",
     "UnixTheory",
     "UnprivilegedUnixTheory",
+    "WindowsFact",
+    "WindowsTheory",
 }
 
 
@@ -546,6 +548,8 @@ def expected_skip(
     should_skip = False
     if attribute in {"UnixFact", "UnixTheory"}:
         should_skip = platform == "windows"
+    elif attribute in {"WindowsFact", "WindowsTheory"}:
+        should_skip = platform != "windows"
     elif attribute == "UnprivilegedUnixTheory":
         if platform == "windows":
             should_skip = True

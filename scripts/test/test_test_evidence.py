@@ -158,6 +158,15 @@ public class Outer {
         with patch.object(evidence.os, "geteuid", return_value=1000, create=True):
             self.assertIsNone(evidence.expected_skip(policy, "linux", {}))
 
+    def test_windows_security_fixtures_skip_only_off_windows_even_when_prerequisites_are_required(self):
+        for attribute in ("WindowsFact", "WindowsTheory"):
+            with self.subTest(attribute=attribute):
+                policy = {"project": "fixture", "owner": "fixture", "fullyQualifiedName": "Fixture.WindowsSecurity",
+                          "attribute": attribute, "platform": None, "capability": None, "reason": "Requires real Windows ACLs."}
+                self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}))
+                for platform in ("linux", "macos"):
+                    self.assertEqual(policy["reason"], evidence.expected_skip(policy, platform, {})["reason"])
+
     def test_case_sensitive_directory_capability_is_probed_and_bound_to_the_exact_case(self):
         source = self.root / "tests/Fixture.Tests/EvidenceTests.cs"
         reason = "Case-distinct containment requires a case-sensitive directory."

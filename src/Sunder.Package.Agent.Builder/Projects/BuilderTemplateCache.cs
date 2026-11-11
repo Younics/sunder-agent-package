@@ -91,7 +91,7 @@ internal sealed partial class BuilderTemplateCache : IDisposable
                 RequireOwner(home, owner);
                 var path = Path.Combine(home, LockName);
                 CheckStateFile(path, maximumBytes: 0);
-                try { fileLock = new FileStream(path, PrivateFileOptions(FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)); }
+                try { fileLock = OpenPrivateFile(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
                 // EAGAIN/EWOULDBLOCK is 11 on Linux and 35 on macOS; Windows
                 // reports sharing/lock violations as 32/33. Other IO faults fail fast.
                 catch (IOException error) when ((error.HResult & 0xffff) is 11 or 32 or 33 or 35)

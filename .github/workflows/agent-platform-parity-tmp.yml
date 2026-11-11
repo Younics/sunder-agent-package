@@ -196,8 +196,8 @@ jobs:
           import xml.etree.ElementTree as ET
           selected = set(json.loads(os.environ["PACKAGES"]))
           required = {
-              "younics.sunder.package.maker": ("BuilderPathIdentityTests",),
-              "younics.ai.agent.execution.local": ("WindowsSecureMutationTests",),
+              "younics.sunder.package.maker": {"BuilderPathIdentityTests": 4, "BuilderWindowsCachePrivacyTests": 11},
+              "younics.ai.agent.execution.local": {"WindowsSecureMutationTests": 46},
           }
           for rid in ("win-x64", "win-arm64"):
               for package, classes in required.items():
@@ -217,6 +217,7 @@ jobs:
                               if definitions.get(result.get("testId"), "").split(",", 1)[0].endswith("." + name):
                                   observed[name].append((result.get("testName"), result.get("outcome")))
                   for name, rows in observed.items():
-                      assert rows and all(outcome == "Passed" for _, outcome in rows), (package, rid, name, rows)
+                      assert len(rows) == classes[name] and len({test for test, _ in rows}) == classes[name], (package, rid, name, rows)
+                      assert all(outcome == "Passed" for _, outcome in rows), (package, rid, name, rows)
                       print(f"{package} / {rid} / {name}: {len(rows)} passed; zero skipped")
           PY

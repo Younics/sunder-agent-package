@@ -38,7 +38,7 @@ internal static class BuilderToolchainFiles
     internal static void CreatePrivateDirectory(string path)
     {
         RejectLink(path);
-        if (OperatingSystem.IsWindows()) Directory.CreateDirectory(path);
+        if (OperatingSystem.IsWindows()) BuilderWindowsStorageSecurity.CreatePrivateDirectory(path);
         else Directory.CreateDirectory(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
