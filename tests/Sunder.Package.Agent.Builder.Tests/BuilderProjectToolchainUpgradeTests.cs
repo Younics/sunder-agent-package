@@ -10,7 +10,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderProjectToolchainUpgradeTests : IDisposable
 {
-    private readonly string root = Path.Combine(Path.GetTempPath(), "sunder-project-toolchain-upgrade", Guid.NewGuid().ToString("N"));
+    private readonly string root = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-project-toolchain-upgrade", Guid.NewGuid().ToString("N"));
     private static readonly SunderDevelopmentToolchain Versions = new("10.0.403", "24.22.1", "11.19.1");
 
     [Fact]

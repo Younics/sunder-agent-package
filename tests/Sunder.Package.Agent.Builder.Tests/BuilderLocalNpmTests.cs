@@ -200,7 +200,7 @@ public sealed class BuilderLocalNpmTests
 
     private sealed class Fixture : IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-local-npm-" + Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-local-npm-" + Guid.NewGuid().ToString("N"));
         internal BuilderProjectDriverOptions Options { get; }
         internal Dictionary<string, string> Versions { get; } = new(StringComparer.Ordinal);
         internal FakeTools Tools { get; } = new();

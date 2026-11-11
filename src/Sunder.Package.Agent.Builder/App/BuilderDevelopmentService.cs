@@ -64,9 +64,13 @@ public sealed partial class BuilderDevelopmentService(BuilderPackageOperations o
             catch (InvalidOperationException) { }
         }
         if (entry is null) throw Error("maker.development.invalid-request", "The project resolves outside the selected local workspace roots.");
-        if (request.ExpectedSourceRevision is not null && !BuilderPathService.PathComparer.Equals(Path.GetFullPath(request.EntryPoint), entry))
+        // Worker preflight already captured physical spelling. An authorized key
+        // is compared as captured, never re-resolved or case-folded for admission.
+        if (request.ExpectedSourceRevision is not null && !string.Equals(Path.GetFullPath(request.EntryPoint), entry, StringComparison.Ordinal))
             throw Error("maker.development.invalid-request", "The original physical project path was redirected after authorized preflight.");
         var project = await application.InspectAsync(entry, token).ConfigureAwait(false);
+        if (request.ExpectedSourceRevision is not null && !string.Equals(entry, project.EntryPoint, StringComparison.Ordinal))
+            throw Error("maker.development.invalid-request", "The physical project path changed during authorized inspection.");
         if (request.ExpectedSourceRevision is not null && request.ExpectedSourceRevision != project.SourceRevision)
             throw Error("maker.development.invalid-request", "The project changed after authorized preflight. Inspect the current source before retrying.");
         return project;

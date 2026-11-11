@@ -65,6 +65,12 @@ internal static class BuilderJobValidation
         if (string.IsNullOrWhiteSpace(path) || path.Length > 4096 || path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
             throw new ArgumentException(label + " must be a bounded absolute local path.");
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        // These OS-owned macOS aliases are already permitted by the source
+        // guard. Normalize them before capture/gates so direct job and scaffold
+        // inputs agree with physical inspection; never follow arbitrary links.
+        if (OperatingSystem.IsMacOS() && (full is "/var" or "/tmp"
+            || full.StartsWith("/var/", StringComparison.Ordinal) || full.StartsWith("/tmp/", StringComparison.Ordinal)))
+            full = "/private" + full;
         if (full == Path.GetPathRoot(full)) throw new ArgumentException(label + " must not be a filesystem root.");
         return full;
     }

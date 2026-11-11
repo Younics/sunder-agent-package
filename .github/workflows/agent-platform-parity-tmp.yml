@@ -196,7 +196,7 @@ jobs:
           import xml.etree.ElementTree as ET
           selected = set(json.loads(os.environ["PACKAGES"]))
           required = {
-              "younics.sunder.package.maker": {"BuilderPathIdentityTests": 4, "BuilderWindowsCachePrivacyTests": 11, "BuilderPackagePathIdentityTests": 7},
+              "younics.sunder.package.maker": {"BuilderPathIdentityTests": 9, "BuilderWindowsCachePrivacyTests": 11, "BuilderPackagePathIdentityTests": 7},
               "younics.ai.agent.execution.local": {"WindowsSecureMutationTests": 46},
           }
           for rid in ("win-x64", "win-arm64"):

@@ -478,7 +478,7 @@ public sealed class BuilderLocalNuGetTests
 
     private sealed class Fixture : IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "bln-" + Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "bln-" + Guid.NewGuid().ToString("N"));
         internal string Feed => PathOf("source feed");
         internal string PointerPath => Path.Combine(Options.CacheRootPath, "local-nuget.json");
         internal string Snapshots => Path.Combine(Options.CacheRootPath, "local-nuget");

@@ -322,7 +322,7 @@ public sealed class BuilderTemplateCacheTests
     private sealed class Fixture : IDisposable
     {
         // An explicitly injected short base in every test protects the user's real template home.
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-bt-" + Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-bt-" + Guid.NewGuid().ToString("N"));
         internal BuilderProjectDriverOptions Options => new(PathOf("tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
         internal FakeProcess Process { get; } = new();
         internal FakeTools Tools { get; } = new();

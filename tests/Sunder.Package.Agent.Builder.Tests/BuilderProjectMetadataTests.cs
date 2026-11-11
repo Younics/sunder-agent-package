@@ -11,7 +11,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderProjectMetadataTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "sunder-builder-metadata-tests", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-builder-metadata-tests", Guid.NewGuid().ToString("N"));
     private readonly BuilderProjectDiscovery _discovery = new();
     private readonly BuilderProjectMetadataService _metadata = new();
 

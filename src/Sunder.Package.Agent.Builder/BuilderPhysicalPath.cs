@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.Builder;
 
 // Canonical source names for inspection and containment classification, not a
 // retained mutation capability. Callers still validate their source/owner revision.
+[Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class BuilderPhysicalPath
 {
     internal static string ReadExisting(string path)
