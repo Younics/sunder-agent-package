@@ -53,12 +53,7 @@ internal sealed class HostSecureMountChallenge : IDisposable
         LocalSecureHandle? challengeFile = null;
         try
         {
-            root.Platform.CreateDirectory(root.Handle, directoryName);
-            directory = root.Platform.OpenChild(
-                root.Handle,
-                directoryName,
-                root.Volume,
-                requireDirectory: true);
+            directory = root.Platform.CreateDirectory(root.Handle, directoryName);
             challengeFile = root.Platform.CreateExclusiveFile(
                 directory,
                 HostChallengeFileName,

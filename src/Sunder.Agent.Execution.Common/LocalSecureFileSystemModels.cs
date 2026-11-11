@@ -37,7 +37,8 @@ internal sealed class LocalSecureHandle(
     uint userId,
     uint groupId,
     Func<SafeFileHandle> duplicateHandle,
-    bool caseSensitiveDirectory = false) : IDisposable
+    bool caseSensitiveDirectory = false,
+    bool mutationExclusive = false) : IDisposable
 {
     public SafeFileHandle Handle { get; } = handle;
 
@@ -59,6 +60,10 @@ internal sealed class LocalSecureHandle(
 
     public bool CaseSensitiveDirectory { get; } = caseSensitiveDirectory;
 
+    // Windows mutation handles deny competing delete (and regular-file write)
+    // opens. A retained approval handle is identity evidence, not that lock.
+    public bool MutationExclusive { get; } = mutationExclusive;
+
     public SafeFileHandle DuplicateHandle() => duplicateHandle();
 
     public LocalSecureHandle Retain()
@@ -67,7 +72,7 @@ internal sealed class LocalSecureHandle(
         return new LocalSecureHandle(copy, FullPath, Kind, Identity, Length, LinkCount, Mode, UserId, GroupId,
             () => OperatingSystem.IsWindows() ? LocalWindowsNative.Duplicate(copy)
                 : new SafeFileHandle(new IntPtr(LocalUnixNative.Duplicate(copy.DangerousGetHandle().ToInt32())), ownsHandle: true),
-            CaseSensitiveDirectory);
+            CaseSensitiveDirectory, MutationExclusive);
     }
 
     public void Dispose() => Handle.Dispose();
@@ -97,7 +102,15 @@ internal sealed class LocalSecureTemporaryFile(
 
     public bool WasPublished { get; set; }
 
+    public bool RetiredForCleanup { get; private set; }
+
     public void MarkDirectoryEntryRemoved() => HasDirectoryEntry = false;
+
+    public void MarkRetiredForCleanup()
+    {
+        HasDirectoryEntry = false;
+        RetiredForCleanup = true;
+    }
 
     public void RetainPublishedTarget(LocalSecureHandle target)
     {
@@ -156,7 +169,7 @@ internal interface ILocalSecureFileSystemPlatform
         out LocalSecureHandle? child,
         bool writable = false);
 
-    void CreateDirectory(LocalSecureHandle parent, string name);
+    LocalSecureHandle CreateDirectory(LocalSecureHandle parent, string name);
 
     LocalSecureHandle CreateExclusiveFile(
         LocalSecureHandle parent,

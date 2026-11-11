@@ -25,8 +25,7 @@ internal sealed class LocalCreatedDirectoryAuthority : IDisposable
                 throw new LocalSecureApprovalChangedException(Path.Combine(parent.FullPath, name));
             }
             if (_directories.Count >= 512) throw new InvalidOperationException("An operation may create at most 512 parent directories.");
-            platform.CreateDirectory(parent, name);
-            var created = platform.OpenChild(parent, name, volume, requireDirectory: true);
+            var created = platform.CreateDirectory(parent, name);
             try { Record(platform, parent, created); return created; }
             catch { created.Dispose(); throw; }
         }
@@ -83,10 +82,12 @@ internal sealed class LocalCreatedDirectoryAuthority : IDisposable
                 try
                 {
                     var name = Path.GetFileName(directory.Child.FullPath);
-                    if (!directory.Platform.TryOpenChild(directory.Parent, name, directory.Parent.Identity.Volume, true, out var current)) continue;
+                    // Probe the final entry without taking an ancestor pin which
+                    // would itself prohibit a Windows delete-access upgrade.
+                    if (!directory.Platform.TryOpenChild(directory.Parent, name, directory.Parent.Identity.Volume, false, out var current)) continue;
                     using (current)
                     {
-                        if (current!.Identity != directory.Child.Identity)
+                        if (current!.Identity != directory.Child.Identity || current.Kind != LocalSecureNodeKind.Directory)
                         {
                             _cleanupFailures.Add($"Created directory was replaced and was not removed: {directory.Child.FullPath}");
                             continue;

@@ -19,7 +19,7 @@ def platforms(root=ROOT):
 RIDS = tuple(row["rid"] for row in platforms())
 
 
-def matrices(package_tests=False, variables=None):
+def matrices(package_tests=False, variables=None, *, windows_filesystem_native=False):
     variables = variables or {}
     native, behavior, preflight = [], [], []
     for row in platforms():
@@ -28,10 +28,12 @@ def matrices(package_tests=False, variables=None):
         if not isinstance(labels, list) or not labels or any(not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", label) for label in labels):
             raise ValueError("Invalid native runner labels: " + key)
         native.append(dict(rid=row["rid"], runner=labels))
-        if row.get("behavior"):
+        extra_windows = windows_filesystem_native and row["rid"] == "win-arm64"
+        if row.get("behavior") or extra_windows:
             platform = {"win": "windows", "linux": "linux", "osx": "macos"}[row["rid"].split("-")[0]]
-            preflight.append(dict(rid=row["rid"], runner=row["runner"], platform=platform))
+            runner = labels if extra_windows else row["runner"]
+            preflight.append(dict(rid=row["rid"], runner=runner, platform=platform))
             for mode in ("source", "package") if package_tests else ("source",):
-                behavior.append(dict(rid=row["rid"], runner=row["runner"], mode=mode,
+                behavior.append(dict(rid=row["rid"], runner=runner, mode=mode,
                     platform=platform))
     return dict(native=dict(include=native), behavior=dict(include=behavior), preflight=dict(include=preflight))

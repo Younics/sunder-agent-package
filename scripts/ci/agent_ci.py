@@ -68,9 +68,10 @@ def coordinates(source):
     print(inputs.canonical(value).decode())
 
 
-def matrices(package_tests):
+def matrices(package_tests, windows_filesystem_native=False):
     import ci_platforms
-    value = ci_platforms.matrices(package_tests, json.loads(os.environ.get("RUNNER_VARIABLES", "{}")))
+    value = ci_platforms.matrices(package_tests, json.loads(os.environ.get("RUNNER_VARIABLES", "{}")),
+                                 windows_filesystem_native=windows_filesystem_native)
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             stream.writelines(f"{key}={json.dumps(item, separators=(',', ':'))}\n" for key, item in value.items())
@@ -403,6 +404,7 @@ def main():
     commands = parser.add_subparsers(dest="action", required=True)
     matrix_parser = commands.add_parser("matrices")
     matrix_parser.add_argument("--package-tests", action="store_true")
+    matrix_parser.add_argument("--windows-filesystem-native", action="store_true")
     test_parser = commands.add_parser("test")
     test_parser.add_argument("--state", required=True)
     test_parser.add_argument("--lane", required=True, choices=("source", "artifact", "package", "required-linux", "stress"))
@@ -464,7 +466,7 @@ def main():
     run_parser.add_argument("--cwd")
     run_parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.action == "matrices": matrices(args.package_tests)
+    if args.action == "matrices": matrices(args.package_tests, args.windows_filesystem_native)
     elif args.action in ("test", "report", "retain-verifier", "prepare-verifier", "test-family"):
         import test_lanes
         if args.action == "test": test_lanes.tests(args.state, args.lane)

@@ -22,6 +22,7 @@ internal static class LocalWindowsNative
     public const uint ShareRead = 0x00000001;
     public const uint ShareWrite = 0x00000002;
     public const uint ShareDelete = 0x00000004;
+    public const uint ShareAll = ShareRead | ShareWrite | ShareDelete;
     public const uint CreateNew = 1;
     public const uint OpenExisting = 3;
     public const uint BackupSemantics = 0x02000000;
@@ -35,6 +36,7 @@ internal static class LocalWindowsNative
     private const int FileCaseSensitiveInfo = 23;
     private const int FileIdInfo = 18;
     private const int FileBasicInfo = 0;
+    private const int FileStandardInfo = 1;
     private const int FileIdBothDirectoryInfo = 10;
     private const int FileIdBothDirectoryRestartInfo = 11;
     private const uint FileOpen = 1;
@@ -50,6 +52,9 @@ internal static class LocalWindowsNative
     private const uint OwnerSecurityInformation = 0x00000001;
     private const uint GroupSecurityInformation = 0x00000002;
     private const uint DaclSecurityInformation = 0x00000004;
+    private const uint ProtectedDaclSecurityInformation = 0x80000000;
+    private const uint UnprotectedDaclSecurityInformation = 0x20000000;
+    private const ushort DaclProtected = 0x1000;
     private const int SecurityFileObject = 1;
     private const uint RenameReplaceIfExists = 0x00000001;
     private const uint RenamePosixSemantics = 0x00000002;
@@ -79,12 +84,16 @@ internal static class LocalWindowsNative
         bool requireDirectory,
         bool create,
         bool caseSensitive,
-        string displayPath)
+        string displayPath,
+        uint shareMode = ShareRead,
+        IntPtr securityDescriptor = default)
     {
         var nameBuffer = Marshal.StringToHGlobalUni(name);
         var unicodeStringBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
+        var parentRetained = false;
         try
         {
+            parent.DangerousAddRef(ref parentRetained);
             var nameBytes = checked(name.Length * sizeof(char));
             if (nameBytes > ushort.MaxValue - sizeof(char))
             {
@@ -103,6 +112,7 @@ internal static class LocalWindowsNative
                 RootDirectory = parent.DangerousGetHandle(),
                 ObjectName = unicodeStringBuffer,
                 Attributes = caseSensitive ? 0U : ObjectCaseInsensitive,
+                SecurityDescriptor = securityDescriptor,
             };
             var options = FileOpenReparsePoint
                           | FileSynchronousIoNonAlert
@@ -116,7 +126,7 @@ internal static class LocalWindowsNative
                 out _,
                 IntPtr.Zero,
                 FileAttributeNormal,
-                ShareRead,
+                shareMode,
                 create ? FileCreate : FileOpen,
                 options,
                 IntPtr.Zero,
@@ -138,9 +148,48 @@ internal static class LocalWindowsNative
         }
         finally
         {
+            if (parentRetained) parent.DangerousRelease();
             Marshal.FreeHGlobal(unicodeStringBuffer);
             Marshal.FreeHGlobal(nameBuffer);
         }
+    }
+
+    public static SafeFileHandle Reopen(SafeFileHandle source, uint access, uint sharing, string path)
+    {
+        var reopened = ReOpenFile(source, access, sharing, BackupSemantics | OpenReparsePoint);
+        if (!reopened.IsInvalid) return reopened;
+        var error = Marshal.GetLastPInvokeError();
+        reopened.Dispose();
+        throw Error("ReOpenFile", path, error);
+    }
+
+    public static bool IsUnlinked(SafeFileHandle handle, string path)
+    {
+        if (!GetFileInformationByHandleExStandard(handle, FileStandardInfo, out var information,
+                (uint)Marshal.SizeOf<FileStandardInformation>()))
+            throw Error("GetFileInformationByHandleEx(FileStandardInfo)", path);
+        return information.NumberOfLinks == 0;
+    }
+
+    public static SafeFileHandle CreatePrivateFile(SafeFileHandle parent, string name, bool caseSensitive, string path)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        var sid = identity.User?.Value ?? throw new LocalSecurePathException("A Windows temporary file requires a user SID.");
+        // The protected DACL is supplied to NtCreateFile, never applied after bytes
+        // have been exposed under an inherited, possibly public, descriptor.
+        // Retain the token's normal default owner/group (including an owner-capable
+        // Administrators group for elevated callers). Only the DACL is restricted;
+        // forcing a different owner here would prevent preserving ordinary files.
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptor($"D:P(A;;FA;;;{sid})", 1,
+                out var descriptor, out _))
+            throw Error("ConvertStringSecurityDescriptorToSecurityDescriptor", path);
+        try
+        {
+            return OpenRelative(parent, name, GenericRead | GenericWrite | DeleteAccess | ReadControl | WriteDac,
+                requireDirectory: false, create: true, caseSensitive, path, ShareRead, descriptor);
+        }
+        finally { _ = LocalFree(descriptor); }
     }
 
     public static WindowsMetadata ReadMetadata(SafeFileHandle handle, string path)
@@ -255,7 +304,7 @@ internal static class LocalWindowsNative
         return (information.Flags & CaseSensitiveDirectory) != 0;
     }
 
-    public static void CopyMetadataAndSecurity(
+    public static void CopyBasicMetadata(
         SafeFileHandle source,
         SafeFileHandle destination,
         string sourcePath,
@@ -269,6 +318,12 @@ internal static class LocalWindowsNative
         {
             throw Error("GetFileInformationByHandleEx(FileBasicInfo)", sourcePath);
         }
+        // These attributes imply data/metadata which a default-stream rewrite
+        // cannot faithfully reproduce. Refuse rather than silently discard it.
+        const uint unsupportedAttributes = 0x00000200 | 0x00000800 | 0x00001000 | 0x00004000 | 0x00008000;
+        if ((basic.FileAttributes & unsupportedAttributes) != 0)
+            throw new PlatformNotSupportedException($"Strict Windows writes cannot preserve the storage attributes of '{sourcePath}'.");
+        RequireDefaultStreamOnly(source, sourcePath);
         var basicBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<FileBasicInformation>());
         try
         {
@@ -287,12 +342,14 @@ internal static class LocalWindowsNative
             Marshal.FreeHGlobal(basicBuffer);
         }
 
-        var identitySecurityInformation = OwnerSecurityInformation | GroupSecurityInformation;
-        var securityInformation = identitySecurityInformation | DaclSecurityInformation;
+    }
+
+    public static FileSecuritySnapshot CaptureSecurity(SafeFileHandle source, string path)
+    {
         var result = GetSecurityInfo(
-            source.DangerousGetHandle(),
+            source,
             SecurityFileObject,
-            securityInformation,
+            OwnerSecurityInformation | GroupSecurityInformation | DaclSecurityInformation,
             out var owner,
             out var group,
             out var dacl,
@@ -300,47 +357,84 @@ internal static class LocalWindowsNative
             out var securityDescriptor);
         if (result != 0)
         {
-            throw Error("GetSecurityInfo", sourcePath, checked((int)result));
-        }
-        var destinationResult = GetSecurityInfo(
-            destination.DangerousGetHandle(),
-            SecurityFileObject,
-            identitySecurityInformation,
-            out var destinationOwner,
-            out var destinationGroup,
-            out _,
-            out _,
-            out var destinationSecurityDescriptor);
-        if (destinationResult != 0)
-        {
-            _ = LocalFree(securityDescriptor);
-            throw Error("GetSecurityInfo", destinationPath, checked((int)destinationResult));
+            throw Error("GetSecurityInfo", path, checked((int)result));
         }
         try
         {
-            if (!SidsEqual(owner, destinationOwner) || !SidsEqual(group, destinationGroup))
-            {
-                throw new PlatformNotSupportedException(
-                    $"Strict Windows writes cannot preserve the owner or primary group of '{sourcePath}'.");
-            }
-            result = SetSecurityInfo(
-                destination.DangerousGetHandle(),
-                SecurityFileObject,
-                DaclSecurityInformation,
-                IntPtr.Zero,
-                IntPtr.Zero,
-                dacl,
-                IntPtr.Zero);
-            if (result != 0)
-            {
-                throw Error("SetSecurityInfo", destinationPath, checked((int)result));
-            }
+            if (!GetSecurityDescriptorControl(securityDescriptor, out var control, out _))
+                throw Error("GetSecurityDescriptorControl", path);
+            return new FileSecuritySnapshot(securityDescriptor, owner, group, dacl, (control & DaclProtected) != 0);
         }
-        finally
+        catch
         {
-            _ = LocalFree(destinationSecurityDescriptor);
             _ = LocalFree(securityDescriptor);
+            throw;
         }
+    }
+
+    internal sealed class FileSecuritySnapshot(IntPtr descriptor, IntPtr owner, IntPtr group, IntPtr dacl, bool protectedDacl) : IDisposable
+    {
+        private IntPtr _descriptor = descriptor;
+        public bool ProtectedDacl { get; } = protectedDacl;
+        public byte[] DaclBytes
+        {
+            get
+            {
+                ObjectDisposedException.ThrowIf(_descriptor == IntPtr.Zero, this);
+                if (dacl == IntPtr.Zero) return [];
+                var length = unchecked((ushort)Marshal.ReadInt16(dacl, 2));
+                if (length < 8) throw new LocalSecurePathException("A Windows file has an invalid DACL.");
+                var bytes = new byte[length];
+                Marshal.Copy(dacl, bytes, 0, length);
+                return bytes;
+            }
+        }
+
+        public void RequireSameOwner(SafeFileHandle destination, string path)
+        {
+            ObjectDisposedException.ThrowIf(_descriptor == IntPtr.Zero, this);
+            using var current = CaptureSecurity(destination, path);
+            if (!SidsEqual(owner, current.Owner) || !SidsEqual(group, current.Group))
+                throw new PlatformNotSupportedException($"Strict Windows writes cannot preserve the owner or primary group of '{path}'.");
+        }
+
+        private IntPtr Owner => owner;
+        private IntPtr Group => group;
+
+        public void ApplyDacl(SafeFileHandle destination, string path)
+        {
+            ObjectDisposedException.ThrowIf(_descriptor == IntPtr.Zero, this);
+            RequireSameOwner(destination, path);
+            var result = SetSecurityInfo(destination, SecurityFileObject,
+                DaclSecurityInformation | (ProtectedDacl ? ProtectedDaclSecurityInformation : UnprotectedDaclSecurityInformation),
+                IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+            if (result != 0) throw Error("SetSecurityInfo", path, checked((int)result));
+            using var applied = CaptureSecurity(destination, path);
+            if (applied.ProtectedDacl != ProtectedDacl || !applied.DaclBytes.AsSpan().SequenceEqual(DaclBytes))
+                throw new LocalSecurePathException($"The Windows DACL could not be preserved exactly: {path}");
+        }
+
+        public void Dispose()
+        {
+            var allocated = Interlocked.Exchange(ref _descriptor, IntPtr.Zero);
+            if (allocated != IntPtr.Zero) _ = LocalFree(allocated);
+        }
+    }
+
+    private static void RequireDefaultStreamOnly(SafeFileHandle source, string path)
+    {
+        const int size = 64 * 1024;
+        var buffer = Marshal.AllocHGlobal(size);
+        try
+        {
+            if (!GetFileInformationByHandleExBuffer(source, 7 /* FileStreamInfo */, buffer, size))
+                throw Error("GetFileInformationByHandleEx(FileStreamInfo)", path);
+            var length = Marshal.ReadInt32(buffer, 4);
+            if (Marshal.ReadInt32(buffer) != 0 || length != "::$DATA".Length * sizeof(char)
+                || Marshal.PtrToStringUni(buffer + 24, length / sizeof(char)) != "::$DATA")
+                throw new PlatformNotSupportedException($"Strict Windows writes cannot preserve alternate data streams of '{path}'.");
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
     }
 
     public static SafeFileHandle Duplicate(SafeFileHandle source)
@@ -362,34 +456,41 @@ internal static class LocalWindowsNative
 
     public static void Flush(SafeFileHandle handle, string path)
     {
-        if (!FlushFileBuffers(handle))
-        {
-            throw Error("FlushFileBuffers", path);
-        }
+        // Normal flags include metadata and the storage cache; no DATA_ONLY or
+        // NO_SYNC fallback is permitted. The caller supplies write/append access.
+        var status = NtFlushBuffersFileEx(handle, 0, IntPtr.Zero, 0, out _);
+        if (status < 0) throw Error("NtFlushBuffersFileEx", path, checked((int)RtlNtStatusToDosError(status)));
     }
 
-    public static void Rename(
+    public static void RenameNoReplace(
         SafeFileHandle file,
         SafeFileHandle parent,
         string targetName,
-        bool overwrite,
         string path)
     {
-        var nameBytes = System.Text.Encoding.Unicode.GetBytes(targetName);
+        var nameLength = checked(targetName.Length * sizeof(char));
         var rootOffset = IntPtr.Size == 8 ? 8 : 4;
         var lengthOffset = rootOffset + IntPtr.Size;
         var nameOffset = lengthOffset + sizeof(uint);
-        var buffer = Marshal.AllocHGlobal(nameOffset + nameBytes.Length);
+        var bufferSize = checked((nameOffset + nameLength + sizeof(char) + IntPtr.Size - 1) & -IntPtr.Size);
+        var buffer = Marshal.AllocHGlobal(bufferSize);
+        var parentRetained = false;
         try
         {
-            var flags = RenamePosixSemantics | (overwrite ? RenameReplaceIfExists : 0);
-            Marshal.WriteInt32(buffer, unchecked((int)flags));
+            parent.DangerousAddRef(ref parentRetained);
+            Marshal.Copy(new byte[bufferSize], 0, buffer, bufferSize);
+            Marshal.WriteInt32(buffer, 0); // Never replace an entry selected by name.
             Marshal.WriteIntPtr(buffer, rootOffset, parent.DangerousGetHandle());
-            Marshal.WriteInt32(buffer, lengthOffset, nameBytes.Length);
-            Marshal.Copy(nameBytes, 0, buffer + nameOffset, nameBytes.Length);
-            if (!SetFileInformationByHandle(file, FileRenameInfoEx, buffer, (uint)(nameOffset + nameBytes.Length)))
+            Marshal.WriteInt32(buffer, lengthOffset, nameLength);
+            // NT names are UTF-16 code units. Encoding.Unicode's replacement
+            // fallback would silently select a different name for a lone surrogate.
+            Marshal.Copy(targetName.ToCharArray(), 0, buffer + nameOffset, targetName.Length);
+            // Native FileRenameInformationEx (65) supports RootDirectory. Do not
+            // rely on Win32's reserved FILE_RENAME_INFO.RootDirectory field.
+            var status = NtSetInformationFile(file, out _, buffer, (uint)bufferSize, 65);
+            if (status < 0)
             {
-                var error = Marshal.GetLastPInvokeError();
+                var error = checked((int)RtlNtStatusToDosError(status));
                 if (error is 80 or 183)
                 {
                     throw new LocalSecureFileAlreadyExistsException(path);
@@ -400,11 +501,12 @@ internal static class LocalWindowsNative
                         "The Windows filesystem does not support handle-relative atomic rename required by strict Local writes.",
                         new Win32Exception(error));
                 }
-                throw Error("SetFileInformationByHandle(FileRenameInfoEx)", path, error);
+                throw Error("NtSetInformationFile(FileRenameInformationEx)", path, error);
             }
         }
         finally
         {
+            if (parentRetained) parent.DangerousRelease();
             Marshal.FreeHGlobal(buffer);
         }
     }
@@ -524,6 +626,16 @@ internal static class LocalWindowsNative
         public uint FileAttributes;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileStandardInformation
+    {
+        public long AllocationSize;
+        public long EndOfFile;
+        public uint NumberOfLinks;
+        [MarshalAs(UnmanagedType.U1)] public bool DeletePending;
+        [MarshalAs(UnmanagedType.U1)] public bool Directory;
+    }
+
     [DllImport(Kernel32, EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle CreateFile(
         string fileName,
@@ -572,6 +684,19 @@ internal static class LocalWindowsNative
         out FileBasicInformation fileInformation,
         uint bufferSize);
 
+    [DllImport(Kernel32, EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleExStandard(
+        SafeFileHandle file, int fileInformationClass, out FileStandardInformation information, uint bufferSize);
+
+    [DllImport(Kernel32, SetLastError = true)]
+    private static extern SafeFileHandle ReOpenFile(SafeFileHandle original, uint desiredAccess, uint shareMode, uint flags);
+
+    [DllImport(Advapi32, EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(
+        string descriptor, uint revision, out IntPtr securityDescriptor, out uint size);
+
     [DllImport(Kernel32)]
     private static extern uint GetFileType(SafeFileHandle file);
 
@@ -616,11 +741,19 @@ internal static class LocalWindowsNative
         uint eaLength);
 
     [DllImport(Ntdll)]
+    private static extern int NtFlushBuffersFileEx(SafeFileHandle handle, uint flags, IntPtr parameters, uint parametersSize,
+        out IoStatusBlock ioStatusBlock);
+
+    [DllImport(Ntdll)]
+    private static extern int NtSetInformationFile(SafeFileHandle handle, out IoStatusBlock ioStatusBlock,
+        IntPtr information, uint length, int informationClass);
+
+    [DllImport(Ntdll)]
     private static extern uint RtlNtStatusToDosError(int status);
 
     [DllImport(Advapi32, SetLastError = true)]
     private static extern uint GetSecurityInfo(
-        IntPtr handle,
+        SafeFileHandle handle,
         int objectType,
         uint securityInformation,
         out IntPtr owner,
@@ -631,13 +764,17 @@ internal static class LocalWindowsNative
 
     [DllImport(Advapi32, SetLastError = true)]
     private static extern uint SetSecurityInfo(
-        IntPtr handle,
+        SafeFileHandle handle,
         int objectType,
         uint securityInformation,
         IntPtr owner,
         IntPtr group,
         IntPtr dacl,
         IntPtr sacl);
+
+    [DllImport(Advapi32, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetSecurityDescriptorControl(IntPtr descriptor, out ushort control, out uint revision);
 
     [DllImport(Advapi32)]
     [return: MarshalAs(UnmanagedType.Bool)]

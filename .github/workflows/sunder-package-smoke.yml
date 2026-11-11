@@ -19,6 +19,10 @@ on:
         description: Run focused then full Builder tests on Windows/Linux
         type: boolean
         default: false
+      windows-filesystem-native:
+        description: Qualify Local filesystem on Windows x64/ARM64 and Linux without publication
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       core_commit:
@@ -71,10 +75,14 @@ jobs:
         env:
           PACKAGES: ${{ inputs.packages }}
           BUILDER_DIAGNOSTICS: ${{ inputs.builder-diagnostics }}
+          WINDOWS_FILESYSTEM_NATIVE: ${{ inputs.windows-filesystem-native }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           FULL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          if [[ "$BUILDER_DIAGNOSTICS" == true ]]; then
+          if [[ "$WINDOWS_FILESYSTEM_NATIVE" == true ]]; then
+            test "$BUILDER_DIAGNOSTICS" != true
+            python3 -B scripts/ci/version_selection.py --packages '["younics.ai.agent.execution.local"]'
+          elif [[ "$BUILDER_DIAGNOSTICS" == true ]]; then
             python3 -B scripts/ci/version_selection.py --packages '["younics.sunder.package.maker"]'
           elif [[ "$PACKAGES" == \[* ]]; then
             python3 -B scripts/ci/version_selection.py --packages "$PACKAGES"
@@ -96,9 +104,11 @@ jobs:
         env:
           PACKAGE_TESTS: ${{ (inputs.package-tests || steps.selection.outputs.full == 'true') && !inputs.builder-diagnostics }}
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
+          WINDOWS_FILESYSTEM_NATIVE: ${{ inputs.windows-filesystem-native }}
         run: |
           args=()
           [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
+          [[ "$WINDOWS_FILESYSTEM_NATIVE" != true ]] || args+=(--windows-filesystem-native)
           python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
 
   preflight:

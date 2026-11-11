@@ -95,11 +95,12 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
         }
     }
 
-    public void CreateDirectory(LocalSecureHandle parent, string name)
+    public LocalSecureHandle CreateDirectory(LocalSecureHandle parent, string name)
     {
         ValidateName(name);
         LocalUnixNative.MakeDirectory(parent.Handle.DangerousGetHandle().ToInt32(), name);
         LocalUnixNative.Sync(parent.Handle.DangerousGetHandle().ToInt32());
+        return OpenChild(parent, name, parent.Identity.Volume, requireDirectory: true);
     }
 
     public LocalSecureHandle CreateExclusiveFile(

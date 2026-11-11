@@ -353,6 +353,21 @@ class AgentCiTests(unittest.TestCase):
         for labels in ('[]', '"ubuntu-latest"', '["linux\\noutput=changed"]'):
             with self.assertRaises(ValueError): ci_platforms.matrices(variables={"SUNDER_AGENT_RUNNER_LINUX_ARM64": labels})
 
+    def test_windows_filesystem_native_adds_arm64_without_replacing_default_or_six_native_lanes(self):
+        for packages in (False, True):
+            with self.subTest(package_tests=packages):
+                ordinary = ci_platforms.matrices(packages)
+                expanded = ci_platforms.matrices(packages, {"SUNDER_AGENT_RUNNER_WIN_ARM64": '["windows-11-arm"]'},
+                                                windows_filesystem_native=True)
+                self.assertEqual(ordinary["native"], expanded["native"])
+                self.assertEqual(ordinary["behavior"]["include"],
+                    [row for row in expanded["behavior"]["include"] if row["rid"] != "win-arm64"])
+                arm = [row for row in expanded["behavior"]["include"] if row["rid"] == "win-arm64"]
+                self.assertEqual({"source", "package"} if packages else {"source"}, {row["mode"] for row in arm})
+                self.assertTrue(all(row["platform"] == "windows" and row["runner"] == ["windows-11-arm"] for row in arm))
+                self.assertEqual({"win-x64", "win-arm64", "linux-x64"},
+                    {row["rid"] for row in expanded["preflight"]["include"]})
+
     def test_scoped_source_archives_preserve_tested_payloads_and_reject_rebuilt_bytes(self):
         fixture = runpy.run_path(str(Path(__file__).with_name("native-family.fixture.py")))
         root = self.root / "component-archives"

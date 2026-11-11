@@ -1,6 +1,6 @@
 namespace Sunder.Agent.Execution.Common;
 
-internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPlatform
+internal sealed partial class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPlatform
 {
     public LocalSecureHandle OpenSystemRoot(string pathRoot)
     {
@@ -27,10 +27,6 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
         var desiredAccess = LocalWindowsNative.GenericRead
                             | LocalWindowsNative.ReadAttributes
                             | LocalWindowsNative.ReadControl;
-        if (writable)
-        {
-            desiredAccess |= LocalWindowsNative.DeleteAccess;
-        }
         var handle = LocalWindowsNative.OpenRelative(
             parent.Handle,
             name,
@@ -38,7 +34,12 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
             requireDirectory,
             create: false,
             caseSensitive: LocalWindowsNative.IsCaseSensitiveDirectory(parent.Handle, parent.FullPath),
-            path);
+            path,
+            // Approval handles retain identity. Mutation access is acquired with
+            // a separate exclusive handle and checked against that identity.
+            requireDirectory
+                ? LocalWindowsNative.ShareRead | LocalWindowsNative.ShareWrite
+                : LocalWindowsNative.ShareAll);
         LocalSecureHandle child;
         try
         {
@@ -77,77 +78,108 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
         }
     }
 
-    public void CreateDirectory(LocalSecureHandle parent, string name)
-        => throw MutationUnavailable();
+    public LocalSecureHandle CreateDirectory(LocalSecureHandle parent, string name)
+    {
+        ValidateName(name);
+        RequireDirectory(parent);
+        var path = Path.Combine(parent.FullPath, name);
+        var handle = LocalWindowsNative.OpenRelative(parent.Handle, name,
+            LocalWindowsNative.GenericRead | LocalWindowsNative.GenericWrite | LocalWindowsNative.DeleteAccess,
+            requireDirectory: true, create: true, parent.CaseSensitiveDirectory, path,
+            LocalWindowsNative.ShareRead | LocalWindowsNative.ShareWrite);
+        LocalSecureHandle? created = null;
+        try
+        {
+            created = CreateHandle(handle, path, requireDirectory: true, mutationExclusive: true);
+            RequireVolume(parent, created);
+            Flush(created);
+            Flush(parent);
+            var read = LocalWindowsNative.Reopen(handle, LocalWindowsNative.GenericRead | LocalWindowsNative.ReadControl,
+                LocalWindowsNative.ShareAll, path);
+            try
+            {
+                var retained = CreateHandle(read, path, requireDirectory: true);
+                RequireIdentity(retained, LocalWindowsNative.ReadMetadata(handle, path));
+                return retained;
+            }
+            catch { read.Dispose(); throw; }
+        }
+        catch (Exception operationException)
+        {
+            try
+            {
+                // Only our creation handle is authority for failed-create cleanup.
+                LocalWindowsNative.Delete(handle, path);
+                if (created is null) handle.Dispose(); else created.Dispose();
+                Flush(parent);
+            }
+            catch (Exception recoveryException)
+            {
+                throw new LocalSecureMutationRecoveryException(path, new AggregateException(operationException, recoveryException));
+            }
+            throw;
+        }
+        finally { if (created is null) handle.Dispose(); else created.Dispose(); }
+    }
 
     public LocalSecureHandle CreateExclusiveFile(
         LocalSecureHandle parent,
         string name,
         uint unixMode)
-        => throw MutationUnavailable();
+    {
+        ValidateName(name);
+        RequireDirectory(parent);
+        var path = Path.Combine(parent.FullPath, name);
+        var handle = LocalWindowsNative.CreatePrivateFile(parent.Handle, name, parent.CaseSensitiveDirectory, path);
+        try
+        {
+            var created = CreateHandle(handle, path, requireDirectory: false, mutationExclusive: true);
+            RequireVolume(parent, created);
+            return created;
+        }
+        catch (Exception operationException)
+        {
+            // No bytes have been written, and this is still the exclusive created
+            // file handle. Never reopen its name to infer cleanup authority.
+            try
+            {
+                LocalWindowsNative.Delete(handle, path);
+                handle.Dispose();
+                Flush(parent);
+            }
+            catch (Exception recoveryException)
+            {
+                throw new LocalSecureMutationRecoveryException(path, new AggregateException(operationException, recoveryException));
+            }
+            finally { handle.Dispose(); }
+            throw;
+        }
+    }
 
     public void Flush(LocalSecureHandle handle)
-        => throw MutationUnavailable();
+    {
+        if (handle.Kind == LocalSecureNodeKind.RegularFile)
+        {
+            LocalWindowsNative.Flush(handle.Handle, handle.FullPath);
+            return;
+        }
+        // ReOpenFile changes access on this exact object, not on FullPath. A
+        // directory read/approval handle need not carry write permissions.
+        using var writable = LocalWindowsNative.Reopen(handle.Handle,
+            LocalWindowsNative.GenericWrite | LocalWindowsNative.ReadAttributes,
+            LocalWindowsNative.ShareAll, handle.FullPath);
+        RequireIdentity(handle, LocalWindowsNative.ReadMetadata(writable, handle.FullPath));
+        LocalWindowsNative.Flush(writable, handle.FullPath);
+    }
 
     public bool IsUnlinked(LocalSecureHandle handle)
-        => throw MutationUnavailable();
+        => LocalWindowsNative.IsUnlinked(handle.Handle, handle.FullPath);
 
     public IEnumerable<string> EnumerateNames(LocalSecureHandle directory)
     {
         RequireDirectory(directory);
         return LocalWindowsNative.EnumerateNames(directory.Handle, directory.FullPath);
     }
-
-    public LocalSecureMutationReservation ReserveMutationSlots(
-        LocalSecureHandle parent,
-        int slotCount,
-        CancellationToken cancellationToken)
-        => throw MutationUnavailable();
-
-    public LocalSecureTemporaryFile CreateTemporaryFile(
-        LocalSecureHandle parent,
-        string name,
-        LocalSecureMutationReservation reservation)
-        => throw MutationUnavailable();
-
-    public void PublishTemporaryFile(
-        LocalSecureHandle parent,
-        LocalSecureTemporaryFile temporaryFile,
-        string targetName,
-        bool overwrite,
-        LocalSecureTargetExpectation expectation,
-        LocalSecureHandle? expectedTarget,
-        Func<LocalSecureHandle, bool>? finalTargetValidator,
-        LocalSecureMutationReservation reservation,
-        Action beforeMutationSyscall,
-        Action afterQuarantineBeforeMetadata,
-        Action beforePostQuarantineSync,
-        Action afterValidationBeforePublish,
-        Action afterNamedTemporaryCopyChunk,
-        Action beforeNamedTemporaryPublish,
-        Action afterPublishedFileSync,
-        Action afterPublishedParentSync,
-        Action beforePostPublicationRestore,
-        CancellationToken cancellationToken)
-        => throw MutationUnavailable();
-
-    public void DeleteEntry(
-        LocalSecureHandle parent,
-        string name,
-        bool directory,
-        LocalSecureHandle expectedTarget,
-        Func<LocalSecureHandle, bool>? finalTargetValidator,
-        LocalSecureMutationReservation reservation,
-        Action beforeMutationSyscall,
-        Action afterQuarantine,
-        CancellationToken cancellationToken)
-        => throw MutationUnavailable();
-
-    public void DeleteTemporaryFile(
-        LocalSecureHandle parent,
-        LocalSecureTemporaryFile temporaryFile,
-        LocalSecureMutationReservation reservation)
-        => throw MutationUnavailable();
 
     private static LocalSecureHandle OpenPath(string path, bool requireDirectory, bool writable)
     {
@@ -158,7 +190,8 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
         {
             desiredAccess |= LocalWindowsNative.DeleteAccess;
         }
-        var handle = LocalWindowsNative.OpenHandle(path, desiredAccess, LocalWindowsNative.OpenExisting);
+        var handle = LocalWindowsNative.OpenHandle(path, desiredAccess, LocalWindowsNative.OpenExisting,
+            LocalWindowsNative.ShareRead | LocalWindowsNative.ShareWrite);
         if (handle.IsInvalid)
         {
             var error = System.Runtime.InteropServices.Marshal.GetLastPInvokeError();
@@ -184,7 +217,8 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
     private static LocalSecureHandle CreateHandle(
         Microsoft.Win32.SafeHandles.SafeFileHandle handle,
         string path,
-        bool requireDirectory)
+        bool requireDirectory,
+        bool mutationExclusive = false)
     {
         var metadata = LocalWindowsNative.ReadMetadata(handle, path);
         if (requireDirectory && metadata.Kind != LocalSecureNodeKind.Directory)
@@ -207,11 +241,23 @@ internal sealed class LocalWindowsFileSystemPlatform : ILocalSecureFileSystemPla
             groupId: 0,
             () => LocalWindowsNative.Duplicate(handle),
             caseSensitiveDirectory: metadata.Kind == LocalSecureNodeKind.Directory
-                                    && LocalWindowsNative.IsCaseSensitiveDirectory(handle, path));
+                                    && LocalWindowsNative.IsCaseSensitiveDirectory(handle, path),
+            mutationExclusive);
     }
 
-    private static PlatformNotSupportedException MutationUnavailable()
-        => new(FileOperation.StrictPlatformMutationUnavailableMessage);
+    private static void RequireVolume(LocalSecureHandle parent, LocalSecureHandle child)
+    {
+        if (child.Identity.Volume != parent.Identity.Volume)
+            throw new LocalSecurePathException($"Path crosses a Windows volume boundary: {child.FullPath}");
+    }
+
+    private static void RequireIdentity(LocalSecureHandle expected, WindowsMetadata actual)
+    {
+        if (new LocalSecureIdentity(actual.Volume, actual.FileId, actual.FileIdHigh) != expected.Identity
+            || actual.Kind != expected.Kind
+            || (actual.Kind == LocalSecureNodeKind.RegularFile && actual.LinkCount != 1))
+            throw new LocalSecureApprovalChangedException(expected.FullPath);
+    }
 
     private static void RequireDirectory(LocalSecureHandle handle)
     {

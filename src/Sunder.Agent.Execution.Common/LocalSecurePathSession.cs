@@ -147,8 +147,7 @@ internal sealed class LocalSecurePathSession : IDisposable
                     if (createdDirectories is not null) created = createdDirectories.CreateChild(root.Platform, current, segment, root.Volume);
                     else
                     {
-                        root.Platform.CreateDirectory(current, segment);
-                        created = root.Platform.OpenChild(current, segment, root.Volume, requireDirectory: true);
+                        created = root.Platform.CreateDirectory(current, segment);
                     }
                     descendants.Add(created);
                     current = created;
@@ -546,8 +545,7 @@ internal sealed class LocalSecurePathSession : IDisposable
                     {
                         throw new LocalSecurePathNotFoundException(Path.Combine(current.FullPath, segment));
                     }
-                    root.Platform.CreateDirectory(current, segment);
-                    child = root.Platform.OpenChild(current, segment, root.Volume, requireDirectory: true);
+                    child = root.Platform.CreateDirectory(current, segment);
                 }
                 descendants.Add(child!);
                 current = child!;
