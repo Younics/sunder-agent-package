@@ -8,9 +8,10 @@ namespace Sunder.Package.Agent.Builder;
 [SunderPackageCodeRole(SunderPackageCodeRole.App)]
 public sealed partial class BuilderPackageOperations(BuilderProjectApplicationService application, IPackageDevelopmentService development) : IAsyncDisposable
 {
-    private readonly ConcurrentDictionary<string, BuilderDevelopmentSession> _sessions = new(BuilderPathService.PathComparer);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(BuilderPathService.PathComparer);
-    private readonly ConcurrentDictionary<string, string> _logPackages = new(BuilderPathService.PathComparer);
+    private readonly BuilderPathService _paths = new();
+    private readonly ConcurrentDictionary<string, BuilderDevelopmentSession> _sessions = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _gates = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _logPackages = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource _lifetime = new();
     private readonly object _sync = new();
     private Task? _disposal;
@@ -18,18 +19,20 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     internal IReadOnlyList<BuilderDevelopmentSession> Sessions => _sessions.Values.ToArray();
     internal void Stop() => _lifetime.Cancel();
     internal BuilderDevelopmentSession? GetSession(string? entryPoint)
-        => entryPoint is null ? null : _sessions.GetValueOrDefault(Path.GetFullPath(entryPoint));
+        => entryPoint is null ? null : SessionForKey(ProjectKey(entryPoint));
+    private BuilderDevelopmentSession? SessionForKey(string key) => _sessions.GetValueOrDefault(key);
 
     public async Task<BuilderJobSnapshot> RunJobAsync(BuilderJobRequest request, Func<BuilderJobSnapshot, Task>? changed = null,
         CancellationToken cancellationToken = default, string? projectId = null)
     {
         using var operation = Begin(cancellationToken);
-        var gate = request.EntryPoint is null ? null : Gate(request.EntryPoint);
+        var key = request.EntryPoint is null ? null : ProjectKey(request.EntryPoint);
+        var gate = key is null ? null : GateForKey(key);
         var entered = false;
         try
         {
             if (gate is not null) { await gate.WaitAsync(operation.Token).ConfigureAwait(false); entered = true; }
-            if (GetSession(request.EntryPoint) is { } session) RequireMutable(session);
+            if (key is not null && SessionForKey(key) is { } session) RequireMutable(session);
             return await application.RunJobAsync(request, changed, operation.Token, projectId).ConfigureAwait(false);
         }
         catch (OperationCanceledException error) when (error.CancellationToken == operation.Token && operation.IsCancellationRequested)
@@ -40,18 +43,19 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     internal async Task<BuilderDevelopmentSession> LoadAsync(BuilderProjectInspection project, string folder, CancellationToken token)
     {
         using var operation = Begin(token);
-        var gate = Gate(project.EntryPoint);
+        var key = ProjectKey(project.EntryPoint);
+        var gate = GateForKey(key);
         var entered = false;
         try
         {
             await gate.WaitAsync(operation.Token).ConfigureAwait(false); entered = true;
-            if (GetSession(project.EntryPoint) is { } current) { RequireMutable(current); return current; }
-            var session = new BuilderDevelopmentSession(project, application, development, _lifetime.Token, Notify);
-            _sessions[project.EntryPoint] = session;
+            if (SessionForKey(key) is { } current) { RequireMutable(current); return current; }
+            var session = new BuilderDevelopmentSession(project, key, application, development, _lifetime.Token, Notify);
+            _sessions[key] = session;
             try
             {
                 await session.LoadAsync(folder, operation.Token).ConfigureAwait(false);
-                _logPackages[project.EntryPoint] = project.PackageId;
+                _logPackages[key] = project.PackageId;
                 return session;
             }
             finally { if (!session.HasHandle) await ReleaseCoreAsync(session).ConfigureAwait(false); }
@@ -63,7 +67,7 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
 
     internal async Task ReleaseAsync(BuilderDevelopmentSession session)
     {
-        var gate = Gate(session.SourceEntryPoint);
+        var gate = GateForKey(session.SourceKey);
         await gate.WaitAsync().ConfigureAwait(false);
         try { await ReleaseCoreAsync(session).ConfigureAwait(false); }
         finally { gate.Release(); }
@@ -73,12 +77,13 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
         Func<BuilderJobSnapshot, Task>? changed = null, CancellationToken cancellationToken = default, string? projectId = null)
     {
         using var operation = Begin(cancellationToken);
-        var gate = Gate(project.EntryPoint);
+        var key = ProjectKey(project.EntryPoint);
+        var gate = GateForKey(key);
         var entered = false;
         try
         {
             await gate.WaitAsync(operation.Token).ConfigureAwait(false); entered = true;
-            var session = GetSession(project.EntryPoint) ?? throw new InvalidOperationException("Load this development package before using Hotreload Package.");
+            var session = SessionForKey(key) ?? throw new InvalidOperationException("Load this development package before using Hotreload Package.");
             if (session.ReleaseStarted || session.SourcePackageId != project.PackageId)
                 throw new InvalidOperationException("The original development owner is stale. Reconcile Unload before loading a different package identity.");
             if (session.PendingHotreload is null)
@@ -105,12 +110,13 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     {
         if (!Guid.TryParseExact(operationId, "N", out _)) throw new ArgumentException("A correlated reload operation identity is required.", nameof(operationId));
         using var operation = Begin(cancellationToken);
-        var gate = Gate(project.EntryPoint);
+        var key = ProjectKey(project.EntryPoint);
+        var gate = GateForKey(key);
         var entered = false;
         try
         {
             await gate.WaitAsync(operation.Token).ConfigureAwait(false); entered = true;
-            var session = GetSession(project.EntryPoint) ?? throw new InvalidOperationException("Load this development package in Maker before reloading it.");
+            var session = SessionForKey(key) ?? throw new InvalidOperationException("Load this development package in Maker before reloading it.");
             if (session.ReleaseStarted || session.SourcePackageId != project.PackageId || session.DevelopmentFolder is null)
                 throw new InvalidOperationException("The original development owner is unavailable. Reconcile Unload before another mutation.");
             if (session.PendingHotreload is null)
@@ -133,7 +139,7 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
 
     internal Task<PackageDevelopmentLogs> GetLogsAsync(BuilderProjectInspection project, PackageDevelopmentLogQuery query, CancellationToken token)
     {
-        if (!_logPackages.TryGetValue(project.EntryPoint, out var packageId) || packageId != project.PackageId)
+        if (!_logPackages.TryGetValue(ProjectKey(project.EntryPoint), out var packageId) || packageId != project.PackageId)
             throw new Sunder.Sdk.Rpc.SunderRpcException(new(Sunder.Sdk.Rpc.SunderRpcErrorKind.Domain, "maker.development.unavailable",
                 "Load this development package in Maker once before reading its retained diagnostics."));
         return development.GetLogsAsync(packageId, query, token);
@@ -201,7 +207,8 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     }
 
     private static bool IsIdentity(string? value) => value is { Length: 64 } && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f');
-    private SemaphoreSlim Gate(string entryPoint) => _gates.GetOrAdd(Path.GetFullPath(entryPoint), _ => new(1, 1));
+    private string ProjectKey(string entryPoint) => _paths.CanonicalEntryPoint(entryPoint);
+    private SemaphoreSlim GateForKey(string key) => _gates.GetOrAdd(key, _ => new(1, 1));
     private static void RequireMutable(BuilderDevelopmentSession session)
     {
         if (session.ReleaseStarted) throw new InvalidOperationException("This development owner is awaiting release. Reconnect and retry Unload.");
@@ -220,7 +227,9 @@ public sealed partial class BuilderPackageOperations(BuilderProjectApplicationSe
     private async Task ReleaseCoreAsync(BuilderDevelopmentSession session)
     {
         try { await session.ReleaseAsync().ConfigureAwait(false); }
-        finally { if (session.Released) _sessions.TryRemove(new KeyValuePair<string, BuilderDevelopmentSession>(session.SourceEntryPoint, session)); }
+        // Cleanup uses the captured key and exact owner, even if source names have
+        // disappeared or now resolve elsewhere. Never reselect cleanup by pathname.
+        finally { if (session.Released) _sessions.TryRemove(new KeyValuePair<string, BuilderDevelopmentSession>(session.SourceKey, session)); }
     }
     public ValueTask DisposeAsync()
     {

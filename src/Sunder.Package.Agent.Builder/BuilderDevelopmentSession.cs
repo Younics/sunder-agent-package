@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Builder;
 /// <summary>One explicit development load and its status observer. It never builds or observes source changes.</summary>
 [SunderPackageCodeRole(SunderPackageCodeRole.App)]
 internal sealed class BuilderDevelopmentSession(
-    BuilderProjectInspection project, BuilderProjectApplicationService application, IPackageDevelopmentService development, CancellationToken lifetime,
+    BuilderProjectInspection project, string sourceKey, BuilderProjectApplicationService application, IPackageDevelopmentService development, CancellationToken lifetime,
     Action<BuilderDevelopmentSession> changed)
 {
     private IPackageDevelopmentSession? _handle;
@@ -18,6 +18,7 @@ internal sealed class BuilderDevelopmentSession(
     internal string Identity { get; } = Guid.NewGuid().ToString("N");
     internal string SourcePackageId => Project.PackageId;
     internal string SourceEntryPoint => Project.EntryPoint;
+    internal string SourceKey { get; } = sourceKey;
     internal IPackageDevelopmentSession Handle => _handle ?? throw new InvalidOperationException("No development handle has been acquired.");
     internal bool HasHandle => _handle is not null;
     internal string? DevelopmentFolder { get; private set; }

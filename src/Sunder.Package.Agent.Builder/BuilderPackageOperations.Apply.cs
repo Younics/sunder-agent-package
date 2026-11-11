@@ -4,7 +4,7 @@ using Sunder.Sdk.Packaging;
 namespace Sunder.Package.Agent.Builder;
 
 [SunderPackageCodeRole(SunderPackageCodeRole.App)]
-internal sealed record BuilderApplySelection(BuilderProjectInspection Project, BuilderDevelopmentSession? Owner, string Folder, string Identity)
+internal sealed record BuilderApplySelection(BuilderProjectInspection Project, string SourceKey, BuilderDevelopmentSession? Owner, string Folder, string Identity)
 {
     internal BuilderDevelopmentSession? AppliedOwner { get; set; } = Owner;
     internal bool InitialLoadAttempted { get; set; }
@@ -14,21 +14,24 @@ public sealed partial class BuilderPackageOperations
 {
     internal static IReadOnlyList<string> BuiltOutputs(BuilderProjectInspection project)
         => BuilderProjectDriverOutputs.BuiltOutputs(project)
-            .Distinct(BuilderPathService.PathComparer).Where(folder => File.Exists(Path.Combine(folder, "manifest", "sunder-package.json"))).ToArray();
+            .Where(folder => File.Exists(Path.Combine(folder, "manifest", "sunder-package.json")))
+            .Select(folder => new BuilderPathService().CanonicalEntryPoint(folder)).Distinct(StringComparer.Ordinal).ToArray();
 
     internal async Task<BuilderApplySelection> SelectApplyAsync(BuilderProjectInspection project, string? folder, CancellationToken token)
     {
         using var operation = Begin(token);
-        var gate = Gate(project.EntryPoint);
+        var key = ProjectKey(project.EntryPoint);
+        var gate = GateForKey(key);
         if (!await gate.WaitAsync(0, operation.Token).ConfigureAwait(false))
             throw new InvalidOperationException("A project operation is still running. Observe it before selecting another apply; no mutation was admitted.");
         try
         {
-            var owner = GetSession(project.EntryPoint);
+            var owner = SessionForKey(key);
             if (owner is not null)
             {
                 RequireMutable(owner);
-                if (owner.SourcePackageId != project.PackageId || folder is not null && !BuilderPathService.PathComparer.Equals(folder, owner.DevelopmentFolder))
+                if (owner.SourcePackageId != project.PackageId || folder is not null
+                    && (owner.DevelopmentFolder is null || !_paths.SameEntryPoint(folder, owner.DevelopmentFolder)))
                     throw new InvalidOperationException("The existing Maker owner selects different output/identity. Unload it explicitly before changing that selection.");
                 folder = owner.DevelopmentFolder;
             }
@@ -38,7 +41,7 @@ public sealed partial class BuilderPackageOperations
             if (candidates.Count != 1) throw new InvalidDataException("output_required: Query outputs and select one; multiple built outputs exist.");
             folder = candidates[0];
             var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(folder, project, BuilderToolchainPlatform.Current.DotnetRid, false, operation.Token).ConfigureAwait(false);
-            return new(project, owner, folder, identity);
+            return new(project, key, owner, folder, identity);
         }
         finally { gate.Release(); }
     }
@@ -46,26 +49,28 @@ public sealed partial class BuilderPackageOperations
     internal async Task<(PackageDevelopmentRevision Revision, string Effect)> ApplyBuiltAsync(BuilderApplySelection selected, string id, CancellationToken token)
     {
         using var operation = Begin(token);
-        var gate = Gate(selected.Project.EntryPoint);
+        if (ProjectKey(selected.Project.EntryPoint) != selected.SourceKey)
+            throw new InvalidOperationException("The selected physical project path changed before apply. No different owner was acquired.");
+        var gate = GateForKey(selected.SourceKey);
         await gate.WaitAsync(operation.Token).ConfigureAwait(false);
         try
         {
-            var owner = GetSession(selected.Project.EntryPoint);
+            var owner = SessionForKey(selected.SourceKey);
             if (!ReferenceEquals(owner, selected.Owner)) throw new InvalidOperationException("The selected development owner changed before admission could execute. No replacement owner was acquired.");
             var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(selected.Folder, selected.Project, BuilderToolchainPlatform.Current.DotnetRid, false, operation.Token).ConfigureAwait(false);
             if (identity != selected.Identity) throw new InvalidDataException("Built output changed after selection; no different revision was applied.");
             var effect = owner is null ? "loaded" : "reloaded";
             if (owner is null)
             {
-                owner = new(selected.Project, application, development, _lifetime.Token, Notify);
+                owner = new(selected.Project, selected.SourceKey, application, development, _lifetime.Token, Notify);
                 selected.AppliedOwner = owner;
-                _sessions[selected.Project.EntryPoint] = owner;
+                _sessions[selected.SourceKey] = owner;
                 SetReloadProgress(owner, id, "running", "loading");
                 try
                 {
                     selected.InitialLoadAttempted = true;
                     await owner.LoadAsync(selected.Folder, operation.Token).ConfigureAwait(false);
-                    _logPackages[selected.Project.EntryPoint] = selected.Project.PackageId;
+                    _logPackages[selected.SourceKey] = selected.Project.PackageId;
                 }
                 finally { if (!owner.HasHandle) await ReleaseCoreAsync(owner).ConfigureAwait(false); }
             }
@@ -108,7 +113,7 @@ public sealed partial class BuilderPackageOperations
         }
         catch (Exception error)
         {
-            if (selected.AppliedOwner is { } owner && ReferenceEquals(owner, GetSession(selected.Project.EntryPoint)) && owner.ReloadProgress?.State != "failed")
+            if (selected.AppliedOwner is { } owner && ReferenceEquals(owner, SessionForKey(selected.SourceKey)) && owner.ReloadProgress?.State != "failed")
                 SetReloadProgress(owner, id, "unknown", owner.ReloadProgress?.Phase ?? "loading", BuilderJobText.Safe(error.Message, 512));
             throw;
         }
@@ -118,13 +123,13 @@ public sealed partial class BuilderPackageOperations
     internal async Task<PackageDevelopmentRevision?> ObserveApplyAsync(BuilderApplySelection selection, string operationId, CancellationToken token)
     {
         using var operation = Begin(token);
-        var gate = Gate(selection.Project.EntryPoint);
+        var gate = GateForKey(selection.SourceKey);
         await gate.WaitAsync(operation.Token).ConfigureAwait(false);
         try
         {
-            var owner = GetSession(selection.Project.EntryPoint);
+            var owner = SessionForKey(selection.SourceKey);
             if (owner is null || !owner.HasHandle || owner.ReleaseStarted || !ReferenceEquals(owner, selection.AppliedOwner)
-                || !BuilderPathService.PathComparer.Equals(owner.DevelopmentFolder, selection.Folder)) return null;
+                || owner.DevelopmentFolder is null || !_paths.SameEntryPoint(owner.DevelopmentFolder, selection.Folder)) return null;
             // Identical historical bytes cannot prove that an unacknowledged reload
             // committed. Only its original acknowledgement supplies this fence.
             if (selection.Owner is not null && owner.ReloadCommittedRevision is null) return null;
