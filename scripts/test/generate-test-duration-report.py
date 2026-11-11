@@ -501,6 +501,33 @@ def filesystem_capability_available(capability: str) -> bool:
                 target = root / "target.txt"
                 target.write_text("target", encoding="utf-8")
                 os.link(target, root / "link.txt")
+            elif capability == "CaseSensitiveDirectories":
+                if sys.platform == "win32":
+                    import ctypes
+                    from ctypes import wintypes
+                    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                    create = kernel.CreateFileW
+                    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+                    create.restype = wintypes.HANDLE
+                    set_information = kernel.SetFileInformationByHandle
+                    set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+                    set_information.restype = wintypes.BOOL
+                    close = kernel.CloseHandle
+                    close.argtypes = [wintypes.HANDLE]
+                    close.restype = wintypes.BOOL
+                    handle = create(str(root), 0x100, 7, None, 3, 0x02000000, None)
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        flags = wintypes.DWORD(1)
+                        if not set_information(handle, 23, ctypes.byref(flags), ctypes.sizeof(flags)):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                    finally:
+                        close(handle)
+                target = root / "case-sensitive-probe"
+                target.write_text("probe", encoding="utf-8")
+                return not (root / "CASE-SENSITIVE-PROBE").exists()
             else:
                 return False
         return True

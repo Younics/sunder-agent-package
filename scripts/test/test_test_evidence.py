@@ -158,6 +158,22 @@ public class Outer {
         with patch.object(evidence.os, "geteuid", return_value=1000, create=True):
             self.assertIsNone(evidence.expected_skip(policy, "linux", {}))
 
+    def test_case_sensitive_directory_capability_is_probed_and_bound_to_the_exact_case(self):
+        source = self.root / "tests/Fixture.Tests/EvidenceTests.cs"
+        reason = "Case-distinct containment requires a case-sensitive directory."
+        source.write_text(source.read_text().replace('[Fact]\n    public void OrdinaryTest()',
+            f'[FileSystemFact(TestFileSystemCapability.CaseSensitiveDirectories, "{reason}")]\n    public void OrdinaryTest()'))
+        available = evidence.filesystem_capability_available("CaseSensitiveDirectories")
+        if not available:
+            self.rows[1] = ("OrdinaryTest", None, "NotExecuted",
+                            reason + " Required filesystem capability 'CaseSensitiveDirectories' is unavailable.")
+        self.write_reports()
+        report = self.report()
+        self.assertEqual([], report["evidenceViolations"])
+        self.assertEqual(1 if available else 2, report["summary"]["skipped"])
+        self.assertEqual("CaseSensitiveDirectories", next(row["capability"] for row in report["skipPolicyEvidence"]
+            if row["fullyQualifiedName"] == "Fixture.Tests.EvidenceTests.OrdinaryTest"))
+
     def test_skips_cannot_trade_identity_or_change_reason(self):
         self.rows[:2] = [("ExpectedArtifactSkip", None, "Passed", ""),
                          ("OrdinaryTest", None, "NotExecuted", self.artifact_reason)]

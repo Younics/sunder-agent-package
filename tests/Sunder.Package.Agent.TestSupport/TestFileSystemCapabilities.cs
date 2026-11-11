@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 
 namespace Sunder.Package.Agent.TestSupport;
 
@@ -9,6 +10,7 @@ public enum TestFileSystemCapability
     DirectorySymbolicLinks,
     HardLinks,
     UnixDirectorySymbolicLinks,
+    CaseSensitiveDirectories,
 }
 
 public static class TestFileSystemCapabilities
@@ -42,6 +44,7 @@ public static class TestFileSystemCapabilities
                     Directory.CreateDirectory(target);
                     Directory.CreateSymbolicLink(Path.Combine(root, "link"), target);
                 })),
+            [TestFileSystemCapability.CaseSensitiveDirectories] = new(() => Probe(EnableCaseSensitiveDirectory)),
         };
 
     public static string? GetUnavailableReason(TestFileSystemCapability capability, string reason)
@@ -66,6 +69,26 @@ public static class TestFileSystemCapabilities
         {
             throw new IOException(new Win32Exception(result).Message);
         }
+    }
+
+    public static void EnableCaseSensitiveDirectory(string path)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            using var handle = OpenDirectory(path, 0x100, 7, 0, 3, 0x02000000, 0);
+            if (handle.IsInvalid) throw new IOException(new Win32Exception(Marshal.GetLastPInvokeError()).Message);
+            uint flags = 1;
+            if (!SetCaseSensitiveInformation(handle, 23, ref flags, sizeof(uint)))
+                throw new IOException(new Win32Exception(Marshal.GetLastPInvokeError()).Message);
+        }
+        var original = Path.Combine(path, "case-sensitive-probe-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            using (new FileStream(original, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            if (File.Exists(Path.Combine(path, Path.GetFileName(original).ToUpperInvariant())))
+                throw new PlatformNotSupportedException("The selected temporary directory does not have case-sensitive names.");
+        }
+        finally { File.Delete(original); }
     }
 
     private static string? Probe(Action<string> probe)
@@ -106,4 +129,12 @@ public static class TestFileSystemCapabilities
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateHardLinkWindows(string fileName, string existingFileName, nint securityAttributes);
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle OpenDirectory(string path, uint access, uint share, nint security,
+        uint disposition, uint attributes, nint template);
+
+    [DllImport("kernel32.dll", EntryPoint = "SetFileInformationByHandle", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetCaseSensitiveInformation(SafeFileHandle handle, int informationClass, ref uint flags, uint size);
 }

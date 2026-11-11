@@ -32,7 +32,7 @@ public sealed class BuilderPathService
     public string CanonicalEntryPoint(string path) => ResolvePhysicalPath(path);
 
     public bool SameEntryPoint(string left, string right)
-        => string.Equals(CanonicalEntryPoint(left), CanonicalEntryPoint(right), PathComparison);
+        => string.Equals(CanonicalEntryPoint(left), CanonicalEntryPoint(right), StringComparison.Ordinal);
 
     public string FormatLocalPath(string hostPath)
     {
@@ -125,15 +125,17 @@ public sealed class BuilderPathService
 
                 if (!Directory.Exists(current) && !File.Exists(current))
                 {
-                    return pendingSegments.Count == 0
-                        ? current
-                        : Path.GetFullPath(Path.Combine([current, .. pendingSegments]));
+                    // Resolve the existing prefix's actual spelling before adding
+                    // the missing suffix. An OS-wide case fold would authorize a
+                    // different-case sibling on APFSX or a case-sensitive NTFS directory.
+                    var parent = BuilderPhysicalPath.ReadExisting(Path.GetDirectoryName(current)!);
+                    return Path.GetFullPath(Path.Combine([parent, segment, .. pendingSegments]));
                 }
             }
 
             if (!redirected)
             {
-                return Path.GetFullPath(current);
+                return BuilderPhysicalPath.ReadExisting(current);
             }
         }
     }
@@ -190,10 +192,11 @@ public sealed class BuilderPathService
 
     private static bool IsSameOrChildPath(string candidatePath, string rootPath)
     {
-        var candidate = Path.GetFullPath(candidatePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var root = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        return string.Equals(candidate, root, PathComparison)
-               || candidate.StartsWith(root + Path.DirectorySeparatorChar, PathComparison);
+        var candidate = Path.TrimEndingDirectorySeparator(Path.GetFullPath(candidatePath));
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(rootPath));
+        var prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        return string.Equals(candidate, root, StringComparison.Ordinal)
+               || candidate.StartsWith(prefix, StringComparison.Ordinal);
     }
 
     private static StringComparison PathComparison
