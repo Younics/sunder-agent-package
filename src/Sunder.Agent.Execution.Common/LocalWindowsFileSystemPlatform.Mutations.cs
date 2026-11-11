@@ -76,6 +76,8 @@ internal sealed partial class LocalWindowsFileSystemPlatform
 
         WindowsQuarantine? original = null;
         LocalWindowsNative.FileSecuritySnapshot? security = null;
+        LocalWindowsNative.FileMetadataSnapshot? metadata = null;
+        LocalWindowsNative.AlternateStreamSnapshot? streams = null;
         LocalSecureHandle? published = null;
         try
         {
@@ -86,8 +88,8 @@ internal sealed partial class LocalWindowsFileSystemPlatform
                     throw new LocalSecureApprovalChangedException(path);
                 afterQuarantineBeforeMetadata();
                 security = LocalWindowsNative.CaptureSecurity(original.Handle.Handle, path);
-                security.RequireSameOwner(temporaryFile.Handle, path);
-                LocalWindowsNative.CopyBasicMetadata(original.Handle.Handle, temporaryFile.Handle, path, temporaryFile.FullPath);
+                streams = LocalWindowsNative.CopyAlternateStreams(original.Handle.Handle, temporaryFile.Handle, path, temporaryFile.FullPath);
+                metadata = LocalWindowsNative.CopyBasicMetadata(original.Handle.Handle, temporaryFile.Handle, path, temporaryFile.FullPath);
                 beforePostQuarantineSync();
                 LocalWindowsNative.Flush(temporaryFile.Handle, temporaryFile.FullPath);
                 if (finalTargetValidator is not null && !finalTargetValidator(original.Handle))
@@ -106,6 +108,9 @@ internal sealed partial class LocalWindowsFileSystemPlatform
             afterValidationBeforePublish();
             beforeNamedTemporaryPublish();
             ValidateTemporaryFile(parent, temporaryFile);
+            streams?.ValidateSource();
+            metadata?.Validate();
+            if (original is not null) security!.RequireUnchangedSource(original.Handle.Handle, path);
             try { LocalWindowsNative.RenameNoReplace(temporaryFile.Handle, parent.Handle, targetName, path); }
             catch (LocalSecureFileAlreadyExistsException) when (expectation.ApprovalBound)
             { throw new LocalSecureApprovalChangedException(path); }
@@ -115,7 +120,7 @@ internal sealed partial class LocalWindowsFileSystemPlatform
             // Keep the protected temporary DACL until the exact-handle rename has
             // published the file. Broad original read permissions must never expose
             // staged secret bytes under a discoverable temporary name.
-            security?.ApplyDacl(temporaryFile.Handle, path);
+            security?.ApplySecurity(temporaryFile.Handle, path);
             LocalWindowsNative.Flush(temporaryFile.Handle, path);
             afterPublishedFileSync();
             Flush(parent);
@@ -135,6 +140,10 @@ internal sealed partial class LocalWindowsFileSystemPlatform
         }
         catch (Exception operationException)
         {
+            // Release only our per-stream locks before exact-owned sanitation;
+            // the creation handle continues pinning the whole staged file.
+            streams?.Dispose();
+            streams = null;
             try
             {
                 if (temporaryFile.WasPublished)
@@ -156,6 +165,7 @@ internal sealed partial class LocalWindowsFileSystemPlatform
         finally
         {
             published?.Dispose();
+            streams?.Dispose();
             security?.Dispose();
             original?.Dispose();
         }
@@ -218,6 +228,7 @@ internal sealed partial class LocalWindowsFileSystemPlatform
             stream.SetLength(0);
             stream.Flush(flushToDisk: true);
         }
+        LocalWindowsNative.SanitizeAlternateStreams(temporaryFile.Handle, temporaryFile.FullPath);
         LocalWindowsNative.Flush(temporaryFile.Handle, temporaryFile.FullPath);
         if (LocalWindowsNative.ReadMetadata(temporaryFile.Handle, temporaryFile.FullPath).Length != 0)
             throw new LocalSecurePathException("A retained temporary entry could not be truncated.");

@@ -7,7 +7,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 // Direct native-backend qualification deliberately does not bypass or change the
 // executor's production availability guard. These same methods are its backend.
 [SupportedOSPlatform("windows")]
-public sealed class WindowsSecureMutationTests : IDisposable
+public sealed partial class WindowsSecureMutationTests : IDisposable
 {
     private readonly string _root = Directory.CreateTempSubdirectory("sunder-windows-mutations-").FullName;
 
@@ -82,8 +82,12 @@ public sealed class WindowsSecureMutationTests : IDisposable
         if (originalSecurity is not null)
         {
             using var publishedSecurity = LocalWindowsNative.CaptureSecurity(retained.Handle, path);
+            Assert.Equal(originalSecurity.OwnerBytes, publishedSecurity.OwnerBytes);
+            Assert.Equal(originalSecurity.GroupBytes, publishedSecurity.GroupBytes);
             Assert.Equal(originalSecurity.ProtectedDacl, publishedSecurity.ProtectedDacl);
             Assert.Equal(originalSecurity.DaclBytes, publishedSecurity.DaclBytes);
+            Assert.Equal(originalSecurity.AccessPolicyBytes, publishedSecurity.AccessPolicyBytes);
+            Assert.Equal(originalSecurity.AccessPolicyControl, publishedSecurity.AccessPolicyControl);
             Assert.Equal(FileAttributes.Hidden | FileAttributes.ReadOnly | FileAttributes.Archive, File.GetAttributes(path));
         }
         Assert.DoesNotContain(Directory.EnumerateFiles(_root), file => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(file)));
@@ -116,7 +120,7 @@ public sealed class WindowsSecureMutationTests : IDisposable
             root.Platform.DeleteTemporaryFile(root.Handle, temporary, reservation);
         }
         Assert.Equal("original", File.ReadAllText(path));
-        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(File.ReadAllText), text => text.Contains("SECRET", StringComparison.Ordinal));
+        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
         using var retrySlots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
         using var retry = Stage(root.Platform, root.Handle, retrySlots, "retry");
         Publish(root.Platform, root.Handle, retry, "target.txt", expected, retrySlots);
@@ -144,8 +148,8 @@ public sealed class WindowsSecureMutationTests : IDisposable
         Assert.Equal(overwrite ? "original" : "ATTACKER", File.ReadAllText(path));
         if (overwrite)
             Assert.Contains(Directory.EnumerateFiles(_root).Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
-                .Select(File.ReadAllText), text => text == "ATTACKER");
-        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(File.ReadAllText), text => text.Contains("SECRET", StringComparison.Ordinal));
+                .Select(ReadPath), text => text == "ATTACKER");
+        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
     }
 
     [PlatformFact(TestPlatform.Windows, "The native source mutation must match the retained approval identity.")]
@@ -222,20 +226,66 @@ public sealed class WindowsSecureMutationTests : IDisposable
         }
     }
 
-    [PlatformFact(TestPlatform.Windows, "Unsupported Windows metadata must not be silently discarded by an overwrite.")]
-    public void AlternateStream_RefusesOverwriteAndRestoresBothStreams()
+    [PlatformTheory(TestPlatform.Windows, "Windows overwrites must preserve all data streams and sanitize copied streams on rollback.")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AlternateStreams_PreserveContentAndSanitizeFailedPublication(bool failAfterPublication)
     {
         using var root = HostSecurePathEngine.OpenRoot(_root);
         var path = Path.Combine(_root, "target.txt");
         File.WriteAllText(path, "original");
         File.WriteAllText(path + ":metadata", "retain-stream");
+        File.WriteAllText(path + ":Zone.Identifier", "[ZoneTransfer]\r\nZoneId=3\r\n");
+        var chunkedBytes = Enumerable.Range(0, 131_077).Select(index => (byte)(index % 251)).ToArray();
+        File.WriteAllBytes(path + ":文-😀", chunkedBytes);
         using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
         using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
         using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
-        Assert.Throws<PlatformNotSupportedException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots));
-        root.Platform.DeleteTemporaryFile(root.Handle, temporary, slots);
-        Assert.Equal("original", File.ReadAllText(path));
-        Assert.Equal("retain-stream", File.ReadAllText(path + ":metadata"));
+        var checkedLocks = false;
+        void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
+        {
+            if (checkpoint == LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish)
+            {
+                // ADS sharing is separate from the default stream. The actual
+                // copied stream must be locked too, not merely the main file.
+                Assert.Throws<LocalSecurePathException>(() =>
+                {
+                    using var attempted = LocalWindowsNative.OpenRelative(temporary.Handle, ":metadata:$DATA",
+                        LocalWindowsNative.GenericWrite, false, false, true, path, LocalWindowsNative.ShareAll);
+                });
+                checkedLocks = true;
+            }
+            if (failAfterPublication && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
+                throw new LocalSecurePathException("Injected failure after stream transfer.");
+        }
+        if (failAfterPublication)
+            Assert.Throws<LocalSecurePathException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint));
+        else
+            Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint);
+        Assert.True(checkedLocks);
+        using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
+        Assert.Equal(failAfterPublication ? expected.Identity : temporary.Identity, final.Identity);
+        Assert.Equal(failAfterPublication ? "original" : "SECRET", Read(final));
+        Assert.Equal("retain-stream", ReadPath(path + ":metadata"));
+        Assert.Equal("[ZoneTransfer]\r\nZoneId=3\r\n", ReadPath(path + ":Zone.Identifier"));
+        using (var data = File.OpenHandle(path + ":文-😀", FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+        {
+            Assert.Equal(chunkedBytes.LongLength, RandomAccess.GetLength(data));
+            using var stream = new FileStream(data, FileAccess.Read);
+            using var bytes = new MemoryStream();
+            stream.CopyTo(bytes);
+            Assert.Equal(chunkedBytes, bytes.ToArray());
+        }
+        if (failAfterPublication)
+        {
+            Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
+            var sanitized = Assert.Single(Directory.EnumerateFiles(_root), file => file != path);
+            foreach (var suffix in new[] { ":metadata", ":Zone.Identifier", ":文-😀" })
+            {
+                using var data = File.OpenHandle(sanitized + suffix, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                Assert.Equal(0, RandomAccess.GetLength(data));
+            }
+        }
     }
 
     [PlatformFact(TestPlatform.Windows, "A failed restore must report recovery-required without stranding new secret bytes.")]
@@ -258,8 +308,8 @@ public sealed class WindowsSecureMutationTests : IDisposable
         Assert.True(restored);
         Assert.False(File.Exists(path));
         Assert.Contains(Directory.EnumerateFiles(_root).Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
-            .Select(File.ReadAllText), text => text == "original");
-        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(File.ReadAllText), text => text.Contains("SECRET", StringComparison.Ordinal));
+            .Select(ReadPath), text => text == "original");
+        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
     }
 
     [PlatformFact(TestPlatform.Windows, "Created directory cleanup must use its creation identity without sharing conflicts.")]
@@ -348,6 +398,16 @@ public sealed class WindowsSecureMutationTests : IDisposable
     {
         using var stream = new FileStream(handle.DuplicateHandle(), FileAccess.Read);
         stream.Position = 0;
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
+
+    private static string ReadPath(string path)
+    {
+        // Test inspection must share the backend's still-retained write/delete
+        // authority; ordinary File.ReadAllText would conflict with that handle.
+        using var file = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+        using var stream = new FileStream(file, FileAccess.Read);
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();
     }

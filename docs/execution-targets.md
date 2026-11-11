@@ -140,6 +140,13 @@ handle-relative no-replace publication/quarantine, metadata transfer, directory 
 and rollback. The manual Validate option `windows-filesystem-native` selects the Local
 component and adds native Windows ARM64 to the ordinary Windows x64/Linux lanes; it
 does not publish, enable mutations, or establish six-platform final-archive acceptance.
+This is an implementation checkpoint, not a supported read-only Windows profile.
+Completion requires the same successful Files read/write/edit/patch/delete contract
+on every supported OS, without OS-specific public methods, flags or reduced tests.
+The guard-closed backend includes exact-handle identity/access-policy transfer,
+bounded extended-attribute and alternate-stream preservation, final metadata checks,
+and all-stream sanitation of owned failed publications. Native qualification and
+remaining metadata/authority review are still required before enabling it.
 
 Configured roots and approved outside resources containing any link/reparse point, hard-linked regular file, or device/volume transition are unsupported, including links that remain inside a configured root. Permission planning emits a durable `local-host-resource-claim-v1` identity record for the exact logical path, configured root, complete opened identity chain, target expectation, invocation scope, generations, and owners. Only the final component may be absent; a missing intermediate directory fails before a claim is emitted. Configured-scope claims carry no transient authority. Outside planning additionally issues distinct random `local-resource-authority-v4` capabilities for the bounded number of authority uses required by the tool. Each capability owns one retained no-follow authority chain, expires after 30 minutes, is process-local and single-use, and is bound to the exact claim and tool activation.
 
