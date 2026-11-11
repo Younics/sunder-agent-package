@@ -455,13 +455,29 @@ internal static partial class LocalWindowsNative
             if (result != 0) throw Error("SetSecurityInfo", path, checked((int)result));
             using var applied = CaptureSecurity(destination, path);
             if (!Matches(applied))
-                throw new LocalSecurePathException($"The Windows identity or access policy could not be preserved exactly: {path}");
+                throw new LocalSecurePathException($"The Windows identity or access policy could not be preserved exactly ({DescribeDifferences(applied)}): {path}");
         }
 
         private bool Matches(FileSecuritySnapshot current)
             => SidsEqual(owner, current.Owner) && SidsEqual(group, current.Group)
                && current.ProtectedDacl == ProtectedDacl && current.DaclBytes.AsSpan().SequenceEqual(DaclBytes)
                && current.AccessPolicyControl == AccessPolicyControl && current.AccessPolicyBytes.AsSpan().SequenceEqual(AccessPolicyBytes);
+
+        private string DescribeDifferences(FileSecuritySnapshot current)
+        {
+            // Diagnose native preservation without printing SIDs, ACL entries,
+            // resource claims or other caller security-descriptor contents.
+            var differences = new List<string>();
+            if (!SidsEqual(owner, current.Owner)) differences.Add("owner");
+            if (!SidsEqual(group, current.Group)) differences.Add("group");
+            if (current.ProtectedDacl != ProtectedDacl) differences.Add($"DACL protection {ProtectedDacl}->{current.ProtectedDacl}");
+            if (!current.DaclBytes.AsSpan().SequenceEqual(DaclBytes)) differences.Add($"DACL bytes {DaclBytes.Length}->{current.DaclBytes.Length}");
+            if (current.AccessPolicyControl != AccessPolicyControl)
+                differences.Add($"policy control 0x{AccessPolicyControl:x4}->0x{current.AccessPolicyControl:x4}");
+            if (!current.AccessPolicyBytes.AsSpan().SequenceEqual(AccessPolicyBytes))
+                differences.Add($"policy bytes {AccessPolicyBytes.Length}->{current.AccessPolicyBytes.Length}");
+            return string.Join(", ", differences);
+        }
 
         private IntPtr Owner => owner;
         private IntPtr Group => group;

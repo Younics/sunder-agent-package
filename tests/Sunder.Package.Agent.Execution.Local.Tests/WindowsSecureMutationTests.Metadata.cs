@@ -24,6 +24,7 @@ public sealed partial class WindowsSecureMutationTests
         Assert.NotEmpty(original.AccessPolicyBytes);
         Assert.False(original.AccessPolicyBytes.AsSpan().SequenceEqual(staged.AccessPolicyBytes));
         var checkedPrivate = false;
+        var failureInjected = false;
         void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
         {
             if (checkpoint == LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish)
@@ -35,13 +36,17 @@ public sealed partial class WindowsSecureMutationTests
                 checkedPrivate = true;
             }
             if (failAfterPublication && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
+            {
+                failureInjected = true;
                 throw new LocalSecurePathException("Injected failure after security transfer.");
+            }
         }
         if (failAfterPublication)
             Assert.Throws<LocalSecurePathException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint));
         else
             Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint);
         Assert.True(checkedPrivate);
+        Assert.Equal(failAfterPublication, failureInjected);
         using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
         using var finalSecurity = LocalWindowsNative.CaptureSecurity(final.Handle, path);
         Assert.Equal(failAfterPublication ? expected.Identity : temporary.Identity, final.Identity);
@@ -70,15 +75,20 @@ public sealed partial class WindowsSecureMutationTests
         Assert.NotEmpty(originalAttributes);
         using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
         using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
+        var failureInjected = false;
         void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
         {
             if (failAfterPublication && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
+            {
+                failureInjected = true;
                 throw new LocalSecurePathException("Injected failure after extended-attribute transfer.");
+            }
         }
         if (failAfterPublication)
             Assert.Throws<LocalSecurePathException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint));
         else
             Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint);
+        Assert.Equal(failAfterPublication, failureInjected);
         using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
         Assert.Equal(failAfterPublication ? expected.Identity : temporary.Identity, final.Identity);
         Assert.Equal(failAfterPublication ? "original" : "SECRET", Read(final));
