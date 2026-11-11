@@ -38,7 +38,8 @@ public sealed partial class AgentPublicSourceMigrationTests
         Assert.Equal(descriptor.AbiSha256, registration.AbiSha256);
         var loopVersion = loopPackage == CurrentContractInventory.AgentId
             ? CurrentContractInventory.PackageVersionFor(loopPackage) : "2.0.0";
-        state.Add(loopPackage, descriptor, implementation, registration.Handler, EmptyDisposable.Instance, registration.ProviderId, loopVersion);
+        state.Add(loopPackage, descriptor, implementation, owner.RecordProviderInvocation(registration.Handler),
+            EmptyDisposable.Instance, registration.ProviderId, loopVersion);
         var provider = Assert.Single((await ownerReceiver.Providers<AgentServices.IBehaviorLoopService>().ListAsync()).Providers,
             value => value.ProviderId == registration.ProviderId);
         var controlReference = Assert.Single((await ownerReceiver.Providers<AgentServices.IRunControlService>().ListAsync()).Providers,
@@ -100,6 +101,7 @@ public sealed partial class AgentPublicSourceMigrationTests
         };
         public BehaviorLoopRunRequest? LastRun { get; private set; }
         public SunderRpcCallOptions? LastRunOptions { get; private set; }
+        public CancellationToken LastRunCancellationToken { get; private set; }
         public List<Scope> Scopes { get; } = [];
         public ValueTask<JsonElement> InvokeAsync(SunderRpcEndpointReference endpoint, string serviceId, string methodId, JsonElement request,
             SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
@@ -128,6 +130,30 @@ public sealed partial class AgentPublicSourceMigrationTests
             SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
             => inner.SubscribeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
 
+        internal ISunderRpcServiceHandler RecordProviderInvocation(ISunderRpcServiceHandler handler)
+            => new InvocationRecorder(this, handler);
+
+        private sealed class InvocationRecorder(BehaviorCallRecorder owner, ISunderRpcServiceHandler inner) :
+            ISunderRpcServiceHandler, ISunderRpcDeclaredErrorMetadata
+        {
+            public IReadOnlyDictionary<string, IReadOnlyDictionary<string, IReadOnlyList<string>>> DeclaredErrors
+                => ((ISunderRpcDeclaredErrorMetadata)inner).DeclaredErrors;
+
+            public ValueTask<JsonElement> InvokeUnaryAsync(SunderRpcInvocationContext context, string serviceId,
+                string methodId, JsonElement request, CancellationToken cancellationToken = default)
+            {
+                // Capture the actual Host invocation token, after call-scope linking.
+                // The outer generated-client token can cancel before this one does.
+                if (serviceId == "behavior-loop" && methodId == "run")
+                    owner.LastRunCancellationToken = cancellationToken;
+                return inner.InvokeUnaryAsync(context, serviceId, methodId, request, cancellationToken);
+            }
+
+            public IAsyncEnumerable<JsonElement> InvokeServerStreamAsync(SunderRpcInvocationContext context, string serviceId,
+                string methodId, JsonElement request, CancellationToken cancellationToken = default)
+                => inner.InvokeServerStreamAsync(context, serviceId, methodId, request, cancellationToken);
+        }
+
         public sealed class Scope(BehaviorCallRecorder owner, ISunderRpcCallScope innerScope) : ISunderRpcCallScope
         {
             public bool Disposed { get; private set; }
@@ -139,7 +165,10 @@ public sealed partial class AgentPublicSourceMigrationTests
                 SunderRpcCallOptions? options = null, CancellationToken cancellationToken = default)
             {
                 if (serviceId == "behavior-loop" && methodId == "run")
-                { owner.LastRun = request.Deserialize<BehaviorLoopRunRequest>(ObservationJson)!; owner.LastRunOptions = options ?? new(DeadlineUtc); }
+                {
+                    owner.LastRun = request.Deserialize<BehaviorLoopRunRequest>(ObservationJson)!;
+                    owner.LastRunOptions = options ?? new(DeadlineUtc);
+                }
                 return innerScope.InvokeAsync(endpoint, serviceId, methodId, request, options, cancellationToken);
             }
             public ValueTask<SunderRpcProviderSnapshot?> GetProviderAsync(SunderRpcEndpointReference endpoint, CancellationToken cancellationToken = default)

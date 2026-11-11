@@ -13,7 +13,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
     internal static MemoryConsumerRuntime AddMemoryInspectorRuntime(RegressionTestRpcState state, Task initialResetRelease)
     {
         var runtime = new MemoryConsumerRuntime { InitialResetRelease = initialResetRelease };
-        AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog, runtime, "agent.runtime.catalog");
+        AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog,
+            new RegressionTestRuntimeCatalogProvider((AgentServices.IRuntimeCatalogService)runtime), "agent.runtime.catalog");
         return runtime;
     }
 
@@ -109,6 +110,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         public AgentSessionRecord Session { get; }
         internal int SessionSubscriberCount;
         internal TaskCompletionSource Subscribed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource WatchStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal Task? InitialResetRelease { get; init; }
         internal MemoryConsumerRuntime(AgentProfileRecord? profile = null)
         {
@@ -211,6 +213,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             ResetRequired += Reset;
             try
             {
+                WatchStarted.TrySetResult();
                 if (InitialResetRelease is { } release) await release.WaitAsync(token);
                 Reset();
                 await foreach (var value in events.Reader.ReadAllAsync(token)) yield return value;

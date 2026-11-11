@@ -311,15 +311,29 @@ public sealed class SubsessionNavigationTests
                 CancellationToken.None));
             Assert.True(latestRow.IsNavigationTargetHighlighted);
 
-            await Task.Delay(TimeSpan.FromMilliseconds(2100));
-            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            var fading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            System.ComponentModel.PropertyChangedEventHandler onFading = (_, change) =>
+            {
+                if (change.PropertyName == nameof(latestRow.IsNavigationTargetFading)
+                    && latestRow.IsNavigationTargetFading) fading.TrySetResult();
+            };
+            latestRow.PropertyChanged += onFading;
+            try
+            {
+                if (latestRow.IsNavigationTargetFading) fading.TrySetResult();
+                // Observe the actual transition inside the same budget. Render work
+                // alone can overtake the Background callback which applies the fade.
+                await fading.Task.WaitAsync(TimeSpan.FromMilliseconds(2100));
+                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Background);
 
-            Assert.True(latestRow.IsNavigationTargetHighlighted);
-            Assert.True(latestRow.IsNavigationTargetFading);
-            Assert.Equal("Search result target", latestRow.NavigationHighlightHelpText);
-            Assert.Equal(
-                "Search result target",
-                Avalonia.Automation.AutomationProperties.GetHelpText(latestPresenter));
+                Assert.True(latestRow.IsNavigationTargetHighlighted);
+                Assert.True(latestRow.IsNavigationTargetFading);
+                Assert.Equal("Search result target", latestRow.NavigationHighlightHelpText);
+                Assert.Equal(
+                    "Search result target",
+                    Avalonia.Automation.AutomationProperties.GetHelpText(latestPresenter));
+            }
+            finally { latestRow.PropertyChanged -= onFading; }
         }
         finally
         {

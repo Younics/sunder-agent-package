@@ -360,7 +360,7 @@ public sealed partial class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
-        var dispatcher = new InlineAgentPresentationDispatcher();
+        using var dispatcher = new QueuedAgentPresentationDispatcher();
         using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
@@ -370,14 +370,15 @@ public sealed partial class AgentRunCoordinatorTests
             dispatcher
         );
         await viewModel.InitializeAsync();
-        var published = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var published = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         using var publicationRelease = new ManualResetEventSlim();
         NotifyCollectionChangedEventHandler onWorkspaceAdded = (_, _) =>
         {
-            if (viewModel.Workspaces.Count > 1 && published.TrySetResult())
+            if (viewModel.Workspaces.Count > 1 && published.TrySetResult(dispatcher.CheckAccess()))
             {
-                Assert.True(dispatcher.CheckAccess());
-                Assert.True(publicationRelease.Wait(TimeSpan.FromSeconds(5)), "Snapshot publication was not released.");
+                // The test's finally releases this dedicated UI thread even when a
+                // checkpoint fails. Never throw an assertion on an unowned callback.
+                publicationRelease.Wait();
             }
         };
         await dispatcher.InvokeAsync(() => viewModel.Workspaces.CollectionChanged += onWorkspaceAdded);
@@ -389,17 +390,11 @@ public sealed partial class AgentRunCoordinatorTests
             var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
             secondWorkspaceId = secondWorkspace.WorkspaceId;
             secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspaceId);
-            await published.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(await published.Task.WaitAsync(TimeSpan.FromSeconds(2)));
             // A collection item is visible before its snapshot finishes applying. User
             // navigation must queue behind that publication, not write into suppression.
-            var selectionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            selectSecondWorkspace = Task.Run(() =>
-            {
-                selectionStarted.TrySetResult();
-                return dispatcher.InvokeAsync(() => viewModel.SelectedWorkspace = viewModel.Workspaces.Single(
-                    workspace => workspace.WorkspaceId == secondWorkspaceId));
-            });
-            await selectionStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            selectSecondWorkspace = dispatcher.InvokeAsync(() => viewModel.SelectedWorkspace = viewModel.Workspaces.Single(
+                workspace => workspace.WorkspaceId == secondWorkspaceId));
             Assert.False(selectSecondWorkspace.IsCompleted);
         }
         finally

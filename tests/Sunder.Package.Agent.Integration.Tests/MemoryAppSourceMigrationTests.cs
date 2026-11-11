@@ -151,6 +151,7 @@ public sealed class MemoryAppSourceMigrationTests
             // Deliver that bootstrap separately before requiring worker detail, which
             // a pending reset is explicitly allowed to coalesce.
             await catalog.Subscribed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await catalog.WatchStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
             Assert.False(catalogResetDelivered.Task.IsCompleted);
             catalogResetRelease.TrySetResult();
             await catalogResetDelivered.Task.WaitAsync(TimeSpan.FromSeconds(5));
