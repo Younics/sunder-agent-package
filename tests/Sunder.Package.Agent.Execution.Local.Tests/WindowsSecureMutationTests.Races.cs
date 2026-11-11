@@ -6,6 +6,100 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 public sealed partial class WindowsSecureMutationTests
 {
+    [PlatformFact(TestPlatform.Windows, TestFileSystemCapability.FileSymbolicLinks, "A reparse substituted at the final Windows mutation boundary must never redirect writes or cleanup.")]
+    public void ReparseSourceRace_RejectsTheLinkAndPreservesTheOutsideTarget()
+    {
+        var workspace = Directory.CreateDirectory(Path.Combine(_root, "workspace")).FullName;
+        var path = Path.Combine(workspace, "target.txt");
+        var parked = Path.Combine(workspace, "original.txt");
+        var outside = Path.Combine(_root, "outside.txt");
+        File.WriteAllText(path, "original");
+        File.WriteAllText(outside, "OUTSIDE");
+        using var root = HostSecurePathEngine.OpenRoot(workspace);
+        using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
+        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
+        using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
+        var replaced = false;
+        Assert.Throws<LocalSecureSymbolicLinkException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, checkpoint =>
+        {
+            if (checkpoint != LocalSecureFileSystemCheckpoint.BeforePublishSyscall) return;
+            File.Move(path, parked);
+            File.CreateSymbolicLink(path, outside);
+            replaced = true;
+        }));
+        Assert.True(replaced);
+        root.Platform.DeleteTemporaryFile(root.Handle, temporary, slots);
+        Assert.Equal("original", File.ReadAllText(parked));
+        Assert.Equal("OUTSIDE", File.ReadAllText(outside));
+        Assert.NotNull(File.ResolveLinkTarget(path, returnFinalTarget: false));
+        Assert.Equal(0, RandomAccess.GetLength(temporary.Handle));
+    }
+
+    [PlatformFact(TestPlatform.Windows, "The freshly quarantined Windows file must still satisfy the approved content validator.")]
+    public void ContentChangeBeforeQuarantine_RejectsStaleValidatorAndRestoresConcurrentBytes()
+    {
+        var path = Path.Combine(_root, "target.txt");
+        File.WriteAllText(path, "original");
+        using var root = HostSecurePathEngine.OpenRoot(_root);
+        using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
+        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
+        using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
+        var changed = false;
+        Assert.Throws<LocalSecureContentChangedException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, checkpoint =>
+        {
+            if (checkpoint != LocalSecureFileSystemCheckpoint.BeforePublishSyscall) return;
+            File.WriteAllText(path, "CONCURRENT");
+            changed = true;
+        }));
+        Assert.True(changed);
+        root.Platform.DeleteTemporaryFile(root.Handle, temporary, slots);
+        using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
+        Assert.Equal(expected.Identity, final.Identity);
+        Assert.Equal("CONCURRENT", Read(final));
+        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
+    }
+
+    [PlatformTheory(TestPlatform.Windows, "Native directory deletion must retain contents and restore an exact directory identity across a conflicting-file rollback.")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void DirectoryDelete_CommitsOrRestoresWithoutDestroyingConflictBytes(bool injectConflict)
+    {
+        var path = Directory.CreateDirectory(Path.Combine(_root, "folder")).FullName;
+        File.WriteAllText(Path.Combine(path, "inside.txt"), "original-child");
+        using var root = HostSecurePathEngine.OpenRoot(_root);
+        using var expected = root.Platform.OpenChild(root.Handle, "folder", root.Volume, false);
+        Assert.Equal(LocalSecureNodeKind.Directory, expected.Kind);
+        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 2, CancellationToken.None);
+        var reached = false;
+        void Attempt() => root.Platform.DeleteEntry(root.Handle, "folder", true, expected, null, slots, static () => { }, () =>
+        {
+            reached = true;
+            Assert.False(Directory.Exists(path));
+            if (!injectConflict) return;
+            File.WriteAllText(path, "ATTACKER");
+            throw new LocalSecurePathException("Injected failure after directory quarantine.");
+        }, CancellationToken.None);
+        if (injectConflict) Assert.Throws<LocalSecurePathException>(Attempt);
+        else Attempt();
+        Assert.True(reached);
+        Assert.Equal(injectConflict, Directory.Exists(path));
+        using var retainedChild = root.Platform.OpenChild(expected, "inside.txt", root.Volume, false);
+        Assert.Equal("original-child", Read(retainedChild));
+        if (injectConflict)
+        {
+            using var restored = root.Platform.OpenChild(root.Handle, "folder", root.Volume, false);
+            Assert.Equal(expected.Identity, restored.Identity);
+            var conflict = Assert.Single(Directory.EnumerateFiles(_root), file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)));
+            Assert.Equal("ATTACKER", File.ReadAllText(conflict));
+        }
+        else
+        {
+            var quarantined = Assert.Single(Directory.EnumerateDirectories(_root));
+            Assert.True(HostSecurePathEngine.IsQuarantineName(Path.GetFileName(quarantined)));
+            Assert.Equal("original-child", File.ReadAllText(Path.Combine(quarantined, "inside.txt")));
+        }
+    }
+
     [PlatformTheory(TestPlatform.Windows, "A default or alternate-stream writer must prevent a coherent Windows overwrite.")]
     [InlineData("")]
     [InlineData(":metadata")]

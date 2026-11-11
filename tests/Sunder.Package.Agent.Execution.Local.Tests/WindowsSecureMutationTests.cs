@@ -16,6 +16,12 @@ public sealed partial class WindowsSecureMutationTests : IDisposable
     {
         using var root = HostSecurePathEngine.OpenRoot(_root);
         var platform = Assert.IsType<LocalWindowsFileSystemPlatform>(root.Platform);
+        var parked = _root + "-parked";
+        var parentMoved = false;
+        try { Directory.Move(_root, parked); parentMoved = true; }
+        catch (IOException) { }
+        finally { if (parentMoved) Directory.Move(parked, _root); }
+        Assert.False(parentMoved, "A retained Windows ancestor must deny delete sharing and prevent reparenting.");
         using var directory = platform.CreateDirectory(root.Handle, "created");
         using var created = platform.CreateExclusiveFile(directory, "private.txt", 0x180);
         RandomAccess.Write(created.Handle, "secret"u8, 0);
@@ -152,26 +158,45 @@ public sealed partial class WindowsSecureMutationTests : IDisposable
         Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
     }
 
-    [PlatformFact(TestPlatform.Windows, "The native source mutation must match the retained approval identity.")]
-    public void SourceRace_RejectsReplacementWithoutMutatingEitherFile()
+    [PlatformTheory(TestPlatform.Windows, "The native source mutation must reject file, directory and hard-link substitutions without touching either identity.")]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(2)]
+    public void SourceRace_RejectsReplacementWithoutMutatingEitherFile(int replacementKind)
     {
-        using var root = HostSecurePathEngine.OpenRoot(_root);
-        var path = Path.Combine(_root, "target.txt");
-        var moved = Path.Combine(_root, "original.txt");
+        var workspace = Directory.CreateDirectory(Path.Combine(_root, "workspace")).FullName;
+        using var root = HostSecurePathEngine.OpenRoot(workspace);
+        var path = Path.Combine(workspace, "target.txt");
+        var moved = Path.Combine(workspace, "original.txt");
+        var outside = Path.Combine(_root, "outside.txt");
+        File.WriteAllText(outside, "OUTSIDE");
         File.WriteAllText(path, "original");
         using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
         using var reservation = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
         using var temporary = Stage(root.Platform, root.Handle, reservation, "SECRET");
-        Assert.Throws<LocalSecureApprovalChangedException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected,
+        var replaced = false;
+        void Attempt() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected,
             reservation, checkpoint =>
             {
                 if (checkpoint != LocalSecureFileSystemCheckpoint.BeforePublishSyscall) return;
                 File.Move(path, moved);
-                File.WriteAllText(path, "ATTACKER");
-            }));
+                if (replacementKind == 1)
+                {
+                    Directory.CreateDirectory(path);
+                    File.WriteAllText(Path.Combine(path, "sentinel.txt"), "ATTACKER");
+                }
+                else if (replacementKind == 2) TestFileSystemCapabilities.CreateHardLink(path, outside);
+                else File.WriteAllText(path, "ATTACKER");
+                replaced = true;
+            });
+        if (replacementKind == 0) Assert.Throws<LocalSecureApprovalChangedException>(Attempt);
+        else Assert.ThrowsAny<LocalSecurePathException>(Attempt);
+        Assert.True(replaced);
         root.Platform.DeleteTemporaryFile(root.Handle, temporary, reservation);
         Assert.Equal("original", File.ReadAllText(moved));
-        Assert.Equal("ATTACKER", File.ReadAllText(path));
+        Assert.Equal(replacementKind == 2 ? "OUTSIDE" : "ATTACKER",
+            File.ReadAllText(replacementKind == 1 ? Path.Combine(path, "sentinel.txt") : path));
+        Assert.Equal("OUTSIDE", File.ReadAllText(outside));
     }
 
     [PlatformTheory(TestPlatform.Windows, "Windows cancellation must not interrupt a reversible critical mutation.")]
