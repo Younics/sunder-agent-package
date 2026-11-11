@@ -140,17 +140,13 @@ internal sealed partial class LocalWindowsFileSystemPlatform
         }
         catch (Exception operationException)
         {
-            // Release only our per-stream locks before exact-owned sanitation;
-            // the creation handle continues pinning the whole staged file.
-            streams?.Dispose();
-            streams = null;
             try
             {
                 if (temporaryFile.WasPublished)
                 {
                     // Source-handle cleanup cannot truncate/delete an attacker's
                     // replacement. No target-name lookup is cleanup authority.
-                    RemoveTemporaryFile(parent, temporaryFile, reservation);
+                    RemoveTemporaryFile(parent, temporaryFile, reservation, streams);
                     if (original is not null) beforePostPublicationRestore();
                 }
                 original?.Rollback();
@@ -214,12 +210,13 @@ internal sealed partial class LocalWindowsFileSystemPlatform
     }
 
     private void RemoveTemporaryFile(LocalSecureHandle parent, LocalSecureTemporaryFile temporaryFile,
-        LocalSecureMutationReservation reservation)
+        LocalSecureMutationReservation reservation, LocalWindowsNative.AlternateStreamSnapshot? streams = null)
     {
         var metadata = LocalWindowsNative.ReadMetadata(temporaryFile.Handle, temporaryFile.FullPath);
         if (metadata.Kind != LocalSecureNodeKind.RegularFile || metadata.Volume != parent.Identity.Volume
             || new LocalSecureIdentity(metadata.Volume, metadata.FileId, metadata.FileIdHigh) != temporaryFile.Identity)
             throw new LocalSecureApprovalChangedException(temporaryFile.FullPath);
+        LocalWindowsNative.ClearOwnedReadOnly(temporaryFile.Handle, temporaryFile.FullPath);
         // Creation provenance plus the retained handle is cleanup authority even
         // if somebody has linked our own staging inode elsewhere. Sanitize that
         // owned inode, never reopen/truncate either the temporary or alias name.
@@ -228,6 +225,11 @@ internal sealed partial class LocalWindowsFileSystemPlatform
             stream.SetLength(0);
             stream.Flush(flushToDisk: true);
         }
+        // The published DACL may legitimately deny a new write open. Keep the
+        // exact granted creation handles long enough to sanitize every copied
+        // stream, then release their sharing locks before scanning for leftovers.
+        streams?.SanitizeDestination();
+        streams?.Dispose();
         LocalWindowsNative.SanitizeAlternateStreams(temporaryFile.Handle, temporaryFile.FullPath);
         LocalWindowsNative.Flush(temporaryFile.Handle, temporaryFile.FullPath);
         if (LocalWindowsNative.ReadMetadata(temporaryFile.Handle, temporaryFile.FullPath).Length != 0)

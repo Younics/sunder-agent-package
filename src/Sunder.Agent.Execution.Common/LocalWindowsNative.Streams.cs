@@ -36,6 +36,7 @@ internal static partial class LocalWindowsNative
                     write = OpenRelative(destination, name, GenericRead | GenericWrite, false, true, true,
                         destinationPath, ShareRead | ShareDelete);
                     RequireStreamIdentity(write, destinationIdentity, 0, destinationPath);
+                    CopyStorageMetadata(read, write, sourcePath, destinationPath);
                     using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                     var buffer = new byte[64 * 1024];
                     long offset = 0;
@@ -63,8 +64,9 @@ internal static partial class LocalWindowsNative
     public static void SanitizeAlternateStreams(SafeFileHandle ownedFile, string path)
     {
         var identity = ReadMetadata(ownedFile, path);
-        foreach (var (name, _) in ReadAlternateStreams(ownedFile, path))
+        foreach (var (name, length) in ReadAlternateStreams(ownedFile, path))
         {
+            if (length == 0) continue;
             // The file's creation identity, not a pathname or an ADS name alone,
             // authorizes cleanup. This never follows a replacement file or alias.
             using var stream = OpenRelative(ownedFile, name, GenericRead | GenericWrite, false, false, true, path, ShareAll);
@@ -146,6 +148,17 @@ internal static partial class LocalWindowsNative
                     || !Hash(stream.Source, stream.Length).AsSpan().SequenceEqual(stream.Digest)
                     || !Hash(stream.Destination, stream.Length).AsSpan().SequenceEqual(stream.Digest))
                     throw new LocalSecureContentChangedException(path);
+            }
+        }
+
+        internal void SanitizeDestination()
+        {
+            foreach (var stream in _streams)
+            {
+                RandomAccess.SetLength(stream.Destination, 0);
+                Flush(stream.Destination, path);
+                if (RandomAccess.GetLength(stream.Destination) != 0)
+                    throw new LocalSecurePathException("An owned Windows alternate stream could not be sanitized.");
             }
         }
 

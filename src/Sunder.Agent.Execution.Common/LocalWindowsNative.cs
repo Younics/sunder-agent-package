@@ -56,8 +56,6 @@ internal static partial class LocalWindowsNative
     // audit SACL access, querying them does not require enabling a privilege.
     private const uint AccessPolicySecurityInformation = 0x00000010 | 0x00000020 | 0x00000040;
     private const ushort AccessPolicyControlMask = 0x2000 | 0x0200 | 0x0800;
-    private const uint ProtectedDaclSecurityInformation = 0x80000000;
-    private const uint UnprotectedDaclSecurityInformation = 0x20000000;
     private const ushort DaclProtected = 0x1000;
     private const int SecurityFileObject = 1;
     private const uint RenameReplaceIfExists = 0x00000001;
@@ -334,17 +332,22 @@ internal static partial class LocalWindowsNative
         {
             throw Error("GetFileInformationByHandleEx(FileBasicInfo)", sourcePath);
         }
+        CopyStorageMetadata(source, destination, sourcePath, destinationPath);
         var extendedAttributes = CopyExtendedAttributes(source, destination, sourcePath, destinationPath);
         // Storage transformations are separate from ordinary FileBasicInfo
         // flags. Never clear one merely because setting basic attributes succeeds.
-        const uint unsupportedAttributes = 0x00000200 | 0x00000800 | 0x00001000 | 0x00004000 | 0x00008000
+        const uint unsupportedAttributes = 0x00001000 | 0x00004000 | 0x00008000
                                            | 0x00020000 | 0x00040000 | 0x00080000 | 0x00100000 | 0x00400000;
         if ((basic.FileAttributes & unsupportedAttributes) != 0)
             throw new PlatformNotSupportedException($"Strict Windows writes cannot preserve the storage attributes of '{sourcePath}'.");
         var basicBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<FileBasicInformation>());
         try
         {
-            Marshal.StructureToPtr(basic, basicBuffer, fDeleteOld: false);
+            var writableBasic = basic;
+            // These bits are controlled by the per-stream FSCTLs above, not by
+            // FileBasicInfo. Keep the source snapshot intact for final validation.
+            writableBasic.FileAttributes &= ~(AttributeSparse | AttributeCompressed);
+            Marshal.StructureToPtr(writableBasic, basicBuffer, fDeleteOld: false);
             if (!SetFileInformationByHandle(
                     destination,
                     FileBasicInfo,
@@ -353,6 +356,9 @@ internal static partial class LocalWindowsNative
             {
                 throw Error("SetFileInformationByHandle(FileBasicInfo)", destinationPath);
             }
+            if ((ReadStorageAttributes(destination, destinationPath) & (AttributeSparse | AttributeCompressed))
+                != (basic.FileAttributes & (AttributeSparse | AttributeCompressed)))
+                throw new LocalSecurePathException($"The Windows stream storage attributes changed while applying basic metadata: {destinationPath}");
         }
         finally
         {
@@ -449,10 +455,13 @@ internal static partial class LocalWindowsNative
             }
             // Apply the original DACL last. Before the exact-handle publication,
             // neither a changed owner nor a lowered label may expose staging bytes.
-            var result = SetSecurityInfo(destination, SecurityFileObject,
-                DaclSecurityInformation | (ProtectedDacl ? ProtectedDaclSecurityInformation : UnprotectedDaclSecurityInformation),
-                IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
-            if (result != 0) throw Error("SetSecurityInfo", path, checked((int)result));
+            // SetSecurityInfo's filesystem inheritance processing can append
+            // another copy of the parent's ACEs to an already inherited DACL.
+            // Apply the retained descriptor's DACL and control bits directly to
+            // this exact file object instead. Never rebuild authority from the
+            // parent's current policy or discard inherited ACEs to make it fit.
+            var status = NtSetSecurityObject(destination, DaclSecurityInformation, _descriptor);
+            if (status < 0) throw Error("NtSetSecurityObject(DACL_SECURITY_INFORMATION)", path, checked((int)RtlNtStatusToDosError(status)));
             using var applied = CaptureSecurity(destination, path);
             if (!Matches(applied))
                 throw new LocalSecurePathException($"The Windows identity or access policy could not be preserved exactly ({DescribeDifferences(applied)}): {path}");
@@ -834,6 +843,9 @@ internal static partial class LocalWindowsNative
     [DllImport(Ntdll)]
     private static extern int NtSetInformationFile(SafeFileHandle handle, out IoStatusBlock ioStatusBlock,
         IntPtr information, uint length, int informationClass);
+
+    [DllImport(Ntdll)]
+    private static extern int NtSetSecurityObject(SafeFileHandle handle, uint securityInformation, IntPtr securityDescriptor);
 
     [DllImport(Ntdll)]
     private static extern int NtQueryInformationFile(SafeFileHandle handle, out IoStatusBlock ioStatusBlock,
