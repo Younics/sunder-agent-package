@@ -40,8 +40,10 @@ internal static class BuilderJobValidation
             if (request.Kind == BuilderProjectKind.Node ? Path.GetFileName(entry) != "sunder.package.json" : !entry.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("The entry point does not match the project kind.");
         }
-        if (request.Expected is { } expected && (expected.Kind != request.Kind || !Same(Absolute(expected.EntryPoint, "Expected entry point"), entry!) ||
-            !Same(Absolute(expected.ProjectFolder, "Expected project folder"), folder!))) throw new ArgumentException("The expected inspection describes a different project.");
+        if (request.Expected is { } expected && (expected.Kind != request.Kind
+            || !string.Equals(Absolute(expected.EntryPoint, "Expected entry point"), entry, StringComparison.Ordinal)
+            || !string.Equals(Absolute(expected.ProjectFolder, "Expected project folder"), folder, StringComparison.Ordinal)))
+            throw new ArgumentException("The expected inspection describes a different project.");
         if (request.Operation == "save-metadata")
         {
             if (request.Expected is null) throw new ArgumentException("Saving metadata requires the last source inspection.");

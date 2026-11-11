@@ -24,13 +24,23 @@ internal static class BuilderToolchainFiles
     internal static void CheckPath(string root, string path)
     {
         var full = Path.GetFullPath(path);
-        if (!string.Equals(full, root, PathComparison) && !IsChild(full, root)) throw new IOException("The path is outside Builder toolchain storage.");
-        RejectLink(root);
-        var current = root;
-        foreach (var segment in Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar))
+        root = Path.GetFullPath(root);
+        RejectAncestors(root);
+        RejectAncestors(full);
+        var physicalRoot = Path.TrimEndingDirectorySeparator(BuilderPhysicalPath.ReadLocation(root));
+        var physicalPath = Path.TrimEndingDirectorySeparator(BuilderPhysicalPath.ReadLocation(full));
+        var prefix = Path.EndsInDirectorySeparator(physicalRoot) ? physicalRoot : physicalRoot + Path.DirectorySeparatorChar;
+        if (!string.Equals(physicalPath, physicalRoot, StringComparison.Ordinal)
+            && !physicalPath.StartsWith(prefix, StringComparison.Ordinal)) throw new IOException("The path is outside Builder toolchain storage.");
+        RejectAncestors(root);
+        RejectAncestors(full);
+    }
+
+    private static void RejectAncestors(string path)
+    {
+        for (string? current = path; current is not null; current = Path.GetDirectoryName(current))
         {
-            if (segment == ".") continue;
-            current = Path.Combine(current, segment);
+            if (OperatingSystem.IsMacOS() && current is "/var" or "/tmp") break; // OS-owned aliases only.
             RejectLink(current);
         }
     }

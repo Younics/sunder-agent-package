@@ -521,7 +521,7 @@ public sealed partial class BuilderToolchainTests
 
     private sealed class Fixture : IBuilderToolchainCatalog, IBuilderToolchainTransport, IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-builder-toolchains", Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-builder-toolchains", Guid.NewGuid().ToString("N"));
         internal string ManagedRoot => PathOf("private-toolchains");
         internal FakeProcess Process { get; } = new();
         internal BuilderToolchainPlatform Platform { get; } = BuilderToolchainPlatform.Current;
@@ -618,6 +618,7 @@ public sealed partial class BuilderToolchainTests
         internal string? ProjectDirectory;
         internal Dictionary<string, string> ExternalSelectedVersion { get; } = [];
         internal Dictionary<string, string> ResolvedExecutable { get; } = [];
+        internal Action? BeforeVersionResult;
 
         public Task<BuilderLocalProcessResult> RunAsync(BuilderLocalProcessRequest request, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
@@ -652,6 +653,7 @@ public sealed partial class BuilderToolchainTests
                 }
             }
             else output = "v" + output;
+            if (request.Arguments.SequenceEqual(["--version"])) BeforeVersionResult?.Invoke();
             return Task.FromResult(new BuilderLocalProcessResult(0, output + "\n", ""));
         }
     }

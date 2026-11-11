@@ -199,6 +199,21 @@ jobs:
               "younics.sunder.package.maker": {"BuilderPathIdentityTests": 9, "BuilderWindowsCachePrivacyTests": 11, "BuilderPackagePathIdentityTests": 7},
               "younics.ai.agent.execution.local": {"WindowsSecureMutationTests": 46},
           }
+          required_methods = {
+              "younics.sunder.package.maker": {
+                  "BuilderToolchainTests.ToolchainContainmentCannotAdmitACaseDistinctSibling": 2,
+                  "BuilderToolchainTests.CopiedReceiptCannotGrantLeaseOrRemovalAuthorityToACaseDistinctWorkspace": 2,
+                  "BuilderLocalBackendTests.ExpectedInspectionCannotAuthorizeACaseDistinctEntryOrProjectFolder": 2,
+                  "BuilderToolchainTests.ToolchainContainmentAcceptsAnExistingCaseAliasAndItsMissingChildren": 1,
+                  "BuilderToolchainTests.RestartThroughAnExistingStorageAliasPreservesCapturedOwnershipAndSuccessfulRemoval": 1,
+                  "BuilderLocalBackendTests.BuildCannotAdoptChangedPhysicalSpellingAfterTheExpectedInspectionWasCaptured": 1,
+                  "BuilderToolchainTests.CapturedStorageCoordinateCannotBeReboundByForgingItsNewPhysicalSpelling": 1,
+                  "BuilderToolchainTests.LeaseOrRemovalRechecksItsCapturedPhysicalCoordinateAfterWaitingForTheOperationLock": 2,
+                  "BuilderToolchainTests.RepairNeverReplacesARenamedPhysicalTreeAfterTheArchiveDownloadAwait": 1,
+                  "BuilderToolchainTests.FirstInstallCannotReplaceNewCaseAliasStorageAfterItsDownloadAwait": 1,
+                  "BuilderToolchainTests.LeaseCannotReturnHealthyAfterItsPhysicalDirectoryChangesDuringTheVersionProbe": 1,
+              },
+          }
           for rid in ("win-x64", "win-arm64"):
               for package, classes in required.items():
                   if package not in selected:
@@ -206,18 +221,30 @@ jobs:
                   directories = list(Path("windows-results").glob(f"agent-component-{package}-source-{rid}-*"))
                   assert len(directories) == 1, (package, rid, directories)
                   observed = {name: [] for name in classes}
+                  methods = required_methods.get(package, {})
+                  observed_methods = {name: [] for name in methods}
                   for path in directories[0].rglob("*.trx"):
                       document = ET.parse(path)
                       definitions = {}
+                      method_definitions = {}
                       for definition in document.findall(".//{*}UnitTest"):
                           method = definition.find("./{*}TestMethod")
                           definitions[definition.get("id")] = method.get("className", "") if method is not None else ""
+                          method_definitions[definition.get("id")] = (definitions[definition.get("id")].split(",", 1)[0]
+                              + "." + method.get("name", "")) if method is not None else ""
                       for result in document.findall(".//{*}UnitTestResult"):
                           for name in classes:
                               if definitions.get(result.get("testId"), "").split(",", 1)[0].endswith("." + name):
                                   observed[name].append((result.get("testName"), result.get("outcome")))
+                          for name in methods:
+                              if method_definitions.get(result.get("testId")) == "Sunder.Package.Agent.Tests." + name:
+                                  observed_methods[name].append((result.get("testName"), result.get("outcome")))
                   for name, rows in observed.items():
                       assert len(rows) == classes[name] and len({test for test, _ in rows}) == classes[name], (package, rid, name, rows)
+                      assert all(outcome == "Passed" for _, outcome in rows), (package, rid, name, rows)
+                      print(f"{package} / {rid} / {name}: {len(rows)} passed; zero skipped")
+                  for name, rows in observed_methods.items():
+                      assert len(rows) == methods[name] and len({test for test, _ in rows}) == methods[name], (package, rid, name, rows)
                       assert all(outcome == "Passed" for _, outcome in rows), (package, rid, name, rows)
                       print(f"{package} / {rid} / {name}: {len(rows)} passed; zero skipped")
           PY

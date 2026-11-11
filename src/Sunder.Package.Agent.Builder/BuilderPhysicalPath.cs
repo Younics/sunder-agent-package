@@ -10,6 +10,28 @@ namespace Sunder.Package.Agent.Builder;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class BuilderPhysicalPath
 {
+    // Read-only classification before capture: preserve the spelling of the
+    // nearest existing entry and append only the genuinely missing suffix.
+    // Callers enforce their original-link policy separately; never normalize an
+    // already-approved identity through this helper for positive authority.
+    internal static string ReadLocation(string path)
+    {
+        var current = Path.GetFullPath(path);
+        if (!OperatingSystem.IsWindows()) _ = new UTF8Encoding(false, true).GetByteCount(current);
+        var missing = new Stack<string>();
+        while (true)
+        {
+            try { _ = File.GetAttributes(current); break; }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException)
+            {
+                missing.Push(Path.GetFileName(current));
+                current = Path.GetDirectoryName(current) ?? throw new IOException("The Builder path has no existing filesystem root.", error);
+            }
+        }
+        var physical = ReadExisting(current);
+        return missing.Count == 0 ? physical : Path.Combine([physical, .. missing]);
+    }
+
     internal static string ReadExisting(string path)
     {
         if (OperatingSystem.IsWindows()) return ReadWindows(path);

@@ -9,7 +9,8 @@ public sealed partial class BuilderToolchainService
         DateTimeOffset? LastSuccess = null, string? Error = null);
     private sealed record Receipt(int Schema, BuilderToolchainRelease Release, DateTimeOffset InstalledAtUtc);
 
-    private string InstallParent(BuilderProjectKind kind) => Path.Combine(root, "installed", KindName(kind), platform.For(kind));
+    private string InstallParent(BuilderProjectKind kind) => installationParents.TryGetValue(kind, out var path)
+        ? path : throw new ArgumentOutOfRangeException(nameof(kind));
     private string InstallRoot(BuilderProjectKind kind, string version) => Path.Combine(InstallParent(kind), version);
     private string StatePath(BuilderProjectKind kind, string suffix) => Path.Combine(root, "state", $"{KindName(kind)}-{platform.For(kind)}-{suffix}.json");
     private static string KindName(BuilderProjectKind kind) => kind switch
@@ -30,14 +31,29 @@ public sealed partial class BuilderToolchainService
     private void ValidateOwned(BuilderToolchainInstallation installation)
     {
         if (!installation.IsManaged) throw new InvalidOperationException("External toolchains are read-only in Builder. Use their original installer to repair or remove them.");
-        if (!BuilderToolchainPolicy.IsKnownVersion(installation.Kind, installation.Version) ||
-            !string.Equals(installation.RootPath, InstallRoot(installation.Kind, installation.Version), BuilderToolchainFiles.PathComparison))
+        if (!BuilderToolchainPolicy.IsKnownVersion(installation.Kind, installation.Version))
             throw new InvalidOperationException("This installation is not owned by this Builder workspace.");
-        BuilderToolchainFiles.CheckPath(root, installation.RootPath);
+        var expected = InstallRoot(installation.Kind, installation.Version);
+        // The caller's installation is a captured key, not a pathname to
+        // re-resolve or case-fold into fresh ownership after an await. Compare
+        // against this activation's original storage coordinate first, not a
+        // newly resolved coordinate which an unapproved key could impersonate.
+        if (!string.Equals(installation.RootPath, expected, StringComparison.Ordinal))
+            throw new InvalidOperationException("This installation is not owned by this Builder workspace.");
+        ValidateStorageCoordinate(expected);
+    }
+
+    private void ValidateStorageCoordinate(string expected)
+    {
+        BuilderToolchainFiles.CheckPath(root, expected);
+        if (!string.Equals(expected, BuilderPhysicalPath.ReadLocation(expected), StringComparison.Ordinal))
+            throw new InvalidOperationException("The captured toolchain storage path changed. Reload its current installation before retrying.");
+        BuilderToolchainFiles.CheckPath(root, expected);
     }
 
     private BuilderToolchainInstallation InstallationAt(BuilderProjectKind kind, string version, string path, string? npmVersion = null)
     {
+        path = BuilderPhysicalPath.ReadLocation(path);
         var windows = platform.For(kind).StartsWith("win-", StringComparison.Ordinal);
         return new BuilderToolchainInstallation
         {
@@ -72,13 +88,15 @@ public sealed partial class BuilderToolchainService
     }
 
     private async Task<BuilderToolchainInstallation> InstallAsync(BuilderToolchainRelease release, bool repair,
-        IProgress<string>? progress, CancellationToken token)
+        IProgress<string>? progress, CancellationToken token, BuilderToolchainInstallation? expected = null)
     {
         BuilderToolchainPolicy.ValidateRelease(release, requireChecksum: false);
         if (release.Platform != platform.For(release.Kind)) throw new InvalidDataException("The catalog returned an archive for another platform.");
         progress?.Report($"Preparing {release.Kind} {release.Version} ({release.Platform}).");
         using var operation = await LockAsync(release.Kind, release.Version, token).ConfigureAwait(false);
         var destination = InstallRoot(release.Kind, release.Version);
+        if (expected is not null) ValidateOwned(expected);
+        else ValidateStorageCoordinate(destination);
         if (!repair && Directory.Exists(destination))
         {
             var current = await ReadManagedAsync(release.Kind, release.Version, token).ConfigureAwait(false);
@@ -128,7 +146,7 @@ public sealed partial class BuilderToolchainService
             var installedAt = clock.GetUtcNow();
             await BuilderToolchainFiles.WriteJsonAsync(Path.Combine(payload, BuilderToolchainFiles.ReceiptName), new Receipt(1, release, installedAt), token).ConfigureAwait(false);
             phase = "promotion";
-            BuilderToolchainFiles.CheckPath(root, destination);
+            ValidateStorageCoordinate(destination);
             Directory.CreateDirectory(InstallParent(release.Kind));
             token.ThrowIfCancellationRequested();
             var hadPrevious = Directory.Exists(destination);
