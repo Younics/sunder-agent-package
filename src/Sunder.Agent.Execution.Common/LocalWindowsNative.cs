@@ -156,11 +156,23 @@ internal static class LocalWindowsNative
 
     public static SafeFileHandle Reopen(SafeFileHandle source, uint access, uint sharing, string path)
     {
-        var reopened = ReOpenFile(source, access, sharing, BackupSemantics | OpenReparsePoint);
-        if (!reopened.IsInvalid) return reopened;
-        var error = Marshal.GetLastPInvokeError();
-        reopened.Dispose();
-        throw Error("ReOpenFile", path, error);
+        var expected = ReadMetadata(source, path);
+        // ReOpenFile adds FILE_NON_DIRECTORY_FILE even with BACKUP_SEMANTICS,
+        // so it cannot upgrade our directory handles. Reopen the retained object
+        // with an empty NT name instead: RootDirectory is the object itself, not
+        // a parent/name lookup. No close/reselect or pathname fallback is allowed.
+        var reopened = OpenRelative(source, string.Empty, access,
+            requireDirectory: expected.Kind == LocalSecureNodeKind.Directory,
+            create: false, caseSensitive: true, path, sharing);
+        try
+        {
+            var actual = ReadMetadata(reopened, path);
+            if (actual.Volume != expected.Volume || actual.FileId != expected.FileId
+                || actual.FileIdHigh != expected.FileIdHigh || actual.Kind != expected.Kind)
+                throw new LocalSecureApprovalChangedException(path);
+            return reopened;
+        }
+        catch { reopened.Dispose(); throw; }
     }
 
     public static bool IsUnlinked(SafeFileHandle handle, string path)
@@ -688,9 +700,6 @@ internal static class LocalWindowsNative
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleExStandard(
         SafeFileHandle file, int fileInformationClass, out FileStandardInformation information, uint bufferSize);
-
-    [DllImport(Kernel32, SetLastError = true)]
-    private static extern SafeFileHandle ReOpenFile(SafeFileHandle original, uint desiredAccess, uint shareMode, uint flags);
 
     [DllImport(Advapi32, EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
