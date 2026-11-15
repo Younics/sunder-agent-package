@@ -39,7 +39,10 @@
       <_ProviderRoleHash>@(_ProviderAgentInput->'%(RoleInputsSha256)')</_ProviderRoleHash>
       <!-- The qualified input hash includes the complete toolset. A rebuilt tool
            dependency must get a new immutable path, including across build runs. -->
-      <_ProviderInputs>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)provider-inputs/$(_ProviderRoleHash)', '$(MSBuildProjectDirectory)'))</_ProviderInputs>
+      <!-- The content hash already binds Configuration/TFM/RID and tool bytes.
+           Do not repeat those directories here: Windows/MSBuild task-file checks
+           can otherwise exceed MAX_PATH even in an ordinary workspace checkout. -->
+      <_ProviderInputs>$([System.IO.Path]::GetFullPath('$(BaseIntermediateOutputPath)provider-inputs/$(_ProviderRoleHash)', '$(MSBuildProjectDirectory)'))</_ProviderInputs>
     </PropertyGroup>
     <Error Condition="'@(_ProviderAgentInput->Count())' != '1' or '$(_ProviderRolePath)' == '' or '$(_ProviderRoleHash)' == ''" Text="The Agent build must return one qualified native role input for test providers." />
     <MakeDir Directories="$(_ProviderInputs)/tools" />

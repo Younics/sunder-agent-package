@@ -1,9 +1,5 @@
-#if !BUILDER_METADATA_STANDALONE
 extern alias BuilderWorker;
 using BuilderWorker::Sunder.Package.Agent.Builder;
-#else
-using Sunder.Package.Agent.Builder;
-#endif
 using System.Text.Json;
 using Xunit;
 
@@ -30,7 +26,8 @@ public sealed class BuilderProjectMetadataTests : IDisposable
         Assert.All(result, item => Assert.Equal("Old display", item.DisplayName));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks,
+        "Linked project and metadata rejection requires symbolic links.", TestFileSystemCapability.FileSymbolicLinks)]
     public async Task Discovery_DoesNotFollowLinkedProjectsOrMetadata()
     {
         await DotnetAsync("actual"); Directory.CreateSymbolicLink(Path.Combine(_root, "linked"), Path.Combine(_root, "actual"));

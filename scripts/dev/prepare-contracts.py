@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Prepare or check exact local authoring selections through Core, never a Registry.
+"""Optional diagnostic/recovery orchestration for exact local selections through Core.
 
-NuGet restore is a separate prerequisite. This command does not select contracts,
-accept/freeze baselines, synthesize receipts, or rebuild candidate archives.
+Ordinary SDK restore already hydrates declared inputs; this is not an authoring
+prerequisite. This explicit wrapper needs restored NuGet compiler references. It
+never selects contracts, accepts/freezes baselines, synthesizes receipts, rebuilds
+candidates, or infers a Registry.
 """
 import argparse
 import os

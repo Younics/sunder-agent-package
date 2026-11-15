@@ -1,6 +1,7 @@
 extern alias AgentCore;
 
 using System.Collections.Concurrent;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using AgentCore::Sunder.Package.Agent.Contracts.Models;
 using AgentCore::Sunder.Package.Agent.PackageViews;
@@ -13,6 +14,7 @@ using AgentProfileCommandHandler = Sunder.Package.Agent.Runtime.AgentProfileComm
 using AgentToolCatalogEntry = AgentCore::Sunder.Package.Agent.Services.AgentToolCatalogEntry;
 using Sunder.Package.Agent.Services;
 using Sunder.Package.Agent.Storage;
+using Sunder.Package.Agent.TestSupport;
 using Xunit;
 using AgentPresentationDispatcher = AgentCore::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher;
 
@@ -301,6 +303,39 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         Assert.Equal("profile-1", viewModel.SelectedProfile?.ProfileId);
     }
 
+    [Fact]
+    public async Task DisposeDuringConnectionInitialization_StopsCallerBeforeSharedInitialization()
+    {
+        var gateway = new RuntimeAwareProfileGateway { BlockNextLocalTools = true };
+        using var viewModel = CreateViewModel(gateway, new ManualTimerTimeProvider());
+        // Observe the actual connection-event owner, not a substitute caller token.
+        // Dependency cancellation can complete inline during Dispose; its owner
+        // must already be stopped before that result reaches presentation.
+        var scope = (AgentCore::Sunder.Package.Agent.Shared.Presentation.PresentationTaskScope)
+            typeof(AgentProfilesViewModel).GetField("_tasks", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(viewModel)!;
+        bool? ownerStoppedBeforeDependency = null;
+        gateway.OnLocalToolsCancellation = () => ownerStoppedBeforeDependency = scope.CancellationToken.IsCancellationRequested;
+        var context = new FailureRecordingSynchronizationContext();
+        var previous = SynchronizationContext.Current;
+        try
+        {
+            SynchronizationContext.SetSynchronizationContext(context);
+            gateway.SetConnectionState(AgentRuntimeConnectionState.Connected);
+        }
+        finally { SynchronizationContext.SetSynchronizationContext(previous); }
+
+        await gateway.LocalToolsStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        try
+        {
+            viewModel.Dispose();
+            await scope.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.True(ownerStoppedBeforeDependency);
+            Assert.Empty(context.Exceptions);
+            Assert.False(viewModel.HasStatusText);
+        }
+        finally { gateway.ReleaseLocalTools.TrySetResult(); }
+    }
+
     private static AgentProfilesViewModel CreateViewModel(
         IAgentProfileGateway gateway,
         TimeProvider timeProvider,
@@ -340,6 +375,8 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
         public bool BlockCreate { get; init; }
 
         public bool BlockNextLocalTools { get; set; }
+
+        public Action? OnLocalToolsCancellation { get; set; }
 
         public TaskCompletionSource CreateStarted { get; } =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -464,6 +501,7 @@ public sealed class AgentProfilesRuntimeAvailabilityTests
             if (BlockNextLocalTools)
             {
                 BlockNextLocalTools = false;
+                using var cancellation = cancellationToken.Register(() => OnLocalToolsCancellation?.Invoke());
                 LocalToolsStarted.TrySetResult();
                 await ReleaseLocalTools.Task;
             }

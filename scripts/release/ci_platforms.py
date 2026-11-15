@@ -31,7 +31,7 @@ def matrices(package_tests=False, variables=None, *, windows_filesystem_native=F
         extra_windows = windows_filesystem_native and row["rid"] == "win-arm64"
         if row.get("behavior") or extra_windows:
             platform = {"win": "windows", "linux": "linux", "osx": "macos"}[row["rid"].split("-")[0]]
-            runner = labels if extra_windows else row["runner"]
+            runner = labels
             preflight.append(dict(rid=row["rid"], runner=runner, platform=platform))
             for mode in ("source", "package") if package_tests else ("source",):
                 behavior.append(dict(rid=row["rid"], runner=runner, mode=mode,

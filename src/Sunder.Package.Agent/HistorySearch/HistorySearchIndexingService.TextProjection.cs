@@ -58,13 +58,6 @@ internal sealed partial class HistorySearchIndexingService
                 FailureCode = null,
                 FailureMessage = null,
             });
-            if (_projection.GetConfiguration().SemanticEnabled)
-            {
-                lock (_pendingLock)
-                {
-                    _embeddingRebuildRequested = true;
-                }
-            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

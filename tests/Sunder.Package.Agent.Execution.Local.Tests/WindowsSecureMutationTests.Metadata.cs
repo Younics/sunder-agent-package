@@ -7,95 +7,74 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 public sealed partial class WindowsSecureMutationTests
 {
-    [PlatformTheory(TestPlatform.Windows, "Windows overwrites must preserve non-default integrity policy, including publication rollback.")]
+    [PlatformTheory(TestPlatform.Windows, "In-place success and incomplete writes must retain a non-default integrity policy on the same object.")]
     [InlineData(false)]
     [InlineData(true)]
-    public void DifferentIntegrityPolicy_PreservesSecurityAndPrivateStaging(bool failAfterPublication)
+    public async Task DifferentIntegrityPolicy_RemainsAttachedToTheEditedObject(bool partialFailure)
     {
-        using var root = HostSecurePathEngine.OpenRoot(_root);
         var path = Path.Combine(_root, "target.txt");
         File.WriteAllText(path, "original");
         SetLowIntegrityLabel(path);
+        File.WriteAllText(Path.Combine(_root, "control.txt"), "control");
+        using var root = HostSecurePathEngine.OpenRoot(_root);
         using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        using var original = LocalWindowsNative.CaptureSecurity(expected.Handle, path);
-        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
-        using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
-        using var staged = LocalWindowsNative.CaptureSecurity(temporary.Handle, temporary.FullPath);
-        Assert.NotEmpty(original.AccessPolicyBytes);
-        Assert.False(original.AccessPolicyBytes.AsSpan().SequenceEqual(staged.AccessPolicyBytes));
-        var checkedPrivate = false;
-        var failureInjected = false;
-        void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
+        using var control = root.Platform.OpenChild(root.Handle, "control.txt", root.Volume, false);
+        using var before = LocalWindowsNative.CaptureSecurity(expected.Handle, path);
+        using var ordinary = LocalWindowsNative.CaptureSecurity(control.Handle, control.FullPath);
+        Assert.NotEmpty(before.AccessPolicyBytes);
+        Assert.False(before.AccessPolicyBytes.AsSpan().SequenceEqual(ordinary.AccessPolicyBytes));
+        var invoked = false;
+        var result = await WriteContentAsync("target.txt", new string('n', 140_000), checkpoint: checkpoint =>
         {
-            if (checkpoint == LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish)
-            {
-                using var stillPrivate = LocalWindowsNative.CaptureSecurity(temporary.Handle, temporary.FullPath);
-                Assert.Equal(staged.OwnerBytes, stillPrivate.OwnerBytes);
-                Assert.Equal(staged.DaclBytes, stillPrivate.DaclBytes);
-                Assert.Equal(staged.AccessPolicyBytes, stillPrivate.AccessPolicyBytes);
-                checkedPrivate = true;
-            }
-            if (failAfterPublication && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
-            {
-                failureInjected = true;
-                throw new LocalSecurePathException("Injected failure after security transfer.");
-            }
-        }
-        if (failAfterPublication)
-            Assert.Throws<LocalSecurePathException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint));
-        else
-            Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint);
-        Assert.True(checkedPrivate);
-        Assert.Equal(failAfterPublication, failureInjected);
+            if (!partialFailure || checkpoint != LocalSecureFileSystemCheckpoint.AfterContentWriteChunk) return;
+            invoked = true;
+            throw new IOException("Injected incomplete content update.");
+        });
+        Assert.Equal(partialFailure, invoked);
+        Assert.Equal(partialFailure, result.IsError);
+        if (partialFailure) Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
         using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        using var finalSecurity = LocalWindowsNative.CaptureSecurity(final.Handle, path);
-        Assert.Equal(failAfterPublication ? expected.Identity : temporary.Identity, final.Identity);
-        Assert.Equal(failAfterPublication ? "original" : "SECRET", Read(final));
-        Assert.Equal(original.OwnerBytes, finalSecurity.OwnerBytes);
-        Assert.Equal(original.GroupBytes, finalSecurity.GroupBytes);
-        Assert.Equal(original.AccessPolicyBytes, finalSecurity.AccessPolicyBytes);
-        Assert.Equal(original.AccessPolicyControl, finalSecurity.AccessPolicyControl);
-        Assert.Equal(original.DaclBytes, finalSecurity.DaclBytes);
-        if (failAfterPublication)
-            Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
+        using var after = LocalWindowsNative.CaptureSecurity(final.Handle, path);
+        Assert.Equal(expected.Identity, final.Identity);
+        Assert.Equal(new string('n', partialFailure ? 65_536 : 140_000), Read(final));
+        Assert.Equal(before.OwnerBytes, after.OwnerBytes);
+        Assert.Equal(before.GroupBytes, after.GroupBytes);
+        Assert.Equal(before.DaclBytes, after.DaclBytes);
+        Assert.Equal(before.ProtectedDacl, after.ProtectedDacl);
+        Assert.Equal(before.AccessPolicyBytes, after.AccessPolicyBytes);
+        Assert.Equal(before.AccessPolicyControl, after.AccessPolicyControl);
     }
 
-    [PlatformTheory(TestPlatform.Windows, "Windows overwrites must copy NTFS extended attributes and retain original recovery metadata.")]
+    [PlatformTheory(TestPlatform.Windows, "Concurrent security/EA updates are not copied over or restored by content editing.")]
     [InlineData(false)]
     [InlineData(true)]
-    public void ExtendedAttributes_PreserveValuesOnOverwriteAndRollback(bool failAfterPublication)
+    public async Task MetadataChangedDuringContentUpdate_RetainsTheConcurrentChange(bool changeSecurity)
     {
-        using var root = HostSecurePathEngine.OpenRoot(_root);
         var path = Path.Combine(_root, "target.txt");
         File.WriteAllText(path, "original");
-        WriteExtendedAttribute(path, "sunder.test", "preserve-this-metadata");
-        WriteExtendedAttribute(path, "sunder.second", "文-😀-\0-binary-value");
+        using var root = HostSecurePathEngine.OpenRoot(_root);
         using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        var originalAttributes = ReadExtendedAttributes(expected.Handle);
-        Assert.NotEmpty(originalAttributes);
-        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
-        using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
-        var failureInjected = false;
-        void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
+        var changed = false;
+        var result = await WriteContentAsync("target.txt", "updated", checkpoint: checkpoint =>
         {
-            if (failAfterPublication && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
-            {
-                failureInjected = true;
-                throw new LocalSecurePathException("Injected failure after extended-attribute transfer.");
-            }
-        }
-        if (failAfterPublication)
-            Assert.Throws<LocalSecurePathException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint));
-        else
-            Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, Checkpoint);
-        Assert.Equal(failAfterPublication, failureInjected);
+            if (checkpoint != LocalSecureFileSystemCheckpoint.BeforeContentWrite) return;
+            using var edit = LocalWindowsNative.Reopen(expected.Handle, LocalWindowsNative.GenericRead
+                | (changeSecurity ? LocalWindowsNative.WriteOwner : 0x10U /* FILE_WRITE_EA */), LocalWindowsNative.ShareAll, path);
+            if (changeSecurity) SetLowIntegrityLabel(edit);
+            else WriteExtendedAttribute(edit, "sunder.concurrent", "RETAIN-CONCURRENT-METADATA");
+            changed = true;
+        });
+        Assert.True(changed);
+        Assert.False(result.IsError, result.Summary);
         using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        Assert.Equal(failAfterPublication ? expected.Identity : temporary.Identity, final.Identity);
-        Assert.Equal(failAfterPublication ? "original" : "SECRET", Read(final));
-        Assert.Equal(originalAttributes, ReadExtendedAttributes(final.Handle));
-        Assert.Equal(originalAttributes, ReadExtendedAttributes(expected.Handle));
-        if (failAfterPublication)
-            Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
+        Assert.Equal(expected.Identity, final.Identity);
+        Assert.Equal("updated", Read(final));
+        if (changeSecurity)
+        {
+            using var security = LocalWindowsNative.CaptureSecurity(final.Handle, path);
+            Assert.NotEmpty(security.AccessPolicyBytes);
+        }
+        else Assert.Contains(ReadExtendedAttributes(final.Handle), entry => entry.Contains("SUNDER.CONCURRENT", StringComparison.OrdinalIgnoreCase));
     }
 
     private static void SetLowIntegrityLabel(string path)
@@ -109,13 +88,7 @@ public sealed partial class WindowsSecureMutationTests
     private static void SetLowIntegrityLabel(SafeFileHandle file)
     {
         Assert.True(ConvertSecurityDescriptor("S:(ML;;NW;;;LW)", 1, out var descriptor, out _));
-        try
-        {
-            Assert.True(GetDescriptorSacl(descriptor, out var present, out var sacl, out _));
-            Assert.True(present);
-            Assert.Equal(0U, SetFileSecurity(file, 1 /* SE_FILE_OBJECT */, 0x10 /* LABEL_SECURITY_INFORMATION */,
-                IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, sacl));
-        }
+        try { Assert.Equal(0, NtSetSecurityObject(file, 0x10 /* LABEL_SECURITY_INFORMATION */, descriptor)); }
         finally { _ = FreeSecurityDescriptor(descriptor); }
     }
 
@@ -135,44 +108,6 @@ public sealed partial class WindowsSecureMutationTests
         nameBytes.CopyTo(buffer, 8);
         valueBytes.CopyTo(buffer, 8 + nameBytes.Length + 1);
         Assert.Equal(0, NtSetEaFile(file, out _, buffer, (uint)buffer.Length));
-    }
-
-    [PlatformTheory(TestPlatform.Windows, "Security and EA writes do not take the default-stream content lock and must be revalidated.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void MetadataChangedBeforePublication_RejectsStaleSnapshotAndRetainsTheConcurrentChange(bool changeSecurity)
-    {
-        var path = Path.Combine(_root, "target.txt");
-        File.WriteAllText(path, "original");
-        using var root = HostSecurePathEngine.OpenRoot(_root);
-        using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        using var slots = root.Platform.ReserveMutationSlots(root.Handle, 4, CancellationToken.None);
-        using var temporary = Stage(root.Platform, root.Handle, slots, "SECRET");
-        var changed = false;
-        Assert.Throws<LocalSecureContentChangedException>(() => Publish(root.Platform, root.Handle, temporary, "target.txt", expected, slots, checkpoint =>
-        {
-            if (checkpoint != LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish) return;
-            // WRITE_EA/WRITE_OWNER are not FILE_WRITE_DATA. Retain the exact
-            // quarantined object while proving the final snapshot check matters.
-            using var edit = LocalWindowsNative.Reopen(expected.Handle, LocalWindowsNative.GenericRead
-                | (changeSecurity ? LocalWindowsNative.WriteOwner : 0x10U /* FILE_WRITE_EA */), LocalWindowsNative.ShareAll, path);
-            if (changeSecurity) SetLowIntegrityLabel(edit);
-            else WriteExtendedAttribute(edit, "sunder.concurrent", "RETAIN-CONCURRENT-METADATA");
-            changed = true;
-        }));
-        Assert.True(changed);
-        root.Platform.DeleteTemporaryFile(root.Handle, temporary, slots);
-        using var final = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
-        Assert.Equal(expected.Identity, final.Identity);
-        Assert.Equal("original", Read(final));
-        if (changeSecurity)
-        {
-            using var security = LocalWindowsNative.CaptureSecurity(final.Handle, path);
-            Assert.NotEmpty(security.AccessPolicyBytes);
-        }
-        else
-            Assert.Contains(ReadExtendedAttributes(final.Handle), entry => entry.Contains("SUNDER.CONCURRENT", StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(Directory.EnumerateFiles(_root).Select(ReadPath), text => text.Contains("SECRET", StringComparison.Ordinal));
     }
 
     private static IReadOnlyList<string> ReadExtendedAttributes(SafeFileHandle file)
@@ -208,14 +143,6 @@ public sealed partial class WindowsSecureMutationTests
     [DllImport("advapi32.dll", EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ConvertSecurityDescriptor(string text, uint revision, out IntPtr descriptor, out uint size);
-
-    [DllImport("advapi32.dll", EntryPoint = "GetSecurityDescriptorSacl", SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool GetDescriptorSacl(IntPtr descriptor, [MarshalAs(UnmanagedType.Bool)] out bool present,
-        out IntPtr sacl, [MarshalAs(UnmanagedType.Bool)] out bool defaulted);
-
-    [DllImport("advapi32.dll", EntryPoint = "SetSecurityInfo")]
-    private static extern uint SetFileSecurity(SafeFileHandle file, int type, uint parts, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
 
     [DllImport("kernel32.dll", EntryPoint = "LocalFree")]
     private static extern IntPtr FreeSecurityDescriptor(IntPtr descriptor);

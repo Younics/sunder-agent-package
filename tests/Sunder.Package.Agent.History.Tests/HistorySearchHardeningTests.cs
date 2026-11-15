@@ -1332,7 +1332,7 @@ public sealed class HistorySearchHardeningTests
         sessions.AppendTextTurn(session.SessionId, AgentMessageRole.User, "begin-generation-retry-anchor");
         await using var indexer = new HistorySearchIndexingService(
             services.GetRequiredService<HistorySearchStore>(), services.GetRequiredService<AgentLocalStore>(),
-            sessions, services.GetRequiredService<AgentWorkspaceService>(), services.GetRequiredService<HistoryEmbeddingProviderCatalog>(),
+            sessions, services.GetRequiredService<AgentWorkspaceService>(),
             services.GetRequiredService<HistorySemanticOperationFence>(), services.GetRequiredService<HistorySearchRuntimeState>(), timeProvider);
         var projection = services.GetRequiredService<HistorySearchStore>();
         var state = services.GetRequiredService<HistorySearchRuntimeState>();

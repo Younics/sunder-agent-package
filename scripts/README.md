@@ -4,7 +4,7 @@
 | --- | --- |
 | `ci/` | Ordinary exact-input hydration, parallel builds and test execution. |
 | `release/` | Automatic dependencies; explicit cold acceptance; native capture/no-rebuild fan-in; immutable publication, atomic cohort visibility and reviewed reverse. |
-| `dev/` | Explicit local contract-cache preparation/checks and deliberate source-lock preparation from an exact Core feed. Never part of immutable publication/promotion. |
+| `dev/` | Optional contract-cache diagnostics/orchestration and deliberate source-lock preparation from an exact Core feed. Never a normal authoring prerequisite or part of immutable publication/promotion. |
 | `test/` | Test inventory, duration/evidence report and analyzer/report fixtures. |
 | `test/release/` | Release tooling mocks, bounded native transport fixtures, and explicit real-input qualification commands. |
 | `compatibility/` | Current dependency/artifact boundary checks; protected history is outside product discovery. |
@@ -13,13 +13,38 @@
 
 ### Local contract preparation
 
-NuGet restore and Sunder contract restore are separate steps. After NuGet restore,
-prepare a fresh or cleared authoring cache with the exact Main `.sunderpkg` candidate
-and Core platform catalog selected by the current `sunder-contracts.lock.json` files.
-Obtain those retained inputs from the matching local qualification or release handoff.
-Core validates their pinned content and projections against each existing lock.
+Ordinary SDK restore now owns contract-cache hydration. Obtain the exact local
+inputs selected by the current `sunder-contracts.lock.json` files from their
+matching qualification or release handoff and retain them at:
 
-Run this from the Agent repository root with Python 3.9+, supplying both input paths:
+```text
+.sunder/contract-inputs/younics.ai.agent.2.0.0.sunderpkg
+.sunder/contract-inputs/sunder-platform-contracts.v1.json
+```
+
+These are source archives/catalogs, not copied cache receipts. The directory is
+ignored local data. `Directory.Build.targets` declares these paths only during
+restore; they do not become defaults for API Add/Update/Implement commands.
+`SunderContractInputsRoot` selects another retained directory. Per-request
+`SunderPackageCandidatePath` and `SunderPlatformCatalogPath` still override their
+respective sources. Core verifies exact content, inventory and projections against
+each existing lock; a hash cannot locate missing bytes.
+
+```sh
+dotnet build Sunder.AgentPackage.slnx
+# Or restore separately, then build offline:
+dotnet restore Sunder.AgentPackage.slnx
+dotnet build Sunder.AgentPackage.slnx --no-restore
+```
+
+No script, cache override, Registry selection, lock refresh or API acceptance is
+required. Source mode imports Core directly. NuGet mode resolves the same Build
+SDK version pinned in `global.json`/`Directory.Packages.props` on cold restore;
+ordinary PackageReference build imports are unavailable during that phase.
+
+The Python wrapper remains an **optional** all-project diagnostic/recovery tool.
+It requires Python 3.9+ and restored NuGet compiler references, and can use retained
+inputs from any location:
 
 ```sh
 python3 -B scripts/dev/prepare-contracts.py \
@@ -39,13 +64,14 @@ With `SunderContractCacheRoot` unset, it hydrates the normal user-profile
 `--cache-root` or an explicit `SunderContractCacheRoot` selects a different
 cache; `SUNDER_HOME` and the Host-managed execution runtime are independent of this
 authoring cache. Restoring these existing selections preserves the contract locks
-and owned baselines. Repeat preparation when selected inputs change or the cache
-is cleared, then use the ordinary solution build.
+and owned baselines. Ordinary restore repeats missing-input hydration when the
+cache is cleared; no repeated manual preparation is needed.
 The same package version or filename is not enough: the archive's exact content
 identity, inventory and model projection must match the current locks. An older
 qualification or a fresh rebuild may select different bytes. No default Registry,
 lock refresh, baseline acceptance or cache-file copying is part of preparation.
-Ordinary builds never perform implicit contract restore. Core also exposes the
+Compilation, no-restore, design-time and Pack never acquire contract inputs or
+repair corruption. Core also exposes the
 read-only `dotnet msbuild <canonical-project> -t:CheckSunderContractCache` target;
 its diagnostics report the effective cache root and missing selected input kinds.
 

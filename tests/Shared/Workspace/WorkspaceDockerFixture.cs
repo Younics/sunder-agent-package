@@ -61,7 +61,7 @@ internal static class WorkspaceDockerFixture
             }
             if (args.Count > 0 && args[0] == "info")
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", false, false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", false, false));
             }
             if (args.Count > 1 && args[0] == "image" && args[1] == "inspect")
             {

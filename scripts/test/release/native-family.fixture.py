@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ci"))
 import bash_runtime
 import native_release_inputs as inputs
+from test_native_runtime_evidence import native_documents
 
 SCRIPT = Path(__file__).resolve().parents[2] / "release"
 SPEC = importlib.util.spec_from_file_location("native_family", SCRIPT / "native-family.py")
@@ -94,8 +95,8 @@ def create_producer(root):
             bundle = directory / "bin/Release/net10.0/sunder-targets" / rid
             for filename, data in files.items():
                 write(bundle / "sunder-dev" / filename, data)
-            baseline = str(Path(project).parent / "sunder-contracts.owned.json")
-            lock = str(Path(project).parent / "sunder-contracts.lock.json")
+            baseline = (Path(project).parent / "sunder-contracts.owned.json").as_posix()
+            lock = (Path(project).parent / "sunder-contracts.lock.json").as_posix()
             fingerprint = inputs.digest(b"fixture compilation frame")
             receipt = {"schemaVersion": 1, "producer": {"name": "Sunder.Package.Build", "version": "1.1.0", "language": "csharp"},
                        "inputFingerprint": fingerprint, "lockSha256": inputs.digest((repository / lock).read_bytes()),
@@ -110,7 +111,7 @@ def create_producer(root):
                      "configuration": "Release", "targetFramework": "net10.0", "runtimeIdentifier": rid, "assemblyName": name,
                      "ownedBaseline": baseline, "ownedBaselineSha256": inputs.digest((repository / baseline).read_bytes()),
                      "contractLock": lock, "contractLockSha256": inputs.digest((repository / lock).read_bytes()), "properties": {}, "items": [],
-                     "sources": [{"path": str(Path(project).parent / "Source.cs"), "bytes": len(b"// reviewed source\n"), "sha256": inputs.digest(b"// reviewed source\n")}],
+                     "sources": [{"path": (Path(project).parent / "Source.cs").as_posix(), "bytes": len(b"// reviewed source\n"), "sha256": inputs.digest(b"// reviewed source\n")}],
                      "toolset": [], "externalInputs": []}
             evidence = inputs.compact({"schemaVersion": 1, "inputs": frame,
                                       "rolePlan": {"inputFingerprint": fingerprint, "nativePlanSha256": inputs.digest(b"native plan"),
@@ -399,7 +400,7 @@ class NativeFamilyFixture(unittest.TestCase):
                 family.compose_component(self.repository, leaves, candidates, component)
                 with self.assertRaisesRegex(ValueError, "immutable"):
                     family.compose_component(self.repository, leaves, candidates, component)
-            final_identity = dict(expected, schemaVersion=5)
+            final_identity = dict(expected, schemaVersion=6)
             records = family.gather_candidates(self.repository, candidates, final, final_identity)
             before_smoke = {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")}
             for rid in inputs.RIDS:
@@ -408,18 +409,32 @@ class NativeFamilyFixture(unittest.TestCase):
                     metric = json.loads(path.read_bytes())
                     metric["measurement"]["archiveBytes"] = (final / metric["measurement"]["archive"]).stat().st_size
                     write(path, metric)
+                execution_records = [dict(packageId=next(key for key, version in expected["familyVersions"].items()
+                    if record["path"] == key + "." + version + ".sunderpkg"), archive=record["path"], size=record["size"], sha256=record["sha256"])
+                    for record in records]
+                execution_records.sort(key=lambda row: row["packageId"])
+                receipt, documents = native_documents(execution_records, rid, expected["core"]["commit"])
+                for name, data in documents.items(): write(metrics / name, data)
+                write(metrics / family.runtime_evidence.RECEIPT, receipt)
                 family.record_final(self.repository, candidates, final, metrics, smoke, rid, final_identity)
             family.finalize_candidates(self.repository, smoke, final, final_identity)
             self.assertEqual(4, len(self.log.read_text().splitlines()), "Only two legacy and two new component packs may execute")
             self.assertEqual(before_smoke, {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")})
             final_document = json.loads((final / "native-test-evidence.json").read_bytes())
             self.assertEqual(records, final_document["finalArtifacts"])
+            self.assertEqual(6, len(final_document["executionBundles"]))
+            bundle = final / final_document["executionBundles"][0]["path"]
+            original = bundle.read_bytes()
+            bundle.write_bytes(original + b"changed original reports")
+            with self.assertRaisesRegex(ValueError, "execution report bundle differs"):
+                family.verify_document(final_document, final, family.release_rows(self.repository, str(plan_path)), final_identity)
+            bundle.write_bytes(original)
             changed = copy.deepcopy(final_document)
             run = changed["nativeRuns"][0]
             selected_package = run["packages"][0]
             selected_package["testedArchive"]["sha256"] = "f" * 64
             next(test for test in run["familyTests"] if test["packageId"] == selected_package["packageId"])["testedArchive"]["sha256"] = "f" * 64
-            with self.assertRaisesRegex(ValueError, "exact final archive"):
+            with self.assertRaisesRegex(ValueError, "exact final archive|receipt differs"):
                 family.verify_document(changed, final, family.release_rows(self.repository, str(plan_path)), final_identity)
             component = family.component_identity(self.repository, next(iter(selected_ids)), *VERSIONS[1:])
             receipt = candidates / (component["packageId"] + ".candidate.json")

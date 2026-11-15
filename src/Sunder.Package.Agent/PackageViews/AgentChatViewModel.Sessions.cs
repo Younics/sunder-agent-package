@@ -137,38 +137,6 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private void ReloadSessions(Guid? selectSessionId)
-    {
-        if (SelectedWorkspace is null)
-        {
-            ReconcileSessions([]);
-            SelectedSession = null;
-            SetDisplayedSession(null);
-            RefreshSetupState();
-            return;
-        }
-
-        ReconcileSessions(ListMainSessions());
-        if (selectSessionId is null && SelectedSession is not null)
-        {
-            RefreshSetupState();
-            return;
-        }
-
-        var nextSession =
-            ResolveSessionItem(selectSessionId, allowChildSession: false)
-            ?? Sessions.FirstOrDefault(session => session.SessionId == SelectedSession?.SessionId)
-            ?? Sessions.FirstOrDefault();
-        SelectedSession = nextSession;
-        if (nextSession is null)
-        {
-            SetDisplayedSession(null);
-            TrackBackgroundTask(() =>
-                _selectionState?.SaveSelectedSessionIdAsync(SelectedWorkspace?.WorkspaceId, null));
-            RefreshSetupState();
-        }
-    }
-
     private void SetDisplayedSession(AgentSessionListItemViewModel? session)
     {
         if (DisplayedSession?.SessionId == session?.SessionId)

@@ -18,19 +18,14 @@ public sealed partial class DockerExecutionTarget
             }
         }
 
-        var info = await RunDockerAsync(["info", "--format", "{{.ID}}"], cancellationToken);
-        var daemonId = info.Output.Trim();
-        if (info.ExitCode != 0
-            || string.IsNullOrWhiteSpace(daemonId)
-            || daemonId.Length > 1024
-            || daemonId.Contains('\r')
-            || daemonId.Contains('\n'))
+        var info = await RunDockerAsync(["info", "--format", "{{.ID}} {{.OSType}}"], cancellationToken);
+        if (info.ExitCode != 0)
         {
             throw new InvalidOperationException(AppendDockerOutput(
                 "Docker daemon identity could not be resolved.",
                 info.Output));
         }
-        var daemonIdentity = endpointIdentity + ":" + daemonId;
+        var daemonIdentity = DockerDaemonIdentity.Parse(endpointIdentity, info.Output);
         lock (_daemonIdentityLock)
         {
             _verifiedDaemonIdentity = daemonIdentity;

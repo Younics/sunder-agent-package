@@ -3,6 +3,7 @@ extern alias LocalWorker;
 using LocalWorker::Sunder.Agent.Execution.Common;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
 using Sunder.Package.Agent.Contracts.Models;
+using Sunder.Package.Agent.Execution.Local.Tests;
 using Xunit;
 using LocalWorkerModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using static Sunder.Package.Agent.Tests.WorkspaceServiceFixture;
@@ -118,6 +119,33 @@ public sealed class LocalWorkspaceExecutionTests
         Assert.Contains($"Executable '{missingExecutable}' was not found", result.Output);
         Assert.Contains("Checked PATH locations", result.Output);
         Assert.DoesNotContain("Working directory does not exist", result.Output);
+    }
+
+    [PlatformTheory(TestPlatform.Windows, "cmd.exe parses a raw command tail, not CRT-escaped argv.")]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LocalShellExecutor_CmdPreservesQuotedRedirectionAndExecutable(bool quotedExecutable)
+    {
+        using var scope = TestScope.Create();
+        var root = Directory.CreateDirectory(Path.Combine(scope.RootPath, "workspace with spaces")).FullName;
+        var configService = new LocalExecutionWorkspaceConfigService(scope.Context);
+        var (workspace, binding) = await CreateLocalWorkspaceAsync(root, configService);
+        var executable = ChildProcessEnvironment.ResolveWindowsCommandProcessor();
+        var config = new LocalExecutionRuntimeConfig([root], root)
+        {
+            SelectedShell = new("cmd", "Command Prompt", executable, AgentShellSyntaxKinds.Cmd, true),
+        };
+        var executor = new LocalShellExecutor(scope.Context, new LocalShellCatalogService(scope.Context));
+        var marker = Path.Combine(root, "quoted & marker.txt");
+        var command = (quotedExecutable ? $"\"{executable}\" /d /c " : string.Empty) + $"echo x>>\"{marker}\"";
+
+        var result = await executor.ExecuteShellAsync(config,
+            ToLocalExecutionContext(new AgentExecutionTargetContext(null, null, workspace, binding)),
+            new() { Command = command, WorkingDirectory = root, TimeoutSeconds = 5 }, CancellationToken.None);
+
+        Assert.True(result.ExitCode == 0 && !result.TimedOut, result.Output);
+        Assert.Equal("x", (await File.ReadAllTextAsync(marker)).TrimEnd('\r', '\n'));
+        Assert.Equal(marker, Assert.Single(Directory.EnumerateFiles(root)));
     }
 
     private static Sunder.Sdk.Rpc.SunderRpcOffsetDateTime LocalTime(DateTimeOffset value)

@@ -418,6 +418,7 @@ def main():
     family_parser = commands.add_parser("test-family")
     family_parser.add_argument("--core", required=True)
     family_parser.add_argument("--directory", required=True)
+    family_parser.add_argument("--results-directory", help="Fresh Core family input/report root; existing inputs are never overwritten")
     resolve_parser = commands.add_parser("resolve")
     resolve_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     resolve_parser.add_argument("--core", required=True)
@@ -473,7 +474,7 @@ def main():
         elif args.action == "report": test_lanes.report(args.mode, args.platform)
         elif args.action == "retain-verifier": test_lanes.retain_verifier()
         elif args.action == "prepare-verifier": test_lanes.prepare_verifier(args.core, args.tools)
-        else: test_lanes.family(args.core, args.directory)
+        else: test_lanes.family(args.core, args.directory, args.results_directory)
     elif args.action == "resolve":
         selected = None if args.packages is None else json.loads(args.packages)
         if args.test_dependencies: selected = test_dependency_scope(args.source, selected)

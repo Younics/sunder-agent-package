@@ -18,16 +18,56 @@ internal sealed class LocalCreatedDirectoryAuthority : IDisposable
             ObjectDisposedException.ThrowIf(_disposed, this);
             // Another approved sibling may have published this ancestor since
             // the caller probed it. Reuse only the executor's retained identity.
+            if (TryBorrowChild(platform, parent, name, volume, out var borrowed)) return borrowed!;
             if (platform.TryOpenChild(parent, name, volume, requireDirectory: true, out var existing))
             {
-                if (OwnsChild(parent, existing!)) return existing!;
                 existing!.Dispose();
                 throw new LocalSecureApprovalChangedException(Path.Combine(parent.FullPath, name));
             }
             if (_directories.Count >= 512) throw new InvalidOperationException("An operation may create at most 512 parent directories.");
-            var created = platform.CreateDirectory(parent, name);
-            try { Record(platform, parent, created); return created; }
-            catch { created.Dispose(); throw; }
+            using var created = platform.CreateDirectory(parent, name);
+            Record(platform, parent, created);
+            return created.RetainForTraversal();
+        }
+    }
+
+    internal bool TryOpenChild(ILocalSecureFileSystemPlatform platform, LocalSecureHandle parent, string name,
+        ulong volume, bool requireDirectory, out LocalSecureHandle? child)
+    {
+        lock (_gate)
+        {
+            // Keep the fallback probe in the same operation gate as creation.
+            // Otherwise a sibling could create a DELETE-owning file object after
+            // the ownership lookup but before a no-delete-sharing directory open.
+            return TryBorrowChild(platform, parent, name, volume, out child)
+                || platform.TryOpenChild(parent, name, volume, requireDirectory, out child);
+        }
+    }
+
+    internal bool TryBorrowChild(ILocalSecureFileSystemPlatform platform, LocalSecureHandle parent, string name,
+        ulong volume, out LocalSecureHandle? child)
+    {
+        lock (_gate)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            child = null;
+            var comparison = OperatingSystem.IsWindows() && !parent.CaseSensitiveDirectory
+                ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+            var owned = _directories.FirstOrDefault(directory => directory.Parent.Identity == parent.Identity
+                && string.Equals(Path.GetFileName(directory.Child.FullPath), name, comparison));
+            if (owned is null) return false;
+
+            // A final-entry identity probe shares DELETE with the creation object.
+            // It is not traversal authority and is never upgraded into ownership.
+            if (!platform.TryOpenChild(parent, name, volume, requireDirectory: false, out var current))
+                throw new LocalSecureApprovalChangedException(Path.Combine(parent.FullPath, name));
+            using (current)
+            {
+                if (current!.Identity != owned.Child.Identity || current.Kind != LocalSecureNodeKind.Directory)
+                    throw new LocalSecureApprovalChangedException(Path.Combine(parent.FullPath, name));
+                child = owned.Child.RetainForTraversal();
+                return true;
+            }
         }
     }
 
@@ -84,7 +124,11 @@ internal sealed class LocalCreatedDirectoryAuthority : IDisposable
                     var name = Path.GetFileName(directory.Child.FullPath);
                     // Probe the final entry without taking an ancestor pin which
                     // would itself prohibit a Windows delete-access upgrade.
-                    if (!directory.Platform.TryOpenChild(directory.Parent, name, directory.Parent.Identity.Volume, false, out var current)) continue;
+                    if (!directory.Platform.TryOpenChild(directory.Parent, name, directory.Parent.Identity.Volume, false, out var current))
+                    {
+                        _cleanupFailures.Add($"Created directory entry is missing; cleanup could not be confirmed: {directory.Child.FullPath}");
+                        continue;
+                    }
                     using (current)
                     {
                         if (current!.Identity != directory.Child.Identity || current.Kind != LocalSecureNodeKind.Directory)

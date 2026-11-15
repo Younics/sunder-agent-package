@@ -111,44 +111,6 @@ internal static class FileDiffPresentation
         }
     }
 
-    private static IReadOnlyList<int> FindMatchIndexes(string content, string oldString, bool replaceAll)
-    {
-        var matches = new List<int>();
-        var startIndex = 0;
-        while (startIndex <= content.Length)
-        {
-            var index = content.IndexOf(oldString, startIndex, StringComparison.Ordinal);
-            if (index < 0)
-            {
-                break;
-            }
-
-            matches.Add(index);
-            if (!replaceAll)
-            {
-                break;
-            }
-
-            startIndex = index + oldString.Length;
-        }
-
-        return matches;
-    }
-
-    private static int CountLinesBefore(string content, int index)
-    {
-        var count = 0;
-        for (var position = 0; position < Math.Min(index, content.Length); position++)
-        {
-            if (content[position] == '\n')
-            {
-                count++;
-            }
-        }
-
-        return count;
-    }
-
     private static string[] SplitLines(string value)
         => value.Length == 0 ? [] : value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
 }

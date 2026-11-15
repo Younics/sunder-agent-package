@@ -16,6 +16,7 @@
 
   <ItemGroup>
     <Compile Include="../Shared/Execution/Docker/DockerPresentationTestContent.cs" Link="TestSupport/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/Execution/Docker/DockerIntegrationFactAttribute.cs" Link="TestSupport/%(Filename)%(Extension)" />
     <Compile Include="../Shared/Repository/*.cs;../Shared/Canonical/*.cs;../Shared/Composition/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs;../Shared/Platform/*.cs;../Shared/Execution/*.cs;../Shared/Execution/Platform/*.cs;../Shared/Execution/Docker/DockerFileSystemTestExecutor.cs;../Shared/Workspace/*.cs"
              Link="TestSupport/%(Filename)%(Extension)" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj"

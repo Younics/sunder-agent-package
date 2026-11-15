@@ -11,7 +11,7 @@ public sealed class OperationCreatedParentTests : IDisposable
     private readonly string _root = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(),
         "sunder-operation-parents", Guid.NewGuid().ToString("N"));
 
-    [PlatformFact(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]
+    [Fact]
     public async Task PreapprovedSiblingPathsReuseOnlyTheirOwnCreatedAncestorsWithoutChangingClaims()
     {
         Directory.CreateDirectory(_root);
@@ -33,10 +33,59 @@ public sealed class OperationCreatedParentTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_root, "new/sub/foreign.txt")));
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task ReplacedOrIndependentlyCreatedAncestorIsNeverAdopted(bool replaceOwnedParent)
+    [Fact]
+    public async Task PostMutationReceipt_KeepsOwnedParentsBorrowableAfterPlanningAuthorityIsReleased()
+    {
+        Directory.CreateDirectory(_root);
+        var config = new LocalExecutionRuntimeConfig([_root], _root);
+        using var references = new LocalResourceReference();
+        using var approved = LocalResourceAuthorityTestContext.Approve(config, "new/sub/a.txt", "files.mutate", resourceReferences: references);
+        var context = approved.Context with { CapturePostMutationResource = true };
+        var written = await Write(config, context, references, "new/sub/a.txt");
+        Assert.False(written.IsError, written.Summary);
+        var receipt = Assert.IsType<LocalModels.AgentResolvedResource>(written.PostMutationResource);
+        Assert.NotEmpty(receipt.AuthorityReferences);
+        foreach (var capability in approved.Context.ApprovedResourceCapabilities) references.Revoke(capability);
+        var compensation = context with
+        {
+            ApprovedResourceReferences = [receipt.CanonicalReference],
+            ApprovedResourceClaims = [receipt.ResourceClaim!],
+            ApprovedResourceCapabilities = receipt.AuthorityReferences,
+            CapturePostMutationResource = false,
+        };
+        var wrongActivation = compensation with
+        {
+            ResourceOperation = compensation.ResourceOperation! with { AuthorityActivationId = Guid.NewGuid().ToString("N") },
+        };
+        var rejected = await Delete(wrongActivation);
+        Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
+        Assert.Equal("approved", File.ReadAllText(Path.Combine(_root, "new/sub/a.txt")));
+        var deleted = await Delete(compensation);
+        Assert.False(deleted.IsError, deleted.Summary);
+        Assert.False(File.Exists(Path.Combine(_root, "new/sub/a.txt")));
+        foreach (var capability in receipt.AuthorityReferences.Concat(receipt.DeleteAuthorityReferences)) references.Revoke(capability);
+        var retained = Assert.Single(Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories));
+        Assert.True(HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retained)));
+        Assert.Equal("approved", File.ReadAllText(retained));
+
+        ValueTask<LocalModels.AgentFileMutationResult> Delete(LocalModels.AgentExecutionTargetContext deleteContext)
+            => LocalFileSystemExecutor.DeleteFileAsync(config, new LocalModels.AgentFileDeleteRequest
+            {
+                Path = "new/sub/a.txt",
+                Recursive = false,
+                ExpectedContentHash = FileOperation.ComputeContentHash("approved"),
+            }, true, CancellationToken.None, authorizationContext: deleteContext, resourceReferences: references);
+    }
+
+    [Fact]
+    public Task IndependentlyCreatedAncestorIsNeverAdopted()
+        => AssertForeignAncestorIsRejected(replaceOwnedParent: false);
+
+    [PlatformFact(TestPlatform.Unix, "This fixture reparents a retained ancestor; Windows instead denies reparenting through handle sharing.")]
+    public Task ReplacedOwnedAncestorIsNeverAdopted()
+        => AssertForeignAncestorIsRejected(replaceOwnedParent: true);
+
+    private async Task AssertForeignAncestorIsRejected(bool replaceOwnedParent)
     {
         Directory.CreateDirectory(_root);
         var config = new LocalExecutionRuntimeConfig([_root], _root);
@@ -56,29 +105,29 @@ public sealed class OperationCreatedParentTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_root, "new/sub/b.txt")));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]
-    public async Task CancellationRetainsSanitizedRecoveryEntriesAndNeverRecursivelyDeletesTheirParents()
+    [Fact]
+    public async Task PrecommitCancellation_CreatesNoFileAndRetiresOnlyOwnedEmptyParentsAfterRelease()
     {
         Directory.CreateDirectory(_root);
         var config = new LocalExecutionRuntimeConfig([_root], _root);
         using var references = new LocalResourceReference();
         using var approved = LocalResourceAuthorityTestContext.Approve(config, "new/sub/a.txt", "files.mutate", resourceReferences: references);
-        using var forceNamedCreation = OperatingSystem.IsLinux()
-            ? LocalUnixNative.OverrideAnonymousTemporaryFileOpenError(95)
-            : null;
         await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await LocalFileSystemExecutor.WriteFileAsync(config,
             new LocalModels.AgentFileWriteRequest { Path = "new/sub/a.txt", Content = "canceled", Overwrite = false }, true,
-            CancellationToken.None, faultInjector: new CancelAfterWrite(), authorizationContext: approved.Context, resourceReferences: references));
+            CancellationToken.None, faultInjector: new CancelBeforeContent(), authorizationContext: approved.Context, resourceReferences: references));
         Assert.True(Directory.Exists(Path.Combine(_root, "new/sub")));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(Path.Combine(_root, "new/sub")));
         foreach (var capability in approved.Context.ApprovedResourceCapabilities) references.Revoke(capability);
-        Assert.True(Directory.Exists(Path.Combine(_root, "new/sub")));
-        Assert.False(File.Exists(Path.Combine(_root, "new/sub/a.txt")));
-        var retained = Assert.Single(Directory.EnumerateFiles(Path.Combine(_root, "new/sub")));
-        Assert.StartsWith(".sunder-secure-quarantine-", Path.GetFileName(retained));
-        Assert.Equal(0, new FileInfo(retained).Length);
+        Assert.False(Directory.Exists(Path.Combine(_root, "new/sub")));
+        // The deletion backend retains the retired empty directory. Its parent
+        // is now nonempty, so cleanup must not recurse through that parent.
+        var retained = Assert.Single(Directory.EnumerateDirectories(Path.Combine(_root, "new")));
+        Assert.True(HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retained)));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(retained));
+        Assert.Empty(Directory.EnumerateFiles(_root, "*", SearchOption.AllDirectories));
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public void EmptyOwnedParentIsRetiredOnlyAfterTheLastBorrowAndExpiredCapabilitiesCannotBorrow(bool expires)
@@ -107,7 +156,7 @@ public sealed class OperationCreatedParentTests : IDisposable
         Assert.Empty(Directory.EnumerateFileSystemEntries(retired));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Strict structured mutations require Unix publication support.")]
+    [Fact]
     public async Task ConcurrentApprovedSiblingsShareCreatedParentsWithoutAdoptingForeignAncestors()
     {
         Directory.CreateDirectory(_root);
@@ -155,11 +204,11 @@ public sealed class OperationCreatedParentTests : IDisposable
         => LocalFileSystemExecutor.WriteFileAsync(config, new LocalModels.AgentFileWriteRequest { Path = path, Content = "approved", Overwrite = false },
             true, CancellationToken.None, authorizationContext: context, resourceReferences: references);
 
-    private sealed class CancelAfterWrite : ILocalFileWriteFaultInjector
+    private sealed class CancelBeforeContent : ILocalFileWriteFaultInjector
     {
         public void OnFaultPoint(LocalFileWriteFaultPoint point)
         {
-            if (point == LocalFileWriteFaultPoint.TemporaryFileFlushed) throw new OperationCanceledException();
+            if (point == LocalFileWriteFaultPoint.ContentPrepared) throw new OperationCanceledException();
         }
     }
 

@@ -8,6 +8,7 @@ namespace Sunder.Package.Agent.Builder;
 [Sunder.Sdk.Packaging.SunderPackageCodeRole(Sunder.Sdk.Packaging.SunderPackageCodeRole.Shared)]
 internal static class BuilderProjectDriverOutputs
 {
+    internal const string NodeDevelopmentScript = "sunder:dev:once";
     private const int MaximumMetadata = 1024 * 1024;
     private const string Manifest = "manifest/sunder-package.json";
     private const string Index = "manifest/content-index.json";

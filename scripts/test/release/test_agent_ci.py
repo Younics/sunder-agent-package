@@ -16,6 +16,7 @@ from unittest.mock import patch
 SCRIPTS = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SCRIPTS / "ci"))
 import agent_ci as ci
+import platform
 import test_lanes
 import ci_platforms
 import bash_runtime
@@ -24,7 +25,14 @@ fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixt
 
 
 class AgentCiTests(unittest.TestCase):
-    setUp = fixture_setup
+    def setUp(self):
+        fixture_setup(self)
+        # Python 3.11 on Windows may query cmd.exe for platform metadata. Keep
+        # that OS probe outside the build-command mock without inventing a RID.
+        machine = platform.machine()
+        architecture = patch("core_tools.platform.machine", return_value=machine)
+        architecture.start()
+        self.addCleanup(architecture.stop)
 
     def write_test_inventory(self):
         path = self.source / "artifacts/reports/test-inventory.json"
@@ -153,6 +161,60 @@ class AgentCiTests(unittest.TestCase):
             self.assertIn(f"steps.archive_tests.outcome == '{outcome}'", upload)
         self.assertNotIn("steps.archive_tests.outcome == 'skipped'", upload)
         self.assertIn("if-no-files-found: error", upload)
+
+    def test_prepublication_family_uses_development_and_supervised_app_gates_without_credentials(self):
+        import release_inputs
+        core = self.root / "family-core"
+        baseline = core / "eng/platform-contracts/sunder-contracts.owned.json"
+        baseline.parent.mkdir(parents=True)
+        baseline.write_text(json.dumps({"contracts": {"stack": {"current": {"catalogRelease": {"releaseVersion": "2.0.0"}}}}}))
+        archives = self.root / "family-archives"
+        archives.mkdir()
+        for name in ("owner", "maker"):
+            (archives / (name + ".sunderpkg")).write_bytes(name.encode())
+        output = self.root / "family-proof"
+        ids = {"owner.sunderpkg": "younics.ai.agent", "maker.sunderpkg": "younics.sunder.package.maker"}
+        with patch.object(test_lanes, "ROOT", self.source), patch.object(test_lanes, "run") as run, \
+             patch.object(test_lanes.subprocess, "check_output", return_value="tool.dll") as evaluate, \
+             patch.object(release_inputs, "archive_metadata", side_effect=lambda path: ({"id": ids[path.name]}, None)), \
+             patch.dict(os.environ, {"GH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-tests",
+                                     "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_NATIVE_READ_TOKEN": "must-not-reach-tests",
+                                     "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY": "1"}):
+            test_lanes.family(core, archives, output)
+            calls = run.call_args_list
+            before = len(calls)
+            with self.assertRaises(FileExistsError):
+                test_lanes.family(core, archives, output)
+            self.assertEqual(before, run.call_count, "a repeated result directory must fail before invoking any tools")
+        tests = [call for call in calls if call.args[:2] == ("dotnet", "test")]
+        self.assertEqual(2, len(tests))
+        self.assertIn("Sunder.App.Integration.Tests", str(tests[1].args[2]))
+        selectors = " ".join(str(arg) for call in tests for arg in call.args)
+        self.assertIn("DevelopmentArchives_ActivateUnloadReloadAndReplaceAsOneFamily", selectors)
+        self.assertIn("RuntimeProducedAgentSnapshot_MaterializesAndActivatesInSupervisedApp", selectors)
+        self.assertNotIn("ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily", selectors)
+        self.assertEqual(2, evaluate.call_count)
+        for call in [*calls, *evaluate.call_args_list]:
+            environment = call.kwargs["env"]
+            self.assertFalse(any(key in environment for key in ("GH_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY")))
+            self.assertEqual(str(output / "app-snapshot"), environment["SUNDER_AGENT_UI_SNAPSHOT_DIR"])
+            self.assertEqual(str(self.source), environment["SUNDER_AGENT_CURRENT_BASELINE_ROOT"])
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
+        build = workflow.split("      - name: Build Core validation paths\n")[1].split("      - name:")[0]
+        self.assertIn("tests/Sunder.App.Integration.Tests", build)
+
+    def test_published_native_acceptance_is_mandatory_after_publication_and_before_visibility(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
+        installed = workflow.split("  installed-native:\n")[1].split("\n  release:")[0]
+        release = workflow.split("  release:\n")[1].split("\n  summary:")[0]
+        self.assertIn("needs: [prepare, stage, publish-owner, publish-consumers]", installed)
+        self.assertIn('"$CORE_COMMIT" published', installed)
+        self.assertIn("secrets.SUNDER_REGISTRY_NATIVE_READ_TOKEN", installed)
+        self.assertIn("REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}", installed)
+        self.assertIn("agent_pipeline.py recover --read-only", installed)
+        self.assertIn("needs.installed-native.result == 'success'", release)
+        self.assertLess(release.index("retain-installed-native"), release.index("agent_pipeline.py visibility"))
+        self.assertIn("installed-native", workflow.split("  summary:\n")[1])
 
     def prepare(self):
         self.core = self.root / "sunder-core"
@@ -314,6 +376,7 @@ class AgentCiTests(unittest.TestCase):
         lanes = []
         def run(state, lane):
             lanes.append(lane)
+            self.assertEqual("1", os.environ["SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES"])
             self.assertEqual("1", os.environ["SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION"])
             if lane == "required-linux":
                 self.assertEqual("1", os.environ["SUNDER_REQUIRE_TEST_PREREQUISITES"])
@@ -346,26 +409,28 @@ class AgentCiTests(unittest.TestCase):
     def test_platform_matrices_preserve_native_coverage_and_validate_runner_overrides(self):
         value = ci_platforms.matrices(True, {"SUNDER_AGENT_RUNNER_LINUX_ARM64": '["self-hosted","linux","ARM64"]'})
         self.assertEqual(set(ci_platforms.RIDS), {row["rid"] for row in value["native"]["include"]})
-        self.assertEqual(4, len(value["behavior"]["include"]))
-        self.assertEqual({"windows", "linux"}, {row["platform"] for row in value["preflight"]["include"]})
-        self.assertEqual(2, len(value["preflight"]["include"]))
+        self.assertEqual({(rid, mode) for rid in ci_platforms.RIDS for mode in ("source", "package")},
+                         {(row["rid"], row["mode"]) for row in value["behavior"]["include"]})
+        self.assertEqual(12, len(value["behavior"]["include"]))
+        self.assertEqual({"windows", "linux", "macos"}, {row["platform"] for row in value["preflight"]["include"]})
+        self.assertEqual(6, len(value["preflight"]["include"]))
         self.assertEqual(["self-hosted", "linux", "ARM64"], next(row["runner"] for row in value["native"]["include"] if row["rid"] == "linux-arm64"))
+        self.assertTrue(all(row["runner"] == ["self-hosted", "linux", "ARM64"] for row in value["behavior"]["include"] if row["rid"] == "linux-arm64"))
         for labels in ('[]', '"ubuntu-latest"', '["linux\\noutput=changed"]'):
             with self.assertRaises(ValueError): ci_platforms.matrices(variables={"SUNDER_AGENT_RUNNER_LINUX_ARM64": labels})
 
-    def test_windows_filesystem_native_adds_arm64_without_replacing_default_or_six_native_lanes(self):
+    def test_windows_filesystem_option_keeps_all_six_default_behavior_owners_without_duplicates(self):
         for packages in (False, True):
             with self.subTest(package_tests=packages):
                 ordinary = ci_platforms.matrices(packages)
                 expanded = ci_platforms.matrices(packages, {"SUNDER_AGENT_RUNNER_WIN_ARM64": '["windows-11-arm"]'},
                                                 windows_filesystem_native=True)
                 self.assertEqual(ordinary["native"], expanded["native"])
-                self.assertEqual(ordinary["behavior"]["include"],
-                    [row for row in expanded["behavior"]["include"] if row["rid"] != "win-arm64"])
+                self.assertEqual(ordinary["behavior"], expanded["behavior"])
                 arm = [row for row in expanded["behavior"]["include"] if row["rid"] == "win-arm64"]
                 self.assertEqual({"source", "package"} if packages else {"source"}, {row["mode"] for row in arm})
                 self.assertTrue(all(row["platform"] == "windows" and row["runner"] == ["windows-11-arm"] for row in arm))
-                self.assertEqual({"win-x64", "win-arm64", "linux-x64"},
+                self.assertEqual(set(ci_platforms.RIDS),
                     {row["rid"] for row in expanded["preflight"]["include"]})
 
     def test_scoped_source_archives_preserve_tested_payloads_and_reject_rebuilt_bytes(self):

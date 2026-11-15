@@ -64,6 +64,8 @@ internal static class FilePatchHandler
                 operation.PostMutationResource = result.PostMutationResource;
                 operation.RejectedWithoutMutation = result.IsError && result.PostMutationResource is null
                     && result.ErrorCode is FileOperation.FileExistsErrorCode or FileOperation.ContentChangedErrorCode;
+                operation.MutationIncomplete = result.IsError
+                    && result.ErrorCode == FileOperation.StrictMutationRecoveryRequiredErrorCode;
                 if (result.IsError)
                 {
                     return await BuildApplicationFailureAsync(target, context, toolId, plan, applied, operation, result.Summary);
@@ -205,21 +207,30 @@ internal static class FilePatchHandler
         FilePatchCompensationProbeFailure? probeFailure = null;
         if (failed is not null && !applied.Contains(failed))
         {
-            try
+            if (failed.MutationIncomplete)
             {
-                if (await FailedOperationReachedNextStateAsync(
-                        target,
-                        context,
-                        failed,
-                        cancellationToken,
-                        requireOriginalStateForNoMutation))
-                {
-                    targets = [.. applied, failed];
-                }
+                probeFailure = new FilePatchCompensationProbeFailure(failed.Path,
+                    "The execution target reported an incomplete mutation. Its file may contain partial content; automatic compensation of this operation was skipped.",
+                    StateUncertain: true);
             }
-            catch (Exception exception)
+            else
             {
-                probeFailure = new FilePatchCompensationProbeFailure(failed.Path, exception.Message);
+                try
+                {
+                    if (await FailedOperationReachedNextStateAsync(
+                            target,
+                            context,
+                            failed,
+                            cancellationToken,
+                            requireOriginalStateForNoMutation))
+                    {
+                        targets = [.. applied, failed];
+                    }
+                }
+                catch (Exception exception)
+                {
+                    probeFailure = new FilePatchCompensationProbeFailure(failed.Path, exception.Message);
+                }
             }
         }
 
@@ -245,6 +256,13 @@ internal static class FilePatchHandler
                 : reachedNextState;
         }
 
+        // Destination compensation already verifies a move's exact approved
+        // source against its complete preflight snapshot, at the later boundary.
+        // Do not spend a second single-use source capability on the same check
+        // here. A missing, changed or unreadable source retains the destination.
+        if (operation.Kind == FilePatchOperationKind.Delete && operation.Move is not null)
+            return false;
+
         var resource = await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
         var readContext = context with
         {
@@ -254,13 +272,7 @@ internal static class FilePatchHandler
         {
             if (!resource.Exists)
             {
-                if (operation.Move is not null)
-                    throw new InvalidOperationException($"Move source '{operation.Path}' removal ownership could not be confirmed; the destination was retained for recovery.");
-                return true;
-            }
-            if (!requireOriginalStateForNoMutation)
-            {
-                return false;
+                throw new InvalidOperationException($"Removal ownership could not be confirmed for '{operation.Path}' without its exact post-mutation receipt; automatic compensation was skipped.");
             }
 
             var current = await ReadCurrentContentAsync(
@@ -273,9 +285,7 @@ internal static class FilePatchHandler
             {
                 return false;
             }
-            return requireOriginalStateForNoMutation
-                ? throw UncertainCanceledOperationState(operation.Path)
-                : false;
+            throw UncertainCanceledOperationState(operation.Path);
         }
 
         if (!resource.Exists)
@@ -284,9 +294,7 @@ internal static class FilePatchHandler
             {
                 return false;
             }
-            return requireOriginalStateForNoMutation
-                ? throw UncertainCanceledOperationState(operation.Path)
-                : false;
+            throw UncertainCanceledOperationState(operation.Path);
         }
 
         // A destination created by somebody else can have identical text. A
@@ -302,16 +310,14 @@ internal static class FilePatchHandler
             requireCompleteRead: requireOriginalStateForNoMutation);
         if (string.Equals(currentContent, operation.NextContent, StringComparison.Ordinal))
         {
-            return true;
+            throw new InvalidOperationException($"The current contents of '{operation.Path}' match the plan, but no exact post-mutation receipt confirms this operation's ownership. Automatic compensation was skipped.");
         }
         if (operation.Kind == FilePatchOperationKind.Update
             && string.Equals(currentContent, operation.OriginalContent, StringComparison.Ordinal))
         {
             return false;
         }
-        return requireOriginalStateForNoMutation
-            ? throw UncertainCanceledOperationState(operation.Path)
-            : false;
+        throw UncertainCanceledOperationState(operation.Path);
     }
 
     private static async Task<FilePatchCompensationResult> CompensateAsync(
@@ -370,11 +376,14 @@ internal static class FilePatchHandler
             }
             catch (Exception exception)
             {
-                return RetainMoveDestination(move, "the source could not be verified: " + exception.Message);
+                return RetainMoveDestination(move,
+                    "the source could not be verified and removal ownership could not be confirmed: " + exception.Message);
             }
         }
-        var resource = operation.PostMutationResource
-                       ?? await target.Service.ResolveFileAsync(new() { Context = context, Path = operation.Path }, cancellationToken);
+        // A fresh pathname resolution cannot replace missing mutation authority,
+        // even when an unrelated replacement contains exactly the planned text.
+        if (operation.PostMutationResource is not { } resource)
+            return UnsafeCompensation(operation.Path);
         var operationContext = CreateCompensationContext(context, operation, resource);
         switch (operation.Kind)
         {
@@ -550,7 +559,9 @@ internal static class FilePatchHandler
         {
             message.Append(" The operation '")
                 .Append(probeFailure.Path)
-                .Append("' could not be verified for compensation because diagnostic probing was unavailable: ")
+                .Append(probeFailure.StateUncertain
+                    ? "' could not be confirmed for compensation: "
+                    : "' could not be verified for compensation because diagnostic probing was unavailable: ")
                 .Append(probeFailure.Failure)
                 .Append('.');
         }

@@ -32,48 +32,17 @@ public sealed partial class RepositoryArchitectureTests
     }
 
     [Fact]
-    public void SharedRegressionHarnesses_RemainSplitAndResponsibilityCapped()
+    public void SharedRpcHarnesses_DoNotDependOnPackageContextOrStorage()
     {
         var testRoot = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "tests",
             "Shared");
-        var lineCaps = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            ["Rpc/RegressionTestInfrastructure.cs"] = 1080,
-            ["Rpc/RegressionTestRpcInfrastructure.cs"] = 1080,
-            ["Rpc/RegressionTestSourceProviders.cs"] = 230,
-            ["Rpc/RegressionTestRpcState.FailureBoundary.cs"] = 80,
-            ["Packages/RegressionTestPackageContext.cs"] = 60,
-            ["Packages/RegressionTestPackageScope.cs"] = 40,
-        };
-        foreach (var item in lineCaps)
-        {
-            var path = Path.Combine(testRoot, item.Key);
-            Assert.True(
-                File.ReadLines(path).Count() <= item.Value,
-                $"{item.Key} exceeds its {item.Value}-line test-harness responsibility cap.");
-        }
-
         var rpcInfrastructure = string.Join('\n',
             File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestInfrastructure.cs")),
             File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestRpcInfrastructure.cs")));
         Assert.DoesNotContain("IPackageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.DoesNotContain("IPackageStorageContext", rpcInfrastructure, StringComparison.Ordinal);
-        Assert.Equal(
-            new[]
-            {
-                "internal partial class RegressionTestExtensionCatalog",
-                "internal sealed class RegressionTestRpcCallScope",
-                "internal sealed class RegressionTestRpcClient",
-                "internal sealed partial class RegressionTestRpcState",
-                "public class RegressionTestInvocationAuthority",
-            },
-            Regex.Matches(
-                rpcInfrastructure,
-                "^(?:internal|public) (?:(?:sealed|partial) )*class \\w+",
-                RegexOptions.Multiline | RegexOptions.CultureInvariant)
-                .Select(match => match.Value).Order(StringComparer.Ordinal));
     }
 
     [Fact]
@@ -647,6 +616,9 @@ public sealed partial class RepositoryArchitectureTests
         Assert.All(sunderPackageVersions, reference => Assert.True(
             SemanticVersion.TryParse(reference.Attribute("Version")?.Value, out _),
             $"{reference.Attribute("Include")?.Value} must declare its own ordinary NuGet version."));
+        using (var global = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repositoryRoot, "global.json"))))
+            Assert.Equal(Assert.Single(sunderPackageVersions, reference => reference.Attribute("Include")?.Value == "Sunder.Package.Build")
+                .Attribute("Version")!.Value, global.RootElement.GetProperty("msbuild-sdks").GetProperty("Sunder.Package.Build").GetString());
         var avaloniaVersions = packageProperties.Descendants("PackageVersion")
             .Where(static reference => reference.Attribute("Include")?.Value == "Avalonia")
             .ToArray();

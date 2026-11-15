@@ -14,7 +14,7 @@ namespace Sunder.Package.Agent.Tests;
 [Collection("Workspace component behavior")]
 public sealed class DockerWorkspaceExecutionTests
 {
-    [UnixFact("Docker strict writes require supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_WriteFileAsync_UsesApprovedVerifiedHostBind()
     {
         using var scope = TestScope.Create();
@@ -52,7 +52,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Equal(content, await File.ReadAllTextAsync(Path.Combine(hostPath, "app", "page.tsx")));
     }
 
-    [UnixFact("Docker target reads require supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_ReadFileAsync_ReportsMissingFileLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -87,7 +87,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Empty(result.Content);
     }
 
-    [UnixFact("Docker target reads require supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_ReadFileAsync_RejectsBinaryFilesLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -119,7 +119,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Empty(result.Content);
     }
 
-    [UnixFact("Docker target deletes require supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_DeleteFileAsync_ReportsMissingPathLikeLocal()
     {
         using var scope = TestScope.Create();
@@ -188,7 +188,7 @@ public sealed class DockerWorkspaceExecutionTests
         Assert.Equal(DockerPathResolver.StructuredBindRequiredMessage, result.ErrorMessage);
     }
 
-    [UnixFact("Docker scoped discovery requires supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_ScopedDiscoveryUsesVerifiedHostBind()
     {
         using var scope = TestScope.Create();
@@ -223,6 +223,7 @@ public sealed class DockerWorkspaceExecutionTests
     }
 
     [DockerIntegrationFact]
+    [SupportedOSPlatform("windows")]
     [SupportedOSPlatform("linux")]
     [SupportedOSPlatform("macos")]
     [Trait("Category", "System")]
@@ -242,10 +243,10 @@ public sealed class DockerWorkspaceExecutionTests
         using var scope = TestScope.Create();
         await using var lifecycle = new DockerContainerLifecycleService();
         var runner = new DockerCliRunner(scope.Context);
-        const string image = "node:22-alpine";
-        var pull = await runner.RunAsync(["pull", image], 120, CancellationToken.None);
-        Assert.False(pull.TimedOut, pull.Output);
-        Assert.Equal(0, pull.ExitCode);
+        var image = Environment.GetEnvironmentVariable("SUNDER_DOCKER_INTEGRATION_IMAGE") ?? "node:22-alpine";
+        var inspected = await runner.RunAsync(["image", "inspect", "--format", "{{.Id}}", image], 30, CancellationToken.None);
+        Assert.False(inspected.TimedOut, inspected.Output);
+        Assert.True(inspected.ExitCode == 0, $"Provision the selected integration image explicitly before running this test. {inspected.Output}");
         var configService = new DockerExecutionWorkspaceConfigService(scope.Context);
         var target = new DockerExecutionTarget(scope.Context, configService, lifecycle, dockerCliRunner: runner);
         var (workspace, hostPath) = CreateDockerWorkspace(scope);
@@ -276,9 +277,12 @@ public sealed class DockerWorkspaceExecutionTests
                     $"cat {DockerCommandRunner.Quote(scopeDescriptor.DefaultWorkingDirectory + "/nested/file.txt")}"));
             Assert.Equal(0, shell.ExitCode);
             Assert.Contains("container-readable", shell.Output, StringComparison.Ordinal);
-            Assert.Equal(
-                UnixFileMode.UserRead | UnixFileMode.UserWrite,
-                File.GetUnixFileMode(Path.Combine(hostPath, "nested", "file.txt")) & (UnixFileMode)0x0fff);
+            if (!OperatingSystem.IsWindows())
+            {
+                var control = Path.Combine(hostPath, "ordinary-control.txt");
+                await File.WriteAllTextAsync(control, "ordinary creation policy");
+                Assert.Equal(File.GetUnixFileMode(control), File.GetUnixFileMode(Path.Combine(hostPath, "nested", "file.txt")));
+            }
         }
         finally
         {
@@ -286,7 +290,35 @@ public sealed class DockerWorkspaceExecutionTests
         }
     }
 
-    [UnixFact("Docker endpoint qualification requires supported host bind-mount verification.")]
+    [Fact]
+    public async Task DockerExecutionTarget_NonLinuxDaemonCannotReachContainerCreationOrMountVerification()
+    {
+        using var scope = TestScope.Create();
+        using var lifecycle = new DockerContainerLifecycleService();
+        var runner = new FakeDockerCliRunner(scope.Context, (args, _, _, _, _) =>
+            Task.FromResult(args.Count > 0 && args[0] == "info"
+                ? new DockerCliRunResult(0, "test-daemon windows", false, false)
+                : new DockerCliRunResult(0, string.Empty, false, false)));
+        var verifier = new PassThroughDockerMountIdentityVerifier();
+        var imageCatalog = new DockerImageCatalogService(scope.Context, runner);
+        await imageCatalog.AddImageAsync("test-image:1.0");
+        var configService = new DockerExecutionWorkspaceConfigService(scope.Context, imageCatalog);
+        var target = new DockerExecutionTarget(scope.Context, configService, lifecycle,
+            imageCatalog, runner, verifier);
+        var (workspace, _) = CreateDockerWorkspace(scope);
+        var binding = CreateBinding(workspace.WorkspaceId, "docker");
+        await configService.SaveConfigAsync(binding.BindingId,
+            new DockerExecutionWorkspaceConfig("test-image:1.0", "sunder-agent-test", "/bin/sh"));
+
+        var readiness = await GetDockerReadinessAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding));
+
+        Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
+        Assert.Contains("Linux-container daemon is required", readiness.Message, StringComparison.Ordinal);
+        Assert.Equal(0, verifier.VerifyCount);
+        Assert.DoesNotContain(runner.Calls, args => args.Count > 0 && args[0] is "run" or "start" or "exec");
+    }
+
+    [Fact]
     public async Task DockerExecutionTarget_PinsExplicitEndpointAcrossAmbientChange()
     {
         using var scope = TestScope.Create();
@@ -297,7 +329,7 @@ public sealed class DockerWorkspaceExecutionTests
         {
             if (args.Count > 0 && args[0] == "info")
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", false, false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", false, false));
             }
             if (args.Count > 1 && args[0] == "image" && args[1] == "inspect")
             {
@@ -351,7 +383,7 @@ public sealed class DockerWorkspaceExecutionTests
         });
     }
 
-    [UnixTheory("Docker mount verification requires Unix file identities.")]
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task DockerExecutionTarget_VerifiesMountAfterCreateAndReuseOrStart(bool runningOnSecondAcquire)
@@ -369,7 +401,7 @@ public sealed class DockerWorkspaceExecutionTests
             }
             if (args.Count > 0 && args[0] == "info")
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", false, false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", false, false));
             }
             if (args.Count > 1 && args[0] == "image" && args[1] == "inspect")
             {
@@ -549,7 +581,7 @@ public sealed class DockerWorkspaceExecutionTests
             }
             if (args.Count > 0 && string.Equals(args[0], "info", StringComparison.Ordinal))
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", TimedOut: false, WasTruncated: false));
             }
             if (args.Count > 1 && args[0] == "image" && args[1] == "inspect")
             {
@@ -585,26 +617,13 @@ public sealed class DockerWorkspaceExecutionTests
         var readiness = await GetDockerReadinessAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding));
 
         Assert.Equal(nameof(AgentExecutionTargetReadinessStatus.Failed), readiness.Status.ToString());
-        if (OperatingSystem.IsWindows())
-        {
-            const string unavailable = "Strict Docker bind-mount identity and mutation verification is unavailable on Windows.";
-            Assert.Equal(unavailable, readiness.Message);
-            var failure = await Assert.ThrowsAsync<PlatformNotSupportedException>(async () =>
-                await ApproveDockerResourceAsync(target, new AgentExecutionTargetContext(null, null, workspace, binding), "file.txt", "files.read"));
-            Assert.Equal(unavailable, failure.Message);
-            Assert.DoesNotContain(targetRunner.Calls, args => args.Count > 0 && args[0] is "run" or "start" or "exec");
-            Assert.Empty(runArgs);
-        }
-        else
-        {
-            Assert.Contains("failed to start from image 'custom:1.0'", readiness.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
-            Assert.Contains("--pull", runArgs);
-            Assert.Contains("never", runArgs);
-        }
+        Assert.Contains("failed to start from image 'custom:1.0'", readiness.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("No such image", readiness.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("--pull", runArgs);
+        Assert.Contains("never", runArgs);
     }
 
-    [UnixFact("Docker container image replacement requires supported host bind-mount verification.")]
+    [Fact]
     public async Task DockerExecutionTarget_MutableTagChangeRecreatesContainerByImageId()
     {
         using var scope = TestScope.Create();
@@ -623,7 +642,7 @@ public sealed class DockerWorkspaceExecutionTests
             }
             if (args.Count > 0 && args[0] == "info")
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", TimedOut: false, WasTruncated: false));
             }
             if (args.Count >= 5
                 && args[0] == "image"
@@ -723,7 +742,7 @@ public sealed class DockerWorkspaceExecutionTests
             }
             if (args.Count > 0 && args[0] == "info")
             {
-                return Task.FromResult(new DockerCliRunResult(0, "test-daemon", TimedOut: false, WasTruncated: false));
+                return Task.FromResult(new DockerCliRunResult(0, "test-daemon linux", TimedOut: false, WasTruncated: false));
             }
             if (args.Count > 1 && args[0] == "image" && args[1] == "inspect")
             {

@@ -145,14 +145,16 @@ def store(path, value):
     if path.exists() or path.is_symlink():
         require(not path.is_symlink() and path.is_file() and path.read_bytes() == data, "Retained evidence cannot be replaced")
         return
-    with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".cohort-", delete=False) as stream:
-        staged = Path(stream.name)
-        try:
+    staged = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".cohort-", delete=False) as stream:
+            staged = Path(stream.name)
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-            os.link(staged, path)  # Atomic create without overwrite.
-        finally:
+        os.link(staged, path)  # Atomic create without overwrite, after closing on Windows.
+    finally:
+        if staged is not None:
             staged.unlink()
 
 

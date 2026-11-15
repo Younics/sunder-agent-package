@@ -44,6 +44,35 @@ public sealed partial class BuilderToolchainService
         else systemPaths = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
         result["PATH"] = string.Join(Path.PathSeparator, new[] { bin }.Concat(path).Concat(systemPaths)
             .Distinct(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal));
+        // Worker admission intentionally omits user profile variables. NuGet's
+        // SDK resolver and npm still need real home/config directories; provide
+        // Builder-owned locations rather than restoring the Host user's profile
+        // or allowing tools to discover its credentials and global settings.
+        var home = Path.Combine(root, "cache", "home");
+        var profiles = new Dictionary<string, string>
+        {
+            ["HOME"] = home,
+            ["XDG_CONFIG_HOME"] = Path.Combine(home, ".config"),
+            ["XDG_CACHE_HOME"] = Path.Combine(home, ".cache"),
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            profiles["USERPROFILE"] = home;
+            profiles["APPDATA"] = Path.Combine(home, "AppData", "Roaming");
+            profiles["LOCALAPPDATA"] = Path.Combine(home, "AppData", "Local");
+            // NuGet also initializes machine-wide settings before applying the
+            // selected config. Keep those probes private, not null or ambient.
+            profiles["PROGRAMFILES"] = Path.Combine(home, "machine", "program-files");
+            profiles["PROGRAMFILES(X86)"] = profiles["PROGRAMFILES"];
+            profiles["PROGRAMDATA"] = Path.Combine(home, "machine", "program-data");
+            profiles["ALLUSERSPROFILE"] = profiles["PROGRAMDATA"];
+        }
+        foreach (var (name, directory) in profiles)
+        {
+            BuilderToolchainFiles.CheckPath(root, directory);
+            BuilderToolchainFiles.CreatePrivateDirectory(directory);
+            result[name] = directory;
+        }
         if (installation.Kind == BuilderProjectKind.Dotnet)
         {
             result["DOTNET_ROOT"] = installation.RootPath;

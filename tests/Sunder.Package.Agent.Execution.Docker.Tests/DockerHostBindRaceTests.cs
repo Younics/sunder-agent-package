@@ -64,7 +64,7 @@ public sealed class DockerHostBindRaceTests : IDisposable
         var fixture = CreateFixture();
         await File.WriteAllTextAsync(Path.Combine(fixture.Pinned, "write.txt"), "old");
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, "write.txt"), "OUTSIDE");
-        var writeHook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforePublish, "write.txt");
+        var writeHook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforeContentWrite, "write.txt");
 
         AgentFileMutationResult write;
         try

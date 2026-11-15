@@ -169,6 +169,14 @@ public static class PlatformTestConditions
         };
         if (platformSkipReason is not null)
         {
+            var targetsCurrentOs = platform switch
+            {
+                TestPlatform.Windows => OperatingSystem.IsWindows(),
+                TestPlatform.Linux => OperatingSystem.IsLinux(),
+                TestPlatform.MacOS or TestPlatform.MacCaseInsensitive => OperatingSystem.IsMacOS(),
+                _ => !OperatingSystem.IsWindows(),
+            };
+            if (targetsCurrentOs) TestPrerequisites.ThrowIfRequired(platformSkipReason, fileSystem: true);
             return platformSkipReason;
         }
 

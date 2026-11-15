@@ -8,6 +8,8 @@ internal sealed class LocalSecurePathSession : IDisposable
     private readonly LocalResourceBinding? _expectedBinding;
     private readonly ILocalSecureFileSystemHooks? _hooks;
     private readonly LocalSecureHandle? _retainedTarget;
+    private LocalCreatedDirectoryAuthority? _createdDirectories;
+    private IDisposable? _createdDirectoryLifetime;
     private int _postMutationAuthorityTaken;
 
     private LocalSecurePathSession(
@@ -39,6 +41,12 @@ internal sealed class LocalSecurePathSession : IDisposable
     public string? TargetName { get; }
 
     public bool IsRootTarget => TargetName is null;
+
+    internal void TakeCreatedDirectoryLifetime(LocalCreatedDirectoryAuthority? authority, IDisposable? lifetime)
+    {
+        _createdDirectories = authority;
+        _createdDirectoryLifetime = lifetime;
+    }
 
     public static LocalSecurePathSession CreateOwned(
         LocalSecureRoot root,
@@ -127,26 +135,15 @@ internal sealed class LocalSecurePathSession : IDisposable
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforeOpen, current.FullPath, segment);
-                    if (root.Platform.TryOpenChild(
-                            current,
-                            segment,
-                            root.Volume,
-                            requireDirectory: true,
-                            out var unexpectedlyExisting))
-                    {
-                        if (createdDirectories?.OwnsChild(current, unexpectedlyExisting!) != true)
-                        {
-                            unexpectedlyExisting!.Dispose();
-                            throw new LocalSecureApprovalChangedException(binding.FullPath);
-                        }
-                        descendants.Add(unexpectedlyExisting!);
-                        current = unexpectedlyExisting!;
-                        continue;
-                    }
                     LocalSecureHandle created;
                     if (createdDirectories is not null) created = createdDirectories.CreateChild(root.Platform, current, segment, root.Volume);
                     else
                     {
+                        if (root.Platform.TryOpenChild(current, segment, root.Volume, requireDirectory: true, out var unexpectedlyExisting))
+                        {
+                            unexpectedlyExisting!.Dispose();
+                            throw new LocalSecureApprovalChangedException(binding.FullPath);
+                        }
                         created = root.Platform.CreateDirectory(current, segment);
                     }
                     descendants.Add(created);
@@ -247,63 +244,48 @@ internal sealed class LocalSecurePathSession : IDisposable
     public IEnumerable<string> EnumerateRawNames(LocalSecureHandle directory)
         => _root.Platform.EnumerateNames(directory);
 
-    public LocalSecureTemporaryFile CreateTemporaryFile(LocalSecureMutationReservation reservation)
-    {
-        if (TargetName is null)
-        {
-            throw new LocalSecurePathException("A configured root cannot be replaced by a structured write.");
-        }
-        var name = HostSecurePathEngine.CreateTemporaryName();
-        return _root.Platform.CreateTemporaryFile(Parent, name, reservation);
-    }
-
     public LocalSecureMutationReservation ReserveMutationSlots(
         LocalSecureHandle parent,
         int slotCount,
         CancellationToken cancellationToken)
         => _root.Platform.ReserveMutationSlots(parent, slotCount, cancellationToken);
 
-    public void PublishTemporaryFile(
-        LocalSecureTemporaryFile temporaryFile,
-        bool overwrite,
-        LocalSecureTargetExpectation expectation,
-        LocalSecureHandle? expectedTarget,
-        Func<LocalSecureHandle, bool>? finalTargetValidator,
-        LocalSecureMutationReservation reservation,
-        CancellationToken cancellationToken)
+    internal LocalSecureHandle CreateUserFile()
     {
-        if (TargetName is null)
-        {
-            throw new LocalSecurePathException("A configured root cannot be replaced by a structured write.");
-        }
-        _root.Platform.PublishTemporaryFile(
-            Parent,
-            temporaryFile,
-            TargetName,
-            overwrite,
-            expectation,
-            expectedTarget,
-            finalTargetValidator,
-            reservation,
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforePublishSyscall, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterQuarantineBeforeMetadata, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforePostQuarantineSync, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterNamedTemporaryCopyChunk, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforeNamedTemporaryPublish, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterPublishedFileSync, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterPublishedParentSync, Parent.FullPath, TargetName),
-            () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforePostPublicationRestore, Parent.FullPath, TargetName),
-            cancellationToken);
+        RequireFileTarget();
+        return _root.Platform.CreateUserFile(Parent, TargetName!);
     }
 
-    public void PrepareToPublish()
+    internal LocalSecureHandle OpenFileForContentUpdate(LocalSecureHandle expectedTarget)
+    {
+        RequireFileTarget();
+        Checkpoint(LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen);
+        return _root.Platform.OpenFileForContentUpdate(Parent, TargetName!, expectedTarget);
+    }
+
+    internal void ValidateContentTarget(LocalSecureHandle target)
+    {
+        RequireFileTarget();
+        using var named = _root.Platform.OpenChild(Parent, TargetName!, _root.Volume, requireDirectory: false);
+        if (named.Kind != LocalSecureNodeKind.RegularFile || named.Identity != target.Identity)
+            throw new LocalSecureApprovalChangedException(FullPath);
+        using var refreshed = _root.Platform.RetainContentTarget(target);
+    }
+
+    internal LocalSecureHandle RetainContentTarget(LocalSecureHandle target)
+        => _root.Platform.RetainContentTarget(target);
+
+    internal void FlushContent(LocalSecureHandle target) => _root.Platform.Flush(target);
+
+    internal void FlushCreatedFileParent() => _root.Platform.Flush(Parent);
+
+    internal void Checkpoint(LocalSecureFileSystemCheckpoint checkpoint)
+        => _hooks?.OnCheckpoint(checkpoint, Parent.FullPath, TargetName);
+
+    private void RequireFileTarget()
     {
         if (TargetName is null)
-        {
-            throw new LocalSecurePathException("A configured root cannot be replaced by a structured write.");
-        }
-        _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforePublish, Parent.FullPath, TargetName);
+            throw new LocalSecurePathException("A configured or approved root cannot be written as a file.");
     }
 
     public void DeleteTarget(
@@ -361,19 +343,6 @@ internal sealed class LocalSecurePathSession : IDisposable
             () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall, parent.FullPath, name),
             () => _hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete, parent.FullPath, name),
             cancellationToken);
-    }
-
-    public void DeleteTemporaryFile(
-        LocalSecureTemporaryFile temporaryFile,
-        LocalSecureMutationReservation reservation)
-    {
-        if (!temporaryFile.WasPublished)
-        {
-            _root.Platform.DeleteTemporaryFile(
-                Parent,
-                temporaryFile,
-                reservation);
-        }
     }
 
     public LocalSecureApprovalLease TakePostMutationAuthority(
@@ -469,6 +438,8 @@ internal sealed class LocalSecurePathSession : IDisposable
                 authority.Dispose();
                 throw new InvalidOperationException("Post-mutation authority was already transferred.");
             }
+            authority.CreatedDirectories = _createdDirectories;
+            authority.CreatedDirectoryLifetime = Interlocked.Exchange(ref _createdDirectoryLifetime, null);
             return authority;
         }
         finally
@@ -479,19 +450,19 @@ internal sealed class LocalSecurePathSession : IDisposable
 
     public void Dispose()
     {
-        _retainedTarget?.Dispose();
-        if (Volatile.Read(ref _postMutationAuthorityTaken) != 0)
+        try
         {
-            return;
+            _retainedTarget?.Dispose();
+            if (Volatile.Read(ref _postMutationAuthorityTaken) != 0) return;
+            for (var index = _descendants.Count - 1; index >= 0; index--)
+            {
+                _descendants[index].Dispose();
+            }
+            if (_ownsRoot) _root.Dispose();
         }
-        for (var index = _descendants.Count - 1; index >= 0; index--)
-        {
-            _descendants[index].Dispose();
-        }
-        if (_ownsRoot)
-        {
-            _root.Dispose();
-        }
+        // Drain traversal/target pins before the final operation borrow can
+        // trigger exact-creation-handle cleanup.
+        finally { Interlocked.Exchange(ref _createdDirectoryLifetime, null)?.Dispose(); }
     }
 
     private static LocalSecurePathSession Create(

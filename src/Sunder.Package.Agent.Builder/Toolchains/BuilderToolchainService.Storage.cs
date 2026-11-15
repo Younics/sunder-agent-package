@@ -150,14 +150,24 @@ public sealed partial class BuilderToolchainService
             Directory.CreateDirectory(InstallParent(release.Kind));
             token.ThrowIfCancellationRequested();
             var hadPrevious = Directory.Exists(destination);
-            if (hadPrevious) Directory.Move(destination, backup);
-            try { Directory.Move(payload, destination); }
-            catch
+            if (hadPrevious) await BuilderToolchainPromotion.MoveAsync(root, destination, backup, progress, token).ConfigureAwait(false);
+            try { await BuilderToolchainPromotion.MoveAsync(root, payload, destination, progress, token).ConfigureAwait(false); }
+            catch (Exception promotionFailure)
             {
                 if (hadPrevious)
                 {
                     preserveStaging = true;
-                    Directory.Move(backup, destination);
+                    try
+                    {
+                        // Cancellation cannot abandon the previous installation
+                        // after it was moved aside. Windows rollback is bounded too.
+                        await BuilderToolchainPromotion.MoveAsync(root, backup, destination, progress, CancellationToken.None).ConfigureAwait(false);
+                    }
+                    catch (Exception rollbackFailure) when (Recoverable(rollbackFailure))
+                    {
+                        throw new IOException($"Toolchain promotion and rollback failed; the previous installation remains at '{backup}'.",
+                            new AggregateException(promotionFailure, rollbackFailure));
+                    }
                     preserveStaging = false;
                 }
                 throw;

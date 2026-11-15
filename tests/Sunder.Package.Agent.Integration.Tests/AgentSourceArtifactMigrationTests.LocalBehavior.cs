@@ -184,21 +184,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
             ApprovedResourceCapabilities = planned.AuthorityReferences, ResourceOperation = operation with { CanIssueOutsideAuthority = false }, CapturePostMutationResource = true };
         Assert.True((await client.ValidateResourceAuthorityAsync(approved)).IsValid);
         var written = await client.WriteFileAsync(approved, new AgentFileWriteRequest(outsideFile, "approved"));
-        if (!OperatingSystem.IsWindows())
-        {
-            Assert.False(written.IsError, written.Summary); Assert.Equal("approved", await File.ReadAllTextAsync(outsideFile));
-            Assert.NotNull(written.PostMutationResource);
-            var receipt = written.PostMutationResource;
-            var next = approved with { ApprovedResourceReferences = [receipt.CanonicalReference], ApprovedResourceClaims = [receipt.ResourceClaim!], ApprovedResourceCapabilities = receipt.AuthorityReferences, CapturePostMutationResource = false };
-            Assert.True((await client.ValidateResourceAuthorityAsync(next)).IsValid);
-            var wrongActivation = next with { ResourceOperation = next.ResourceOperation! with { AuthorityActivationId = Guid.NewGuid().ToString("N") } };
-            Assert.False((await client.ValidateResourceAuthorityAsync(wrongActivation)).IsValid);
-            await client.ReleaseResourceAuthorityAsync(receipt.AuthorityReferences.Concat(receipt.DeleteAuthorityReferences).ToArray());
-            Assert.False((await client.ValidateResourceAuthorityAsync(next)).IsValid);
-        }
-        else { Assert.True(written.IsError); await client.ReleaseResourceAuthorityAsync(planned.AuthorityReferences); }
+        Assert.False(written.IsError, written.Summary); Assert.Equal("approved", await File.ReadAllTextAsync(outsideFile));
+        Assert.NotNull(written.PostMutationResource);
+        var receipt = written.PostMutationResource;
+        var next = approved with { ApprovedResourceReferences = [receipt.CanonicalReference], ApprovedResourceClaims = [receipt.ResourceClaim!], ApprovedResourceCapabilities = receipt.AuthorityReferences, CapturePostMutationResource = false };
+        Assert.True((await client.ValidateResourceAuthorityAsync(next)).IsValid);
+        var wrongActivation = next with { ResourceOperation = next.ResourceOperation! with { AuthorityActivationId = Guid.NewGuid().ToString("N") } };
+        Assert.False((await client.ValidateResourceAuthorityAsync(wrongActivation)).IsValid);
+        await client.ReleaseResourceAuthorityAsync(receipt.AuthorityReferences.Concat(receipt.DeleteAuthorityReferences).ToArray());
+        Assert.False((await client.ValidateResourceAuthorityAsync(next)).IsValid);
         var deleted = await client.DeleteFileAsync(context, new AgentFileDeleteRequest("artifact.txt"));
-        if (!OperatingSystem.IsWindows()) { Assert.False(deleted.IsError, deleted.Summary); Assert.False(File.Exists(file)); }
+        Assert.False(deleted.IsError, deleted.Summary); Assert.False(File.Exists(file));
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();

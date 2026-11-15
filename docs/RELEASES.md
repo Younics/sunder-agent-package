@@ -93,7 +93,9 @@ Workflow configuration has these owners:
   `.github/actions/setup/action.yml`. The action also binds native Bash for nested
   Python script calls through `SUNDER_BASH_EXECUTABLE` (Git Bash on Windows).
 - `eng/ci/platforms.json` supplies native, preflight and source/package behavior matrices.
-  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables.
+  Behavior is required on all six OS/architecture targets, not only Windows/Linux x64.
+  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables
+  for tools, preflight and behavior alike; retained reports are RID-labelled.
 - `scripts/test/ci-scenarios.json` owns required test selections; `agent_ci.py test`
   and `report` execute/check them. `run-ci-checks.py source|release` discovers script checks.
 - `compatibility/agent-current-inventory.json` remains the independently reviewed
@@ -217,8 +219,10 @@ apphost, SDK or toolchain. Generated App roles are retained where authored.
 
 Unchanged packages are downloaded from exact numeric published-release assets,
 with their original hash/size and six-RID native evidence. They are not rebuilt or
-repacked. Every native smoke test still installs and exercises **all fifteen**
-packages: the exact final selected archives plus unchanged universal archives. Mixed
+repacked. Every native phase still exercises **all fifteen** packages: the exact
+final selected archives plus unchanged universal archives. Pre-publication execution
+uses supported development imports; post-publication execution installs authenticated
+published bytes under genuine Registry policy. Mixed
 package versions are expected. The final output audit and Runtime/App gates still
 inspect all fifteen archives. Exact reviewed dependency candidates/catalogs remain
 separate dependency inputs; changing a version never regenerates a dependency lock.
@@ -231,13 +235,21 @@ is composed once from all six Core-qualified leaves with
 
 `native-family.py collect-component`, `compose-component`, `gather`, `record-final`
 and `finalize` own bounded transport and exact module/runtimeconfig/deps/shared/App
-byte comparisons. Schema 5 binds every native smoke record to the final archive
-hash and size; fan-in verifies and copies those bytes without another Pack. The
-schema-3/4 readers remain for retained evidence. Native smoke exercises real
+byte comparisons. Schema 6 binds every native smoke record to the final archive
+hash/size, exact execution methods, phase scope and original Maker/preparation reports;
+fan-in verifies and copies those bytes without another Pack. The schema-3/4/5 readers
+remain for retained evidence, not new release staging. Native smoke exercises real
 official .NET installation, every Worker lifecycle, domain RPC/auth/SQLite behavior,
 crash recovery, cleanup and Builder's separate SDK path. Core metric budgets and
-the current-RID installed-projection gate remain enforced. Fan-in runs the retained
-Agent archive tests and the real Core Runtime/App family tests before publication.
+the current-RID projection-size gate remain enforced. Fan-in retains the Agent archive
+and Core Runtime/App gates. The pre-publication Core family selection now uses local
+development admission for all fifteen universal archives, then consumes a hash-bound
+Runtime snapshot in a genuine supervised App process. It preserves Runtime-first
+execution order, fresh evidence roots and credential isolation; schema/phase and
+archive/catalog changes fail before App activation. The installed lifecycle remains
+separately selected, not reclassified as development evidence. This adaptation still
+needs real full-family execution qualification; the pre-Main artifact hook does not
+exercise ordinary App startup, package views, Maker UI or published-installed behavior.
 
 ## Stable Boundary
 
@@ -266,11 +278,15 @@ and public install-plan postchecks. The pipeline:
    `registry-publications.json`: the Registry-returned publication evidence for
    every tested package, including its actual owner. Retries and later readback
    compare that immutable evidence before visibility changes or announcement.
-4. Retains one complete cohort request with its idempotency key and current policy
+4. Runs authenticated published-installed acceptance on all six native RIDs, using
+   the exact immutable family and genuine policy. A single writer durably retains
+   `installed-native-test-evidence.json` and all twelve RID receipt/bundle assets on
+   the coordinator. No development-import result can satisfy this gate.
+5. Retains one complete cohort request with its idempotency key and current policy
    revision on the draft **before** any availability mutation.
-5. Commits the selected-batch Yanked→Listed transition and its dist tags in
+6. Commits the selected-batch Yanked→Listed transition and its dist tags in
    one Registry operation; preserves its exact request/result for recovery.
-6. Confirms the committed result against fresh policy and the owner's retained
+7. Confirms the committed result against fresh policy and the owner's retained
    operation, rechecks public package/projection bytes and six-RID install plans,
    then finalizes those drafts with `make_latest=false`, coordinator last.
 
@@ -367,6 +383,13 @@ separate execution result.
   a 1–90 day lifetime or **Never**; rotate expiring keys before their selected expiry.
 - The separate reviewed reverse workflow still requires a human
   `SUNDER_REGISTRY_CLI_TOKEN`; a release API key intentionally cannot roll back.
+- Provision a separate `SUNDER_REGISTRY_NATIVE_READ_TOKEN` environment secret for
+  published-installed jobs. `/api/v1/me` requires an interactive CLI identity, not
+  the publication API key. Use a dedicated non-publishing principal and rotate the
+  credential; the current Registry does not define a read-only CLI-token scope.
+  The jobs use it only for identity/archive reads, strip it from preparation/build
+  children and the App proxy, and never retain it in receipts. Missing or rejected
+  credentials fail acceptance; they never select anonymous or development fallback.
 - Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays.
   RID suffixes use uppercase underscores. Defaults use native Windows2022/Windows11ARM,
   Ubuntu24x64/ARM and macOS15Intel/ARM runners.

@@ -19,7 +19,7 @@ public sealed class AgentLocalStoreMigrationTests
             $"{AgentLocalStore.BaselineVersion}|{AgentLocalStore.BaselineName}|{AgentLocalStore.BaselineChecksum}",
             ExecuteString(connection, "SELECT Version || '|' || Name || '|' || Checksum FROM SchemaMigrations;"));
         var sql = string.Concat(new[] { "BaselineSql", "TranscriptIndexSql" }.Select(name =>
-            (string)typeof(AgentLocalStore).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetRawConstantValue()!));
+            (string)typeof(AgentLocalStore).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!));
         Assert.Equal(AgentLocalStore.BaselineChecksum, Convert.ToHexStringLower(
             System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sql))));
         Assert.True(TableExists(connection, "AgentRuntimeGenerations"));

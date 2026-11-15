@@ -20,7 +20,7 @@ on:
         type: boolean
         default: false
       windows-filesystem-native:
-        description: Qualify Local filesystem on Windows x64/ARM64 and Linux without publication
+        description: Retained compatibility input; six-platform behavior is always required
         type: boolean
         default: false
   workflow_call:
@@ -145,7 +145,7 @@ jobs:
         if: always() && steps.scripts.outcome != 'skipped' && steps.scripts.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunder-agent-preflight-${{ matrix.platform }}-${{ github.run_attempt }}
+          name: sunder-agent-preflight-${{ matrix.rid }}-${{ github.run_attempt }}
           path: sunder-agent-package/artifacts/reports
           if-no-files-found: error
           retention-days: 14
@@ -443,7 +443,7 @@ jobs:
         if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunder-agent-shared-${{ matrix.mode }}-${{ matrix.platform }}-${{ github.run_attempt }}
+          name: sunder-agent-shared-${{ matrix.mode }}-${{ matrix.rid }}-${{ github.run_attempt }}
           path: |
             sunder-agent-package/artifacts/reports
             sunder-agent-package/artifacts/test-results

@@ -340,7 +340,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.False(File.Exists(Path.Combine(target, "file.txt")));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Creating nested files requires supported strict filesystem mutations.")]
+    [Fact]
     public async Task FileOperations_PreserveWorkspaceRelativeNewFileBehavior()
     {
         var (workspace, _) = CreateDirectories();
@@ -364,25 +364,24 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Equal(Physical(Path.Combine(workspace, relativePath)), readResult.Path);
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Atomic replacement fault injection requires supported strict filesystem mutations.")]
-    [InlineData(nameof(LocalFileWriteFaultPoint.TemporaryFileFlushed))]
-    [InlineData(nameof(LocalFileWriteFaultPoint.BeforeAtomicReplace))]
-    public async Task WriteFileAsync_FailureBeforeAtomicReplace_PreservesOriginal(string faultPointName)
+    [Fact]
+    public async Task WriteFileAsync_PrecommitFailure_PreservesOriginal()
     {
-        var faultPoint = Enum.Parse<LocalFileWriteFaultPoint>(faultPointName);
         var (workspace, _) = CreateDirectories();
         var target = Path.Combine(workspace, "important.txt");
         await File.WriteAllTextAsync(target, "original");
-        var injector = new ThrowingWriteFaultInjector(faultPoint);
+        var injector = new ThrowingWriteFaultInjector(LocalFileWriteFaultPoint.ContentPrepared);
 
-        await Assert.ThrowsAsync<IOException>(async () =>
-            await LocalFileSystemExecutor.WriteFileAsync(
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
                 CreateConfig(workspace),
                 new AgentFileWriteRequest { Path = "important.txt", Content = "replacement", Overwrite = true },
                 allowOutsideConfiguredScope: false,
                 CancellationToken.None,
-                faultInjector: injector));
+                faultInjector: injector);
 
+        Assert.True(injector.Invoked);
+        Assert.True(result.IsError);
+        Assert.NotEqual(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
         Assert.Equal("original", await File.ReadAllTextAsync(target));
         Assert.Empty(Directory.EnumerateFiles(workspace, ".important.txt.sunder-*.tmp"));
     }
@@ -407,9 +406,8 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             allowOutsideConfiguredScope: false,
             CancellationToken.None);
 
-        var expectedError = OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : "file-content-changed";
-        Assert.Equal(expectedError, write.ErrorCode);
-        Assert.Equal(expectedError, delete.ErrorCode);
+        Assert.Equal("file-content-changed", write.ErrorCode);
+        Assert.Equal("file-content-changed", delete.ErrorCode);
         Assert.Equal("newer", await File.ReadAllTextAsync(target));
     }
 
@@ -427,13 +425,8 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             "local-resource-authority-v4:",
             Assert.Single(approved.Context.ApprovedResourceCapabilities),
             StringComparison.Ordinal);
-        if (OperatingSystem.IsWindows())
-            Assert.Throws<IOException>(() => File.Delete(first));
-        else
-        {
-            File.Delete(first);
-            File.Move(second, first);
-        }
+        File.Delete(first);
+        File.Move(second, first);
 
         var read = await LocalFileSystemExecutor.ReadFileAsync(
             config,
@@ -456,12 +449,12 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         Assert.Contains("approved target", read.Content, StringComparison.Ordinal);
         Assert.DoesNotContain("RETARGETED_SECRET", read.Content, StringComparison.Ordinal);
         Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, write.ErrorCode);
-        Assert.Equal(OperatingSystem.IsWindows() ? "approved target" : "RETARGETED_SECRET", await File.ReadAllTextAsync(first));
-        if (OperatingSystem.IsWindows()) Assert.Equal("RETARGETED_SECRET", await File.ReadAllTextAsync(second));
+        Assert.Equal("RETARGETED_SECRET", await File.ReadAllTextAsync(first));
+        Assert.False(File.Exists(second));
     }
 
     [Fact]
-    public async Task OutsideApproval_RejectsReparentedTarget()
+    public async Task OutsideApproval_PreventsReparentingFromRedirectingDeletion()
     {
         var (workspace, outside) = CreateDirectories();
         var firstDirectory = Path.Combine(outside, "first");
@@ -475,6 +468,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         var requestedPath = first;
         var config = CreateConfig(workspace);
         using var approved = LocalResourceAuthorityTestContext.Approve(config, requestedPath, "files.mutate");
+        using var before = LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.Capture([workspace], first);
         var parkedDirectory = Path.Combine(outside, "parked");
         if (OperatingSystem.IsWindows())
             Assert.Throws<IOException>(() => Directory.Move(firstDirectory, parkedDirectory));
@@ -492,14 +486,28 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             authorizationContext: approved.Context,
             resourceReferences: approved.ResourceReferences);
 
-        Assert.Equal(OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : LocalResourceReference.ReapprovalRequiredErrorCode, result.ErrorCode);
-        Assert.Equal("approved target", await File.ReadAllTextAsync(Path.Combine(OperatingSystem.IsWindows() ? firstDirectory : parkedDirectory, "victim.txt")));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.False(result.IsError, result.Summary);
+            Assert.False(File.Exists(first));
+            Assert.False(Directory.Exists(parkedDirectory));
+            var retainedPath = Assert.Single(Directory.EnumerateFiles(firstDirectory));
+            Assert.True(LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retainedPath)));
+            using var root = LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.OpenRoot(firstDirectory);
+            using var retained = root.Platform.OpenChild(root.Handle, Path.GetFileName(retainedPath), root.Volume, false);
+            Assert.Equal(before.Binding.TargetIdentity, retained.Identity);
+            Assert.Equal("approved target", await File.ReadAllTextAsync(retainedPath));
+        }
+        else
+        {
+            Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, result.ErrorCode);
+            Assert.Equal("approved target", await File.ReadAllTextAsync(Path.Combine(parkedDirectory, "victim.txt")));
+        }
         Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(OperatingSystem.IsWindows() ? secondDirectory : firstDirectory, "victim.txt")));
-        if (OperatingSystem.IsWindows()) Assert.False(Directory.Exists(parkedDirectory));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Atomic publication revalidation requires supported strict filesystem mutations.")]
-    public async Task OutsideApproval_RevalidatesImmediatelyBeforeAtomicWrite()
+    [Fact]
+    public async Task OutsideApproval_RevalidatesBeforeWritableAcquisition()
     {
         var (workspace, outside) = CreateDirectories();
         var first = Path.Combine(outside, "first-write.txt");
@@ -509,7 +517,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
         await File.WriteAllTextAsync(second, "second");
         var config = CreateConfig(workspace);
         using var approved = LocalResourceAuthorityTestContext.Approve(config, first, "files.mutate");
-        var hooks = new RetargetingPublishHook(first, second, parked);
+        var hooks = new RetargetingContentHook(first, second, parked);
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             config,
@@ -522,6 +530,7 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
             authorizationContext: approved.Context,
             resourceReferences: approved.ResourceReferences);
 
+        Assert.True(hooks.Invoked);
         Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
         Assert.Equal("first", await File.ReadAllTextAsync(parked));
         Assert.Equal("second", await File.ReadAllTextAsync(first));
@@ -562,28 +571,31 @@ public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
 
     private sealed class ThrowingWriteFaultInjector(LocalFileWriteFaultPoint faultPoint) : ILocalFileWriteFaultInjector
     {
+        public bool Invoked { get; private set; }
+
         public void OnFaultPoint(LocalFileWriteFaultPoint current)
         {
             if (current == faultPoint)
             {
+                Invoked = true;
                 throw new IOException($"Injected failure at {current}.");
             }
         }
     }
 
-    private sealed class RetargetingPublishHook(string path, string replacement, string parked)
+    private sealed class RetargetingContentHook(string path, string replacement, string parked)
         : ILocalSecureFileSystemHooks
     {
-        private bool _invoked;
+        public bool Invoked { get; private set; }
 
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
         {
-            if (_invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforePublish)
+            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen)
             {
                 return;
             }
 
-            _invoked = true;
+            Invoked = true;
             File.Move(path, parked);
             File.Move(replacement, path);
         }

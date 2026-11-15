@@ -92,6 +92,15 @@
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- These are byte sources for existing local selections, not selection
+       defaults for Add/Update/Implement commands. No private scratch cache is
+       required; ordinary restore populates the normal user cache. -->
+  <PropertyGroup Condition="'$(MSBuildIsRestoring)' == 'true' and '$(SunderPackageProject)' == 'true'">
+    <SunderContractInputsRoot Condition="'$(SunderContractInputsRoot)' == ''">$(MSBuildThisFileDirectory).sunder/contract-inputs</SunderContractInputsRoot>
+    <SunderPackageCandidatePath Condition="'$(SunderPackageCandidatePath)' == ''">$(SunderContractInputsRoot)/younics.ai.agent.2.0.0.sunderpkg</SunderPackageCandidatePath>
+    <SunderPlatformCatalogPath Condition="'$(SunderPlatformCatalogPath)' == ''">$(SunderContractInputsRoot)/sunder-platform-contracts.v1.json</SunderPlatformCatalogPath>
+  </PropertyGroup>
+
   <Target Name="ValidateSunderSdkMode"
           BeforeTargets="_GenerateRestoreProjectPathWalk;CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'test'"
@@ -114,4 +123,9 @@
 
   <Import Project="$(SunderPackageBuildTargets)"
           Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
+  <!-- NuGet excludes PackageReference build imports during restore. Resolve the
+       same centrally pinned tooling SDK explicitly on that cold path; ordinary
+       warm builds already imported these targets from PackageReference. -->
+  <Import Project="../buildTransitive/Sunder.Package.Build.targets" Sdk="Sunder.Package.Build"
+          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false' and '$(_SunderPackageBuildTargetsImported)' != 'true'" />
 </Project>

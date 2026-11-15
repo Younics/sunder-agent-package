@@ -146,7 +146,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         Assert.Throws<DockerStructuredBindRequiredException>(() => DockerPathResolver.MapToHostPath(config, outside));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Successful strict filesystem mutations require Unix descriptor-relative publication.")]
+    [Fact]
     public async Task LocalHelper_RequiresExactApprovedCanonicalReferenceForOutsideAccess()
     {
         var workspace = Path.Combine(_root, "local-approved-workspace");
@@ -308,8 +308,8 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             ExpectedContentHash = staleHash,
         });
 
-        AssertMutationError(write, ExpectedStrictMutationError("file-content-changed"));
-        AssertMutationError(delete, ExpectedStrictMutationError("file-content-changed"));
+        AssertMutationError(write, "file-content-changed");
+        AssertMutationError(delete, "file-content-changed");
         Assert.Equal("newer", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "conditional.txt")));
     }
 
@@ -331,7 +331,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         AssertReadError(read, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         AssertReadError(ranged, AgentFileReadErrorCodes.PathCanonicalizationFailed);
-        AssertMutationError(write, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
+        AssertMutationError(write, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         // Delete inspects configured roots before entering the strict mutation gate.
         AssertMutationError(delete, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.False(File.Exists(Path.Combine(outside, "new.txt")));
@@ -352,7 +352,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var read = await fixture.ReadAsync(new AgentFileReadRequest("link/file.txt", 1, 1));
         var delete = await fixture.DeleteAsync(new AgentFileDeleteRequest("link/file.txt"));
 
-        AssertMutationError(write, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
+        AssertMutationError(write, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         AssertReadError(read, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         AssertMutationError(delete, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.False(File.Exists(Path.Combine(target, "file.txt")));
@@ -466,7 +466,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
         AssertReadError(read, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.True(write.IsError);
-        Assert.Equal(ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed), write.ErrorCode);
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, write.ErrorCode);
     }
 
     [PlatformFact(TestPlatform.Unix, "A POSIX host filesystem is required.")]
@@ -505,12 +505,10 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         var fixture = CreateDockerFixture();
         const string hostileName = "quote' ; touch SUNDER_PWNED ; $(touch SUNDER_SUBSTITUTED).txt";
 
-        if (OperatingSystem.IsWindows()) await fixture.WriteTextAsync(hostileName, "safe");
         var write = await fixture.WriteAsync(new AgentFileWriteRequest(hostileName, "safe"));
         var read = await fixture.ReadAsync(new AgentFileReadRequest(hostileName, 1, 1));
 
-        if (OperatingSystem.IsWindows()) AssertMutationError(write, "strict-platform-mutation-unavailable");
-        else Assert.False(write.IsError, write.Summary);
+        Assert.False(write.IsError, write.Summary);
         Assert.Equal("safe", read.Content);
         Assert.True(File.Exists(Path.Combine(fixture.Root, hostileName)));
         Assert.False(File.Exists(Path.Combine(fixture.Root, "SUNDER_PWNED")));
@@ -597,7 +595,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             },
             CancellationToken.None);
 
-        AssertMutationError(result, ExpectedStrictMutationError(AgentFileReadErrorCodes.PathCanonicalizationFailed));
+        AssertMutationError(result, AgentFileReadErrorCodes.PathCanonicalizationFailed);
         Assert.False(File.Exists(Path.Combine(hostRoot, "file.txt")));
     }
 
@@ -714,7 +712,7 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
         }
     }
 
-    [PlatformFact(TestPlatform.Unix, "Patch addition requires supported strict filesystem publication.")]
+    [Fact]
     public async Task DockerExistenceQuery_UsesHostBindAndAllowsPatchAdd()
     {
         var fixture = CreateDockerFixture();
@@ -755,8 +753,8 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
             ExpectedContentHash = staleHash,
         });
 
-        Assert.Equal(ExpectedStrictMutationError("file-content-changed"), write.ErrorCode);
-        Assert.Equal(ExpectedStrictMutationError("file-content-changed"), delete.ErrorCode);
+        Assert.Equal("file-content-changed", write.ErrorCode);
+        Assert.Equal("file-content-changed", delete.ErrorCode);
         Assert.Equal("newer", await File.ReadAllTextAsync(Path.Combine(fixture.Root, "conditional.txt")));
     }
 
@@ -859,9 +857,6 @@ public sealed class ExecutionTargetFileConformanceTests : IDisposable
 
     private static string ContentHash(string content)
         => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
-
-    private static string ExpectedStrictMutationError(string supportedPlatformError)
-        => OperatingSystem.IsWindows() ? "strict-platform-mutation-unavailable" : supportedPlatformError;
 
     private static void AssertReadError(AgentFileReadResult result, string expectedCode)
     {

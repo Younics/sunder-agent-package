@@ -62,8 +62,7 @@ public sealed class ScopedInstructionClaimTests
             Request("write", new { path = "src/feature/output.txt", content = "second" }));
 
         AssertDeferred(changed);
-        if (OperatingSystem.IsWindows()) Assert.False(File.Exists(Path.Combine(nested, "output.txt")));
-        else Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(nested, "output.txt")));
+        Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(nested, "output.txt")));
         var changedContext = await PresentAsync(restarted, fixture.PromptRequest(epoch: 1));
         Assert.Contains(changedContext, block => block.Content.Contains("nested policy v2", StringComparison.Ordinal));
     }
@@ -621,13 +620,8 @@ public sealed class ScopedInstructionClaimTests
                 _ => 1,
             });
         await PresentAsync(fixture.CreateSource(), fixture.PromptRequest(epoch: 1));
-        if (OperatingSystem.IsWindows())
-            Assert.Throws<IOException>(() => File.Delete(link));
-        else
-        {
-            File.Delete(link);
-            File.CreateSymbolicLink(link, second);
-        }
+        File.Delete(link);
+        File.CreateSymbolicLink(link, second);
         var source = fixture.CreateSource();
         var request = operation switch
         {
@@ -659,7 +653,7 @@ public sealed class ScopedInstructionClaimTests
         Assert.DoesNotContain("RETARGETED_TOOL_SECRET", result.Content, StringComparison.Ordinal);
         Assert.True(File.Exists(second));
         Assert.Equal("RETARGETED_TOOL_SECRET", await File.ReadAllTextAsync(second));
-        if (OperatingSystem.IsWindows()) Assert.Equal("approved content", await File.ReadAllTextAsync(link));
+        Assert.NotNull(File.ResolveLinkTarget(link, returnFinalTarget: false));
     }
 
     [Fact]
@@ -682,7 +676,7 @@ public sealed class ScopedInstructionClaimTests
         var shell = await fixture.CreateShellSourceAsync();
         var shellResult = await shell.ExecuteAsync(
             fixture.ToolContext(epoch: 1),
-            Request("shell", new { command = "true" }));
+            Request("shell", new { command = "echo scoped-instruction-refresh" }));
         var refreshed = await PresentAsync(files, fixture.PromptRequest(epoch: 1));
 
         Assert.False(shellResult.IsError, shellResult.Summary);
@@ -799,17 +793,8 @@ public sealed class ScopedInstructionClaimTests
     private static async Task AssertMutationOutcomeAsync(AgentToolResult result, string path, string content)
     {
         Assert.True(result.RequiresPromptContextRefresh);
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.True(result.IsError);
-            Assert.Equal("strict-platform-mutation-unavailable", result.ErrorCode);
-            Assert.False(File.Exists(path));
-        }
-        else
-        {
-            Assert.False(result.IsError, result.Summary);
-            Assert.Equal(content, await File.ReadAllTextAsync(path));
-        }
+        Assert.False(result.IsError, result.Summary);
+        Assert.Equal(content, await File.ReadAllTextAsync(path));
     }
 
     private static void AssertDeferred(AgentToolResult result)

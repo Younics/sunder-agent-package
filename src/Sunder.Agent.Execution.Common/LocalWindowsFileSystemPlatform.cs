@@ -94,15 +94,10 @@ internal sealed partial class LocalWindowsFileSystemPlatform : ILocalSecureFileS
             RequireVolume(parent, created);
             Flush(created);
             Flush(parent);
-            var read = LocalWindowsNative.Reopen(handle, LocalWindowsNative.GenericRead | LocalWindowsNative.ReadControl,
-                LocalWindowsNative.ShareAll, path);
-            try
-            {
-                var retained = CreateHandle(read, path, requireDirectory: true);
-                RequireIdentity(retained, LocalWindowsNative.ReadMetadata(handle, path));
-                return retained;
-            }
-            catch { read.Dispose(); throw; }
+            // Keep the creation object and its no-delete-sharing reservation.
+            // Operation-owned traversal borrows restricted duplicates of this
+            // object; reopening ShareAll would allow a later ancestor rename.
+            return created;
         }
         catch (Exception operationException)
         {
@@ -117,9 +112,9 @@ internal sealed partial class LocalWindowsFileSystemPlatform : ILocalSecureFileS
             {
                 throw new LocalSecureMutationRecoveryException(path, new AggregateException(operationException, recoveryException));
             }
+            finally { if (created is null) handle.Dispose(); else created.Dispose(); }
             throw;
         }
-        finally { if (created is null) handle.Dispose(); else created.Dispose(); }
     }
 
     public LocalSecureHandle CreateExclusiveFile(
@@ -239,10 +234,12 @@ internal sealed partial class LocalWindowsFileSystemPlatform : ILocalSecureFileS
             mode: 0,
             userId: 0,
             groupId: 0,
-            () => LocalWindowsNative.Duplicate(handle),
+            LocalWindowsNative.Duplicate,
             caseSensitiveDirectory: metadata.Kind == LocalSecureNodeKind.Directory
                                     && LocalWindowsNative.IsCaseSensitiveDirectory(handle, path),
-            mutationExclusive);
+            mutationExclusive,
+            duplicateForTraversal: mutationExclusive && metadata.Kind == LocalSecureNodeKind.Directory
+                ? LocalWindowsNative.DuplicateForDirectoryTraversal : null);
     }
 
     private static void RequireVolume(LocalSecureHandle parent, LocalSecureHandle child)

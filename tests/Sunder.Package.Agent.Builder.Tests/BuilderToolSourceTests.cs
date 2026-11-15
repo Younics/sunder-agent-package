@@ -1,8 +1,10 @@
 extern alias BuilderWorker;
+extern alias AgentWorker;
 
 using BuilderWorker::Sunder.Package.Agent.Builder;
 using BuilderModels = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using PermissionSurface = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
+using AgentOperations = AgentWorker::Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation;
 using Xunit;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -12,15 +14,18 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderToolSourceTests
 {
     [Theory]
-    [InlineData("{\"status\":\"unknown\"}", true, "tool-outcome-ambiguous")]
-    [InlineData("{\"status\":\"failed\"}", true, "maker.operation-failed")]
-    [InlineData("{\"status\":\"applied\"}", false, null)]
-    public void OperationResultsPreserveAgentAmbiguitySemantics(string json, bool error, string? errorCode)
+    [InlineData("{\"status\":\"unknown\"}", true, "tool-outcome-ambiguous", "Unconfirmed", false)]
+    [InlineData("{\"status\":\"failed\"}", true, "maker.operation-failed", "Failed", true)]
+    [InlineData("{\"status\":\"applied\"}", false, null, "Applied", true)]
+    [InlineData("{\"status\":\"unchanged\"}", false, null, "Unchanged", true)]
+    public void OperationResultsPreserveAgentAmbiguitySemantics(string json, bool error, string? errorCode, string label, bool terminal)
     {
         var rendered = BuilderToolSource.CompactResult("maker_apply", JsonNode.Parse(json)!, "Observed operation.",
             failed: error, unknown: errorCode == "tool-outcome-ambiguous");
         Assert.Equal(error, rendered.IsError);
         Assert.Equal(errorCode, rendered.ErrorCode);
+        Assert.Equal(label, AgentOperations.Read(rendered.PresentationPayloadJson));
+        Assert.Equal(terminal, AgentOperations.IsTerminal(rendered.PresentationPayloadJson));
     }
 
     [Theory]
@@ -96,6 +101,10 @@ public sealed class BuilderToolSourceTests
         var tools = await source.ListToolsAsync(null!);
         Assert.Equal(new[] { "maker_package", "maker_apply", "maker_logs", "maker_view", "maker_screenshot", "maker_interact" }, tools.Select(tool => tool.ToolId));
         Assert.Single(tools, tool => !string.IsNullOrWhiteSpace(tool.RuntimeInstructions));
+        var instructions = Assert.Single(tools, tool => tool.ToolId == "maker_package").RuntimeInstructions!;
+        Assert.Contains("query=build", instructions);
+        Assert.Contains("sunder:dev:once", instructions);
+        Assert.Contains("do not find Node by inspecting running Workers", instructions);
         Assert.DoesNotContain(tools, tool => tool.ToolId == "maker_build_package");
         Assert.All(tools, tool => Assert.DoesNotContain("watch", tool.ToolId, StringComparison.OrdinalIgnoreCase));
         Assert.All(tools, tool => Assert.Empty(tool.Aliases ?? []));

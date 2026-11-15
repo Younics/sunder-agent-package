@@ -87,20 +87,6 @@ public sealed partial class SemanticMemoryPromotionService(
         return candidates;
     }
 
-    private static void AddCandidates(
-        ICollection<MemoryCandidate> target,
-        ISet<string> seen,
-        IReadOnlyList<MemoryCandidate> candidates)
-    {
-        foreach (var candidate in candidates)
-        {
-            if (seen.Add($"{candidate.Category}:{SemanticMemoryTextHelpers.Normalize(candidate.Content)}"))
-            {
-                target.Add(candidate);
-            }
-        }
-    }
-
     private static void AddCandidate(
         ICollection<MemoryCandidate> candidates,
         ISet<string> seen,

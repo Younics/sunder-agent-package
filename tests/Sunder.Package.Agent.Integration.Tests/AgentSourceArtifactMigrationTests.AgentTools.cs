@@ -23,7 +23,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
     {
         var fixture = Directory.CreateDirectory(Path.Combine(root, "ScriptedToolProvider")).FullName;
         WriteImportProject(fixture, core, driver, cache, archive, provider: true, packageId: "example.agent.scripted.tools", assemblyName: "ScriptedToolProvider");
-        File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"), Path.Combine(fixture, "sunder-contracts.lock.json"));
+        CopyMinimalContractFixture(core, fixture);
         File.WriteAllText(Path.Combine(fixture, "Source.cs"), "public sealed class Seed;");
         await Run(fixture, "restore", "Imported.csproj", "--disable-parallel", "-p:BuildProjectReferences=false");
         await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept", "-p:BuildProjectReferences=false");

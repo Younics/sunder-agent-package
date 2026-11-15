@@ -1,8 +1,9 @@
 # Qualified native release inputs
 
 The Agent native scripts consume Core's **qualified generated-role inputs V1**.
-Current final-archive native provenance is **schema 5**; the schema-3 single-version
-and schema-4 selective readers remain supported. Schema-2 marker-only native evidence is
+Current final-archive native provenance is **schema 6**; the schema-3 single-version,
+schema-4 selective and schema-5 final-archive readers remain supported for history.
+New release staging requires schema 6. Schema-2 marker-only native evidence is
 rejected; it cannot be upgraded by relabeling or rehashing an old handoff.
 
 Core's authoritative contract is
@@ -79,7 +80,7 @@ the release workflow then calls `record-final` after the native lifecycle/metric
 3. Checks exact Core metric identity, counts and thresholds.
 4. Writes `native-leaves-<rid>.tar.gz`, `native-leaf-evidence-<rid>.json` and metric copies.
 
-Each selected package in native schema 3/4/5 retains `workerProject`, `leaf`, `testedArchive`,
+Each selected package in native schema 3/4/5/6 retains `workerProject`, `leaf`, `testedArchive`,
 `metricsSha256` and `metrics`. It adds:
 
 ```json
@@ -100,8 +101,9 @@ Each selected package in native schema 3/4/5 retains `workerProject`, `leaf`, `t
 `leaf.path` is now `<packageId>/<rid>/sunder-dev`; `leaf.hasApp` binds the qualified
 role set. Obsolete `markerPath` and `markerSha256` are removed. `leaf.files` still uses `{path, sha256, size}`; Core's
 unchanged evidence uses `{path, bytes, sha256}`. Tar membership is exactly the
-qualification, its LF-terminated digest sidecar, every qualified leaf file, and
-`metrics/<packageId>.<rid>.json`. Paths are independent of the producer checkout.
+qualification, its LF-terminated digest sidecar, every qualified leaf file,
+`metrics/<packageId>.<rid>.json` and, for schema 6, the bound original reports under
+`execution/<rid>/`. Paths are independent of the producer checkout.
 The digest is bound into the owning CI provenance; an unauthenticated sidecar or
 locally fabricated provenance alone is not release approval or native attestation.
 
@@ -116,7 +118,7 @@ execution-target discovery does not grant invocation, subscription or App use.
 Older schema-3 captures without this projection are usable only when their qualified
 receipts contain no separately authored role uses.
 
-Schemas 4 and 5 bind `planSha256`, selected `packageVersions`, all fifteen `familyVersions`,
+Schemas 4, 5 and 6 bind `planSha256`, selected `packageVersions`, all fifteen `familyVersions`,
 exact `retainedArtifacts` and their previously authenticated `retainedSourceRoleUses`.
 Every RID run includes `familyTests` for all fifteen archive/measurement identities,
 including unchanged packages. Selected leaves still require Core qualifications on
@@ -125,6 +127,47 @@ retained bytes or lost source-backed use evidence reject fan-in. Schema 5 additi
 requires each RID's `testedArchive` hash and size to equal the final published
 archive, including selected packages. Earlier schemas bind the qualified role
 bytes but may have tested a current-RID projection.
+
+### Two-phase execution authority
+
+`run-native-runtime-smoke.sh <core> <archives> <new-results> <core-commit> development`
+uses supported local development-import preparation for the exact final archives.
+It does not install unpublished packages or fabricate Registry observations. The
+required methods exercise all fifteen Workers and Maker's separate create → author
+→ build → archive → validate/extract → development activation → supervised App RPC
+→ unload/cleanup journey without Agent loaded. This qualifies backend execution,
+not Maker view/UI, a desktop install/update or published-installed acceptance.
+
+`prepare_maker_inputs.py` builds an isolated App and exports the selected source
+catalog; development mode also packs and metadata-verifies all six Core authoring
+NuGets at their independently authored versions. Schema-2 `inputs.json` binds the
+App/catalog/feed hashes and exact Core commit. Release qualification requires clean
+Core source. Existing outputs and failed reports are never replaced; use a new
+results directory for a new attempt. Build children receive no GitHub/Registry
+credentials. The test-only RPC hook runs inside the actual App image and retains
+production OS-peer admission, load permits, role permissions and scoped content checks.
+
+Schema 6 adds `execution` to each RID run: exact TRX method identities, development
+scope, archive hashes, Maker jobs/journey and preparation/catalog records. `finalize`
+retains their original bytes in six `native-execution-<rid>.tar.gz` files, bound by
+`executionBundles` in `native-test-evidence.json` and durably stored on the coordinator.
+Rehashed old evidence, success display names or omitted/skipped methods cannot
+qualify the new phase. Original report hashes remain distinct from native attestation.
+
+After immutable publication, the separate `published` mode requires an explicit
+HTTPS Registry origin and `SUNDER_AGENT_NATIVE_REGISTRY_TOKEN`. It checks authenticated
+identity, downloads each exact canonical archive and uploads it through Runtime with
+the selected hash/length, obtains genuine nonce-bound policy observations, then tests
+installed lifecycle/RPC/SQLite/recovery/cleanup. It uses `--host-only` preparation and
+never rebuilds the selected family archives. It does not run Maker's development job
+journey as a substitute for installed acceptance.
+
+Each RID exports `native-installed-<rid>.json` and `.tar.gz`. Strict raw-tar membership,
+report hashes, policy authority, metric identities/budgets and exact source/archive/
+Registry binding are checked before all six form `installed-native-test-evidence.json`.
+The coordinator must retain that set before visibility or announcement; recovery
+verifies the originals without native-leaf remote writes. Native App UI, installers,
+update and deployed recovery acceptance remain additional gates.
 
 ## Fan-in prerequisites and execution
 
@@ -158,7 +201,7 @@ no BOM and no terminal newline follow Core V1. There is no current-machine fallb
 Core rejection ends the operation, without an ordinary-Pack or build retry.
 
 After all six platforms have smoked the exact final family, `finalize` verifies
-their complete schema-5 handoffs and writes `native-test-evidence.json`. It does
+their complete schema-6 handoffs and writes `native-test-evidence.json`. It does
 not Pack again. `verify` rechecks those archives before publication. The retained
 `record`/`assemble` commands support earlier current-RID schema-3/4 callers.
 

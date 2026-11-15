@@ -16,12 +16,15 @@ using Sunder.Runtime.Host;
 using Sunder.Runtime.Host.Services;
 using Sunder.Runtime.LocalState;
 using Sunder.Sdk.Rpc;
+using Sunder.Registry.Contracts;
+using Microsoft.AspNetCore.Builder;
+using Sunder.Runtime.Host.Endpoints;
 using Xunit;
 
 namespace Sunder.Runtime.Host.Tests;
 
 [Collection(RuntimeProcessIntegrationCollection.Name)]
-public sealed class AgentNativeReleaseSmokeTests(
+public sealed partial class AgentNativeReleaseSmokeTests(
     OfficialRuntimeFixture executionRuntimes)
     : IClassFixture<OfficialRuntimeFixture>
 {
@@ -38,8 +41,12 @@ public sealed class AgentNativeReleaseSmokeTests(
     [Trait("Category", "Release")]
     [Trait("Capability", "Native")]
     [Trait("Size", "Large")]
-    public async Task CurrentRidArchives_ExerciseEveryNativeWorkerThroughRuntimeHost()
+    public async Task PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost()
     {
+        var registryOrigin = RegistryActivePolicyClient.Origin(Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN")
+            ?? throw new InvalidOperationException("Published native installed acceptance requires an explicit authenticated HTTPS Registry origin."));
+        var registryToken = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN");
+        Assert.False(string.IsNullOrWhiteSpace(registryToken), "Published native installed acceptance requires an explicit Registry read credential.");
         var archiveDirectory = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_ARCHIVE_DIR")
             ?? throw new InvalidOperationException(
                 "A selected release lane is missing a required prerequisite. "
@@ -60,56 +67,65 @@ public sealed class AgentNativeReleaseSmokeTests(
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
         var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync("10.0.12");
-        var launchResolver = new CapturingExecutionRuntimeLaunchResolver(executionRuntimes.LaunchResolver);
-        var services = new ServiceCollection();
-        services.AddRuntimeHostServices(paths, new RuntimeBearerTokenValidator("native-release-smoke-token"));
-        services.AddSingleton(executionRuntimes.Layout);
-        services.AddSingleton(executionRuntimes.Store);
-        services.AddSingleton(executionRuntimes.LocalBindingResolver);
-        services.AddSingleton<IEphemeralExecutionRuntimeBindingResolver>(executionRuntimes.LocalBindingResolver);
-        services.AddSingleton<IExecutionRuntimeLaunchResolver>(launchResolver);
-        services.AddSingleton<IExecutionRuntimeRetentionManager>(executionRuntimes.Store);
-        services.AddSingleton(new RuntimeLifecyclePolicyOptions
-        {
-            PackageWorkerStartupTimeout = TimeSpan.FromMinutes(8),
-            PackageRuntimeGenerationActivationTimeout = TimeSpan.FromMinutes(2),
-        });
-        services.AddSingleton(new RuntimeProcessPolicyOptions
-        {
-            StartupTimeout = TimeSpan.FromSeconds(30),
-            ShutdownTimeout = TimeSpan.FromSeconds(15),
-        });
-        var provider = services.BuildServiceProvider(new ServiceProviderOptions
-        {
-            ValidateOnBuild = true,
-            ValidateScopes = true,
-        });
-        var hostedServices = provider.GetServices<IHostedService>()
-            .Distinct<IHostedService>(ReferenceEqualityComparer.Instance)
-            .ToArray();
+        var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var launchResolver, out var appConnection);
+        var provider = runtimeHost.Services;
         var observedProcessIds = new HashSet<int>();
         var observedTemporaryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var initialized = false;
 
         try
         {
-            foreach (var hostedService in hostedServices) await hostedService.StartAsync(CancellationToken.None);
+            await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             var installedLifecycle = provider.GetRequiredService<InstalledPackageLifecycleService>();
             var sessionLifecycle = provider.GetRequiredService<PackageSessionLifecycleService>();
             var sessionOwner = provider.GetRequiredService<RuntimeSessionOwner>();
             await installedLifecycle.InitializeAsync();
             initialized = true;
 
-            var transfers = provider.GetRequiredService<RuntimeContentTransferStore>();
-            var installMutations = new List<PackageStoreMutationRequest>(archives.Count);
-            foreach (var archivePath in archives.Values.OrderBy(static path => path, StringComparer.Ordinal))
+            var subjects = new List<RegistryPackageVersionIdentity>();
+            var platforms = new HashSet<RegistryPlatformCatalogIdentity>();
+            foreach (var (packageId, archivePath) in archives)
             {
-                await using var archive = File.OpenRead(archivePath);
+                var extracted = Path.Combine(root, "published-subjects", packageId);
+                var validation = await SunderPackageArchiveInspector.ExtractAndValidateAsync(archivePath, extracted);
+                Assert.True(validation.Success, string.Join(Environment.NewLine, validation.Errors));
+                subjects.Add(new(packageId, validation.Manifest!.Version!, PackageSessionPreparer.ComputeContentIdentity(extracted)));
+                platforms.UnionWith(PackagePolicyAdmission.Platforms(validation.Manifest));
+            }
+            // Genuine nonce-bound HTTPS observations, never a seeded/fabricated
+            // cache or disabled admission. Unpublished/denied bytes must fail.
+            await provider.GetRequiredService<RegistryPackagePolicySynchronizer>().RefreshAsync(
+                [new(registryOrigin, subjects, platforms.ToArray())], CancellationToken.None);
+            var policies = provider.GetRequiredService<PackageLifecyclePolicyCache>();
+            foreach (var subject in subjects) policies.RequireActivation(registryOrigin, subject);
+
+            var transfers = provider.GetRequiredService<RuntimeContentTransferStore>();
+            var registry = provider.GetRequiredService<RegistryHttpClient>();
+            using (var identityRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, registryOrigin + RegistryApiRoutes.CurrentUser))
+            {
+                identityRequest.Headers.Authorization = new("Bearer", registryToken);
+                using var identity = await registry.SendAsync(identityRequest, CancellationToken.None);
+                Assert.Equal(System.Net.HttpStatusCode.OK, identity.StatusCode);
+            }
+            var installMutations = new List<PackageStoreMutationRequest>(archives.Count);
+            var downloads = new List<object>();
+            foreach (var (packageId, archivePath) in archives.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+            {
+                var subject = subjects.Single(subject => subject.PackageId == packageId);
+                var length = new FileInfo(archivePath).Length;
+                var hash = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(archivePath)));
+                using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get,
+                    registryOrigin + RegistryApiRoutes.PackageVersionCanonical(packageId, subject.Version));
+                request.Headers.Authorization = new("Bearer", registryToken);
+                using var response = await registry.SendAsync(request, CancellationToken.None);
+                Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
+                if (response.Content.Headers.ContentLength is { } advertised) Assert.Equal(length, advertised);
+                await using var archive = await response.Content.ReadAsStreamAsync();
                 var upload = await transfers.CreateUploadAsync(
                     RuntimeUploadKind.Package,
                     archive,
-                    archive.Length,
-                    expectedHash: null,
+                    length,
+                    expectedHash: hash,
                     Path.GetFileName(archivePath),
                     "application/vnd.sunder.package",
                     sessionOwner.Generation,
@@ -118,7 +134,13 @@ public sealed class AgentNativeReleaseSmokeTests(
                     PackageStoreMutationKind.Install,
                     UploadId: upload.UploadId,
                     CapabilityConsent: ReadCapabilityConsent(archivePath)));
+                downloads.Add(new { packageId, version = subject.Version, archiveSha256 = hash, size = length });
             }
+            // Downloads and all-family extraction can outlive the initial lease.
+            // Renew through the real HTTPS boundary immediately before admission.
+            await provider.GetRequiredService<RegistryPackagePolicySynchronizer>().RefreshAsync(
+                [new(registryOrigin, subjects, platforms.ToArray())], CancellationToken.None);
+            var policyEvidence = subjects.Select(subject => new { package = subject, lease = policies.PackageLease(registryOrigin, subject) }).ToArray();
             var stage = await installedLifecycle.StageAsync(
                 new PackageStoreStageRequest(installMutations),
                 CancellationToken.None);
@@ -155,11 +177,10 @@ public sealed class AgentNativeReleaseSmokeTests(
                     package.Value,
                     runtimeReceipt,
                     executionRuntimes));
-            await RecordMetricsAndMigrationsAsync(
+            await RecordWorkerMetricsAsync(
                 initialWorkers,
-                installed,
+                installed.ToDictionary(package => package.PackageId, package => paths.GetInstalledPackagePath(package.PackageId, package.Version)),
                 archives,
-                paths,
                 rid,
                 activationMeasurements,
                 metricsDirectory,
@@ -174,13 +195,8 @@ public sealed class AgentNativeReleaseSmokeTests(
                 Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"),
                 "MemorySchemaMigrations",
                 GetInstalledPackagePath(paths, installed, SemanticMemoryPackageId));
-            await VerifyOwnerUnaryAndStreamAsync(provider, sessionOwner, rid);
-            await VerifyBuilderProjectLifecycleAsync(
-                provider,
-                sessionOwner,
-                rid,
-                root,
-                executionRuntimes.GetRuntimeRoot(runtimeReceipt));
+            sessionOwner.MarkReady();
+            await VerifyOwnerUnaryAndStreamAsync(provider, sessionOwner, rid, appConnection, root);
             await VerifyCallbackAndAuthAsync(provider, sessionOwner);
             var crashedShellProcessId = await VerifyCrashIsolationAsync(
                 sessionOwner,
@@ -226,6 +242,12 @@ public sealed class AgentNativeReleaseSmokeTests(
 
             await installedLifecycle.ShutdownAsync(sessionLifecycle);
             initialized = false;
+            await WriteNativeScopeAsync(metricsDirectory, rid, archives, "published-installed", registryOrigin);
+            await File.WriteAllTextAsync(Path.Combine(metricsDirectory, "scope", "published-registry.json"), JsonSerializer.Serialize(new
+            {
+                schemaVersion = 1, registryOrigin, authenticatedIdentityRead = true, authenticatedArchiveDownloads = true,
+                downloads, policies = policyEvidence,
+            }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }
         finally
         {
@@ -241,18 +263,11 @@ public sealed class AgentNativeReleaseSmokeTests(
                     // Preserve the primary test failure; process and directory assertions below still run.
                 }
             }
-            for (var index = hostedServices.Length - 1; index >= 0; index--)
+            try
             {
-                try
-                {
-                    await hostedServices[index].StopAsync(CancellationToken.None);
-                }
-                catch
-                {
-                    // Provider disposal and orphan assertions remain mandatory.
-                }
+                await runtimeHost.StopAsync(CancellationToken.None);
             }
-            await provider.DisposeAsync();
+            finally { await DisposeRuntimeHostAsync(runtimeHost, appConnection); }
             await AssertProcessIdsStoppedAsync(observedProcessIds);
             Assert.All(observedTemporaryPaths, path => Assert.False(
                 Directory.Exists(path),
@@ -260,6 +275,60 @@ public sealed class AgentNativeReleaseSmokeTests(
             MakeTreeWritable(root);
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
             Assert.False(Directory.Exists(root));
+        }
+    }
+
+    private static IHost CreateNativeRuntimeHost(RuntimePackagePaths paths, OfficialRuntimeFixture runtimes,
+        out CapturingExecutionRuntimeLaunchResolver launchResolver, out RuntimeConnectionInfo appConnection)
+    {
+        // Use the real Generic Host composition, including its application
+        // lifetime; a bare ServiceCollection cannot run the update scheduler.
+        var builder = WebApplication.CreateSlimBuilder();
+        var endpoint = new RuntimeIpcEndpoint(OperatingSystem.IsWindows() ? RuntimeIpcTransportKind.NamedPipe : RuntimeIpcTransportKind.UnixSocket,
+            OperatingSystem.IsWindows() ? "sunder-native-" + Guid.NewGuid().ToString("N") : Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sn-" + Guid.NewGuid().ToString("N")[..12] + ".sock"));
+        RuntimeSupervisedTransport.Configure(builder.WebHost, endpoint);
+        var services = builder.Services;
+        services.AddRuntimeHostServices(paths, new RuntimeBearerTokenValidator("native-release-smoke-token"));
+        services.AddSingleton(runtimes.Layout);
+        services.AddSingleton(runtimes.Store);
+        services.AddSingleton(runtimes.LocalBindingResolver);
+        services.AddSingleton<IEphemeralExecutionRuntimeBindingResolver>(runtimes.LocalBindingResolver);
+        launchResolver = new CapturingExecutionRuntimeLaunchResolver(runtimes.LaunchResolver);
+        services.AddSingleton<IExecutionRuntimeLaunchResolver>(launchResolver);
+        services.AddSingleton<IExecutionRuntimeRetentionManager>(runtimes.Store);
+        services.AddSingleton(new RuntimeLifecyclePolicyOptions
+        {
+            PackageWorkerStartupTimeout = TimeSpan.FromMinutes(8),
+            PackageRuntimeGenerationActivationTimeout = TimeSpan.FromMinutes(2),
+        });
+        services.AddSingleton(new RuntimeProcessPolicyOptions { StartupTimeout = TimeSpan.FromSeconds(30), ShutdownTimeout = TimeSpan.FromSeconds(15) });
+        builder.Host.UseServiceProviderFactory(new DefaultServiceProviderFactory(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }));
+        var app = builder.Build();
+        app.UseMiddleware<RuntimeProblemDetailsMiddleware>();
+        app.UseMiddleware<RuntimeBearerAuthenticationMiddleware>();
+        app.MapRuntimeHandshakeEndpoint();
+        app.MapGroup("/api/v1").MapRuntimeRpcEndpoints().MapAppPolicyEndpoints().MapContentTransferEndpoints();
+        appConnection = new RuntimeConnectionInfo(RuntimeIpcEndpoint.LogicalRuntimeUrl, "native-release-smoke-token") { IpcEndpoint = endpoint };
+        return app;
+    }
+
+    private static async Task StartNativeRuntimeHostAsync(IHost host, RuntimeConnectionInfo connection)
+    {
+        await host.StartAsync(CancellationToken.None);
+        RuntimeSupervisedTransport.RestrictEndpoint(connection.IpcEndpoint!);
+    }
+
+    private static async Task DisposeRuntimeHostAsync(IHost host, RuntimeConnectionInfo connection)
+    {
+        try
+        {
+            if (host is IAsyncDisposable asynchronous) await asynchronous.DisposeAsync();
+            else host.Dispose();
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows() && connection.IpcEndpoint is { Kind: RuntimeIpcTransportKind.UnixSocket } endpoint)
+                File.Delete(endpoint.Address); // Only this fixture's freshly allocated socket.
         }
     }
 
@@ -355,11 +424,10 @@ public sealed class AgentNativeReleaseSmokeTests(
             static pair => Assert.IsType<ProcessRuntimeWorker>(pair.Value.Worker),
             StringComparer.Ordinal);
 
-    private static async Task RecordMetricsAndMigrationsAsync(
+    private static async Task RecordWorkerMetricsAsync(
         IReadOnlyDictionary<string, ProcessRuntimeWorker> workers,
-        IReadOnlyList<InstalledPackageDescriptor> installed,
+        IReadOnlyDictionary<string, string> projections,
         IReadOnlyDictionary<string, string> archives,
-        RuntimePackagePaths paths,
         string rid,
         IReadOnlyDictionary<string, WorkerActivationMeasurement> activationMeasurements,
         string metricsDirectory,
@@ -379,13 +447,15 @@ public sealed class AgentNativeReleaseSmokeTests(
             Assert.True(startup > TimeSpan.Zero, $"Worker '{packageId}' did not record a positive start-to-active interval.");
             observedProcessIds.Add(process.Id);
             observedTemporaryPaths.Add(worker.WorkerTemporaryPath);
-            var package = Assert.Single(installed, candidate => candidate.PackageId == packageId);
-            var workerProcessCount = CountWorkerProcessTree(process.Id, processParents);
+            var processTree = GetWorkerProcessTree(process.Id, processParents);
+            Console.WriteLine("Native Worker process tree for " + packageId + ": " + JsonSerializer.Serialize(
+                processTree.Select(id => DescribeObservedProcess(id, processParents[id]))));
+            var workerProcessCount = processTree.Count;
             await WorkerReleaseMetrics.RecordAsync(
                 "dotnetWorker",
                 rid,
                 archives[packageId],
-                WorkerReleaseMetrics.DirectoryBytes(paths.GetInstalledPackagePath(packageId, package.Version)),
+                WorkerReleaseMetrics.DirectoryBytes(projections[packageId]),
                 startup,
                 workerProcessCount,
                 process,
@@ -637,7 +707,7 @@ public sealed class AgentNativeReleaseSmokeTests(
         return parentByProcess;
     }
 
-    private static int CountWorkerProcessTree(
+    private static IReadOnlyList<int> GetWorkerProcessTree(
         int workerProcessId,
         IReadOnlyDictionary<int, int> parentByProcess)
     {
@@ -656,8 +726,23 @@ public sealed class AgentNativeReleaseSmokeTests(
                 }
             }
         }
-        return workerProcesses.Count;
+        return workerProcesses.Order().ToArray();
     }
+
+    private static NativeProcessDiagnostic DescribeObservedProcess(int id, int parent)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(id);
+            return new(id, parent, process.ProcessName, process.StartTime.ToUniversalTime().Ticks, null);
+        }
+        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        {
+            return new(id, parent, null, null, error.GetType().Name);
+        }
+    }
+
+    private sealed record NativeProcessDiagnostic(int ProcessId, int ParentProcessId, string? Name, long? StartedAtUtcTicks, string? ObservationError);
 
     private static string GetInstalledPackagePath(
         RuntimePackagePaths paths,
@@ -685,390 +770,46 @@ public sealed class AgentNativeReleaseSmokeTests(
     private static async Task VerifyOwnerUnaryAndStreamAsync(
         IServiceProvider services,
         RuntimeSessionOwner owner,
-        string rid)
+        string rid, RuntimeConnectionInfo connection, string root)
     {
-        var sessions = services.GetRequiredService<RuntimeRpcAppSessionManager>();
-        var broker = services.GetRequiredService<RuntimeRpcBroker>();
-        var appSession = await OpenAppSessionAsync(sessions, owner, AgentPackageId, rid);
-        try
+        await using var app = await NativeAppRpcProxy.CreateAsync(services, AgentPackageId, rid, connection, Path.Combine(root, "agent-app"));
         {
-            var catalog = await broker.DiscoverAppAsync(appSession.SessionId, AgentOwnerContractId, CancellationToken.None);
-            var endpoint = Assert.Single(catalog.Providers, provider =>
-                provider.PackageId == AgentPackageId && provider.ProviderId == "agent.owner.runtime").Endpoint;
-            var dashboard = await broker.InvokeAppAsync(
-                appSession.SessionId,
-                endpoint,
+            var dashboard = await app.InvokeAsync(AgentOwnerContractId,
                 "agent-runtime",
                 "dashboard",
                 JsonSerializer.SerializeToElement(new { }),
-                options: null,
-                CancellationToken.None);
+                content: false);
             var revision = dashboard.GetProperty("revision").GetInt64();
-
-            using var streamTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
-            await using var stream = broker.SubscribeAppAsync(
-                    appSession.SessionId,
-                    endpoint,
-                    "agent-runtime",
-                    "changes",
-                    JsonSerializer.SerializeToElement(new { afterRevision = revision, supportsTurnMutations = true }),
-                    options: null,
-                    streamTimeout.Token)
-                .GetAsyncEnumerator(streamTimeout.Token);
-            Assert.True(await stream.MoveNextAsync());
-            Assert.True(stream.Current.GetProperty("revision").GetInt64() >= revision);
-            var mutation = await broker.InvokeAppAsync(
-                appSession.SessionId,
-                endpoint,
+            // The App proxy owns the live stream and the mutation in one real
+            // supervised App process, retaining the original streaming assertion.
+            var mutation = await app.InvokeAsync(AgentOwnerContractId,
                 "agent-runtime",
                 "profile-command",
                 JsonSerializer.SerializeToElement(new
                 {
                     kind = 0,
+                    // Nullable DTO members remain required on the reviewed wire;
+                    // a hand-authored native request must not omit their nulls.
+                    profileId = (string?)null,
                     displayName = "Native release smoke",
                     description = "Exercises the owner stream over an official-runtime Worker.",
+                    instructions = (string?)null,
+                    chatProviderId = (string?)null,
+                    chatModelId = (string?)null,
+                    embeddingProviderId = (string?)null,
+                    embeddingModelId = (string?)null,
+                    assignments = (object?)null,
+                    behaviorLoopId = (string?)null,
+                    behaviorLoopSourceId = (string?)null,
+                    behaviorLoopSettingsJson = (string?)null,
+                    chatModelSettingsJson = (string?)null,
                 }),
-                options: null,
-                streamTimeout.Token);
+                content: false, afterRevision: revision);
             var mutationRevision = mutation.GetProperty("revision").GetInt64();
             Assert.True(mutationRevision > revision);
-            do
-            {
-                Assert.True(await stream.MoveNextAsync());
-            }
-            while (stream.Current.GetProperty("revision").GetInt64() < mutationRevision);
+            Assert.False(string.IsNullOrWhiteSpace(mutation.GetProperty("profile").GetProperty("profileId").GetString()));
+            Assert.Equal("Native release smoke", mutation.GetProperty("profile").GetProperty("displayName").GetString());
         }
-        finally
-        {
-            sessions.Close(appSession.SessionId);
-        }
-    }
-
-    private static async Task VerifyBuilderProjectLifecycleAsync(
-        IServiceProvider services,
-        RuntimeSessionOwner owner,
-        string rid,
-        string testRoot,
-        string workerRuntimeRoot)
-    {
-        var selectedSdkVersion = Environment.GetEnvironmentVariable("SUNDER_AGENT_BUILDER_SDK_VERSION");
-        Assert.False(
-            string.IsNullOrWhiteSpace(selectedSdkVersion),
-            "SUNDER_AGENT_BUILDER_SDK_VERSION must identify the exact project-build SDK.");
-        Assert.Matches("^[0-9]+\\.[0-9]+\\.[0-9]+$", selectedSdkVersion!);
-
-        var selectedDotnetPath = Environment.GetEnvironmentVariable("SUNDER_AGENT_BUILDER_DOTNET_PATH");
-        Assert.False(
-            string.IsNullOrWhiteSpace(selectedDotnetPath),
-            "SUNDER_AGENT_BUILDER_DOTNET_PATH must identify the selected project-build toolchain.");
-        selectedDotnetPath = Path.GetFullPath(selectedDotnetPath!);
-        Assert.True(File.Exists(selectedDotnetPath), $"Selected dotnet executable was not found: {selectedDotnetPath}");
-        Assert.False(
-            IsSameOrChildPath(selectedDotnetPath, workerRuntimeRoot),
-            "The Builder project SDK must remain separate from the shared Worker execution-runtime store.");
-        var selectedToolchainDirectory = Path.GetDirectoryName(selectedDotnetPath);
-        Assert.False(string.IsNullOrWhiteSpace(selectedToolchainDirectory));
-
-        var workspaceRoot = Path.Combine(testRoot, "builder-workspace");
-        var projectRoot = Path.Combine(workspaceRoot, "NativeBuilderSmoke");
-        var publishRoot = Path.Combine(workspaceRoot, "published");
-        Directory.CreateDirectory(workspaceRoot);
-        await File.WriteAllTextAsync(
-            Path.Combine(workspaceRoot, "global.json"),
-            JsonSerializer.Serialize(new
-            {
-                sdk = new
-                {
-                    version = selectedSdkVersion,
-                    rollForward = "disable",
-                    allowPrerelease = false,
-                },
-            }),
-            CancellationToken.None);
-
-        var sessions = services.GetRequiredService<RuntimeRpcAppSessionManager>();
-        var broker = services.GetRequiredService<RuntimeRpcBroker>();
-        var launchDiagnostics = Assert.IsType<CapturingExecutionRuntimeLaunchResolver>(
-            services.GetRequiredService<IExecutionRuntimeLaunchResolver>());
-        var agentAppSession = await OpenAppSessionAsync(sessions, owner, AgentPackageId, rid);
-        string workspaceId;
-        try
-        {
-            var catalog = await broker.DiscoverAppAsync(
-                agentAppSession.SessionId,
-                AgentOwnerContractId,
-                CancellationToken.None);
-            var endpoint = Assert.Single(catalog.Providers, provider =>
-                provider.PackageId == AgentPackageId && provider.ProviderId == "agent.owner.runtime").Endpoint;
-            var created = await broker.InvokeAppAsync(
-                agentAppSession.SessionId,
-                endpoint,
-                "agent-runtime",
-                "workspace-command",
-                JsonSerializer.SerializeToElement(new
-                {
-                    kind = 0,
-                    displayName = "Native Builder smoke",
-                }),
-                options: null,
-                CancellationToken.None);
-            workspaceId = created.GetProperty("workspace").GetProperty("workspaceId").GetString()!;
-            Assert.False(string.IsNullOrWhiteSpace(workspaceId));
-
-            var now = DateTimeOffset.UtcNow.ToString(
-                "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
-                CultureInfo.InvariantCulture);
-            JsonElement saved;
-            try
-            {
-                saved = await broker.InvokeAppAsync(
-                    agentAppSession.SessionId,
-                    endpoint,
-                    "agent-runtime",
-                    "workspace-command",
-                    JsonSerializer.SerializeToElement(new
-                    {
-                        kind = 1,
-                        workspaceId,
-                        displayName = "Native Builder smoke",
-                        description = "Exercises Builder through the packaged shared Runtime boundary.",
-                        paths = new[]
-                        {
-                            new
-                            {
-                                pathId = Guid.NewGuid().ToString("N"),
-                                workspaceId,
-                                hostPath = workspaceRoot,
-                                isDefault = true,
-                                sortOrder = 0,
-                                createdAtUtc = now,
-                                updatedAtUtc = now,
-                            },
-                        },
-                        documents = Array.Empty<object>(),
-                        executionTargetId = "local",
-                    }),
-                    options: null,
-                    CancellationToken.None);
-            }
-            catch (SunderRpcException exception)
-            {
-                throw new InvalidOperationException(
-                    $"Agent workspace save failed with RPC error '{exception.Error.Code}': "
-                    + $"{exception.Error.Message} Details: {exception.Error.Details?.GetRawText() ?? "<none>"}. "
-                    + launchDiagnostics.DescribeStandardError(AgentPackageId),
-                    exception);
-            }
-            var savedWorkspace = saved.GetProperty("workspace");
-            Assert.Equal(workspaceId, savedWorkspace.GetProperty("workspaceId").GetString());
-            Assert.Equal(
-                workspaceRoot,
-                Path.GetFullPath(Assert.Single(savedWorkspace.GetProperty("paths").EnumerateArray())
-                    .GetProperty("hostPath")
-                    .GetString()!));
-        }
-        finally
-        {
-            sessions.Close(agentAppSession.SessionId);
-        }
-
-        var builderAppSession = await OpenAppSessionAsync(sessions, owner, BuilderPackageId, rid);
-        try
-        {
-            var workspaces = await InvokeBuilderAsync(
-                broker,
-                builderAppSession.SessionId,
-                launchDiagnostics,
-                JsonSerializer.SerializeToElement(new { kind = "list-workspaces", timeoutSeconds = 600 }));
-            Assert.Contains(
-                workspaces.GetProperty("workspaces").EnumerateArray(),
-                workspace => workspace.GetProperty("workspaceId").GetString() == workspaceId);
-
-            var execution = (await InvokeBuilderAsync(
-                    broker,
-                    builderAppSession.SessionId,
-                    launchDiagnostics,
-                    JsonSerializer.SerializeToElement(new
-                    {
-                        kind = "resolve-workspace",
-                        workspaceId,
-                        timeoutSeconds = 600,
-                    })))
-                .GetProperty("execution");
-            Assert.Equal("local", execution.GetProperty("target").GetProperty("targetId").GetString());
-            Assert.True(execution.GetProperty("supportsPathEnvironment").GetBoolean());
-            Assert.Contains(
-                execution.GetProperty("scope").GetProperty("workspacePaths").EnumerateArray(),
-                path => string.Equals(
-                    Path.GetFullPath(path.GetString()!),
-                    workspaceRoot,
-                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal));
-
-            _ = await InvokeBuilderAsync(
-                broker,
-                builderAppSession.SessionId,
-                launchDiagnostics,
-                JsonSerializer.SerializeToElement(new
-                {
-                    kind = "add-path-entry",
-                    workspaceId,
-                    timeoutSeconds = 600,
-                    executionPath = selectedToolchainDirectory,
-                }));
-
-            var version = AssertBuilderProcessSucceeded(
-                await InvokeBuilderProcessAsync(
-                    broker,
-                    builderAppSession.SessionId,
-                    launchDiagnostics,
-                    workspaceId,
-                    ["--version"],
-                    workspaceRoot,
-                    120),
-                "SDK selection");
-            Assert.Equal(selectedSdkVersion, version.GetProperty("standardOutput").GetString()!.Trim());
-
-            AssertBuilderProcessSucceeded(
-                await InvokeBuilderProcessAsync(
-                    broker,
-                    builderAppSession.SessionId,
-                    launchDiagnostics,
-                    workspaceId,
-                    [
-                        "new", "console",
-                        "--name", "NativeBuilderSmoke",
-                        "--framework", "net10.0",
-                        "--output", projectRoot,
-                        "--no-restore",
-                    ],
-                    workspaceRoot,
-                    300),
-                "project creation");
-            Assert.True(File.Exists(Path.Combine(projectRoot, "NativeBuilderSmoke.csproj")));
-
-            AssertBuilderProcessSucceeded(
-                await InvokeBuilderProcessAsync(
-                    broker,
-                    builderAppSession.SessionId,
-                    launchDiagnostics,
-                    workspaceId,
-                    ["build", projectRoot, "--configuration", "Release", "--nologo"],
-                    projectRoot,
-                    600),
-                "project build");
-
-            AssertBuilderProcessSucceeded(
-                await InvokeBuilderProcessAsync(
-                    broker,
-                    builderAppSession.SessionId,
-                    launchDiagnostics,
-                    workspaceId,
-                    [
-                        "publish", projectRoot,
-                        "--configuration", "Release",
-                        "--no-restore",
-                        "--output", publishRoot,
-                        "--nologo",
-                    ],
-                    projectRoot,
-                    900),
-                "project publish");
-            Assert.True(File.Exists(Path.Combine(publishRoot, "NativeBuilderSmoke.dll")));
-        }
-        finally
-        {
-            sessions.Close(builderAppSession.SessionId);
-        }
-    }
-
-    private static async Task<JsonElement> InvokeBuilderProcessAsync(
-        RuntimeRpcBroker broker,
-        string appSessionId,
-        CapturingExecutionRuntimeLaunchResolver launchDiagnostics,
-        string workspaceId,
-        IReadOnlyList<string> arguments,
-        string workingDirectory,
-        int timeoutSeconds)
-        => await InvokeBuilderAsync(
-            broker,
-            appSessionId,
-            launchDiagnostics,
-            JsonSerializer.SerializeToElement(new
-            {
-                kind = "execute-process",
-                workspaceId,
-                fileName = "dotnet",
-                arguments,
-                workingDirectory,
-                timeoutSeconds,
-            }));
-
-    private static JsonElement AssertBuilderProcessSucceeded(JsonElement response, string operation)
-    {
-        var process = response.GetProperty("process");
-        var output = process.GetProperty("standardOutput").GetString() ?? string.Empty;
-        var error = process.GetProperty("standardError").GetString() ?? string.Empty;
-        Assert.True(
-            process.GetProperty("exitCode").GetInt32() == 0,
-            $"Builder {operation} failed:{Environment.NewLine}{output}{Environment.NewLine}{error}");
-        Assert.False(process.GetProperty("wasTruncated").GetBoolean());
-        return process;
-    }
-
-    private static async Task<JsonElement> InvokeBuilderAsync(
-        RuntimeRpcBroker broker,
-        string appSessionId,
-        CapturingExecutionRuntimeLaunchResolver launchDiagnostics,
-        JsonElement request)
-    {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
-        await using var scope = new RuntimeRpcCallScope(
-            broker,
-            broker.CreateAppCallScope(
-                appSessionId,
-                new SunderRpcCallOptions(DateTimeOffset.UtcNow.AddMinutes(20)),
-                timeout.Token));
-        var catalog = await scope.DiscoverAsync(BuilderRuntimeContractId, timeout.Token);
-        var endpoint = Assert.Single(catalog.Providers, provider =>
-            provider.PackageId == BuilderPackageId && provider.ProviderId == "builder.runtime").Endpoint;
-        JsonElement response;
-        try
-        {
-            response = await scope.InvokeAsync(
-                endpoint,
-                "builder-runtime",
-                "execute",
-                request,
-                options: null,
-                timeout.Token);
-        }
-        catch (SunderRpcException exception)
-        {
-            var operation = request.GetProperty("kind").GetString();
-            throw new InvalidOperationException(
-                $"Builder operation '{operation}' failed with RPC error '{exception.Error.Code}': "
-                + $"{exception.Error.Message} Details: {exception.Error.Details?.GetRawText() ?? "<none>"}. "
-                + launchDiagnostics.DescribeStandardError(BuilderPackageId) + "; "
-                + launchDiagnostics.DescribeStandardError(AgentPackageId) + "; "
-                + launchDiagnostics.DescribeStandardError("younics.ai.agent.execution.local"),
-                exception);
-        }
-        var reference = ReadContentReference(response.GetProperty("content"));
-        Assert.Equal("application/json", reference.MediaType);
-        Assert.Equal("builder-result.json", reference.FileName);
-        Assert.Equal(SunderRpcContentRepeatability.SingleUse, reference.Repeatability);
-        Assert.True(reference.ExpiresAtUtc <= scope.DeadlineUtc);
-
-        await using var content = await scope.OpenContentAsync(reference, timeout.Token);
-        using var buffer = new MemoryStream(checked((int)reference.Length));
-        await content.CopyToAsync(buffer, timeout.Token);
-        var bytes = buffer.ToArray();
-        Assert.Equal(reference.Length, bytes.LongLength);
-        Assert.Equal(
-            reference.Sha256,
-            Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant());
-        using var document = JsonDocument.Parse(bytes);
-        return document.RootElement.Clone();
     }
 
     private static SunderRpcContentReference ReadContentReference(JsonElement value)
@@ -1082,30 +823,6 @@ public sealed class AgentNativeReleaseSmokeTests(
             value.GetProperty("repeatability").GetString() == "single-use"
                 ? SunderRpcContentRepeatability.SingleUse
                 : SunderRpcContentRepeatability.Repeatable);
-
-    private static async Task<RuntimeRpcAppSessionDescriptor> OpenAppSessionAsync(
-        RuntimeRpcAppSessionManager sessions,
-        RuntimeSessionOwner owner,
-        string packageId,
-        string rid)
-    {
-        Assert.True(owner.State.ActiveSession.TryGetPackageSource(packageId, out var source));
-        Assert.NotNull(source?.Manifest);
-        Assert.NotNull(source.ContentIndex);
-        var appTarget = Assert.Single(source.Manifest.Targets!, target =>
-            target is not null
-            && target.Role == SunderPackageFormat.AppHostRole
-            && target.Rid == rid)!;
-        return await sessions.OpenAsync(
-            new RuntimeRpcAppSessionOpenRequest(
-                packageId,
-                source.Manifest.Version!,
-                RuntimeRpcPackageMetadata.GetManifestSha256(source.ContentIndex),
-                PackageTargetSelection.ToDescriptor(appTarget),
-                owner.Generation,
-                Guid.NewGuid()),
-            CancellationToken.None);
-    }
 
     private static bool IsSameOrChildPath(string candidatePath, string rootPath)
     {

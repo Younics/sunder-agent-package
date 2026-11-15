@@ -434,9 +434,6 @@ public sealed partial class AgentWorkspaceStackContributor(
     private static string BuildActionId(string fragmentId, string workspaceId)
         => $"agent-workspace:{fragmentId}:{workspaceId}";
 
-    private static string BuildInputId(string workspaceId, string kind, string itemId, int sortOrder)
-        => $"agent-workspace.{SanitizeIdentifier(workspaceId)}.{kind}.{SanitizeIdentifier(string.IsNullOrWhiteSpace(itemId) ? sortOrder.ToString() : itemId)}";
-
     private static string SanitizeIdentifier(string value)
     {
         var builder = new System.Text.StringBuilder(value.Length);

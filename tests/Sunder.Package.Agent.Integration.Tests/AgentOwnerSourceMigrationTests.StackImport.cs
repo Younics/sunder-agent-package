@@ -76,8 +76,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "--disable-build-servers", "-p:UseSharedCompilation=false",
                 "-nodeReuse:false", "-nologo",
             };
-            await Command("restore", ["--disable-parallel", "--no-dependencies"]);
-            await Command("msbuild", ["-t:RestoreSunderContracts", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
+            await Command("restore", ["--disable-parallel", "--no-dependencies", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
             await Command("build", ["--no-restore"]);
             var generatedRoot = CanonicalPackageRoles.Analysis(projectRoot);
             var generated = Snapshot();

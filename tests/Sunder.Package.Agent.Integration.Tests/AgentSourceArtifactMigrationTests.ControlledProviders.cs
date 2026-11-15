@@ -34,8 +34,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             WriteImportProject(directory, core, driver, cache, archive, provider: true,
                 packageId: "example.agent.controlled", assemblyName: "ControlledNaturalProviders",
                 domainReferences: [typeof(Microsoft.Extensions.DependencyInjection.ServiceProvider).Assembly.Location]);
-            File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"),
-                Path.Combine(directory, "sunder-contracts.lock.json"));
+            CopyMinimalContractFixture(core, directory);
             File.WriteAllText(Path.Combine(directory, "Source.cs"), "public sealed class Seed;");
             await Run(directory, "restore", "Imported.csproj", "--disable-parallel", "-p:BuildProjectReferences=false");
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept", "-p:BuildProjectReferences=false");

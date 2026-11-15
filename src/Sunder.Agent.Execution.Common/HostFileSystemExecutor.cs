@@ -17,7 +17,7 @@ internal enum HostReportedPathStyle
     Posix,
 }
 
-internal static class HostFileSystemExecutor
+internal static partial class HostFileSystemExecutor
 {
     internal static int MutationGateCount => HostMutationCoordinator.Count;
 
@@ -110,6 +110,13 @@ internal static class HostFileSystemExecutor
         ILocalFileWriteFaultInjector? faultInjector = null,
         ILocalSecureFileSystemHooks? hooks = null)
     {
+        if (!LocalSecureNative.StrictMutationsAvailable)
+        {
+            pathContext.ApprovedAuthority?.Dispose();
+            return FileOperation.Failure(pathContext.ReportedPath,
+                FileOperation.StrictPlatformMutationUnavailableMessage,
+                FileOperation.StrictPlatformMutationUnavailableErrorCode);
+        }
         try
         {
             return await WriteFileCoreAsync(
@@ -123,172 +130,8 @@ internal static class HostFileSystemExecutor
         {
             return FileOperation.Failure(
                 pathContext.ReportedPath,
-                FileOperation.StrictMutationRecoveryRequiredMessage,
+                "File mutation or operation-owned directory cleanup could not be confirmed. File contents may have changed; inspect the target before retrying.",
                 FileOperation.StrictMutationRecoveryRequiredErrorCode);
-        }
-    }
-
-    private static async ValueTask<AgentFileMutationResult> WriteFileCoreAsync(
-        HostFileSystemPathContext pathContext,
-        AgentFileWriteRequest request,
-        CancellationToken cancellationToken,
-        ILocalFileWriteFaultInjector? faultInjector,
-        ILocalSecureFileSystemHooks? hooks)
-    {
-        var path = pathContext.ReportedPath;
-        using var approvedAuthority = pathContext.ApprovedAuthority;
-        if (!LocalSecureNative.StrictMutationsAvailable)
-        {
-            return FileOperation.Failure(
-                path,
-                FileOperation.StrictPlatformMutationUnavailableMessage,
-                FileOperation.StrictPlatformMutationUnavailableErrorCode);
-        }
-        LocalSecureTemporaryFile? temporaryFile = null;
-        LocalSecurePathSession? session = null;
-        LocalSecureOpenedTarget? target = null;
-        LocalSecureMutationReservation? reservation = null;
-        try
-        {
-            session = HostSecurePathEngine.OpenAuthorized(
-                pathContext.ConfiguredRoots,
-                pathContext.HostPath,
-                approvedAuthority,
-                createParents: true,
-                hooks,
-                cancellationToken);
-            target = session.TryOpenTarget(writable: true);
-            LocalSecureTargetExpectation expectation;
-            if (target is not null)
-            {
-                if (target.Handle.Kind != LocalSecureNodeKind.RegularFile)
-                {
-                    return FileOperation.Failure(
-                        path,
-                        "The write target is not a regular file.",
-                        AgentFileReadErrorCodes.NotAFile);
-                }
-                if (!request.Overwrite)
-                {
-                    return FileOperation.Failure(path, "File already exists.", FileOperation.FileExistsErrorCode);
-                }
-                if (!ExpectedContentMatches(target.Handle, request.ExpectedContentHash, cancellationToken))
-                {
-                    return FileOperation.ContentChanged(path);
-                }
-                expectation = LocalSecureTargetExpectation.Existing(
-                    target.Handle.Identity,
-                    approvalBound: approvedAuthority is not null);
-            }
-            else
-            {
-                if (request.ExpectedContentHash is not null)
-                {
-                    return FileOperation.ContentChanged(path);
-                }
-                expectation = LocalSecureTargetExpectation.Missing(
-                    approvalBound: approvedAuthority is not null);
-            }
-
-            var reservationSlots = (target is null ? 1 : 3) + 1;
-            reservation = session.ReserveMutationSlots(session.Parent, reservationSlots, cancellationToken);
-            temporaryFile = session.CreateTemporaryFile(reservation);
-            await using (var stream = new FileStream(
-                             temporaryFile.DuplicateHandle(),
-                             FileAccess.Write,
-                             64 * 1024,
-                             isAsync: false))
-            {
-                await using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: true))
-                {
-                    if (target is not null && !request.Content.StartsWith('\uFEFF') && HasUtf8Bom(target.Handle))
-                        await writer.WriteAsync("\uFEFF".AsMemory(), cancellationToken).ConfigureAwait(false);
-                    await writer.WriteAsync(request.Content.AsMemory(), cancellationToken).ConfigureAwait(false);
-                    await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
-                }
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-                faultInjector?.OnFaultPoint(LocalFileWriteFaultPoint.TemporaryFileFlushed);
-                faultInjector?.OnFaultPoint(LocalFileWriteFaultPoint.BeforeAtomicReplace);
-                session.PrepareToPublish();
-                session.PublishTemporaryFile(
-                    temporaryFile,
-                    request.Overwrite,
-                    expectation,
-                    target?.Handle,
-                    request.ExpectedContentHash is null
-                        ? null
-                        : handle => ExpectedContentMatches(handle, request.ExpectedContentHash, CancellationToken.None),
-                    reservation,
-                    cancellationToken);
-            }
-
-            CapturePostMutationAuthority(pathContext, session, temporaryFile);
-
-            return FileOperation.Written(path, request.Content.Length);
-        }
-        catch (LocalSecureFileAlreadyExistsException)
-        {
-            return FileOperation.Failure(path, "File already exists.", FileOperation.FileExistsErrorCode);
-        }
-        catch (DecoderFallbackException)
-        {
-            return FileOperation.Failure(path, "The existing file is not valid UTF-8 text. No mutation was applied.", AgentFileReadErrorCodes.BinaryFile);
-        }
-        catch (LocalSecureApprovalChangedException ex)
-        {
-            return request.ExpectedContentHash is not null
-                ? FileOperation.ContentChanged(path)
-                : FileOperation.Failure(path, ex.Message, AgentFileReadErrorCodes.PathCanonicalizationFailed);
-        }
-        catch (LocalSecureContentChangedException)
-        {
-            return FileOperation.ContentChanged(path);
-        }
-        catch (LocalSecureMutationRecoveryException)
-        {
-            throw;
-        }
-        catch (InvalidOperationException ex)
-        {
-            return FileOperation.Failure(path, ex.Message, AgentFileReadErrorCodes.OutsideConfiguredScope);
-        }
-        catch (Exception ex) when (ex is LocalSecurePathException or UnauthorizedAccessException or PlatformNotSupportedException)
-        {
-            return FileOperation.Failure(path, ex.Message, AgentFileReadErrorCodes.PathCanonicalizationFailed);
-        }
-        finally
-        {
-            LocalSecureMutationRecoveryException? cleanupFailure = null;
-            try
-            {
-                if (temporaryFile is not null)
-                {
-                    try
-                    {
-                        if (!temporaryFile.WasPublished && session is not null && reservation is not null)
-                        {
-                            session.DeleteTemporaryFile(temporaryFile, reservation);
-                        }
-                    }
-                    finally
-                    {
-                        temporaryFile.Dispose();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                cleanupFailure = ex as LocalSecureMutationRecoveryException
-                    ?? new LocalSecureMutationRecoveryException(path, ex);
-            }
-            target?.Dispose();
-            session?.Dispose();
-            reservation?.Dispose();
-            if (cleanupFailure is not null)
-            {
-                throw cleanupFailure;
-            }
         }
     }
 
@@ -449,32 +292,6 @@ internal static class HostFileSystemExecutor
             isDirectory: true,
             wasTruncated: (long)offset - 1 + selected.Length < entries.Count,
             startLine: offset, endLine: selected.Length == 0 ? 0 : offset + selected.Length - 1, totalLines: entries.Count);
-    }
-
-    private static void CapturePostMutationAuthority(
-        HostFileSystemPathContext pathContext,
-        LocalSecurePathSession session,
-        LocalSecureTemporaryFile temporaryFile)
-    {
-        if (pathContext.PostMutationAuthoritySink is not { } sink)
-        {
-            return;
-        }
-
-        var retainedTarget = temporaryFile.TakePublishedTarget();
-        LocalSecureApprovalLease? authority = session.TakePostMutationAuthority(
-            retainedTarget,
-            retainedTarget.Identity,
-            LocalSecureNodeKind.RegularFile);
-        try
-        {
-            sink(authority);
-            authority = null;
-        }
-        finally
-        {
-            authority?.Dispose();
-        }
     }
 
     private static void CaptureDeletedPostMutationAuthority(
@@ -696,6 +513,5 @@ internal interface ILocalFileWriteFaultInjector
 
 internal enum LocalFileWriteFaultPoint
 {
-    TemporaryFileFlushed,
-    BeforeAtomicReplace,
+    ContentPrepared,
 }

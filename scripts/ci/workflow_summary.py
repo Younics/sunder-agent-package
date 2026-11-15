@@ -47,7 +47,7 @@ def verify(jobs, mode, *, builder_diagnostics=False, operation=None):
             raise ValueError("Publication leaves differ from the selected components")
         expected = {"validation": build, "production": build, "native": build and production > 0,
             "smoke": build, "fan-in": build, "stage": active,
-            "publish-owner": active and owner, "publish-consumers": active and bool(consumers), "release": active}
+            "publish-owner": active and owner, "publish-consumers": active and bool(consumers), "installed-native": active, "release": active}
     else:
         raise ValueError("Unknown workflow summary")
     outcomes(jobs, dict(prepare=True, **expected))

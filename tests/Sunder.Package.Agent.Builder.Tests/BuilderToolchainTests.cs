@@ -28,6 +28,9 @@ public sealed partial class BuilderToolchainTests
         {
             ["SystemRoot"] = systemRoot, ["PATH"] = null, ["NODE_OPTIONS"] = "--require untrusted-hook",
             ["DOTNET_ROOT"] = fixture.PathOf("wrong-sdk"), ["UNRELATED_HOST_SECRET"] = "must-not-be-copied",
+            ["HOME"] = fixture.PathOf("host-profile"), ["USERPROFILE"] = fixture.PathOf("host-profile"),
+            ["APPDATA"] = fixture.PathOf("host-credentials"), ["LOCALAPPDATA"] = fixture.PathOf("host-local"),
+            ["XDG_CONFIG_HOME"] = fixture.PathOf("host-config"), ["XDG_CACHE_HOME"] = fixture.PathOf("host-cache"),
         };
         var environment = service.CreateEnvironment(installation, key => variables.GetValueOrDefault(key), variables.Keys);
         var paths = environment["PATH"]!.Split(Path.PathSeparator);
@@ -37,6 +40,14 @@ public sealed partial class BuilderToolchainTests
         Assert.Contains(paths, path => System.IO.File.Exists(Path.Combine(path, shell)));
         Assert.Null(environment["NODE_OPTIONS"]);
         Assert.DoesNotContain("UNRELATED_HOST_SECRET", environment.Keys);
+        foreach (var name in OperatingSystem.IsWindows()
+            ? new[] { "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA", "ALLUSERSPROFILE" }
+            : new[] { "HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME" })
+        {
+            Assert.NotEqual(variables.GetValueOrDefault(name), environment[name]);
+            Assert.True(BuilderToolchainFiles.IsChild(environment[name]!, fixture.ManagedRoot));
+            Assert.True(Directory.Exists(environment[name]));
+        }
         Assert.Null(variables["PATH"]); // No parent/global environment mutation.
         var absolute = fixture.PathOf("explicit-command-tools");
         variables["PATH"] = string.Join(Path.PathSeparator, ".", "relative-tools", absolute, absolute);

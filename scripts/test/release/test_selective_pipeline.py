@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
 import agent_pipeline as pipeline
 import agent_release as r
 import agent_selection as selection
+from test_native_runtime_evidence import native_documents
 
 
 class MemoryRelease:
@@ -94,6 +95,21 @@ class SelectivePipelineTests(unittest.TestCase):
     def stage(self):
         return pipeline.stage(self.core, self.directory, self.plan)
 
+    def retain_installed_fixture(self):
+        receipts = self.directory / "installed-receipts"
+        records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
+                   for row in sorted(self.records, key=lambda row: row["packageId"])]
+        for rid in pipeline.native_execution.RIDS:
+            metrics = self.directory / "installed-fixture-metrics" / rid
+            value, documents = native_documents(records, rid, self.env["CORE_COMMIT"], "published", self.plan["registryOrigin"])
+            for name, data in documents.items():
+                path = metrics / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            (metrics / pipeline.native_execution.RECEIPT).write_bytes(pipeline.native_execution.compact(value))
+            pipeline.native_execution.export_installed(metrics, receipts / ("native-installed-" + rid + ".tar.gz"))
+        pipeline.retain_installed_native(self.core, self.directory, self.plan, receipts)
+
     def publisher(self, calls, *, retained=False, fail_at=None):
         def run(command, **_):
             calls.append(command)
@@ -130,11 +146,36 @@ class SelectivePipelineTests(unittest.TestCase):
         self.assertEqual({selection.archive_name(self.targets[1][0])}, {name for name in second.data if name.endswith(".sunderpkg")})
         self.assertEqual(4, len([call for store in (first, second) for call in store.calls if call[0] == "git/refs" and call[1] == "POST"]))
 
+    def test_schema6_original_development_report_bundles_are_durable_coordinator_assets(self):
+        # Transport inventory only: these placeholder bytes are not execution evidence.
+        names = {"native-execution-" + rid + ".tar.gz" for rid in pipeline.native_execution.RIDS}
+        records = []
+        for name in sorted(names):
+            data = name.encode()
+            (self.directory / name).write_bytes(data)
+            records.append(dict(path=name, size=len(data), sha256=r.sha(data)))
+        (self.directory / "native-test-evidence.json").write_bytes(r.canonical(dict(schemaVersion=6, executionBundles=records)))
+        with self.mocks():
+            self.stage()
+            first, second = [store for _, store in self.targets]
+            self.assertTrue(names <= set(first.data))
+            self.assertFalse(names & set(second.data))
+            with patch.object(pipeline, "source_guard"), patch.object(selection, "retain"), patch.object(pipeline, "stage") as stage:
+                pipeline.recover(self.core, self.directory, self.plan, read_only=True)
+                stage.assert_not_called()
+            self.assertTrue(all(name.encode() == first.data[name] for name in names))
+
     def test_failed_native_or_lock_gate_precedes_every_github_mutation(self):
         with patch.object(pipeline, "verify_primary", side_effect=ValueError("unqualified native inputs")), \
              patch.object(pipeline, "stores") as stores, self.assertRaises(ValueError):
             self.stage()
         stores.assert_not_called()
+        for schema in (3, 4, 5):
+            (self.directory / "native-test-evidence.json").write_bytes(r.canonical(dict(schemaVersion=schema)))
+            with self.subTest(schema=schema), patch.object(pipeline, "source_guard"), patch.object(pipeline.subprocess, "run") as run, \
+                    patch.object(pipeline, "stores") as stores, self.assertRaisesRegex(ValueError, "schema 6"):
+                self.stage()
+            stores.assert_not_called(); run.assert_not_called()
 
     def test_selected_registry_uploads_leave_thirteen_unchanged_packages_read_only(self):
         with self.mocks():
@@ -185,6 +226,43 @@ class SelectivePipelineTests(unittest.TestCase):
                  self.assertRaisesRegex(ValueError, "Missing retained Registry publication"):
                 pipeline.visibility(self.core, self.directory, self.plan)
             http.assert_not_called(); apply.assert_not_called()
+
+    def test_installed_native_gate_precedes_visibility_and_retains_original_reports_on_coordinator(self):
+        with self.mocks():
+            self.stage()
+            with patch.object(pipeline.r, "verify_family", return_value=dict(order=[item["packageId"] for item in self.records])), \
+                 patch.object(pipeline.subprocess, "run", side_effect=self.publisher([])):
+                pipeline.publish_versions(self.core, self.directory, self.plan)
+            with patch.object(pipeline.cohort, "http") as http, patch.object(pipeline.cohort, "apply") as apply, \
+                 self.assertRaisesRegex(ValueError, "six-RID installed native acceptance"):
+                pipeline.visibility(self.core, self.directory, self.plan)
+            http.assert_not_called(); apply.assert_not_called()
+            self.retain_installed_fixture()
+            pipeline.require_installed_native(self.directory, self.plan, dict(artifacts=self.records))
+            first, second = [store for _, store in self.targets]
+            self.assertIn(pipeline.native_execution.INSTALLED, first.data)
+            self.assertNotIn(pipeline.native_execution.INSTALLED, second.data)
+            self.assertEqual(12, len([name for name in first.data if name.startswith("native-installed-")]))
+            path = self.directory / ("native-installed-" + pipeline.native_execution.RIDS[0] + ".tar.gz")
+            path.write_bytes(path.read_bytes() + b"changed reports")
+            with self.assertRaises((ValueError, OSError)):
+                pipeline.require_installed_native(self.directory, self.plan, dict(artifacts=self.records))
+
+    def test_installed_recovery_verifies_retained_evidence_without_any_remote_writes(self):
+        with self.mocks():
+            self.stage()
+            self.retain_installed_fixture()
+            before = [copy.deepcopy(store.data) for _, store in self.targets]
+            for _, store in self.targets: store.calls.clear()
+            with patch.object(pipeline, "source_guard"), patch.object(selection, "retain"), patch.object(pipeline, "stage") as stage:
+                pipeline.recover(self.core, self.directory, self.plan, read_only=True)
+                stage.assert_not_called()
+                path = self.directory / ("native-installed-" + pipeline.native_execution.RIDS[0] + ".tar.gz")
+                path.write_bytes(path.read_bytes() + b"changed")
+                with patch.object(self.targets[0][1], "download"), self.assertRaises((ValueError, AssertionError)):
+                    pipeline.recover(self.core, self.directory, self.plan, read_only=True)
+            self.assertEqual(before, [store.data for _, store in self.targets])
+            self.assertTrue(all(method == "GET" for _, store in self.targets for _, method, _ in store.calls))
 
     def test_component_receipts_gate_the_single_writer_and_bind_exact_tested_bytes(self):
         receipt_directory = self.directory / "receipts"
@@ -269,10 +347,13 @@ class SelectivePipelineTests(unittest.TestCase):
                     pipeline.source_guard(self.core, self.plan)
 
     def test_mutation_guard_accepts_retained_channel_subsets_but_binds_every_selected_version(self):
+        with self.mocks():
+            self.stage()
+            self.retain_installed_fixture()
         value = dict(invocation=dict(releaseId=42), artifacts=self.records)
         proposed = pipeline.cohort_request(self.plan, value, 8)
         path = self.directory / pipeline.REQUEST
-        with patch.object(sys, "argv", ["agent_pipeline.py", "guard", "--core", str(self.directory), "--directory", str(self.directory)]), \
+        with patch.dict(os.environ, self.env), patch.object(sys, "argv", ["agent_pipeline.py", "guard", "--core", str(self.directory), "--directory", str(self.directory)]), \
              patch.object(selection, "load", return_value=self.plan), \
              patch.object(pipeline, "verified", return_value=(self.targets, [dict(draft=True)], value)):
             for tags in ([], proposed["distTags"][:1], proposed["distTags"]):
@@ -336,6 +417,7 @@ class SelectivePipelineTests(unittest.TestCase):
             pipeline.cohort.store(request_path, proposed); pipeline.cohort.store(receipt_path, receipt)
             pipeline.persist(self.directory / r.PUBLICATIONS, r.canonical(self.publications) + b"\n")
             self.targets[0][1].upload(42, [request_path, receipt_path, self.directory / r.PUBLICATIONS])
+            self.retain_installed_fixture()
             for _, store in self.targets: store.value["draft"] = False
             with patch.object(pipeline.receipts, "download_bytes", return_value=receipt), \
                  patch.object(pipeline.cohort, "confirm") as confirm, patch.object(pipeline.cohort, "apply") as apply, \

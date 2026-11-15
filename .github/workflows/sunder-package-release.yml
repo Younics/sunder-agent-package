@@ -176,6 +176,7 @@ jobs:
           python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family
           "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
       - name: Exercise all fifteen Workers from the final six-RID archives
+        id: native_smoke
         env:
           RID: ${{ matrix.rid }}
         run: |
@@ -183,6 +184,14 @@ jobs:
           bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/family "artifacts/native-metrics/$RID" "$CORE_COMMIT"
           python3 -B scripts/release/native-family.py record-final "$RID" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" \
             artifacts/candidates artifacts/family "artifacts/native-metrics/$RID" "artifacts/native/$RID" "$PWD"
+      - name: Retain native smoke and Maker diagnostics
+        if: always() && steps.native_smoke.outcome != 'skipped' && steps.native_smoke.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-native-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-native-${{ matrix.rid }}
@@ -269,7 +278,7 @@ jobs:
       - name: Build Core validation paths
         working-directory: sunder-core
         run: |
-          for project in host/Sunder.Cli tests/Sunder.Runtime.Host.Tests tests/Sunder.App.Tests; do
+          for project in host/Sunder.Cli tools/Sunder.ExecutionRuntime.Build tests/Sunder.Runtime.Host.Tests tests/Sunder.App.Integration.Tests; do
             path="languages/csharp/dotnet/$project/${project##*/}.csproj"
             dotnet restore "$path" --locked-mode
             dotnet build "$path" -c Release --no-restore -p:GeneratePackageOnBuild=false
@@ -384,13 +393,100 @@ jobs:
     secrets:
       publish_token: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
 
-  release:
-    name: Activate family and announce
+  installed-native:
+    name: Published installed acceptance · ${{ matrix.rid }}
     needs: [prepare, stage, publish-owner, publish-consumers]
     if: >-
       always() && !cancelled() && needs.stage.result == 'success'
       && ((needs.prepare.outputs.owner_selected == 'false' && needs.publish-owner.result == 'skipped') || needs.publish-owner.result == 'success')
       && ((needs.prepare.outputs.consumers == '[]' && needs.publish-consumers.result == 'skipped') || needs.publish-consumers.result == 'success')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    environment: sunder-agent-release-promotion
+    permissions:
+      contents: write # Required to read the exact coordinator draft, not to repack or publish.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
+      RID: ${{ matrix.rid }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ needs.prepare.outputs.core_commit }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts/release
+      - name: Recover exact published inputs or original installed evidence
+        id: recovery
+        run: |
+          set -euo pipefail
+          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_pipeline.py recover --read-only --core ../sunder-core --directory artifacts/release
+          mkdir -p artifacts/installed-native
+          if [[ -f artifacts/release/installed-native-test-evidence.json ]]; then
+            for suffix in .json .tar.gz; do
+              cp "artifacts/release/native-installed-$RID$suffix" artifacts/installed-native/
+            done
+            echo 'retained=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'retained=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Install and exercise authenticated published archives before visibility
+        id: installed_smoke
+        if: steps.recovery.outputs.retained != 'true'
+        env:
+          SUNDER_AGENT_NATIVE_REGISTRY_TOKEN: ${{ secrets.SUNDER_REGISTRY_NATIVE_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
+          bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/release "artifacts/installed-native-metrics/$RID" "$CORE_COMMIT" published
+          python3 -B scripts/release/native_runtime_evidence.py export-installed "artifacts/installed-native-metrics/$RID" "artifacts/installed-native/native-installed-$RID.tar.gz"
+      - name: Retain published installed diagnostics
+        if: always() && steps.installed_smoke.outcome != 'skipped' && steps.installed_smoke.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-installed-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-installed-native-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/installed-native/*
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  release:
+    name: Activate family and announce
+    needs: [prepare, stage, publish-owner, publish-consumers, installed-native]
+    if: >-
+      always() && !cancelled() && needs.stage.result == 'success'
+      && ((needs.prepare.outputs.owner_selected == 'false' && needs.publish-owner.result == 'skipped') || needs.publish-owner.result == 'success')
+      && ((needs.prepare.outputs.consumers == '[]' && needs.publish-consumers.result == 'skipped') || needs.publish-consumers.result == 'success')
+      && needs.installed-native.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: sunder-agent-release-promotion
@@ -438,6 +534,13 @@ jobs:
         env:
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
         run: python3 -B scripts/release/agent_pipeline.py merge-publications --core ../sunder-core --directory artifacts/release --receipts artifacts/publication-receipts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-installed-native-*
+          merge-multiple: true
+          path: sunder-agent-package/artifacts/installed-native
+      - name: Durably retain all six installed native receipts before visibility
+        run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --core ../sunder-core --directory artifacts/release --receipts artifacts/installed-native
       - name: Commit and confirm one retained atomic visibility request
         env:
           SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
@@ -450,7 +553,7 @@ jobs:
   summary:
     name: Summary
     if: always()
-    needs: [prepare, validation, production, native, smoke, fan-in, stage, publish-owner, publish-consumers, release]
+    needs: [prepare, validation, production, native, smoke, fan-in, stage, publish-owner, publish-consumers, installed-native, release]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

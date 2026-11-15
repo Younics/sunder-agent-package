@@ -2,7 +2,16 @@ using System.Text;
 
 namespace Sunder.Agent.Execution.Common;
 
-internal sealed class HostSecureMountChallenge : IDisposable
+internal interface IHostSecureMountChallenge : IDisposable
+{
+    string DirectoryName { get; }
+    IReadOnlyList<string> ContainerFilesToRemove { get; }
+    IReadOnlyList<string> ContainerDirectoriesToRemove { get; }
+    void VerifyContainerResponse(string expectedResponse);
+    void VerifyContainerCleanup();
+}
+
+internal sealed class HostSecureMountChallenge : IHostSecureMountChallenge
 {
     public const string HostChallengeFileName = "host-challenge";
     public const string ContainerDirectoryName = "container-nested";
@@ -31,21 +40,20 @@ internal sealed class HostSecureMountChallenge : IDisposable
     }
 
     public string DirectoryName { get; }
+    public IReadOnlyList<string> ContainerFilesToRemove => [ContainerDirectoryName + "/" + ContainerResponseFileName, HostChallengeFileName];
+    public IReadOnlyList<string> ContainerDirectoriesToRemove => [ContainerDirectoryName, string.Empty];
 
-    public static HostSecureMountChallenge Create(
+    public static IHostSecureMountChallenge Create(
         LocalSecureRoot root,
         string challenge,
         CancellationToken cancellationToken)
     {
-        if (OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException(
-                "Strict Docker mount identity challenges are unavailable on Windows.");
-        }
         if (challenge.Length is < 32 or > 256 || !challenge.All(Uri.IsHexDigit))
         {
             throw new ArgumentException("A secure mount challenge must be bounded hexadecimal data.", nameof(challenge));
         }
+        if (OperatingSystem.IsWindows())
+            return WindowsHostSecureMountChallenge.Create(root, challenge, cancellationToken);
 
         var reservation = root.Platform.ReserveMutationSlots(root.Handle, 2, cancellationToken);
         var directoryName = HostSecurePathEngine.CreateChallengeName();

@@ -303,13 +303,6 @@ public sealed partial class AgentProfileStackContributor(
             ? remappedId
             : profileId;
 
-    private static bool HasProviderBindings(AgentProfileRecord profile)
-        => !string.IsNullOrWhiteSpace(profile.ChatProviderId)
-           || !string.IsNullOrWhiteSpace(profile.ChatModelId)
-           || !string.IsNullOrWhiteSpace(profile.EmbeddingProviderId)
-           || !string.IsNullOrWhiteSpace(profile.EmbeddingModelId)
-           || (profile.ModelBindings?.Any(binding => !string.IsNullOrWhiteSpace(binding.ProviderId) || !string.IsNullOrWhiteSpace(binding.ModelId)) == true);
-
     private static string SanitizeId(string value)
         => string.Concat(value.Select(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_' or '.' ? char.ToLowerInvariant(character) : '-'));
 

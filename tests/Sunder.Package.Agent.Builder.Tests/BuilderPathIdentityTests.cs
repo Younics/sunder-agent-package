@@ -78,7 +78,8 @@ public sealed class BuilderPathIdentityTests
     }
 
     [FileSystemTheory(TestFileSystemCapability.CaseSensitiveDirectories,
-        "Case-only preflight redirection requires a case-sensitive directory and symbolic links.")]
+        "Case-only preflight redirection requires a case-sensitive directory and symbolic links.",
+        TestFileSystemCapability.FileSymbolicLinks, TestFileSystemCapability.DirectorySymbolicLinks)]
     [InlineData(false)]
     [InlineData(true)]
     public async Task CapturedPhysicalPreflightRejectsCaseOnlyFileOrAncestorRedirectionBeforeBackendInspection(bool ancestor)

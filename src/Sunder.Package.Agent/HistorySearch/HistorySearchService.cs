@@ -125,7 +125,7 @@ internal sealed partial class HistorySearchService(
                 case HistorySearchCommandKind.ConfigureSemantic:
                     {
                         projectionOperationStarted = true;
-                        await indexer.ConfigureSemanticAsync(false, selection: null, cancellationToken)
+                        await indexer.DisableSemanticAsync(cancellationToken)
                             .ConfigureAwait(false);
                         break;
                     }
@@ -376,7 +376,6 @@ internal sealed partial class HistorySearchService(
             lease.ThrowIfCurrent();
             if (!string.Equals(resolved.SpaceFingerprint, configuration.EmbeddingSpaceFingerprint, StringComparison.Ordinal))
             {
-                indexer.RequestProviderRefresh();
                 return ([], true);
             }
             var readiness = await resolved.OwnedProvider.Provider.Service
@@ -400,7 +399,6 @@ internal sealed partial class HistorySearchService(
             lease.ThrowIfCurrent();
             if (!string.Equals(currentFingerprint, configuration.EmbeddingSpaceFingerprint, StringComparison.Ordinal))
             {
-                indexer.RequestProviderRefresh();
                 return ([], true);
             }
             if (!HistoryVectorCodec.TryNormalize(

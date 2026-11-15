@@ -24,6 +24,24 @@ public sealed partial class BuilderDevelopmentService
         var (root, project) = await ReadToolsetProjectAsync(json, token).ConfigureAwait(false);
         var session = operations.GetSession(project.EntryPoint);
         var query = root["query"]?.GetValue<string>() ?? "status";
+        if (query == "build")
+        {
+            if (project.ToolchainAssessment is { Message: { } warning })
+                throw Error("maker.development.unavailable", warning);
+            var tools = await application.GetToolchainsAsync(project.Kind, checkUpdates: false, token).ConfigureAwait(false);
+            var tool = tools.Installed.FirstOrDefault(item => item.IsHealthy && item.Version == tools.RecommendedVersion);
+            if (tool is null || project.Kind == BuilderProjectKind.Node && string.IsNullOrWhiteSpace(tool.NpmCliPath))
+                throw Error("maker.development.unavailable", "No healthy current development toolchain is installed. Install or repair it in Package Maker settings; no build was started.");
+            if (project.Kind == BuilderProjectKind.Node) BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, BuilderProjectDriverOutputs.NodeDevelopmentScript);
+            return BuilderContent.Create(new
+            {
+                executable = tool.ExecutablePath,
+                arguments = project.Kind == BuilderProjectKind.Node ? new[] { tool.NpmCliPath!, "run", BuilderProjectDriverOutputs.NodeDevelopmentScript }
+                    : new[] { "build", project.EntryPoint, "--configuration", "Debug" },
+                pathEntry = Path.GetDirectoryName(tool.ExecutablePath), workingDirectory = project.ProjectFolder,
+                version = tool.Version, npmVersion = tool.NpmVersion,
+            });
+        }
         if (query == "outputs") return BuilderContent.Create(new { outputs = BuilderPackageOperations.BuiltOutputs(project).Select(folder => new { folder, name = project.Kind == BuilderProjectKind.Node ? "node" : new DirectoryInfo(folder).Parent?.Parent?.Name }).ToArray() });
         if (query == "views")
         {

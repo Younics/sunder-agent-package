@@ -54,6 +54,28 @@ public sealed class BuilderLocalNuGetTests
         Assert.Equal(original, File.ReadAllBytes(options.DotnetTemplatePackagePath!));
     }
 
+    [Theory]
+    [InlineData("1.1.0", "1.0.0", true)]
+    [InlineData("1.1.1", "1.0.0", false)]
+    [InlineData("1.1.0", "2.0.0", false)]
+    public async Task SdkStyleTemplateUsesExactBuildSdkAndNuGetMinimumReferences(string sdkVersion, string minimum, bool accepted)
+    {
+        using var fixture = new Fixture(); fixture.CreateFeed();
+        fixture.WritePackage("Sunder.Package.Templates", buildSdkVersion: sdkVersion, templateMinimum: minimum);
+        var original = File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates"));
+        if (accepted)
+        {
+            var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
+            Assert.Equal(original, File.ReadAllBytes(options.DotnetTemplatePackagePath!));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.Snapshots));
+        }
+        Assert.Equal(original, File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates")));
+    }
+
     [Fact]
     public async Task MultipleVersionsOfOneLocalIdentityAreAmbiguousNotNewestSelection()
     {
@@ -322,6 +344,7 @@ public sealed class BuilderLocalNuGetTests
         Assert.True(Encoding.UTF8.GetByteCount(home!) <= BuilderTemplateCache.MaximumHomeUtf8Bytes);
         Assert.Single(commands.Select(command => command.Environment["NUGET_PACKAGES"]).Distinct());
         Assert.Single(commands.Select(command => command.Environment["RestoreConfigFile"]).Distinct());
+        Assert.All(commands, AssertSdkResolverSettings);
     }
 
     [Fact]
@@ -373,6 +396,7 @@ public sealed class BuilderLocalNuGetTests
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-plugins"), command.Environment["NUGET_PLUGINS_CACHE_PATH"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-scratch"), command.Environment["NUGET_SCRATCH"]);
         Assert.Null(command.Environment["NUGET_FALLBACK_PACKAGES"]);
+        Assert.All(fixture.Process.Requests, AssertSdkResolverSettings);
         Assert.Contains("-p:RestoreConfigFile=" + config, command.Arguments);
         if (operation == "setup")
         {
@@ -387,6 +411,30 @@ public sealed class BuilderLocalNuGetTests
             Assert.Contains("-restore", command.Arguments);
         }
         else Assert.Contains("-restore", command.Arguments);
+    }
+
+    private static void AssertSdkResolverSettings(BuilderLocalProcessRequest command)
+    {
+        var directory = OperatingSystem.IsWindows() ? Path.Combine(command.Environment["APPDATA"]!, "NuGet")
+            : Path.Combine(command.Environment["DOTNET_CLI_HOME"]!, ".nuget", "NuGet");
+        Assert.Equal(File.ReadAllBytes(command.Environment["RestoreConfigFile"]!), File.ReadAllBytes(Path.Combine(directory, "NuGet.Config")));
+    }
+
+    [Fact]
+    public async Task SdkResolverSettingsRejectChangedPrivateConfigWithoutRepairingItOrWritingProjectSource()
+    {
+        using var fixture = new Fixture(); fixture.CreateFeed();
+        var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
+        var environment = new Dictionary<string, string?>();
+        BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, null);
+        var directory = OperatingSystem.IsWindows() ? Path.Combine(environment["APPDATA"]!, "NuGet")
+            : Path.Combine(environment["DOTNET_CLI_HOME"]!, ".nuget", "NuGet");
+        var path = Path.Combine(directory, "NuGet.Config");
+        File.WriteAllText(path, "changed-private-settings");
+        Assert.Throws<InvalidDataException>(() => BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, null));
+        Assert.Equal("changed-private-settings", File.ReadAllText(path));
+        Assert.Empty(fixture.Process.Requests);
+        Assert.False(File.Exists(Path.Combine(fixture.Root, "NuGet.Config")));
     }
 
     [Fact]
@@ -526,7 +574,8 @@ public sealed class BuilderLocalNuGetTests
                 _ => throw new NotSupportedException(method.Name),
             });
         }
-        internal void WritePackage(string id, string? failure = null, string marker = "original", int paddingBytes = 0, string? dependencyVersion = null)
+        internal void WritePackage(string id, string? failure = null, string marker = "original", int paddingBytes = 0, string? dependencyVersion = null,
+            string? buildSdkVersion = null, string? templateMinimum = null)
         {
             using var output = File.Create(Archive(id)); using var zip = new ZipArchive(output, ZipArchiveMode.Create);
             void Add(string path, string text = "artifact")
@@ -553,8 +602,9 @@ public sealed class BuilderLocalNuGetTests
             {
                 const string root = "content/sunder-package/"; const string project = root + "Sunder.Package.Template/";
                 Add(root + ".template.config/template.json", JsonSerializer.Serialize(new { identity = "Sunder.Package", shortName = "sunder-package", symbols = new { } }));
-                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"[{(failure == "template-dependency" ? "99.0.0" : Versions.GetValueOrDefault(package, "1.1.0"))}]\" />";
-                Add(project + "Sunder.Package.Template.csproj", "<Project><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + Reference("Sunder.Package.Build") + "</ItemGroup></Project>");
+                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"{templateMinimum ?? "[" + (failure == "template-dependency" ? "99.0.0" : Versions.GetValueOrDefault(package, "1.1.0")) + "]"}\" />";
+                var sdk = buildSdkVersion is null ? "" : $" Sdk=\"Sunder.Package.Build/{buildSdkVersion}\"";
+                Add(project + "Sunder.Package.Template.csproj", "<Project" + sdk + "><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + (buildSdkVersion is null ? Reference("Sunder.Package.Build") : "") + "</ItemGroup></Project>");
                 Add(project + "Views/Avalonia.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Avalonia") + "</ItemGroup></Project>");
                 Add(project + "Stacks/Stacks.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Stacks") + "</ItemGroup></Project>");
             }

@@ -56,7 +56,7 @@ public static class TestFileSystemCapabilities
             return null;
         }
         var unavailable = $"{reason} Required filesystem capability '{capability}' is unavailable.";
-        TestPrerequisites.ThrowIfRequired(unavailable);
+        TestPrerequisites.ThrowIfRequired(unavailable, fileSystem: true);
         return unavailable;
     }
 

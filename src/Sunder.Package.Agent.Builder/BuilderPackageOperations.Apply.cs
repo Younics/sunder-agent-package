@@ -37,7 +37,7 @@ public sealed partial class BuilderPackageOperations
             }
             if (application.HasUnconfirmedJob(project.ProjectFolder)) throw new InvalidOperationException("Resolve the existing project job before applying built output.");
             var candidates = folder is null ? BuiltOutputs(project) : [folder];
-            if (candidates.Count == 0) throw new InvalidDataException("build_required: Build this project with Shell before applying it.");
+            if (candidates.Count == 0) throw new InvalidDataException("build_required: Query maker_package with query=build, then build this project's development output with Shell before applying it.");
             if (candidates.Count != 1) throw new InvalidDataException("output_required: Query outputs and select one; multiple built outputs exist.");
             folder = candidates[0];
             var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(folder, project, BuilderToolchainPlatform.Current.DotnetRid, false, operation.Token).ConfigureAwait(false);

@@ -172,6 +172,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(SunderRpcRetrySafety.Unsafe, uncertain.Error.RetrySafety);
             Assert.False(SunderRpcException.HasTrustedNoDispatchEvidence(uncertain));
             Assert.Equal(beforeAmbiguous + 1, target.Calls.Count(call => call.Method == "execute-shell"));
+            var dispatched = target.Calls.Last(call => call.Method == "execute-shell").Response;
+            Assert.True(dispatched.GetProperty("exitCode").GetInt32() == 0, dispatched.GetProperty("output").GetString());
             Assert.Equal("x", (await File.ReadAllTextAsync(onceMarker)).TrimEnd('\r', '\n'));
             observer.InvalidateAfterInvoke = false; observer.Transform = null;
             if (!OperatingSystem.IsWindows())

@@ -101,7 +101,7 @@ class VersionSelectionTests(unittest.TestCase):
             consumers = [f"consumer-{index}" for index in range(count - int(owner))]
             required = dict(prepare=True, validation=build, production=build, native=build and production > 0,
                 smoke=build, stage=active, release=active)
-            required.update({"fan-in": build, "publish-owner": owner, "publish-consumers": bool(consumers)})
+            required.update({"fan-in": build, "publish-owner": owner, "publish-consumers": bool(consumers), "installed-native": active})
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
             jobs["prepare"]["outputs"] = dict(selected_count=str(count), resume=str(resume).lower(),
                 owner_selected=str(owner).lower(), consumers=json.dumps(consumers))

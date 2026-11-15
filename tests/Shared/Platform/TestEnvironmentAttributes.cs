@@ -42,13 +42,17 @@ internal sealed class UnixTheoryAttribute : TheoryAttribute
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 internal sealed class FileSystemFactAttribute : FactAttribute
 {
-    public FileSystemFactAttribute(TestFileSystemCapability capability, string reason)
-        => Skip = TestFileSystemCapabilities.GetUnavailableReason(capability, reason);
+    public FileSystemFactAttribute(TestFileSystemCapability capability, string reason,
+        params TestFileSystemCapability[] additionalCapabilities)
+        => Skip = new[] { capability }.Concat(additionalCapabilities)
+            .Select(item => TestFileSystemCapabilities.GetUnavailableReason(item, reason)).FirstOrDefault(value => value is not null);
 }
 
 [AttributeUsage(AttributeTargets.Method, AllowMultiple = false)]
 internal sealed class FileSystemTheoryAttribute : TheoryAttribute
 {
-    public FileSystemTheoryAttribute(TestFileSystemCapability capability, string reason)
-        => Skip = TestFileSystemCapabilities.GetUnavailableReason(capability, reason);
+    public FileSystemTheoryAttribute(TestFileSystemCapability capability, string reason,
+        params TestFileSystemCapability[] additionalCapabilities)
+        => Skip = new[] { capability }.Concat(additionalCapabilities)
+            .Select(item => TestFileSystemCapabilities.GetUnavailableReason(item, reason)).FirstOrDefault(value => value is not null);
 }

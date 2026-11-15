@@ -249,7 +249,7 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
     }
 
     [Fact]
-    public async Task ApplyPatch_CancellationAfterMutationWithRollbackConflict_ReturnsPartialResult()
+    public async Task ApplyPatch_UnacknowledgedCanceledWrite_IsNotAdoptedForCompensation()
     {
         var target = new MemoryExecutionTarget(new Dictionary<string, string>
         {
@@ -281,9 +281,9 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         Assert.Equal("patch-partial-application", result.ErrorCode);
         Assert.Contains("canceled", result.Content, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Completed rollbacks: 'first.txt'", result.Content, StringComparison.Ordinal);
-        Assert.Contains("Failed rollbacks: 'second.txt'", result.Content, StringComparison.Ordinal);
-        Assert.Contains("changed after patch preflight", result.Content, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(4, target.MutationCallCount);
+        Assert.Contains("no exact post-mutation receipt", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("may remain partially modified", result.Content, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(3, target.MutationCallCount);
         Assert.Equal("old first", target.Files["first.txt"]);
         Assert.Equal("concurrent rollback conflict", target.Files["second.txt"]);
     }
@@ -392,8 +392,8 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         Assert.Equal("old second", target.Files["second.txt"]);
     }
 
-    [PlatformFact(TestPlatform.Linux, "This verifies Linux anonymous-file publication fallback.")]
-    public async Task ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback()
+    [Fact]
+    public async Task ApplyPatch_ExistingFileUpdate_PreservesTheOriginalObject()
     {
         using var scope = RegressionTestPackageScope.Create();
         var root = Path.Combine(scope.RootPath, "workspace");
@@ -401,15 +401,8 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         var targetPath = Path.Combine(root, "target.txt");
         await File.WriteAllTextAsync(targetPath, "old content");
         var (source, context) = await CreateLocalSourceAsync(scope, root);
-        var methods = new List<LocalUnixAnonymousPublishMethod>();
-        AgentToolResult result;
-        using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
-               {
-                   methods.Add(method);
-                   return method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : null;
-               }))
-        {
-            result = await source.ExecuteAsync(
+        using var before = HostSecurePathEngine.Capture([root], targetPath);
+        var result = await source.ExecuteAsync(
                 context,
                 new AgentToolRequest("apply_patch", PatchArguments("""
                     *** Begin Patch
@@ -419,19 +412,17 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
                     +new content
                     *** End Patch
                     """)));
-        }
 
         Assert.False(result.IsError, result.Content);
         Assert.Equal("new content", await File.ReadAllTextAsync(targetPath));
-        Assert.Equal(
-            [LocalUnixAnonymousPublishMethod.EmptyPath, LocalUnixAnonymousPublishMethod.ProcSelfFd],
-            methods);
+        using var after = HostSecurePathEngine.Capture([root], targetPath);
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
         Assert.DoesNotContain(
             Directory.EnumerateFileSystemEntries(root),
             path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Post-mutation compensation requires supported strict filesystem mutations.")]
+    [Theory]
     [InlineData("local", "add")]
     [InlineData("local", "update")]
     [InlineData("local", "delete")]
@@ -564,6 +555,7 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         Assert.True(
             string.Equals(result.ErrorCode, "patch-partial-application", StringComparison.Ordinal),
             $"{result.ErrorCode}: {result.Content}");
+        Assert.False(File.Exists(Path.Combine(targetRoot, "moved.txt")), result.Content);
         Assert.Contains("Compensation restored 1 operation", result.Content, StringComparison.Ordinal);
         Assert.Equal(3, target.MutationCallCount);
         if (operationKind == "add")
@@ -575,7 +567,6 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
             Assert.Equal("old subject", await File.ReadAllTextAsync(subjectHostPath));
         }
         Assert.Equal("old trigger", await File.ReadAllTextAsync(triggerHostPath));
-        Assert.False(File.Exists(Path.Combine(targetRoot, "moved.txt")));
     }
 
     [Fact]
@@ -1097,7 +1088,10 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
         };
 
     private static AgentFileMutationResult ToAgentResult(DockerModels.AgentFileMutationResult result)
-        => new(result.Path, result.Summary, result.IsError, result.ErrorCode);
+        => new(result.Path, result.Summary, result.IsError, result.ErrorCode)
+        {
+            PostMutationResource = result.PostMutationResource is null ? null : ToAgentResource(result.PostMutationResource),
+        };
 
     private static AgentResolvedResource ToAgentResource(DockerModels.AgentResolvedResource resource)
         => new(resource.ResourceKind, resource.DisplayName, resource.CanonicalReference, resource.PermissionBoundaryId, resource.Exists)
@@ -1262,6 +1256,12 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
 
         public int? FailAfterMutationCall { get; init; }
 
+        public int? IncompleteWriteCall { get; init; }
+
+        public bool IncompleteWriteReachesPlannedContent { get; init; }
+
+        public bool OmitMutationReceipts { get; init; }
+
         public string? ReprobeUnavailablePath { get; init; }
 
         public int? BeforeMutationCall { get; init; }
@@ -1361,6 +1361,13 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
                 return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "The file changed after patch preflight; no mutation was applied.", IsError: true, ErrorCode: "file-content-changed"));
             }
 
+            if (MutationCallCount == IncompleteWriteCall)
+            {
+                Files[request.Path] = IncompleteWriteReachesPlannedContent ? request.Content : "partially written content";
+                return ValueTask.FromResult(WithReceipt(context, request.Path,
+                    new AgentFileMutationResult(request.Path, "File may be partially modified.", IsError: true,
+                        ErrorCode: "strict-mutation-recovery-required")));
+            }
             Files[request.Path] = request.Content;
             if (MutationCallCount == CancelAfterMutationCall)
             {
@@ -1368,10 +1375,11 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
             }
             if (MutationCallCount == FailAfterMutationCall)
             {
-                return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted post-mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
+                return ValueTask.FromResult(WithReceipt(context, request.Path,
+                    new AgentFileMutationResult(request.Path, "Scripted post-mutation failure.", IsError: true, ErrorCode: "scripted-failure")));
             }
 
-            return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Written."));
+            return ValueTask.FromResult(WithReceipt(context, request.Path, new AgentFileMutationResult(request.Path, "Written.")));
         }
 
         public virtual ValueTask<AgentFileMutationResult> DeleteFileAsync(AgentExecutionTargetContext context, AgentFileDeleteRequest request, CancellationToken cancellationToken = default)
@@ -1407,13 +1415,21 @@ public sealed partial class FilesToolSourceRefactorTests : IDisposable
             }
             if (removed && MutationCallCount == FailAfterMutationCall)
             {
+                // This fixture intentionally models unacknowledged removal;
+                // the move safety cases must not reconstruct its ownership.
                 return ValueTask.FromResult(new AgentFileMutationResult(request.Path, "Scripted post-mutation failure.", IsError: true, ErrorCode: "scripted-failure"));
             }
 
             return ValueTask.FromResult(removed
-                ? new AgentFileMutationResult(request.Path, "Deleted.")
+                ? WithReceipt(context, request.Path, new AgentFileMutationResult(request.Path, "Deleted."))
                 : new AgentFileMutationResult(request.Path, "Path does not exist.", IsError: true, ErrorCode: "path-not-found"));
         }
+
+        private AgentFileMutationResult WithReceipt(AgentExecutionTargetContext context, string path, AgentFileMutationResult result)
+            => !OmitMutationReceipts && context.CapturePostMutationResource
+                ? result with { PostMutationResource = new AgentResolvedResource("file", path, path,
+                    AgentPermissionBoundaryIds.ConfiguredScope, Files.ContainsKey(path)) }
+                : result;
 
         private static string ContentHash(string content)
             => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();

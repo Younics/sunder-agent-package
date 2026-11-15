@@ -445,7 +445,7 @@ def skip_policy(
                     strings = attribute_strings(attribute)
                     reason = strings[-1] if strings else ""
                     platform_match = re.search(r"TestPlatform\.([A-Za-z_]\w*)", attribute)
-                    capability_match = re.search(r"TestFileSystemCapability\.([A-Za-z_]\w*)", attribute)
+                    capabilities = re.findall(r"TestFileSystemCapability\.([A-Za-z_]\w*)", attribute)
                     if name == "DockerIntegrationFact":
                         reason = "Set SUNDER_DOCKER_INTEGRATION=1 and provide a reachable Docker daemon."
                     elif name == "PackageArtifactsFact":
@@ -459,7 +459,8 @@ def skip_policy(
                             "fullyQualifiedName": f"{class_name}.{method_name}",
                             "attribute": name,
                             "platform": platform_match.group(1) if platform_match else None,
-                            "capability": capability_match.group(1) if capability_match else None,
+                            "capability": capabilities[0] if capabilities else None,
+                            "additionalCapabilities": capabilities[1:],
                             "reason": reason,
                         }
                     )
@@ -542,6 +543,8 @@ def expected_skip(
 ) -> dict[str, object] | None:
     platform = platform or current_platform()
     environment = os.environ if environment is None else environment
+    filesystem_required = (environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") == "1"
+                           or environment.get("SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES") == "1")
     attribute = str(policy["attribute"])
     target = policy["platform"]
     reason = str(policy["reason"])
@@ -554,7 +557,7 @@ def expected_skip(
         if platform == "windows":
             should_skip = True
             reason = "This permission-denied fixture requires Unix."
-        elif os.geteuid() == 0 and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1":
+        elif os.geteuid() == 0 and not filesystem_required:
             should_skip = True
             reason = "A real permission-denied fixture requires a non-root Unix user."
     elif attribute == "DockerIntegrationFact":
@@ -586,13 +589,13 @@ def expected_skip(
             "NonRootUnix": platform == "windows",
             "UnixWithDistinctDevice": platform == "windows",
         }.get(str(target), False)
-        if target == "NonRootUnix" and platform != "windows" and getpass.getuser() == "root":
+        if target == "NonRootUnix" and platform != "windows" and getpass.getuser() == "root" and not filesystem_required:
             should_skip = True
             reason = "POSIX permission-boundary behavior cannot be observed while running as root."
-        if target == "MacCaseInsensitive" and platform == "macos" and not temp_volume_is_case_insensitive():
+        if target == "MacCaseInsensitive" and platform == "macos" and not temp_volume_is_case_insensitive() and not filesystem_required:
             should_skip = True
             reason = "The temporary volume is case-sensitive."
-        if target == "UnixWithDistinctDevice" and platform != "windows":
+        if target == "UnixWithDistinctDevice" and platform != "windows" and not filesystem_required:
             try:
                 distinct_device = os.stat("/").st_dev != os.stat("/dev").st_dev
             except OSError:
@@ -600,15 +603,12 @@ def expected_skip(
             if not distinct_device:
                 should_skip = True
                 reason = "/dev does not expose a distinct device on this host."
-    capability = policy["capability"]
-    if (
-        not should_skip
-        and capability is not None
-        and not filesystem_capability_available(str(capability))
-        and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
-    ):
-        should_skip = True
-        reason = f"{reason} Required filesystem capability '{capability}' is unavailable."
+    if not should_skip and not filesystem_required:
+        for capability in [policy["capability"], *policy.get("additionalCapabilities", [])]:
+            if capability is not None and not filesystem_capability_available(str(capability)):
+                should_skip = True
+                reason = f"{reason} Required filesystem capability '{capability}' is unavailable."
+                break
     if not should_skip:
         return None
     return {

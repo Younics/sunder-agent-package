@@ -11,7 +11,7 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 
 public sealed partial class FilesToolSourceRefactorTests
 {
-    [PlatformTheory(TestPlatform.Unix, "Strict patch publication requires Unix file-descriptor semantics.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ApplyPatch_PreapprovedFiveFileProjectSharesCreatedParentsAndCompensatesOwnedDirectories(bool failSecond)
@@ -58,7 +58,7 @@ public sealed partial class FilesToolSourceRefactorTests
             {
                 Assert.True(result.IsError);
                 Assert.Contains("Compensation restored", result.Content);
-                Assert.All(paths, path => Assert.False(File.Exists(Path.Combine(root, path))));
+                Assert.All(paths, path => Assert.False(File.Exists(Path.Combine(root, path)), result.Content));
             }
             else
             {

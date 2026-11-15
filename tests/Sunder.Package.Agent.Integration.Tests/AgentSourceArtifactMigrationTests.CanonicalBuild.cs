@@ -56,14 +56,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         // Core's producer closure is a required parent input. Restoring this
         // exact-RID consumer must not rewrite its referenced Core lock files.
-        await build.Run("restore", "--disable-parallel", "--no-dependencies");
+        // API selection below is deliberate fixture authoring, not a developer
+        // prerequisite. Restore its compiler references without acquiring the old
+        // production selection; then exercise ordinary restore for the selected inputs.
+        await build.Run("restore", "--disable-parallel", "--no-dependencies", "-p:SunderRestoreContracts=false");
         if (ownerArchive is not null) await build.SelectFixtureOwner(ownerArchive, catalog!);
-        var restore = new List<string> { "-t:RestoreSunderContracts" };
+        var restore = new List<string> { "--disable-parallel", "--no-dependencies" };
         // An independent local family still exercises restore, but has no platform
         // constraints for an offline catalog to satisfy. Core rejects such an override.
         if (hasImports) restore.Add("-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!));
         if (ownerArchive is not null) restore.Add("-p:SunderPackageCandidatePath=" + ownerArchive);
-        await build.Run("msbuild", denyNetwork: true, arguments: restore.ToArray());
+        await build.Run("restore", denyNetwork: true, arguments: restore.ToArray());
         await build.Run("build", "--no-restore");
         build.AssertEvidenceUnchanged();
         build.CopyOutputs();

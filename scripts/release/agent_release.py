@@ -532,14 +532,14 @@ def native_source_role_uses(assets, records):
     from native_release_inputs import RIDS, json_file
     regular(path)
     evidence = json_file(path.parent.resolve() / path.name, 256 * 1024 * 1024, 4 * 1024 * 1024)
-    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] in (3, 4, 5), "Expected native source-use evidence schema 3, 4 or 5")
+    require(type(evidence["schemaVersion"]) is int and evidence["schemaVersion"] in (3, 4, 5, 6), "Expected native source-use evidence schema 3, 4, 5 or 6")
     expected = {item["path"]: {field: item[field] for field in ("path", "size", "sha256")} for item in records}
     final = evidence["finalArtifacts"]
     require(len(final) == len(expected) and {item["path"]: item for item in final} == expected,
             "Source role-use evidence belongs to different final archives")
     runs = evidence["nativeRuns"]
     require(len(runs) == len(RIDS) and {run["rid"] for run in runs} == set(RIDS), "Incomplete native source-use RID evidence")
-    package_ids = set(evidence["packageVersions"]) if evidence["schemaVersion"] in (4, 5) else {item["packageId"] for item in records}
+    package_ids = set(evidence["packageVersions"]) if evidence["schemaVersion"] in (4, 5, 6) else {item["packageId"] for item in records}
     result = dict(evidence.get("retainedSourceRoleUses", {}))
     for run in runs:
         require(len(run["packages"]) == len(package_ids) and {item["packageId"] for item in run["packages"]} == package_ids,

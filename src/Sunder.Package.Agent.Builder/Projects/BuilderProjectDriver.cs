@@ -167,8 +167,8 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         }
         else
         {
-            BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, "sunder:dev:once");
-            await RunAsync(selection, ["run", "sunder:dev:once"], project.ProjectFolder, reporter, token, npm: true).ConfigureAwait(false);
+            BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, BuilderProjectDriverOutputs.NodeDevelopmentScript);
+            await RunAsync(selection, ["run", BuilderProjectDriverOutputs.NodeDevelopmentScript], project.ProjectFolder, reporter, token, npm: true).ConfigureAwait(false);
         }
         reporter.Update(new() { Phase = BuilderJobPhase.Validating });
         var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(output, project, rid, requireApp, token).ConfigureAwait(false);
@@ -270,6 +270,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         if (cliHome is not null) environment["DOTNET_CLI_HOME"] = cliHome;
         if (options.NuGetConfigPath is { } config)
         {
+            BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, cliHome);
             environment["RestoreConfigFile"] = config;
             environment["NUGET_HTTP_CACHE_PATH"] = Path.Combine(options.CacheRootPath, "nuget-http");
             environment["NUGET_PLUGINS_CACHE_PATH"] = Path.Combine(options.CacheRootPath, "nuget-plugins");

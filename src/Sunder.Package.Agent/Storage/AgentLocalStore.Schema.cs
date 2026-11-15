@@ -7,7 +7,7 @@ public sealed partial class AgentLocalStore
     internal const int BaselineVersion = 3;
     internal const string BaselineName = "agent-transcript-3-baseline";
 
-    private const string BaselineSql = """
+    private static readonly string BaselineSql = """
         CREATE TABLE SchemaMigrations (
             Version INTEGER PRIMARY KEY,
             Name TEXT NOT NULL,
@@ -607,7 +607,7 @@ public sealed partial class AgentLocalStore
         BEGIN
             SELECT RAISE(ABORT, 'Agent lifecycle outbox events may only be deleted by bounded compaction');
         END;
-        """;
+        """.Replace("\r\n", "\n", StringComparison.Ordinal);
 
     internal const string BaselineChecksum = "fbe804503f69edfed05b96b98a2e284a26fccdfd2145b9067a19f72618a513ca";
 

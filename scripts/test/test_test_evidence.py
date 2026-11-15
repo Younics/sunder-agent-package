@@ -83,7 +83,7 @@ public sealed class EvidenceTests
 
     def report(self, platform="linux", success=True):
         environment = {key: value for key, value in os.environ.items()
-                       if key not in {"SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_REQUIRE_TEST_PREREQUISITES"}}
+                       if key not in {"SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_REQUIRE_TEST_PREREQUISITES", "SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES"}}
         process = subprocess.run([sys.executable, "-B", str(SCRIPT), str(self.root / "results"),
                                   "--inventory", str(self.inventory), "--repository-root", str(self.root),
                                   "--mode", "source", "--platform", platform, "--verify"],
@@ -182,6 +182,39 @@ public class Outer {
         self.assertEqual(1 if available else 2, report["summary"]["skipped"])
         self.assertEqual("CaseSensitiveDirectories", next(row["capability"] for row in report["skipPolicyEvidence"]
             if row["fullyQualifiedName"] == "Fixture.Tests.EvidenceTests.OrdinaryTest"))
+
+    def test_multiple_filesystem_prerequisites_are_checked_in_declared_order_and_required_lanes_cannot_skip(self):
+        source = self.root / "tests/Fixture.Tests/EvidenceTests.cs"
+        reason = "Case-only redirection requires case-sensitive names and symbolic links."
+        source.write_text(source.read_text().replace('[Fact]\n    public void OrdinaryTest()',
+            f'[FileSystemFact(TestFileSystemCapability.CaseSensitiveDirectories, "{reason}", '
+            'TestFileSystemCapability.FileSymbolicLinks, TestFileSystemCapability.DirectorySymbolicLinks)]\n    public void OrdinaryTest()'))
+        policies = evidence.skip_policy(self.root, json.loads(self.inventory.read_text()), "source", None, None)
+        policy = next(row for row in policies
+                      if row["fullyQualifiedName"] == "Fixture.Tests.EvidenceTests.OrdinaryTest")
+        self.assertEqual(["FileSymbolicLinks", "DirectorySymbolicLinks"], policy["additionalCapabilities"])
+        with patch.object(evidence, "filesystem_capability_available", side_effect=lambda name: name == "CaseSensitiveDirectories") as probe:
+            skipped = evidence.expected_skip(policy, "windows", {})
+            self.assertEqual(reason + " Required filesystem capability 'FileSymbolicLinks' is unavailable.", skipped["reason"])
+            self.assertEqual(["CaseSensitiveDirectories", "FileSymbolicLinks"], [call.args[0] for call in probe.call_args_list])
+        with patch.object(evidence, "filesystem_capability_available", return_value=False):
+            self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}))
+            self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}))
+        # Requiring local security fixtures does not implicitly select an external
+        # archive or Docker lane. Unsupported OS cases remain explicit exclusions.
+        artifact = {**policy, "attribute": "PackageArtifactsFact", "capability": None}
+        self.assertIsNotNone(evidence.expected_skip(artifact, "windows", {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}))
+
+    def test_matching_os_filesystem_constraints_cannot_be_approved_as_skips_in_required_lanes(self):
+        required = {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}
+        policy = {"project": "fixture", "owner": "fixture", "fullyQualifiedName": "Fixture.Security",
+                  "attribute": "PlatformFact", "platform": "MacCaseInsensitive", "capability": None,
+                  "additionalCapabilities": [], "reason": "Requires macOS aliases."}
+        with patch.object(evidence, "temp_volume_is_case_insensitive", return_value=False):
+            self.assertIsNone(evidence.expected_skip(policy, "macos", required))
+            self.assertIsNotNone(evidence.expected_skip(policy, "windows", required))
+        with patch.object(evidence.getpass, "getuser", return_value="root"):
+            self.assertIsNone(evidence.expected_skip({**policy, "platform": "NonRootUnix"}, "linux", required))
 
     def test_skips_cannot_trade_identity_or_change_reason(self):
         self.rows[:2] = [("ExpectedArtifactSkip", None, "Passed", ""),

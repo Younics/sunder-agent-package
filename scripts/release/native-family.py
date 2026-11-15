@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Native component production, immutable composition and exact final-archive evidence."""
 
-import math
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -13,6 +12,7 @@ import tarfile
 import tempfile
 import zipfile
 import zlib
+import native_runtime_evidence as runtime_evidence
 
 from agent_release import (
     FAMILY_PACKAGE_IDS, FAMILY_PROJECTS, owned_contracts, has_public_evidence, source_role_use_evidence,
@@ -87,7 +87,7 @@ def release_rows(repository, coordinate):
 
 
 def package_version(expected, package_id):
-    return expected["packageVersions"][package_id] if expected["schemaVersion"] in (4, 5) else expected["version"]
+    return expected["packageVersions"][package_id] if expected["schemaVersion"] in (4, 5, 6) else expected["version"]
 
 
 def identity_keys(expected):
@@ -157,28 +157,7 @@ def record_shape(record, path, maximum=MAX_LEAF):
     integer(record["size"], maximum, 1)
 
 
-def validate_metrics(package, rid):
-    metric = package["metrics"]
-    keys(metric, "measurement thresholds")
-    measure = metric["measurement"]
-    threshold = metric["thresholds"]
-    keys(measure, "archive archiveBytes capturedAtUtc currentRidInstalledBytes formatVersion profile rid startupMilliseconds workerProcessCount workerRssBytes")
-    keys(threshold, "expectedWorkerProcessCount maximumArchiveBytes maximumCurrentRidInstalledBytes maximumStartupMilliseconds maximumWorkerRssBytes")
-    require(type(measure["formatVersion"]) is int and measure["formatVersion"] == 1
-            and measure["profile"] == "dotnetWorker" and measure["rid"] == rid
-            and measure["archive"] == package["testedArchive"]["path"]
-            and measure["archiveBytes"] == package["testedArchive"]["size"], "Invalid Core metric identity")
-    require(isinstance(measure["capturedAtUtc"], str) and re.fullmatch(
-        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]+)?(?:Z|[+-][0-9]{2}:[0-9]{2})", measure["capturedAtUtc"]),
-        "Invalid metric capture timestamp")
-    for source, name in ((measure, "workerProcessCount"), (threshold, "expectedWorkerProcessCount")):
-        require(type(source[name]) is int and source[name] == 1, "Expected exactly one native Worker process")
-    for field in ("archiveBytes", "currentRidInstalledBytes", "startupMilliseconds", "workerRssBytes"):
-        actual = measure[field]
-        maximum = threshold["maximum" + field[0].upper() + field[1:]]
-        types = (int, float) if field == "startupMilliseconds" else (int,)
-        require(type(actual) in types and type(maximum) in types and math.isfinite(actual)
-                and math.isfinite(maximum) and 0 < actual <= maximum, "Core native metric budget failed: " + field)
+validate_metrics = runtime_evidence.validate_metrics
 
 
 def leaf_record(package_id, project, rid, files, has_app):
@@ -197,7 +176,8 @@ def leaf_record(package_id, project, rid, files, has_app):
 
 
 def validate_run(run, expected, rows):
-    keys(run, identity_keys(expected) + " rid bundle packages" + (" familyTests" if expected["schemaVersion"] in (4, 5) else ""))
+    keys(run, identity_keys(expected) + " rid bundle packages" + (" familyTests" if expected["schemaVersion"] in (4, 5, 6) else "")
+         + (" execution" if expected["schemaVersion"] == 6 else ""))
     require(all(run[key] == value for key, value in expected.items()) and run["rid"] in RIDS,
             "Native evidence schema/identity differs from the approved selection")
     rid = run["rid"]
@@ -226,7 +206,7 @@ def validate_run(run, expected, rows):
         files = file_set(leaf["files"])
         require(leaf == leaf_record(package_id, project, rid, files, leaf["hasApp"]), "Mixed native leaf/module projection")
         validate_metrics(package, rid)
-    if expected["schemaVersion"] in (4, 5):
+    if expected["schemaVersion"] in (4, 5, 6):
         tests = run["familyTests"]
         require(type(tests) is list and len(tests) == len(expected["familyVersions"]) and {test["packageId"] for test in tests} == set(expected["familyVersions"]),
                 "Selective native builds still require all fifteen Worker tests")
@@ -240,6 +220,11 @@ def validate_run(run, expected, rows):
                 require(all(package[field] == test[field] for field in test), "Selected native metric differs from the full-family smoke test")
             else:
                 require(test["testedArchive"] in expected["retainedArtifacts"], "Smoke test did not use the exact unchanged archive")
+    if expected["schemaVersion"] == 6:
+        records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"],
+                        size=test["testedArchive"]["size"], sha256=test["testedArchive"]["sha256"])
+                   for test in sorted(run["familyTests"], key=lambda row: row["packageId"])]
+        runtime_evidence.validate_receipt(run["execution"], "development", records, expected["core"]["commit"], rid)
 
 
 def transport(run, bundle, destination=None):
@@ -248,6 +233,7 @@ def transport(run, bundle, destination=None):
     metadata = {}
     roles = {}
     manifests = {}
+    execution_reports = {}
     for package in run["packages"]:
         q = package["qualification"]
         expected[q["path"]] = q
@@ -266,6 +252,10 @@ def transport(run, bundle, destination=None):
         metric_path = "metrics/" + test["packageId"] + "." + run["rid"] + ".json"
         expected[metric_path] = {"sha256": test["metricsSha256"], "size": test["metricsSize"]}
         metadata[metric_path] = ("metrics", test)
+    for report in run.get("execution", {}).get("reports", []):
+        name = "execution/" + run["rid"] + "/" + report["path"]
+        expected[name] = report
+        metadata[name] = ("execution-report", report)
 
     def consume(name, data):
         kind, package = metadata[name]
@@ -283,8 +273,13 @@ def transport(run, bundle, destination=None):
             manifests[package["packageId"]] = any(t["role"] == "app" for t in manifest["targets"])
         elif kind == "metrics":
             require(parse(data) == package["metrics"], "Core metric file differs from native provenance")
+        elif kind == "execution-report":
+            execution_reports[package["path"]] = data
 
     scan_tar(bundle, expected, consume, destination, metadata)
+    if "execution" in run:
+        runtime_evidence.verify_reports(run["execution"], execution_reports.__getitem__)
+    return execution_reports
     require(roles == manifests, "Incomplete/mixed native App role closure")
     require(file_record(bundle, run["bundle"]["path"], MAX_RUN) == run["bundle"], "Native bundle changed during validation")
 
@@ -400,12 +395,21 @@ def capture(args):
 
 
 def verify_document(document, artifacts, rows, expected):
-    keys(document, identity_keys(expected) + " nativeRuns finalArtifacts")
+    keys(document, identity_keys(expected) + " nativeRuns finalArtifacts" + (" executionBundles" if expected["schemaVersion"] == 6 else ""))
     require(all(document[key] == value for key, value in expected.items()), "Native family schema/identity differs from the approved selection")
     runs = document["nativeRuns"]
     require(isinstance(runs, list) and sorted(run["rid"] for run in runs) == sorted(RIDS), "Require exactly six unique native RID runs")
     for run in runs:
         validate_run(run, expected, rows)
+    if expected["schemaVersion"] == 6:
+        bundles = document["executionBundles"]
+        require(type(bundles) is list and [row["path"] for row in bundles] == sorted("native-execution-" + rid + ".tar.gz" for rid in RIDS),
+                "Missing/extra durable development execution report bundles")
+        for record in bundles:
+            record_shape(record, record["path"], MAX_RUN)
+            require(file_record(artifacts / record["path"], maximum=MAX_RUN) == record, "Durable execution report bundle differs from native evidence")
+            run = next(run for run in runs if record["path"] == "native-execution-" + run["rid"] + ".tar.gz")
+            runtime_evidence.verify_bundle(artifacts / record["path"], run["execution"])
     records = document["finalArtifacts"]
     versions = expected.get("familyVersions", {row["packageId"]: expected.get("version") for row in rows})
     expected_names = {package_id + "." + version + ".sunderpkg" for package_id, version in versions.items()}
@@ -417,12 +421,12 @@ def verify_document(document, artifacts, rows, expected):
         record_shape(record, record["path"])
         require(file_record(artifacts / record["path"]) == record, "Native family archive differs from evidence: " + record["path"])
         package_id = next(package_id for package_id, version in versions.items() if record["path"] == package_id + "." + version + ".sunderpkg")
-        if expected["schemaVersion"] in (4, 5) and package_id not in expected["packageVersions"]:
+        if expected["schemaVersion"] in (4, 5, 6) and package_id not in expected["packageVersions"]:
             require(record in expected["retainedArtifacts"] and all(next(test for test in run["familyTests"]
                 if test["packageId"] == package_id)["testedArchive"] == record for run in runs), "Retained archive differs from native-tested bytes")
             continue
         packages = [(run["rid"], next(p for p in run["packages"] if p["packageId"] == package_id)) for run in runs]
-        if expected["schemaVersion"] == 5:
+        if expected["schemaVersion"] in (5, 6):
             require(all(package["testedArchive"] == record for _, package in packages),
                     "Native smoke must exercise the exact final archive on every RID")
         verify_archive(artifacts / record["path"], packages, versions[package_id])
@@ -561,8 +565,12 @@ def record_final(repository, candidates, archives, metrics, output, rid, expecte
             "Record only a complete, already-smoked final family")
     records = gather_candidates(repository, candidates, archives, expected)
     output = artifact_output(output, repository)
+    evidence_path = output / ("native-leaf-evidence-" + rid + ".json")
+    bundle_path = output / ("native-leaves-" + rid + ".tar.gz")
+    require(not evidence_path.exists() and not bundle_path.exists(), "Final native handoffs are immutable; retain failed attempts separately")
     with tempfile.TemporaryDirectory(prefix=".native-final-", dir=output) as temporary:
-        work, packages, tests = Path(temporary), [], []
+        work, packages, tests = Path(temporary) / "payload", [], []
+        work.mkdir()
         for record in records:
             package_id = next(key for key, version in expected["familyVersions"].items() if record["path"] == key + "." + version + ".sunderpkg")
             metric_name = package_id + "." + rid + ".json"
@@ -580,29 +588,65 @@ def record_final(repository, candidates, archives, metrics, output, rid, expecte
                 packages.append(dict(leaf["packages"][0], **{key: value for key, value in test.items() if key != "packageId"}))
             (work / "metrics").mkdir(exist_ok=True)
             (work / "metrics" / metric_name).write_bytes(metric_data)
-        bundle = output / ("native-leaves-" + rid + ".tar.gz")
+        execution = None
+        if expected["schemaVersion"] == 6:
+            execution = json_file(metrics / runtime_evidence.RECEIPT)
+            records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"], size=test["testedArchive"]["size"],
+                            sha256=test["testedArchive"]["sha256"]) for test in sorted(tests, key=lambda test: test["packageId"])]
+            runtime_evidence.validate_receipt(execution, "development", records, expected["core"]["commit"], rid)
+            runtime_evidence.verify_reports(execution, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
+            for report in execution["reports"]:
+                destination = work / "execution" / rid / report["path"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(metrics / report["path"], destination)
+        bundle = Path(temporary) / bundle_path.name
         write_tar(bundle, {path.relative_to(work).as_posix(): path for path in work.rglob("*") if path.is_file()})
         run = dict(expected, rid=rid, bundle=file_record(bundle, maximum=MAX_RUN), packages=packages, familyTests=tests)
+        if execution is not None: run["execution"] = execution
         rows = [row for row in inventory(repository) if row["packageId"] in expected["packageVersions"]]
         validate_run(run, expected, rows)
         transport(run, bundle)
-        (output / ("native-leaf-evidence-" + rid + ".json")).write_bytes(compact(run))
+        os.replace(bundle, bundle_path)
+        with evidence_path.open("xb") as stream: stream.write(compact(run))
 
 
 def finalize_candidates(repository, native_input, archives, expected):
     require({path.name for path in native_input.iterdir()} == {"native-" + kind + "-" + rid + suffix
         for rid in RIDS for kind, suffix in (("leaf-evidence", ".json"), ("leaves", ".tar.gz"))}, "Missing/extra final native smoke handoffs")
     rows = [row for row in inventory(repository) if row["packageId"] in expected["packageVersions"]]
-    runs = []
+    runs, executions = [], []
     for rid in RIDS:
         run = json_file(native_input / ("native-leaf-evidence-" + rid + ".json"), MAX_PROVENANCE, 4 * 1024 * 1024)
         validate_run(run, expected, rows)
         require(run["rid"] == rid, "Mixed final native evidence")
-        transport(run, native_input / run["bundle"]["path"])
+        reports = transport(run, native_input / run["bundle"]["path"])
+        if expected["schemaVersion"] == 6:
+            # Keep the original bounded reports durable on the coordinator, not
+            # only inside expiring Actions artifacts or as unverifiable hashes.
+            with tempfile.TemporaryDirectory(prefix=".native-execution-", dir=archives) as temporary:
+                work = Path(temporary)
+                (work / runtime_evidence.RECEIPT).write_bytes(compact(run["execution"]))
+                for name, data in reports.items():
+                    path = work / "reports" / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(data)
+                bundle_name = "native-execution-" + rid + ".tar.gz"
+                bundle = work / bundle_name
+                write_tar(bundle, {path.relative_to(work).as_posix(): path for path in work.rglob("*") if path.is_file()})
+                destination = archives / bundle_name
+                if destination.exists():
+                    require(file_record(destination) == file_record(bundle), "Durable execution reports cannot be replaced")
+                else:
+                    with destination.open("xb") as output, bundle.open("rb") as source: shutil.copyfileobj(source, output)
+                executions.append(file_record(destination, maximum=MAX_RUN))
         runs.append(run)
     document = dict(expected, nativeRuns=runs, finalArtifacts=[file_record(path) for path in sorted(archives.glob("*.sunderpkg"))])
+    if expected["schemaVersion"] == 6: document["executionBundles"] = sorted(executions, key=lambda row: row["path"])
     verify_document(document, archives, rows, expected)
-    (archives / "native-test-evidence.json").write_bytes(compact(document))
+    evidence = archives / "native-test-evidence.json"
+    if evidence.exists(): require(evidence.read_bytes() == compact(document), "Final native evidence cannot be replaced")
+    else:
+        with evidence.open("xb") as output: output.write(compact(document))
 
 
 def assemble(args):
@@ -696,14 +740,14 @@ def main():
         repository = Path(repository).resolve()
         expected = identity(version, *versions)
         require(expected["schemaVersion"] == 4, "Final candidates require an explicit package selection")
-        expected["schemaVersion"] = 5
+        expected["schemaVersion"] = 6
         if command == "gather": gather_candidates(repository, Path(source).resolve(), destination, expected)
         else: finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
     elif command == "record-final" and len(args) == 11:
         rid, version, agent_commit, core_tag, core_commit, core_version, candidates, archives, metrics, output, repository = args
         expected = identity(version, agent_commit, core_tag, core_commit, core_version)
         require(expected["schemaVersion"] == 4, "Final native smoke requires an explicit package selection")
-        expected["schemaVersion"] = 5
+        expected["schemaVersion"] = 6
         record_final(Path(repository).resolve(), Path(candidates).resolve(), Path(archives).resolve(), Path(metrics).resolve(), output, rid, expected)
     elif command == "record" and len(args) == 10:
         capture(args)
@@ -713,9 +757,9 @@ def main():
         evidence, artifacts, inventory_path, *versions = args
         document = json_file(Path(evidence).resolve(), MAX_PROVENANCE, 24 * 1024 * 1024)
         expected = identity(*versions)
-        if document.get("schemaVersion") == 5:
+        if document.get("schemaVersion") in (5, 6):
             require(expected["schemaVersion"] == 4, "Final archive evidence requires a package selection")
-            expected["schemaVersion"] = 5
+            expected["schemaVersion"] = document["schemaVersion"]
         verify_document(document, Path(artifacts).resolve(), release_rows(Path(inventory_path).resolve().parent, versions[0]), expected)
         print(f"Verified schema-version-{document['schemaVersion']} native evidence, Core qualifications and {len(document['finalArtifacts'])} exact family archives.")
     elif command == "select-native" and len(args) == 4:

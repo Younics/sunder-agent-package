@@ -18,7 +18,7 @@ public sealed class DockerStrictReauditTests : IDisposable
         "sunder-docker-strict-reaudit",
         Guid.NewGuid().ToString("N"));
 
-    [PlatformFact(TestPlatform.Unix, "The mount identity verifier requires Unix file descriptors.")]
+    [PlatformFact(TestPlatform.Unix, "This mount challenge fixture uses a local POSIX shell in place of Docker.")]
     public async Task MountVerifier_PerformsBidirectionalNestedChallengeAndExactCleanup()
     {
         Directory.CreateDirectory(_root);
@@ -39,7 +39,7 @@ public sealed class DockerStrictReauditTests : IDisposable
             path => HostSecurePathEngine.IsChallengeName(Path.GetFileName(path)));
     }
 
-    [PlatformFact(TestPlatform.Unix, "The mount identity verifier requires Unix file descriptors.")]
+    [PlatformFact(TestPlatform.Unix, "This mount challenge fixture uses the Unix challenge protocol and path mapping.")]
     public async Task MountVerifier_MismatchFailsClosedAndZerosHiddenChallenge()
     {
         Directory.CreateDirectory(_root);
@@ -110,16 +110,8 @@ public sealed class DockerStrictReauditTests : IDisposable
             authority,
             CancellationToken.None);
 
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Equal("strict-platform-mutation-unavailable", result.ErrorCode);
-            Assert.Empty(Directory.EnumerateFileSystemEntries(_root));
-        }
-        else
-        {
-            Assert.False(result.IsError, result.Summary);
-            Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, "new.txt")));
-        }
+        Assert.False(result.IsError, result.Summary);
+        Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, "new.txt")));
     }
 
     private static DockerModels.AgentExecutionTargetContext CreateResourceContext(string actionId)
