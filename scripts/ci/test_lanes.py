@@ -341,7 +341,7 @@ def family(core, directory, results_directory=None):
     env = {key: value for key, value in os.environ.items() if key not in {
         "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN",
         "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY"}}
-    env.update(SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE="1", SUNDER_REQUIRE_AGENT_UI_SNAPSHOT="1",
+    env.update({"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE": "1", "SUNDER_REQUIRE_AGENT_UI_SNAPSHOT": "1"},
                SUNDER_AGENT_CURRENT_BASELINE_ROOT=str(ROOT), SUNDER_AGENT_PACKAGE_ARCHIVE_DIR=str(directory),
                SUNDER_AGENT_UI_SNAPSHOT_DIR=str(output / "app-snapshot"))
     cli = core / "languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj"

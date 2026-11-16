@@ -49,9 +49,9 @@
       },
       "Sunder.Package.Build": {
         "type": "Direct",
-        "requested": "[1.0.4, )",
-        "resolved": "1.0.4",
-        "contentHash": "c+TS9QFmnFZ9ONxEmHDhGCc53ujyIZoBKwa69bnPSr+Y3Tg5ZzMEOy+Anht9BM29w34urr2bZtetgTrQ0NwAYA=="
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "EZCtu0MGmCA6VgrYg3DDmxw90zDAAcilnu5beXjnUjmkk0LaBQrGaiPKMwgqDnpEWsoNu5r1vawUoVb+ouyfMg=="
       },
       "Sunder.Sdk": {
         "type": "Direct",
