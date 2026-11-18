@@ -43,7 +43,6 @@ internal static partial class LocalWindowsNative
     private const uint FileCreate = 2;
     private const uint FileOpenReparsePoint = 0x00200000;
     private const uint FileSynchronousIoNonAlert = 0x00000020;
-    private const uint FileOpenForBackupIntent = 0x00004000;
     private const uint FileDirectoryFile = 0x00000001;
     private const uint FileNonDirectoryFile = 0x00000040;
     private const uint ObjectCaseInsensitive = 0x00000040;
@@ -114,9 +113,10 @@ internal static partial class LocalWindowsNative
                 Attributes = caseSensitive ? 0U : ObjectCaseInsensitive,
                 SecurityDescriptor = securityDescriptor,
             };
+            // These are user operations, not backup/restore. Backup intent can
+            // bypass the DACL when the process already holds those privileges.
             var options = FileOpenReparsePoint
                           | FileSynchronousIoNonAlert
-                          | FileOpenForBackupIntent
                           | (requireDirectory ? FileDirectoryFile : 0U)
                           | (create && !requireDirectory ? FileNonDirectoryFile : 0U);
             var status = NtCreateFile(
@@ -433,31 +433,33 @@ internal static partial class LocalWindowsNative
         if (status < 0) throw Error("NtFlushBuffersFileEx", path, checked((int)RtlNtStatusToDosError(status)));
     }
 
-    public static void RenameNoReplace(
+    public static void RenameWithinParentNoReplace(
         SafeFileHandle file,
-        SafeFileHandle parent,
         string targetName,
         string path)
     {
+        if (string.IsNullOrEmpty(targetName) || targetName is "." or ".." || targetName.IndexOfAny(['/', '\\', '\0', ':']) >= 0)
+            throw new LocalSecurePathException("A same-directory rename requires one exact child name.");
         var nameLength = checked(targetName.Length * sizeof(char));
         var rootOffset = IntPtr.Size == 8 ? 8 : 4;
         var lengthOffset = rootOffset + IntPtr.Size;
         var nameOffset = lengthOffset + sizeof(uint);
         var bufferSize = checked((nameOffset + nameLength + sizeof(char) + IntPtr.Size - 1) & -IntPtr.Size);
         var buffer = Marshal.AllocHGlobal(bufferSize);
-        var parentRetained = false;
         try
         {
-            parent.DangerousAddRef(ref parentRetained);
             Marshal.Copy(new byte[bufferSize], 0, buffer, bufferSize);
             Marshal.WriteInt32(buffer, 0); // Never replace an entry selected by name.
-            Marshal.WriteIntPtr(buffer, rootOffset, parent.DangerousGetHandle());
+            // A simple name and null RootDirectory rename inside the source
+            // object's actual parent. No pathname or new parent open is involved.
+            // Supplying a DELETE-owning created parent instead makes Windows'
+            // target-directory reopen conflict with our own no-delete share pin.
+            // https://learn.microsoft.com/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
             Marshal.WriteInt32(buffer, lengthOffset, nameLength);
             // NT names are UTF-16 code units. Encoding.Unicode's replacement
             // fallback would silently select a different name for a lone surrogate.
             Marshal.Copy(targetName.ToCharArray(), 0, buffer + nameOffset, targetName.Length);
-            // Native FileRenameInformationEx (65) supports RootDirectory. Do not
-            // rely on Win32's reserved FILE_RENAME_INFO.RootDirectory field.
+            // Native FileRenameInformationEx (65), with no replacement flags.
             var status = NtSetInformationFile(file, out _, buffer, (uint)bufferSize, 65);
             if (status < 0)
             {
@@ -477,7 +479,6 @@ internal static partial class LocalWindowsNative
         }
         finally
         {
-            if (parentRetained) parent.DangerousRelease();
             Marshal.FreeHGlobal(buffer);
         }
     }
@@ -512,8 +513,11 @@ internal static partial class LocalWindowsNative
         => Error(operation, path, Marshal.GetLastPInvokeError());
 
     public static Exception Error(string operation, string path, int error)
-        => new LocalSecurePathException(
-            $"Secure filesystem {operation} failed for '{path}': {new Win32Exception(error).Message}");
+    {
+        var native = new Win32Exception(error);
+        return new LocalSecurePathException(
+            $"Secure filesystem {operation} failed for '{path}': {native.Message}", native);
+    }
 
     public static string ToExtendedPath(string path)
     {

@@ -100,7 +100,7 @@ internal sealed partial class LocalWindowsFileSystemPlatform
         WindowsQuarantine? transaction = null;
         try
         {
-            LocalWindowsNative.RenameNoReplace(locked.Handle, parent.Handle, reservation.TakeQuarantineName(), locked.FullPath);
+            LocalWindowsNative.RenameWithinParentNoReplace(locked.Handle, reservation.TakeQuarantineName(), locked.FullPath);
             transaction = new WindowsQuarantine(this, parent, name, locked);
             Flush(parent);
             RequireIdentity(locked, LocalWindowsNative.ReadMetadata(locked.Handle, locked.FullPath));
@@ -142,7 +142,7 @@ internal sealed partial class LocalWindowsFileSystemPlatform
                 RequireIdentity(Handle, LocalWindowsNative.ReadMetadata(Handle.Handle, Handle.FullPath));
                 // A new arrival is not recovery authority. Leave it at its name,
                 // retain our quarantined object and report recovery-required.
-                LocalWindowsNative.RenameNoReplace(Handle.Handle, parent.Handle, targetName, Handle.FullPath);
+                LocalWindowsNative.RenameWithinParentNoReplace(Handle.Handle, targetName, Handle.FullPath);
                 owner.Flush(parent);
                 using var restored = owner.OpenChild(parent, targetName, parent.Identity.Volume, requireDirectory: false);
                 if (restored.Identity != Handle.Identity || restored.Kind != Handle.Kind)

@@ -35,7 +35,7 @@ public sealed partial class WindowsSecureMutationTests : IDisposable
         Assert.Equal(1, BitConverter.ToUInt16(security.DaclBytes, 4));
         Assert.Throws<LocalSecureFileAlreadyExistsException>(() => platform.CreateExclusiveFile(directory, "private.txt", 0x180));
         Assert.Throws<IOException>(() => File.Move(created.FullPath, Path.Combine(directory.FullPath, "stolen.txt")));
-        LocalWindowsNative.RenameNoReplace(created.Handle, directory.Handle, "published.txt", created.FullPath);
+        LocalWindowsNative.RenameWithinParentNoReplace(created.Handle, "published.txt", created.FullPath);
         platform.Flush(directory);
         using var read = platform.OpenChild(directory, "published.txt", root.Volume, requireDirectory: false);
         Assert.Equal(created.Identity, read.Identity);
@@ -80,8 +80,8 @@ public sealed partial class WindowsSecureMutationTests : IDisposable
         Assert.True(ownership.OwnsChild(root.Handle, child));
         Assert.False(child.MutationExclusive);
         Assert.ThrowsAny<IOException>(() => Directory.Move(child.FullPath, Path.Combine(_root, "foreign-rename")));
-        Assert.Throws<LocalSecurePathException>(() => LocalWindowsNative.RenameNoReplace(
-            child.Handle, root.Handle.Handle, "borrower-rename", child.FullPath));
+        Assert.Throws<LocalSecurePathException>(() => LocalWindowsNative.RenameWithinParentNoReplace(
+            child.Handle, "borrower-rename", child.FullPath));
         using var siblingBorrow = ownership.CreateChild(root.Platform, root.Handle, "created", root.Volume);
         Assert.Equal(child.Identity, siblingBorrow.Identity);
         ownership.Dispose();

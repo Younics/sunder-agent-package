@@ -1,5 +1,6 @@
 extern alias LocalWorker;
 
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using LocalModels = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using Xunit;
@@ -39,21 +40,19 @@ public sealed partial class WindowsSecureMutationTests
         try
         {
             Assert.Equal(0, NtSetSecurityObject(parentPolicy, 0x80000004, parentDescriptor));
-            using (var deniedParent = LocalWindowsNative.OpenHandle(directory, LocalWindowsNative.GenericWrite,
-                       LocalWindowsNative.OpenExisting, LocalWindowsNative.ShareAll))
-            {
-                var error = Marshal.GetLastPInvokeError();
-                Assert.True(deniedParent.IsInvalid);
-                Assert.Equal(5, error);
-            }
+            // Query ordinary NtCreateFile access, not CreateFile's directory
+            // BACKUP_SEMANTICS, which can exercise an elevated runner's privileges.
+            var deniedParent = Assert.Throws<LocalSecurePathException>(() => LocalWindowsNative.OpenRelative(
+                root.Handle.Handle, "no-parent-write", LocalWindowsNative.GenericWrite,
+                true, false, false, directory, LocalWindowsNative.ShareAll));
+            Assert.Equal(5, Assert.IsType<Win32Exception>(deniedParent.InnerException).NativeErrorCode);
+            using var expected = root.Platform.OpenChild(root.Handle, "no-parent-write", root.Volume, true);
             foreach (var access in new[] { LocalWindowsNative.DeleteAccess, LocalWindowsNative.WriteDac, LocalWindowsNative.WriteOwner })
             {
-                using var denied = LocalWindowsNative.OpenHandle(path, access, LocalWindowsNative.OpenExisting, LocalWindowsNative.ShareAll);
-                var error = Marshal.GetLastPInvokeError();
-                Assert.True(denied.IsInvalid);
-                Assert.Equal(5, error);
+                var denied = Assert.Throws<LocalSecurePathException>(() => LocalWindowsNative.OpenRelative(
+                    expected.Handle, "file.txt", access, false, false, false, path, LocalWindowsNative.ShareAll));
+                Assert.Equal(5, Assert.IsType<Win32Exception>(denied.InnerException).NativeErrorCode);
             }
-            using var expected = root.Platform.OpenChild(root.Handle, "no-parent-write", root.Volume, true);
             using var original = root.Platform.OpenChild(expected, "file.txt", root.Volume, false);
             using var before = LocalWindowsNative.CaptureSecurity(original.Handle, path);
             var content = new string('n', 140_000);
