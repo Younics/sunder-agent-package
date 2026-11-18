@@ -177,7 +177,8 @@ class AgentCiTests(unittest.TestCase):
         with patch.object(test_lanes, "ROOT", self.source), patch.object(test_lanes, "run") as run, \
              patch.object(test_lanes.subprocess, "check_output", return_value="tool.dll") as evaluate, \
              patch.object(release_inputs, "archive_metadata", side_effect=lambda path: ({"id": ids[path.name]}, None)), \
-             patch.dict(os.environ, {"GH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-tests",
+             patch.dict(os.environ, {"GH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_API_KEY": "must-not-reach-tests",
+                                     "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_CLI_TOKEN": "must-not-reach-tests",
                                      "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_NATIVE_READ_TOKEN": "must-not-reach-tests",
                                      "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY": "1"}):
             test_lanes.family(core, archives, output)
@@ -196,12 +197,32 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual(2, evaluate.call_count)
         for call in [*calls, *evaluate.call_args_list]:
             environment = call.kwargs["env"]
-            self.assertFalse(any(key in environment for key in ("GH_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY")))
-            self.assertEqual(str(output / "app-snapshot"), environment["SUNDER_AGENT_UI_SNAPSHOT_DIR"])
+            self.assertFalse(any(key in environment for key in ("GH_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY")))
+            self.assertEqual(str(output.resolve() / "app-snapshot"), environment["SUNDER_AGENT_UI_SNAPSHOT_DIR"])
             self.assertEqual(str(self.source), environment["SUNDER_AGENT_CURRENT_BASELINE_ROOT"])
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
         build = workflow.split("      - name: Build Core validation paths\n")[1].split("      - name:")[0]
         self.assertIn("tests/Sunder.App.Integration.Tests", build)
+
+    def test_publication_api_key_keeps_its_environment_secret_name_through_component_calls(self):
+        workflows = SCRIPTS.parent / ".github/workflows"
+        workflow = (workflows / "sunder-package-release.yml").read_text()
+        for name, following in (("publish-owner", "publish-consumers"), ("publish-consumers", "installed-native")):
+            caller = workflow.split(f"  {name}:\n")[1].split(f"\n  {following}:")[0]
+            self.assertIn("SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}", caller)
+        component = (workflows / "sunder-package-component.yml").read_text()
+        self.assertIn("      SUNDER_REGISTRY_API_KEY:\n        required: false", component)
+        publish = component.split("  publish:\n")[1].split("\n  summary:")[0]
+        self.assertIn("environment: sunder-agent-release-promotion", publish)
+        self.assertIn("SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}", publish)
+        self.assertNotIn("publish_token", component)
+        for path in workflows.glob("*.yml"):
+            text = path.read_text()
+            for credential in ("SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN"):
+                self.assertNotIn("secrets." + credential, text, str(path))
+        rollback = (workflows / "sunder-agent-cohort-rollback.yml").read_text()
+        self.assertIn("reverse_agent_cohort.py plan", rollback)
+        self.assertNotIn("reverse_agent_cohort.py apply", rollback)
 
     def test_published_native_acceptance_is_mandatory_after_publication_and_before_visibility(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
@@ -209,12 +230,35 @@ class AgentCiTests(unittest.TestCase):
         release = workflow.split("  release:\n")[1].split("\n  summary:")[0]
         self.assertIn("needs: [prepare, stage, publish-owner, publish-consumers]", installed)
         self.assertIn('"$CORE_COMMIT" published', installed)
-        self.assertIn("secrets.SUNDER_REGISTRY_NATIVE_READ_TOKEN", installed)
+        self.assertNotIn("secrets.", installed)
         self.assertIn("REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}", installed)
         self.assertIn("agent_pipeline.py recover --read-only", installed)
         self.assertIn("needs.installed-native.result == 'success'", release)
         self.assertLess(release.index("retain-installed-native"), release.index("agent_pipeline.py visibility"))
         self.assertIn("installed-native", workflow.split("  summary:\n")[1])
+        launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()
+        self.assertIn("SUNDER_REGISTRY_API_KEY", launcher.split("unset ", 1)[1])
+        self.assertNotIn("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN=", launcher)
+        # Exercise the real launcher prologue without native artifacts/toolchains.
+        # Both phases must strip credentials before the first external operation.
+        prologue = launcher.split('[[ "$expected_core_commit" =~', 1)[0]
+        credentials = ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
+                       "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")
+        script = prologue + '\nfor credential in ' + " ".join(credentials) + '; do [[ -z "${!credential+x}" ]] || exit 1; done\n'
+        for mode in ("development", "published"):
+            with self.subTest(mode=mode):
+                result = subprocess.run(bash_runtime.command("-c", script, "--", self.root.as_posix(), self.bundle.as_posix(),
+                    "metrics", "a" * 40, mode),
+                    env={**os.environ, **dict.fromkeys(credentials, "must-not-reach-tools"),
+                         "SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN": "https://registry.test"},
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(0, result.returncode, result.stderr)
+        fixture = (SCRIPTS.parent / "tests/fixtures/AgentNativeReleaseSmokeTests.cs").read_text()
+        self.assertNotIn("RegistryApiRoutes.CurrentUser", fixture)
+        self.assertIn("Assert.Null(request.Headers.Authorization)", fixture)
+        self.assertNotIn("request.Headers.Authorization =", fixture)
+        self.assertNotIn("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", fixture)
+        self.assertIn('archiveDownloadAuthentication = "anonymous"', fixture)
 
     def prepare(self):
         self.core = self.root / "sunder-core"
@@ -225,6 +269,7 @@ class AgentCiTests(unittest.TestCase):
         def run(command, **kwargs):
             self.commands.append(command)
             self.assertNotIn("GH_TOKEN", kwargs["env"])
+            self.assertFalse("SUNDER_REGISTRY_API_KEY" in kwargs["env"], "API key leaked into build environment")
             self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", kwargs["env"])
             self.assertNotIn("-m:1", command)
             self.assertNotIn("--force-evaluate", command)
@@ -240,7 +285,8 @@ class AgentCiTests(unittest.TestCase):
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="source")
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
              patch.object(ci.inputs, "offline_prefix", side_effect=AssertionError("ordinary CI does not request a production offline runner")), \
-             patch.dict(os.environ, {"GH_TOKEN": "read-only-download", "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-build"}), \
+             patch.dict(os.environ, {"GH_TOKEN": "read-only-download", "SUNDER_REGISTRY_API_KEY": "must-not-reach-build",
+                                     "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-build"}), \
              patch("sys.stdout", new_callable=io.StringIO):
             ci.prepare(args)
         return self.work / "ci-state.json"

@@ -222,7 +222,7 @@ The old 516-line publisher / 325-line fixture responsibilities map to existing
 | Stable and numeric-preview downgrade refusal | `test_forward_downgrade_stable_and_numeric_preview_stops_before_mutation` |
 | Concurrent newer tag during the guard | `test_concurrent_policy_change_during_guard_keeps_original_fence_and_never_compensates`; the atomic policy fence replaces sequential snapshot/compensation. |
 | Failed, credential-free just-in-time guard | `test_guard_failure_stops_before_post_and_guard_receives_no_registry_credentials` and existing request-tamper test |
-| Missing/malformed owner token, no publish-token fallback | `test_missing_or_malformed_owner_credential_never_falls_back_to_publish_token` |
+| Missing/malformed human owner token, no API-key fallback | `test_missing_or_malformed_owner_credential_never_falls_back_to_api_key` |
 | Ambiguous write and idempotent rerun | Existing `test_lost_response_retries_byte_identical_request_and_retains_result` |
 | Unavailable/stale/conflicting response | `test_unavailable_stale_and_conflicting_success_never_fallback`; server failures retry the same retained request and never create a compensation request. |
 | Verification failure/concurrent replacement | `test_post_commit_verification_failure_retains_result_without_compensation` |

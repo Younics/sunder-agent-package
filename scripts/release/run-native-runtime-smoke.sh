@@ -13,12 +13,11 @@ expected_core_commit="$4"
 mode="${5:-development}"
 [[ "$mode" == development || "$mode" == published ]] \
   || { printf 'Select development or published native qualification explicitly.\n' >&2; exit 2; }
-registry_token="${SUNDER_AGENT_NATIVE_REGISTRY_TOKEN:-}"
-unset SUNDER_AGENT_NATIVE_REGISTRY_TOKEN
-unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_CLI_TOKEN SUNDER_REGISTRY_PUBLISH_TOKEN SUNDER_REGISTRY_NATIVE_READ_TOKEN
+unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_CLI_TOKEN SUNDER_REGISTRY_PUBLISH_TOKEN \
+  SUNDER_REGISTRY_NATIVE_READ_TOKEN SUNDER_AGENT_NATIVE_REGISTRY_TOKEN
 if [[ "$mode" == published ]]; then
-  [[ -n "${SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN:-}" && -n "$registry_token" ]] \
-    || { printf 'Published installed acceptance requires explicit HTTPS Registry origin and read credentials.\n' >&2; exit 2; }
+  [[ -n "${SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN:-}" ]] \
+    || { printf 'Published installed acceptance requires an explicit HTTPS Registry origin.\n' >&2; exit 2; }
 fi
 [[ "$expected_core_commit" =~ ^[0-9a-f]{40}$ ]] \
   || { printf 'Expected Core commit must be a full lowercase Git SHA.\n' >&2; exit 2; }
@@ -92,7 +91,6 @@ fi
 SUNDER_AGENT_NATIVE_ARCHIVE_DIR="$(native_path "$archive_directory")" \
 SUNDER_AGENT_NATIVE_METRICS_DIR="$(native_path "$metrics_directory")" \
 SUNDER_AGENT_NATIVE_PLATFORM_CATALOG="$(native_path "$metrics_directory/maker-inputs/sunder-platform-contracts.v1.json")" \
-SUNDER_AGENT_NATIVE_REGISTRY_TOKEN="$registry_token" \
 SUNDER_AGENT_BUILDER_SDK_VERSION="$builder_sdk_version" \
 SUNDER_AGENT_BUILDER_DOTNET_PATH="$(native_path "$builder_dotnet_path")" \
 SUNDER_AGENT_BUILDER_NUGET_FEED="$(native_path "$metrics_directory/maker-inputs/feed")" \

@@ -183,9 +183,12 @@ class SelectionTests(unittest.TestCase):
             self.assertIn("-p:Configuration=Release", command)
             self.assertFalse(any("SunderAgentVersion=" in part for part in command))
             self.assertNotIn("GH_TOKEN", kwargs["env"])
+            self.assertNotIn("SUNDER_REGISTRY_API_KEY", kwargs["env"])
             self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", kwargs["env"])
             return r.encoded(dict(Properties=dict(Version="2.0.0", PackageVersion="2.0.0", InformationalVersion="2.0.0", SunderAgentVersion="")))
-        with patch.object(selection.subprocess, "check_output", side_effect=evaluate):
+        with patch.dict(os.environ, {"SUNDER_REGISTRY_API_KEY": "must-not-reach-msbuild",
+                                     "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-msbuild"}), \
+                patch.object(selection.subprocess, "check_output", side_effect=evaluate):
             self.assertEqual(15, len(selection.evaluated_packages(self.source)))
             self.assertEqual([self.rows[0]], selection.evaluated_packages(self.source, [self.rows[0]["packageId"]]))
         with patch.object(selection.subprocess, "check_output") as evaluate:

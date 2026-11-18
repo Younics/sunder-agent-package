@@ -339,7 +339,7 @@ def family(core, directory, results_directory=None):
     inputs = output / "inputs"
     inputs.mkdir(parents=True, exist_ok=False)
     env = {key: value for key, value in os.environ.items() if key not in {
-        "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN",
+        "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
         "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY"}}
     env.update({"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE": "1", "SUNDER_REQUIRE_AGENT_UI_SNAPSHOT": "1"},
                SUNDER_AGENT_CURRENT_BASELINE_ROOT=str(ROOT), SUNDER_AGENT_PACKAGE_ARCHIVE_DIR=str(directory),

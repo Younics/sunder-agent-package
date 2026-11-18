@@ -39,7 +39,7 @@ on:
         type: boolean
         default: false
     secrets:
-      publish_token:
+      SUNDER_REGISTRY_API_KEY:
         required: false
 
 # The caller supplies read-only validation/production permissions or publication
@@ -306,7 +306,7 @@ jobs:
           path: ${{ runner.temp }}/owner-receipt
       - name: Publish this component and write its immutable receipt
         env:
-          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.publish_token }}
+          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
           OWNER_SELECTED: ${{ inputs.owner_selected }}
         run: |
           set -euo pipefail

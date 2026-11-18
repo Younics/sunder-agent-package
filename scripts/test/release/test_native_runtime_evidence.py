@@ -45,8 +45,8 @@ def native_documents(records, rid, core, mode="development", registry="https://r
         documents["maker/journey.json"] = encode(journey)
         documents.update({"maker/" + operation + ".json": encode(dict(state="succeeded")) for operation in ("create", "build", "archive")})
     else:
-        documents["scope/published-registry.json"] = encode(dict(schemaVersion=1, registryOrigin=scope["registryOrigin"],
-            authenticatedIdentityRead=True, authenticatedArchiveDownloads=True,
+        documents["scope/published-registry.json"] = encode(dict(schemaVersion=2, registryOrigin=scope["registryOrigin"],
+            archiveDownloadAuthentication="anonymous",
             downloads=[dict(packageId=row["packageId"], version="2.0.0", archiveSha256=row["sha256"], size=row["size"]) for row in records],
             policies=[dict(package=dict(packageId=row["packageId"], version="2.0.0", packageContentIdentity="c" * 64),
                 lease=dict(state="valid", errorCode=None, responseNonce="a" * 32, responseSha256="b" * 64,
@@ -68,15 +68,25 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
     def test_published_proof_rejects_rehashed_wrong_nonce_authority_versions_and_metrics(self):
         from native_release_inputs import digest
         records = [dict(packageId="younics.sunder.package.maker", archive="maker.sunderpkg", size=1, sha256="a" * 64)]
-        for kind in ("nonce", "response-hash", "origin", "revision", "version", "metric-identity", "metric-budget"):
+        for kind in ("schema", "download-authentication", "legacy-authentication", "nonce", "response-hash", "origin",
+                     "revision", "version", "archive-hash", "archive-size", "missing-download", "metric-identity", "metric-budget"):
             value, documents = native_documents(records, "win-x64", "c" * 40, "published")
+            evidence.verify_reports(value, documents.__getitem__)
             name = "scope/published-registry.json" if not kind.startswith("metric-") else records[0]["packageId"] + ".win-x64.json"
             changed = json.loads(documents[name])
-            if kind == "nonce": changed["policies"][0]["lease"]["responseNonce"] = True
+            if kind == "schema": changed["schemaVersion"] = 1
+            elif kind == "download-authentication": changed["archiveDownloadAuthentication"] = "api-key"
+            elif kind == "legacy-authentication":
+                changed.pop("archiveDownloadAuthentication")
+                changed.update(schemaVersion=1, authenticatedIdentityRead=True, authenticatedArchiveDownloads=True)
+            elif kind == "nonce": changed["policies"][0]["lease"]["responseNonce"] = True
             elif kind == "response-hash": changed["policies"][0]["lease"]["responseSha256"] = "not-a-response-hash"
             elif kind == "origin": changed["policies"][0]["lease"]["watermark"]["registryOrigin"] = "https://other.example"
             elif kind == "revision": changed["policies"][0]["lease"]["watermark"]["packagePolicyRevision"] = 0
             elif kind == "version": changed["downloads"][0]["version"] = "3.0.0"
+            elif kind == "archive-hash": changed["downloads"][0]["archiveSha256"] = "f" * 64
+            elif kind == "archive-size": changed["downloads"][0]["size"] = 2
+            elif kind == "missing-download": changed["downloads"].clear()
             elif kind == "metric-identity": changed["measurement"]["rid"] = "linux-x64"
             else: changed["measurement"]["startupMilliseconds"] = 1000
             documents[name] = json.dumps(changed).encode()

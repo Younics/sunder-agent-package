@@ -88,10 +88,10 @@ def verify_reports(value, loader):
             require(parse(documents["maker/" + operation + ".json"])["state"] == "succeeded", "Maker job did not complete")
     else:
         proof = parse(documents["scope/published-registry.json"])
-        keys(proof, "schemaVersion registryOrigin authenticatedIdentityRead authenticatedArchiveDownloads downloads policies")
-        require(proof["schemaVersion"] == 1 and proof["registryOrigin"] == value["registryOrigin"]
-            and proof["authenticatedIdentityRead"] is True and proof["authenticatedArchiveDownloads"] is True,
-            "Published native execution lacks authenticated Registry download evidence")
+        keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies")
+        require(type(proof["schemaVersion"]) is int and proof["schemaVersion"] == 2 and proof["registryOrigin"] == value["registryOrigin"]
+            and proof["archiveDownloadAuthentication"] == "anonymous",
+            "Published native execution lacks anonymous Registry download evidence")
         require(sorted((row["packageId"], row["archiveSha256"], row["size"]) for row in proof["downloads"])
             == sorted((row["packageId"], row["sha256"], row["size"]) for row in value["archives"]),
             "Published native execution did not install the exact downloaded archives")

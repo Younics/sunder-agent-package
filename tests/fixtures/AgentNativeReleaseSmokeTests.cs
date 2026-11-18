@@ -44,9 +44,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
     public async Task PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost()
     {
         var registryOrigin = RegistryActivePolicyClient.Origin(Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN")
-            ?? throw new InvalidOperationException("Published native installed acceptance requires an explicit authenticated HTTPS Registry origin."));
-        var registryToken = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN");
-        Assert.False(string.IsNullOrWhiteSpace(registryToken), "Published native installed acceptance requires an explicit Registry read credential.");
+            ?? throw new InvalidOperationException("Published native installed acceptance requires an explicit HTTPS Registry origin."));
         var archiveDirectory = Environment.GetEnvironmentVariable("SUNDER_AGENT_NATIVE_ARCHIVE_DIR")
             ?? throw new InvalidOperationException(
                 "A selected release lane is missing a required prerequisite. "
@@ -101,12 +99,6 @@ public sealed partial class AgentNativeReleaseSmokeTests(
 
             var transfers = provider.GetRequiredService<RuntimeContentTransferStore>();
             var registry = provider.GetRequiredService<RegistryHttpClient>();
-            using (var identityRequest = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, registryOrigin + RegistryApiRoutes.CurrentUser))
-            {
-                identityRequest.Headers.Authorization = new("Bearer", registryToken);
-                using var identity = await registry.SendAsync(identityRequest, CancellationToken.None);
-                Assert.Equal(System.Net.HttpStatusCode.OK, identity.StatusCode);
-            }
             var installMutations = new List<PackageStoreMutationRequest>(archives.Count);
             var downloads = new List<object>();
             foreach (var (packageId, archivePath) in archives.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
@@ -116,8 +108,10 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                 var hash = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(archivePath)));
                 using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get,
                     registryOrigin + RegistryApiRoutes.PackageVersionCanonical(packageId, subject.Version));
-                request.Headers.Authorization = new("Bearer", registryToken);
+                // Exact-version downloads, including Yanked versions, are public.
+                // Exercise that boundary without a human session or publication key.
                 using var response = await registry.SendAsync(request, CancellationToken.None);
+                Assert.Null(request.Headers.Authorization);
                 Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
                 if (response.Content.Headers.ContentLength is { } advertised) Assert.Equal(length, advertised);
                 await using var archive = await response.Content.ReadAsStreamAsync();
@@ -245,7 +239,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             await WriteNativeScopeAsync(metricsDirectory, rid, archives, "published-installed", registryOrigin);
             await File.WriteAllTextAsync(Path.Combine(metricsDirectory, "scope", "published-registry.json"), JsonSerializer.Serialize(new
             {
-                schemaVersion = 1, registryOrigin, authenticatedIdentityRead = true, authenticatedArchiveDownloads = true,
+                schemaVersion = 2, registryOrigin, archiveDownloadAuthentication = "anonymous",
                 downloads, policies = policyEvidence,
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }

@@ -51,8 +51,8 @@ The GitHub entry points are:
   `builder-diagnostics` selects the separate focused/full Builder diagnostic lane.
 - `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
-- `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
-  cohort, sharing the release concurrency group.
+- `sunder-agent-cohort-rollback.yml`: validates and retains a reviewed reverse plan for
+  an unannounced cohort without Registry mutation, sharing the release concurrency group.
 
 They share `sunder-package-component.yml` for component tests, native production/
 composition and per-package publication. Each operation has a strict outcome summary.
@@ -278,8 +278,8 @@ and public install-plan postchecks. The pipeline:
    `registry-publications.json`: the Registry-returned publication evidence for
    every tested package, including its actual owner. Retries and later readback
    compare that immutable evidence before visibility changes or announcement.
-4. Runs authenticated published-installed acceptance on all six native RIDs, using
-   the exact immutable family and genuine policy. A single writer durably retains
+4. Runs published-installed acceptance on all six native RIDs, anonymously downloading
+   the exact immutable family over HTTPS and checking genuine policy. A single writer durably retains
    `installed-native-test-evidence.json` and all twelve RID receipt/bundle assets on
    the coordinator. No development-import result can satisfy this gate.
 5. Retains one complete cohort request with its idempotency key and current policy
@@ -311,7 +311,7 @@ exact package/platform subject set. Initial visibility requests `minimumPackageP
 confirmation supplies the retained committed revision/fingerprint and rejects older or
 same-revision conflicting identities. Responses require a valid policy fingerprint and
 the fixed 24-hour UTC observation interval. The confirmation check additionally requires
-Allowed Listed packages and Supported platform catalogs before exact owner-token result
+Allowed Listed packages and Supported platform catalogs before exact release-API-key result
 readback. PostgreSQL is authoritative: this retained floor checks client consistency and
 does not independently prove absence of database rollback. Checkpoint/topology fields and
 external policy stores are absent from the current release protocol.
@@ -335,9 +335,12 @@ immutable bytes require investigation and a new version, not clobbering an old o
 
 ### Reviewed Non-Security Reverse
 
-The explicit rollback workflow uses a new reviewed idempotency key and current
+The explicit rollback-plan workflow uses a new reviewed idempotency key and current
 policy revision, requires an unannounced numeric draft and the exact forward
-receipt, then restores the captured prior tag map and Yanks the cohort atomically.
+receipt, then validates a request to restore the captured prior tag map and Yank the
+cohort atomically. CI retains that request but never applies it or receives human
+Registry credentials. Execution is a separate authenticated operator recovery task,
+not an API-key privilege or an automatic release action.
 Supply `release_id`, `expected_package_policy_revision`, `idempotency_key` and
 `confirmation=reverse-unannounced-cohort`. The protected-main resolver derives the
 source commit, tag and forward-receipt digest from that draft and rejects missing
@@ -373,7 +376,7 @@ separate execution result.
   tags do not trigger a second publication workflow. No manually created tag needed.
 - Environment variable `SUNDER_REGISTRY_API_URL`: the Registry HTTPS origin, without an `/api/v1` suffix.
   Source/lock hashes and dependency locations are derived, never per-release settings.
-- One environment secret `SUNDER_REGISTRY_PUBLISH_TOKEN`, created at Registry
+- One environment secret `SUNDER_REGISTRY_API_KEY`, created at Registry
   **Dashboard → API keys**, with `package:publish` and `package:release` for all
   fifteen exact package IDs. The Registry derives the publisher from the key and
   enforces package ownership/maintainer permissions; no owner ID is configured in
@@ -381,15 +384,20 @@ separate execution result.
   preserve the existing owner, and atomic cohort release requires that owner's key.
   `package:promote-latest` is unnecessary for staged atomic releases. API keys support
   a 1–90 day lifetime or **Never**; rotate expiring keys before their selected expiry.
-- The separate reviewed reverse workflow still requires a human
-  `SUNDER_REGISTRY_CLI_TOKEN`; a release API key intentionally cannot roll back.
-- Provision a separate `SUNDER_REGISTRY_NATIVE_READ_TOKEN` environment secret for
-  published-installed jobs. `/api/v1/me` requires an interactive CLI identity, not
-  the publication API key. Use a dedicated non-publishing principal and rotate the
-  credential; the current Registry does not define a read-only CLI-token scope.
-  The jobs use it only for identity/archive reads, strip it from preparation/build
-  children and the App proxy, and never retain it in receipts. Missing or rejected
-  credentials fail acceptance; they never select anonymous or development fallback.
+  The same secret name is preserved through reusable-workflow calls and resolved
+  in the protected publication job. Agent scripts never fall back to the legacy
+  `SUNDER_REGISTRY_PUBLISH_TOKEN` name; the released Core CLI retains that separate
+  environment interface for its `--credential-source environment` option.
+- No human CLI login token or native-read secret belongs in CI. Exact-version
+  canonical downloads, including staged `Yanked` versions, are anonymous Registry
+  operations; `Yanked` controls selection, not confidentiality. Installed-native
+  jobs require the pinned HTTPS origin, exact downloaded hashes/lengths and real
+  policy observations, not `/api/v1/me`. They still fail on missing, changed or
+  denied bytes without a development fallback. Publication keys remain confined
+  to publication/forward visibility steps and are stripped from build, validation,
+  HTTP-child and App-proxy environments, together with legacy credential names.
+- The separate reviewed reverse workflow produces a plan only. Release API keys
+  intentionally cannot roll back; no workflow accepts a human recovery token.
 - Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays.
   RID suffixes use uppercase underscores. Defaults use native Windows2022/Windows11ARM,
   Ubuntu24x64/ARM and macOS15Intel/ARM runners.

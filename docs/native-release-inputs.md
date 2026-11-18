@@ -155,12 +155,16 @@ Rehashed old evidence, success display names or omitted/skipped methods cannot
 qualify the new phase. Original report hashes remain distinct from native attestation.
 
 After immutable publication, the separate `published` mode requires an explicit
-HTTPS Registry origin and `SUNDER_AGENT_NATIVE_REGISTRY_TOKEN`. It checks authenticated
-identity, downloads each exact canonical archive and uploads it through Runtime with
+HTTPS Registry origin, not a human login token or publication API key. It anonymously
+downloads each exact canonical archive (also allowed while `Yanked`) and uploads it through Runtime with
 the selected hash/length, obtains genuine nonce-bound policy observations, then tests
 installed lifecycle/RPC/SQLite/recovery/cleanup. It uses `--host-only` preparation and
 never rebuilds the selected family archives. It does not run Maker's development job
 journey as a substitute for installed acceptance.
+Schema-2 `scope/published-registry.json` records
+`archiveDownloadAuthentication: "anonymous"` alongside the exact downloads and policy
+leases. Legacy human-identity claims cannot be relabeled as this evidence. New and
+legacy credential environment names are stripped before preparation, builds and tests.
 
 Each RID exports `native-installed-<rid>.json` and `.tar.gz`. Strict raw-tar membership,
 report hashes, policy authority, metric identities/budgets and exact source/archive/

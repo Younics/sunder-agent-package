@@ -167,7 +167,7 @@ def retain_installed_native(core, directory, plan, receipts_directory):
 
 def require_installed_native(directory, plan, family):
     path = directory / native_execution.INSTALLED
-    r.require(path.exists(), "Complete authenticated six-RID installed native acceptance is required before visibility or announcement")
+    r.require(path.exists(), "Complete six-RID installed native acceptance is required before visibility or announcement")
     expected = installed_native_value(directory, plan, family)
     r.require(path.read_bytes() == r.canonical(expected) + b"\n", "Retained installed native evidence differs from the exact selected source, Registry or final archives")
 

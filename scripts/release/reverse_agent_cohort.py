@@ -95,18 +95,26 @@ def guard(repository, release_id, tag, source, source_sha, forward_path, request
     require(current in (forward["result"]["previousTags"], forward["result"]["resultingTags"]), "Concurrent tag change invalidates reverse approval")
 
 
-def run(repository, release_id, tag, source, source_sha, forward_path, key, revision, output):
+def plan(repository, release_id, tag, source, source_sha, forward_path, key, revision, output):
     forward = load(forward_path)
     receipts.check(forward)
     output = Path(output)
     require(not output.exists() and not output.is_symlink(), "Reverse evidence destination already exists")
     output.mkdir()
-    request_path, result_path = output / "request.json", output / "result.json"
+    request_path = output / "request.json"
     proposed = cohort.reverse(forward["request"], forward["result"], key, int(revision))
     cohort.store(request_path, proposed)
     args = [repository, release_id, tag, source, source_sha, forward_path, str(request_path)]
-    os.environ["SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON"] = cohort.encoded([sys.executable, "-B", str(Path(__file__).resolve()), "guard", *args]).decode()
     guard(*args)
+    return request_path
+
+
+def run(repository, release_id, tag, source, source_sha, forward_path, key, revision, output):
+    request_path = plan(repository, release_id, tag, source, source_sha, forward_path, key, revision, output)
+    result_path = Path(output) / "result.json"
+    forward = load(forward_path)
+    args = [repository, release_id, tag, source, source_sha, forward_path, str(request_path)]
+    os.environ["SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON"] = cohort.encoded([sys.executable, "-B", str(Path(__file__).resolve()), "guard", *args]).decode()
     cohort.apply(forward["registryOrigin"], str(request_path), str(result_path))
     committed = load(result_path)
     require(committed["previousTags"] == forward["result"]["resultingTags"]
@@ -121,6 +129,9 @@ if __name__ == "__main__":
             resolve(*args)
         elif command == "guard":
             guard(*args)
+        elif command == "plan":
+            plan(*args)
+            print("Validated reviewed reverse request. No Registry mutation; execution requires human recovery outside CI.")
         elif command == "apply":
             run(*args)
         else:

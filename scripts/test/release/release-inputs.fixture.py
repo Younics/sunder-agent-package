@@ -99,6 +99,7 @@ class ColdInputsTests(unittest.TestCase):
         self.calls.append((command, env))
         self.assertEqual(str(self.work / "sunder-home"), env["SUNDER_HOME"])
         self.assertNotIn("GH_TOKEN", env)
+        self.assertNotIn("SUNDER_REGISTRY_API_KEY", env)
         self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", env)
         if command[0] == "deny-network":
             command = command[2:]
@@ -141,7 +142,8 @@ class ColdInputsTests(unittest.TestCase):
     def prepare(self):
         with patch.object(inputs, "clean_source"), patch.object(inputs, "offline_prefix", return_value=["deny-network", "--"]), \
                 patch.object(inputs, "verify_network_denial"), patch.object(inputs, "run", side_effect=self.mock_run), \
-                patch.dict(os.environ, {"GH_TOKEN": "must-not-leak", "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-leak"}), \
+                patch.dict(os.environ, {"GH_TOKEN": "must-not-leak", "SUNDER_REGISTRY_API_KEY": "must-not-leak",
+                                        "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-leak"}), \
                 patch("sys.stdout", new_callable=io.StringIO):
             inputs.prepare(self.source, self.bundle, self.work, self.mode, self.source_sha, self.core_sha, self.manifest_sha)
 

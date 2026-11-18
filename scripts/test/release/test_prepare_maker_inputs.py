@@ -80,7 +80,7 @@ class PrepareMakerInputsTests(unittest.TestCase):
 
     def test_six_independent_versions_and_exact_app_catalog_are_prepared_without_credential_or_output_leaks(self):
         credentials = {key: "test-secret" for key in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
-            "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN")}
+            "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN")}
         with self.mocks(), patch.dict(os.environ, credentials):
             preparation.prepare(self.core, self.output, self.commit)
         value = json.loads((self.output / "inputs.json").read_text())

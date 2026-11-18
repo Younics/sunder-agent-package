@@ -367,7 +367,7 @@ jobs:
       core_version: ${{ needs.prepare.outputs.core_version }}
       plan_sha256: ${{ needs.prepare.outputs.plan_sha256 }}
     secrets:
-      publish_token: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
 
   publish-consumers:
     name: Publish consumer
@@ -391,7 +391,7 @@ jobs:
       plan_sha256: ${{ needs.prepare.outputs.plan_sha256 }}
       owner_selected: ${{ needs.prepare.outputs.owner_selected == 'true' }}
     secrets:
-      publish_token: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
 
   installed-native:
     name: Published installed acceptance · ${{ matrix.rid }}
@@ -453,11 +453,9 @@ jobs:
           else
             echo 'retained=false' >> "$GITHUB_OUTPUT"
           fi
-      - name: Install and exercise authenticated published archives before visibility
+      - name: Download anonymously and exercise exact published archives before visibility
         id: installed_smoke
         if: steps.recovery.outputs.retained != 'true'
-        env:
-          SUNDER_AGENT_NATIVE_REGISTRY_TOKEN: ${{ secrets.SUNDER_REGISTRY_NATIVE_READ_TOKEN }}
         run: |
           set -euo pipefail
           export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
@@ -532,7 +530,7 @@ jobs:
           path: sunder-agent-package/artifacts/publication-receipts
       - name: Merge exact component receipts through the single coordinator writer
         env:
-          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
         run: python3 -B scripts/release/agent_pipeline.py merge-publications --core ../sunder-core --directory artifacts/release --receipts artifacts/publication-receipts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -543,11 +541,11 @@ jobs:
         run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --core ../sunder-core --directory artifacts/release --receipts artifacts/installed-native
       - name: Commit and confirm one retained atomic visibility request
         env:
-          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
         run: python3 -B scripts/release/agent_pipeline.py visibility --core ../sunder-core --directory artifacts/release
       - name: Recheck public bytes, policy, tags and six-RID plans before announcement
         env:
-          SUNDER_REGISTRY_PUBLISH_TOKEN: ${{ secrets.SUNDER_REGISTRY_PUBLISH_TOKEN }}
+          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
         run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release
 
   summary:

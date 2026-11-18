@@ -165,7 +165,8 @@ def http(registry, route, payload=None, token=None):
     if payload is not None:
         command += ["--request", "POST", "--header", "Content-Type: application/json", "--data-binary", "@-"]
     command.append(registry + route)
-    clean = {k: v for k, v in os.environ.items() if k not in ("SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN")}
+    clean = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
+        "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
     # curl supports a header file; credentials must never become process arguments.
     with tempfile.TemporaryDirectory(prefix="sunder-registry-headers-") as directory:
         if token is not None:
@@ -271,7 +272,8 @@ def guard():
     value = decode(os.environ.get("SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON", "null").encode())
     require(type(value) is list and 0 < len(value) <= 16 and all(type(v) is str and v and not any(c in v for c in "\r\n\0") for v in value),
             "A trusted pre-mutation guard is required")
-    clean = {k: v for k, v in os.environ.items() if k not in ("SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN")}
+    clean = {k: v for k, v in os.environ.items() if k not in ("SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY",
+        "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
     subprocess.run(value, env=clean, check=True)
 
 
@@ -281,8 +283,8 @@ def mutation_credential(proposed):
     if source == "api-key":
         require(all(v["expectedAvailability"] == "Yanked" and v["availability"] == "Listed" for v in proposed["versions"]),
                 "API keys permit only forward releases")
-        token = os.environ.get("SUNDER_REGISTRY_PUBLISH_TOKEN", "")
-        require(re.fullmatch(r"sunder_pub_v1_[A-Za-z0-9_-]{43}", token), "Scoped release API key required; no CLI credential fallback")
+        token = os.environ.get("SUNDER_REGISTRY_API_KEY", "")
+        require(re.fullmatch(r"sunder_pub_v1_[A-Za-z0-9_-]{43}", token), "SUNDER_REGISTRY_API_KEY must be a scoped release API key; no CLI credential fallback")
     else:
         token = os.environ.get("SUNDER_REGISTRY_CLI_TOKEN", "")
         require(re.fullmatch(r"sunder_cli_[A-Za-z0-9_-]{43}", token), "Interactive owner credential required")

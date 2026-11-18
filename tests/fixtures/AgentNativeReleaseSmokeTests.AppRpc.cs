@@ -49,7 +49,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             start.Environment["SUNDER_APP_STATE_ROOT"] = Path.Combine(root, "app-state");
             start.Environment["SUNDER_HOME"] = Path.Combine(root, "home");
             start.Environment["DOTNET_DbgEnableMiniDump"] = "0";
-            foreach (var name in new[] { "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN" })
+            foreach (var name in new[] { "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN" })
                 start.Environment.Remove(name);
             var diagnostics = Path.Combine(RequiredMakerPath("SUNDER_AGENT_NATIVE_METRICS_DIR", directory: true), "apps", packageId, Guid.NewGuid().ToString("N"));
             var proxy = new NativeAppRpcProxy(CapturedProcess.Start(start, maximumOutputCharacters: 1024 * 1024, diagnosticsDirectory: diagnostics), responsePath, diagnostics);
