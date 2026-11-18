@@ -1,5 +1,6 @@
 """Ordinary CI uses exact inputs without production approval or cache synthesis."""
 import argparse
+import ast
 from contextlib import nullcontext
 import io
 import json
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[2]
@@ -105,6 +107,48 @@ class AgentCiTests(unittest.TestCase):
                     expected += ["--packages", '["younics.ai.agent"]'] if component else ["--shared"]
                     if stress == "true": expected.append("--stress")
                     self.assertEqual(expected, result.stdout.splitlines())
+
+    def test_windows_native_gate_requires_exact_current_rows_once_on_both_abis(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/agent-platform-parity-tmp.yml").read_text()
+        self.assertIn("needs: [selection, baseline]\n", workflow)
+        self.assertNotIn("\n  arm-components:", workflow)
+        matrix = ci_platforms.matrices(package_tests=True)["behavior"]["include"]
+        self.assertEqual({"source", "package"}, {row["mode"] for row in matrix if row["rid"] == "win-arm64"})
+        section = workflow.split("      - name: Reject unavailable or skipped owning regressions on either Windows ABI\n", 1)[1]
+        body = textwrap.dedent(section.split("        run: |\n", 1)[1])
+        script = body.split("python3 -B - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        cases = sorted(ast.literal_eval(next(node.value for node in ast.parse(script).body
+                                            if isinstance(node, ast.Assign)
+                                            and any(isinstance(target, ast.Name) and target.id == "local_native_cases"
+                                                    for target in node.targets))))
+        self.assertEqual(34, len(cases))
+        package = "younics.ai.agent.execution.local"
+        class_name = "Sunder.Package.Agent.Execution.Local.Tests.WindowsSecureMutationTests"
+        for defect in ("none", "omitted", "duplicate", "substituted", "skipped", "failed", "missing-abi"):
+            directory = self.root / ("native-gate-" + defect)
+            directory.mkdir()
+            for rid in ("win-x64", "win-arm64"):
+                if defect == "missing-abi" and rid == "win-arm64": continue
+                selected = cases[:-1] if defect == "omitted" and rid == "win-arm64" else list(cases)
+                if defect == "duplicate" and rid == "win-arm64": selected.append(cases[0])
+                if defect == "substituted" and rid == "win-arm64": selected[0] += "-unexpected-row"
+                document = ET.Element("TestRun")
+                definitions = ET.SubElement(document, "TestDefinitions")
+                results = ET.SubElement(document, "Results")
+                for index, case in enumerate(selected):
+                    definition = ET.SubElement(definitions, "UnitTest", id=str(index))
+                    ET.SubElement(definition, "TestMethod", className=class_name, name=case.split("(", 1)[0])
+                    outcome = ("NotExecuted" if defect == "skipped" else "Failed") if index == 0 and rid == "win-arm64" and defect in ("skipped", "failed") else "Passed"
+                    ET.SubElement(results, "UnitTestResult", testId=str(index), testName=class_name + "." + case, outcome=outcome)
+                output = directory / "windows-results" / f"agent-component-{package}-source-{rid}-1"
+                output.mkdir(parents=True)
+                ET.ElementTree(document).write(output / "native.trx")
+            with self.subTest(defect=defect):
+                result = subprocess.run([sys.executable, "-B", "-c", script], cwd=directory,
+                                        env={**os.environ, "PACKAGES": json.dumps([package])}, text=True, capture_output=True)
+                self.assertEqual(defect == "none", result.returncode == 0, result.stdout + result.stderr)
+                if defect == "none":
+                    self.assertEqual(2, result.stdout.count("34 passed; zero skipped"))
 
     def test_selected_builds_and_reports_share_the_owned_project_inventory(self):
         selected = "younics.ai.agent.provider.openai"
@@ -627,6 +671,13 @@ class AgentCiTests(unittest.TestCase):
                 provision.assert_called_once_with("docker", "pull", "--", image, cwd=self.source, env={})
                 self.assertEqual(["source"] if fails else ["source", "docker-pull", "required-linux"], calls)
                 report.assert_called_once_with("source", "linux")
+
+    def test_linux_stress_excludes_the_current_windows_only_mutation_case(self):
+        name = "WindowsMutations_ReachCommitCheckpointsAndPreserveOutsidePaths"
+        source = (SCRIPTS.parent / "tests/Sunder.Package.Agent.Execution.Local.Tests/LocalSecureFileSystemRaceTests.cs").read_text()
+        self.assertRegex(source, r'\[PlatformFact\(TestPlatform\.Windows,[^\n]+\)\]\s+public async Task ' + name + r'\(')
+        self.assertIn("FullyQualifiedName!~" + name, test_lanes.POLICY["stress"]["filter"])
+        self.assertNotIn("WindowsMutations_FailClosedBeforeFinalSyscallCheckpoints", test_lanes.POLICY["stress"]["filter"])
 
     def test_required_linux_lane_rejects_missing_test_identity_even_with_successful_command(self):
         self.write_test_inventory()

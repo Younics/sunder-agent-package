@@ -51,123 +51,12 @@ jobs:
       core_commit: ${{ needs.selection.outputs.core_commit }}
       package-tests: true
 
-  arm-tools:
-    name: Prepare missing Windows ARM64 tools
-    needs: [selection, baseline]
-    # Unpublished dependency production already prepares tools on all six RIDs.
-    if: needs.baseline.outputs.bootstrap_packages == '[]'
-    runs-on: windows-11-arm
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.selection.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - run: python3 -B scripts/ci/agent_ci.py prepare-tools --core ../sunder-core --output "$RUNNER_TEMP/core-tools"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-core-tools-win-arm64
-          path: ${{ runner.temp }}/core-tools
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 14
-
-  arm-components:
-    name: Windows ARM64 component
-    needs: [selection, baseline, arm-tools]
-    if: >-
-      always() && !cancelled() && needs.baseline.result == 'success'
-      && (needs.arm-tools.result == 'success'
-          || (needs.arm-tools.result == 'skipped' && needs.baseline.outputs.bootstrap_packages != '[]'))
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.selection.outputs.packages) }}
-    uses: ./.github/workflows/sunder-package-component.yml
-    with:
-      package: ${{ matrix.package }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      inputs_sha256: ${{ needs.baseline.outputs.inputs_sha256 }}
-      matrix: '{"include":[{"rid":"win-arm64","platform":"windows","runner":["windows-11-arm"],"mode":"source"},{"rid":"win-arm64","platform":"windows","runner":["windows-11-arm"],"mode":"package"}]}'
-
-  arm-shared:
-    name: Windows ARM64 shared family · ${{ matrix.mode }}
-    needs: [selection, baseline, arm-tools]
-    if: >-
-      always() && !cancelled() && needs.selection.outputs.full == 'true' && needs.baseline.result == 'success'
-      && (needs.arm-tools.result == 'success'
-          || (needs.arm-tools.result == 'skipped' && needs.baseline.outputs.bootstrap_packages != '[]'))
-    runs-on: windows-11-arm
-    timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        mode: [source, package]
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.selection.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-core-tools-win-arm64
-          path: ${{ runner.temp }}/core-tools
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-dependency-inputs
-          path: ${{ runner.temp }}/agent-inputs
-      - name: Verify sealed dependencies
-        id: inputs
-        env:
-          INPUTS_SHA256: ${{ needs.baseline.outputs.inputs_sha256 }}
-        run: test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
-      - name: Run the existing full shared reference-mode lane
-        env:
-          MODE: ${{ matrix.mode }}
-        run: >-
-          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
-          --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" --mode "$MODE" --shared
-      - name: Retain full shared-family evidence
-        if: always() && steps.inputs.outcome != '' && steps.inputs.outcome != 'skipped'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-parity-shared-${{ matrix.mode }}-win-arm64-${{ github.run_attempt }}
-          path: |
-            sunder-agent-package/artifacts/reports
-            sunder-agent-package/artifacts/test-results
-            sunder-agent-package/artifacts/source-family
-            sunder-agent-package/artifacts/source-commands
-          if-no-files-found: error
-          retention-days: 14
-
   summary:
     name: Require actual Windows regression execution
     if: always()
-    needs: [selection, baseline, arm-tools, arm-components, arm-shared]
+    # The baseline already owns source/package and shared lanes on all six RIDs.
+    # Repeating ARM64 here would collide with its immutable artifact names.
+    needs: [selection, baseline]
     runs-on: ubuntu-24.04
     steps:
       - name: Require successful selected jobs
@@ -177,10 +66,7 @@ jobs:
           python3 -B - <<'PY'
           import json, os
           jobs = json.loads(os.environ["JOB_RESULTS"])
-          assert all(jobs[name]["result"] == "success" for name in ("selection", "baseline", "arm-components")), jobs
-          assert jobs["arm-tools"]["result"] in ("success", "skipped"), jobs
-          full = jobs["selection"]["outputs"]["full"] == "true"
-          assert jobs["arm-shared"]["result"] == ("success" if full else "skipped"), jobs
+          assert all(jobs[name]["result"] == "success" for name in ("selection", "baseline")), jobs
           PY
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -195,9 +81,47 @@ jobs:
           from pathlib import Path
           import xml.etree.ElementTree as ET
           selected = set(json.loads(os.environ["PACKAGES"]))
+          # Reviewed current in-place-update cases, replacing the stale aggregate
+          # from the retired replacement-based suite. Keep exact rows on both ABIs.
+          local_native_cases = {
+              "ContentUpdate_PreservesSecurityWithoutPolicyOrNamespaceWriteRights(partialFailure: False)",
+              "ContentUpdate_PreservesSecurityWithoutPolicyOrNamespaceWriteRights(partialFailure: True)",
+              "UserFileCreation_MatchesOrdinaryCurrentUserCreationPolicy",
+              "ContentUpdate_ReadOnlyOriginalIsRejectedWithoutClearingItsAttribute",
+              "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 512, partialFailure: False)",
+              "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 512, partialFailure: True)",
+              "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 2048, partialFailure: False)",
+              "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 2048, partialFailure: True)",
+              "ContentUpdate_MappedReaderObservesWritesAndLengthFailureIsExplicit(shrink: False)",
+              "ContentUpdate_MappedReaderObservesWritesAndLengthFailureIsExplicit(shrink: True)",
+              "CreatedAncestors_AreBorrowedBeforeSiblingCaptureAndSessionOwnsTheirLifetime",
+              "CreatedAncestors_ConcurrentApprovedSiblingsShareTheCreationObject",
+              "CreatedAncestors_ExpiredOrRevokedCapabilitiesCannotBorrowButTransferredAuthorityKeepsOwnership(expires: False)",
+              "CreatedAncestors_ExpiredOrRevokedCapabilitiesCannotBorrowButTransferredAuthorityKeepsOwnership(expires: True)",
+              "CreatedAncestors_NestedBorrowSupportsCreationAndCancellationWithoutReopeningOwnedDirectories",
+              "DifferentIntegrityPolicy_RemainsAttachedToTheEditedObject(partialFailure: False)",
+              "DifferentIntegrityPolicy_RemainsAttachedToTheEditedObject(partialFailure: True)",
+              "MetadataChangedDuringContentUpdate_RetainsTheConcurrentChange(changeSecurity: False)",
+              "MetadataChangedDuringContentUpdate_RetainsTheConcurrentChange(changeSecurity: True)",
+              "ReparseSourceRace_RejectsTheLinkAndPreservesTheOutsideTarget",
+              "ContentChangeBeforeWritableAcquisition_RejectsStaleValidator",
+              "DirectoryDelete_RecoveryNeverMovesAnUnrelatedReplacement(injectConflict: False)",
+              "DirectoryDelete_RecoveryNeverMovesAnUnrelatedReplacement(injectConflict: True)",
+              'ExistingWriter_RespectsPerStreamSharingWithoutLosingEitherStream(streamSuffix: "")',
+              'ExistingWriter_RespectsPerStreamSharingWithoutLosingEitherStream(streamSuffix: ":metadata")',
+              "NewStreamDuringContentUpdate_RemainsOnTheSameObject",
+              "DeleteCancellationBeforeQuarantine_DoesNotMoveTheOriginal",
+              "LargeAlternateStream_IsRetainedWithoutCopyingOrTruncatingIt",
+              "CaseSensitiveDirectory_UpdatesOnlyTheExactCasedTarget",
+              "ContentUpdate_WriteDenyingDaclRetainsOriginalAndIndependentStreams",
+              "NativeHandles_CreateFlushRenameAndDeleteWithoutPathFallbacks",
+              "ContentUpdate_HardLinkSubstitutionLeavesBothObjectsUnchanged",
+              "CreatedDirectory_RetiresOnlyItsExactIdentity",
+              "ContentWrites_UseExactUtf16ChildNames",
+          }
           required = {
               "younics.sunder.package.maker": {"BuilderPathIdentityTests": 9, "BuilderWindowsCachePrivacyTests": 11, "BuilderPackagePathIdentityTests": 7},
-              "younics.ai.agent.execution.local": {"WindowsSecureMutationTests": 46},
+              "younics.ai.agent.execution.local": {"WindowsSecureMutationTests": len(local_native_cases)},
           }
           required_methods = {
               "younics.sunder.package.maker": {
@@ -241,6 +165,10 @@ jobs:
                                   observed_methods[name].append((result.get("testName"), result.get("outcome")))
                   for name, rows in observed.items():
                       assert len(rows) == classes[name] and len({test for test, _ in rows}) == classes[name], (package, rid, name, rows)
+                      if package == "younics.ai.agent.execution.local":
+                          expected = {"Sunder.Package.Agent.Execution.Local.Tests.WindowsSecureMutationTests." + case for case in local_native_cases}
+                          actual = {test for test, _ in rows}
+                          assert actual == expected, (package, rid, name, "missing", sorted(expected - actual), "unexpected", sorted(actual - expected))
                       assert all(outcome == "Passed" for _, outcome in rows), (package, rid, name, rows)
                       print(f"{package} / {rid} / {name}: {len(rows)} passed; zero skipped")
                   for name, rows in observed_methods.items():
