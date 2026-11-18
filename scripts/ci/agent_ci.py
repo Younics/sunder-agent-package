@@ -159,11 +159,22 @@ def prepare(args):
     scope = project_scope.packages(source, projects, props, env)
     candidates, catalog = selected_files(args, source, core, scope) if scope else ([], None)
     selected = inputs.verify_selected_files(source, candidates, catalog, scope) if scope else {}
+    restore_inputs = {}
+    if scope:
+        paths = [str(selected[key]) for key in sorted(selected)]
+        inputs.require(all(not any(c in path for c in "%\r\n;") for path in [str(catalog), *paths]), "Ambiguous MSBuild input path")
+        # Core hydrates missing contracts during ordinary NuGet restore. Bind its
+        # verified byte sources before that first restore, not just the later
+        # explicit hydration. Do not leak these restore-only inputs into tests.
+        restore_inputs = dict(SunderPlatformCatalogPath=str(catalog))
+        if paths:
+            restore_inputs["SunderPackageCandidatePath"] = "%3B".join(paths)
     root = new_directory(args.work)
     home.mkdir()
     try:
         for project in projects:
-            subprocess.run(["dotnet", "restore", str(source / project), "--locked-mode", *arguments(props)], env=env, check=True)
+            subprocess.run(["dotnet", "restore", str(source / project), "--locked-mode", *arguments(props),
+                            *arguments(restore_inputs)], env=env, check=True)
         tools = (core_tools.verify(core, args.tools) if getattr(args, "tools", None)
                  else core_tools.prepare(core, root / "tools"))
         package_tools = (core_tools.package_tasks(source,

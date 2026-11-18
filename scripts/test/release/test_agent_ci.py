@@ -297,6 +297,10 @@ class AgentCiTests(unittest.TestCase):
         restores = [c for c in self.commands if c[:2] == ["dotnet", "restore"]]
         self.assertEqual(2, len(restores))
         self.assertTrue(all("--locked-mode" in c and "-r" not in c for c in restores))
+        restore = next(command for command in restores if command[2] == str((self.source / "Sunder.AgentPackage.slnx").resolve()))
+        self.assertIn("-p:SunderPlatformCatalogPath=" + str(self.catalog_path.resolve()), restore)
+        self.assertIn("-p:SunderPackageCandidatePath=" + str(self.archive.resolve()), restore)
+        self.assertNotIn("-p:SunderRestoreContracts=false", restore)
         hydration = [c for c in self.commands if "-t:RestoreSunderContracts" in c]
         self.assertEqual(15, len(hydration))
         self.assertEqual(14, sum(any(a.startswith("-p:SunderPackageCandidatePath=") for a in c) for c in hydration))
@@ -307,6 +311,28 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual(str(self.catalog_path.resolve()), env["SUNDER_AGENT_SOURCE_PLATFORM_CATALOG"])
         self.assertEqual("true", state["properties"]["SunderPackageBuildTaskSourceIsImmutable"])
         self.assertNotIn("GeneratePackageOnBuild", state["properties"])
+        self.assertNotIn("SunderPackageCandidatePath", state["properties"])
+        self.assertNotIn("SunderPlatformCatalogPath", state["properties"])
+
+    def test_bootstrap_owner_supplies_verified_catalog_to_initial_restore_without_a_candidate_seed(self):
+        tools = Path(ci.inputs.load(self.prepare())["tools"])
+        owner = self.rows[0]
+        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "owner-ci", mode="package",
+                                  packages=json.dumps([owner["packageId"]]), candidate=[], catalog=self.catalog_path,
+                                  inputs=None, tools=tools)
+        result = subprocess.CompletedProcess([], 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
+        with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", return_value=result) as run, \
+             patch("core_tools.package_tasks", return_value={name: tools / name for name in ci.inputs.TOOL_FILES}), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            ci.prepare(args)
+        restore = next(call.args[0] for call in run.call_args_list if call.args[0][:2] == ["dotnet", "restore"])
+        self.assertIn("-p:SunderPlatformCatalogPath=" + str(self.catalog_path.resolve()), restore)
+        self.assertFalse(any(part.startswith("-p:SunderPackageCandidatePath=") for part in restore))
+        self.assertNotIn("-p:SunderRestoreContracts=false", restore)
+        state = ci.inputs.load(args.work / "ci-state.json")
+        self.assertEqual([], state["candidates"])
+        self.assertEqual([owner["packageId"]], state["packages"])
+        self.assertFalse((self.source / ".sunder/contract-inputs").exists())
 
     def test_changed_tool_or_selected_archive_is_rejected_before_build(self):
         state_path = self.prepare()

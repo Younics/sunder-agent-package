@@ -111,6 +111,10 @@ validator. It invokes Core's `RestoreSunderContracts`, uses an isolated cache an
 retained toolset, and runs normal parallel builds. Generated test providers are a
 project dependency built with the tests; discovery and execution retain per-run
 evidence. It does not write approval or cold-release receipts.
+Verified candidate/catalog paths are supplied to the initial ordinary NuGet restore,
+where Core also hydrates missing contracts. These restore-only byte sources are not
+inherited by test/build children. The import-free owner supplies only its exact
+catalog, without an empty candidate override or a runner-local input seed.
 Package-mode preparation selects the installed locked NuGet Build tasks and binds
 all their hashes into the prepared state. Native producers and composition therefore
 use identical published tooling across operating systems; platform-built Core tools
