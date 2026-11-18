@@ -59,7 +59,9 @@ internal sealed class TestApplication : Application
         // of an optional App reference, just as with the optional Skia renderer.
         if (Type.GetType("Sunder.App.Services.ThemeManager, Sunder.App") is { } managerType)
         {
-            var manager = managerType.GetConstructor([typeof(Application)])!.Invoke([this]);
+            // Reflection still requires the optional ShellState parameter.
+            var manager = Activator.CreateInstance(managerType, [this, null])
+                ?? throw new InvalidOperationException("The source App theme manager could not be constructed.");
             managerType.GetMethod("Initialize")!.Invoke(manager, null);
             return;
         }

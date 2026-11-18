@@ -141,6 +141,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(appAssembly.FullName[..^4] + ".pdb", entry.FullName));
     }
 
-    private static Task Run(string root, params string[] arguments) => BuilderSourceMigrationTests.Run(root, arguments);
+    private static Task<string> Run(string root, params string[] arguments) => BuilderSourceMigrationTests.Run(root, arguments);
     private static string Escape(string value) => System.Security.SecurityElement.Escape(value)!;
 }

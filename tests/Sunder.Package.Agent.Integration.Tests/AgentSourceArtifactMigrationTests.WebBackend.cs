@@ -24,8 +24,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             new XElement("ItemGroup", references.Select(path => new XElement("Reference", new XAttribute("Include", Path.GetFileNameWithoutExtension(path)), new XAttribute("HintPath", path))))))
             .Save(Path.Combine(directory, "Backend.csproj"));
         await Run(directory, "restore", "Backend.csproj", "--disable-parallel");
-        await Run(directory, "build", "Backend.csproj", "--no-restore");
-        using var bytes = File.OpenRead(Path.Combine(directory, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/Sunder.Package.Agent.Tests.dll"));
+        var diagnostics = await Run(directory, "build", "Backend.csproj", "--no-restore");
+        using var bytes = File.OpenRead(BuilderSourceMigrationTests.RequireProbeOutput(directory, "Sunder.Package.Agent.Tests", diagnostics));
         var assembly = load.LoadFromStream(bytes);
         var type = assembly.GetType("WebArtifactBackend", true)!;
         var backend = Activator.CreateInstance(type)!;
