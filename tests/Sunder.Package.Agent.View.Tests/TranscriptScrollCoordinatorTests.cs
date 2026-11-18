@@ -971,6 +971,15 @@ public sealed class TranscriptScrollCoordinatorTests
             coordinator.DiagnosticSnapshot.Mutation?.Mode);
 
         renderer.ClearSelection();
+        // Clearing selection releases deferred Markdown, but headless layout
+        // still needs render passes before geometry can settle.
+        for (var attempt = 0;
+             attempt < 200 && coordinator.DiagnosticSnapshot.Mutation?.Status
+                 == TranscriptViewportMutationStatus.Active;
+             attempt++)
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+        }
         await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(
             TranscriptViewportMutationStatus.Completed,
