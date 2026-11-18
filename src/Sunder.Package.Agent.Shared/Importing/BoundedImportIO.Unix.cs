@@ -28,6 +28,9 @@ internal static partial class BoundedImportIO
     private static int UnixCloseOnExecFlag => OperatingSystem.IsMacOS() ? 0x01000000 : 0x00080000;
     private static int UnixNonBlockingFlag => OperatingSystem.IsMacOS() ? 0x00000004 : 0x00000800;
 
+    private static bool UseDarwinInode64
+        => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
+
     private static void EnsureSupportedArchitecture()
     {
         if (RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64)) throw UnsupportedArchitecture();
@@ -82,7 +85,7 @@ internal static partial class BoundedImportIO
             UnixReadOnly | UnixDirectoryFlag | UnixNoFollowFlag | UnixCloseOnExecFlag, 0);
         if (duplicate < 0)
             throw new IOException($"Could not enumerate import directory '{directoryPath}'.", new Win32Exception(Marshal.GetLastPInvokeError()));
-        var nativeDirectory = FileDescriptorOpenDirectory(duplicate);
+        var nativeDirectory = UseDarwinInode64 ? FileDescriptorOpenDirectoryDarwinInode64(duplicate) : FileDescriptorOpenDirectory(duplicate);
         if (nativeDirectory == IntPtr.Zero)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -94,7 +97,7 @@ internal static partial class BoundedImportIO
             while (true)
             {
                 Marshal.SetLastPInvokeError(0);
-                var entry = ReadDirectory(nativeDirectory);
+                var entry = UseDarwinInode64 ? ReadDirectoryDarwinInode64(nativeDirectory) : ReadDirectory(nativeDirectory);
                 if (entry == IntPtr.Zero)
                 {
                     var error = Marshal.GetLastPInvokeError();
@@ -141,7 +144,9 @@ internal static partial class BoundedImportIO
         var buffer = Marshal.AllocHGlobal(256);
         try
         {
-            if (FStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
+            var descriptor = handle.DangerousGetHandle().ToInt32();
+            var result = UseDarwinInode64 ? FStatDarwinInode64(descriptor, buffer) : FStat(descriptor, buffer);
+            if (result != 0)
                 throw new IOException($"Could not inspect import source '{path}'.", new Win32Exception(Marshal.GetLastPInvokeError()));
             return OperatingSystem.IsMacOS() ? ReadMacIdentity(buffer, path) : ReadLinuxIdentity(buffer, path);
         }
@@ -197,10 +202,15 @@ internal static partial class BoundedImportIO
         int flags, nint unused3, nint unused4, nint unused5, nint unused6, nint unused7, uint mode);
 
     [DllImport("libc", EntryPoint = "fstat", SetLastError = true)] private static extern int FStat(int descriptor, IntPtr buffer);
+    // Darwin x64's bare symbols retain legacy inode layouts. These are the
+    // inode64 stat/dirent layouts parsed above; ARM64 uses unsuffixed symbols.
+    [DllImport("libc", EntryPoint = "fstat$INODE64", SetLastError = true)] private static extern int FStatDarwinInode64(int descriptor, IntPtr buffer);
     [DllImport("libc", EntryPoint = "mkdirat", SetLastError = true)]
     private static extern int MakeDirectoryAt(int directoryFileDescriptor, [MarshalAs(UnmanagedType.LPUTF8Str)] string path, uint mode);
     [DllImport("libc", EntryPoint = "fdopendir", SetLastError = true)] private static extern IntPtr FileDescriptorOpenDirectory(int fileDescriptor);
+    [DllImport("libc", EntryPoint = "fdopendir$INODE64", SetLastError = true)] private static extern IntPtr FileDescriptorOpenDirectoryDarwinInode64(int fileDescriptor);
     [DllImport("libc", EntryPoint = "readdir", SetLastError = true)] private static extern IntPtr ReadDirectory(IntPtr directory);
+    [DllImport("libc", EntryPoint = "readdir$INODE64", SetLastError = true)] private static extern IntPtr ReadDirectoryDarwinInode64(IntPtr directory);
     [DllImport("libc", EntryPoint = "closedir", SetLastError = true)] private static extern int CloseDirectory(IntPtr directory);
     [DllImport("libc", EntryPoint = "close", SetLastError = true)] private static extern int Close(int descriptor);
 }

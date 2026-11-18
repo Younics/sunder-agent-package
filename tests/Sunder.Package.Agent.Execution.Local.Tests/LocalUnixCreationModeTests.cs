@@ -14,11 +14,13 @@ public sealed class LocalUnixCreationModeTests
         var root = Directory.CreateTempSubdirectory("sunder-unix-create-").FullName;
         try
         {
-            const string name = "private.txt";
+            const string name = "private-文-😀.txt";
             var path = Path.Combine(root, name);
             using var parent = new SafeFileHandle((IntPtr)LocalUnixNative.Open(root,
                 LocalUnixNative.ReadOnly | LocalUnixNative.DirectoryFlag | LocalUnixNative.CloseOnExecFlag), ownsHandle: true);
             Assert.False(parent.IsInvalid);
+            Assert.Equal(LocalSecureNodeKind.Directory,
+                LocalUnixNative.GetNodeKind(LocalUnixNative.ReadMetadata(parent.DangerousGetHandle().ToInt32()), root));
             var flags = LocalUnixNative.WriteOnly | LocalUnixNative.CreateFlag | LocalUnixNative.ExclusiveFlag
                 | LocalUnixNative.NoFollowFlag | LocalUnixNative.CloseOnExecFlag;
             var descriptor = relative
@@ -29,6 +31,10 @@ public sealed class LocalUnixCreationModeTests
             if (!OperatingSystem.IsWindows())
                 Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
             RandomAccess.Write(created, "private file"u8, 0);
+            var metadata = LocalUnixNative.ReadMetadata(descriptor);
+            Assert.Equal(LocalSecureNodeKind.RegularFile, LocalUnixNative.GetNodeKind(metadata, path));
+            Assert.Equal((long)"private file"u8.Length, metadata.Length);
+            Assert.Equal(new[] { name }, LocalUnixNative.EnumerateNames(parent.DangerousGetHandle().ToInt32()));
             Assert.Equal("private file", File.ReadAllText(path));
             Assert.Equal(-1, relative
                 ? LocalUnixNative.OpenAt(parent.DangerousGetHandle().ToInt32(), name, flags, 0x180)

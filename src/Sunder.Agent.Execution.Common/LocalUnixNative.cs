@@ -31,6 +31,9 @@ internal static partial class LocalUnixNative
 
     public static int ExclusiveFlag => OperatingSystem.IsMacOS() ? 0x00000800 : 0x00000080;
 
+    private static bool UseDarwinInode64
+        => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
+
     public static int Open(string path, int flags, uint mode = 0)
         => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
             ? OpenAppleArm64(path, flags, 0, 0, 0, 0, 0, 0, mode)
@@ -63,7 +66,8 @@ internal static partial class LocalUnixNative
         var buffer = Marshal.AllocHGlobal(StatBufferSize);
         try
         {
-            if (FStat(fileDescriptor, buffer) != 0)
+            var result = UseDarwinInode64 ? FStatDarwinInode64(fileDescriptor, buffer) : FStat(fileDescriptor, buffer);
+            if (result != 0)
             {
                 throw Error("fstat");
             }
@@ -108,7 +112,7 @@ internal static partial class LocalUnixNative
             throw Error("openat directory duplicate");
         }
 
-        var directory = FdOpenDir(duplicate);
+        var directory = UseDarwinInode64 ? FdOpenDirDarwinInode64(duplicate) : FdOpenDir(duplicate);
         if (directory == IntPtr.Zero)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -121,7 +125,7 @@ internal static partial class LocalUnixNative
             while (true)
             {
                 Marshal.SetLastPInvokeError(0);
-                var entry = ReadDir(directory);
+                var entry = UseDarwinInode64 ? ReadDirDarwinInode64(directory) : ReadDir(directory);
                 if (entry == IntPtr.Zero)
                 {
                     var error = Marshal.GetLastPInvokeError();
