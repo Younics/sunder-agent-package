@@ -33,11 +33,12 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
 
     internal SkillSettingsViewModel(
         ISkillManagementGateway gateway,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IPresentationDispatcher? uiDispatcher = null)
     {
         _gateway = gateway;
         _ownerAvailability = gateway as IOwnerStreamAvailability;
-        _uiDispatcher = PresentationDispatcher.Capture();
+        _uiDispatcher = uiDispatcher ?? PresentationDispatcher.Capture();
         _successStatus = new TimedStatusController(timeProvider, _uiDispatcher);
         _tasks = new PresentationTaskScope((exception, token) => _uiDispatcher.InvokeAsync(() =>
         {
@@ -237,29 +238,34 @@ public sealed partial class SkillSettingsViewModel : ObservableObject,
             var displayName = selected.DisplayName;
             var deletedSkillId = selected.SkillId;
             await _gateway.DeleteAsync(deletedSkillId, mutation.CancellationToken);
-            if (!_requests.IsCurrent(mutation)
-                || intentRevision != IntentRevision)
+            await PublishOnUiThreadAsync(() =>
             {
-                return;
-            }
+                if (_disposed || !_requests.IsCurrent(mutation)
+                    || intentRevision != IntentRevision)
+                {
+                    return;
+                }
 
-            DiscardPendingSkillRefresh();
-            if (IsCompactLayout)
-            {
-                _listDetail.ShowList();
-                ClearStatus();
-            }
-            else
-            {
-                SetStatus($"Deleted skill '{displayName}'.", SkillStatusKind.Success, autoClear: true);
-            }
+                // Delete and streamed refreshes reconcile the same collection.
+                // Use their common dispatcher/publication gate even without a UI.
+                DiscardPendingSkillRefresh();
+                if (IsCompactLayout)
+                {
+                    _listDetail.ShowList();
+                    ClearStatus();
+                }
+                else
+                {
+                    SetStatus($"Deleted skill '{displayName}'.", SkillStatusKind.Success, autoClear: true);
+                }
 
-            _listDetail.Reconcile(
-                Skills.Where(skill => !string.Equals(
-                    skill.SkillId,
-                    deletedSkillId,
-                    StringComparison.OrdinalIgnoreCase)).ToArray());
-            _tasks.Run(_ => _runtimeRefresh.MarkDirty());
+                _listDetail.Reconcile(
+                    Skills.Where(skill => !string.Equals(
+                        skill.SkillId,
+                        deletedSkillId,
+                        StringComparison.OrdinalIgnoreCase)).ToArray());
+                _tasks.Run(_ => _runtimeRefresh.MarkDirty());
+            }, mutation.CancellationToken);
         }
         catch (OperationCanceledException) when (mutation.CancellationToken.IsCancellationRequested)
         {

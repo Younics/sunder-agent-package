@@ -3,6 +3,7 @@ extern alias SkillsApp;
 using SkillsApp::Sunder.Package.Agent.Skills.PackageViews;
 using SkillsApp::Sunder.Package.Agent.Skills.Runtime;
 using SkillsApp::Sunder.Package.Agent.Skills.Services;
+using SkillsApp::Sunder.Package.Agent.Shared.Presentation;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -151,6 +152,29 @@ public sealed class SkillSettingsRaceTests
         Assert.Same(created, viewModel.SelectedSkill);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeleteCompletionPublishesThroughTheSameDispatcherAsRuntimeRefresh(bool compact)
+    {
+        var gateway = new DeleteCreateRaceSkillGateway();
+        var dispatcher = new RecordingSkillDispatcher();
+        using var viewModel = new SkillSettingsViewModel(gateway, uiDispatcher: dispatcher) { IsCompactLayout = compact };
+        await viewModel.InitializeAsync();
+        viewModel.ActivateSkill(Assert.Single(viewModel.Skills));
+        var publications = new List<bool>();
+        viewModel.Skills.CollectionChanged += (_, _) => publications.Add(dispatcher.IsPublishing);
+
+        await viewModel.DeleteSelectedSkillCommand.ExecuteAsync(null);
+        gateway.ReleaseDelayedDeleteSnapshot.TrySetResult();
+        await viewModel.RuntimeRefreshIdle.WaitAsync(TimeSpan.FromSeconds(2));
+
+        Assert.Empty(viewModel.Skills);
+        Assert.False(viewModel.IsStatusError, viewModel.StatusText);
+        Assert.NotEmpty(publications);
+        Assert.All(publications, published => Assert.True(published, "Delete and refresh must share the dispatcher publication boundary."));
+    }
+
     [Fact]
     public async Task ImportCompletionAndRetryAfterDisposalAreIgnored()
     {
@@ -256,6 +280,20 @@ public sealed class SkillSettingsRaceTests
             => throw new NotSupportedException();
 
         public void RaiseSkillsChanged() => SkillsChanged?.Invoke();
+    }
+
+    private sealed class RecordingSkillDispatcher : IPresentationDispatcher
+    {
+        public bool IsPublishing { get; private set; }
+        public bool CheckAccess() => IsPublishing;
+        public Task InvokeAsync(Action action)
+        {
+            var previous = IsPublishing;
+            IsPublishing = true;
+            try { action(); }
+            finally { IsPublishing = previous; }
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class PendingList
