@@ -57,9 +57,11 @@ public sealed class OperationCreatedParentTests : IDisposable
         {
             ResourceOperation = compensation.ResourceOperation! with { AuthorityActivationId = Guid.NewGuid().ToString("N") },
         };
+        Assert.False(LocalSecurePathEngine.HasCurrentOutsideCapabilities(config, wrongActivation, references));
         var rejected = await Delete(wrongActivation);
         Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
         Assert.Equal("approved", File.ReadAllText(Path.Combine(_root, "new/sub/a.txt")));
+        Assert.True(LocalSecurePathEngine.HasCurrentOutsideCapabilities(config, compensation, references));
         var deleted = await Delete(compensation);
         Assert.False(deleted.IsError, deleted.Summary);
         Assert.False(File.Exists(Path.Combine(_root, "new/sub/a.txt")));

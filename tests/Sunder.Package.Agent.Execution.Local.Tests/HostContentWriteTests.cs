@@ -10,7 +10,8 @@ namespace Sunder.Package.Agent.Execution.Local.Tests;
 // availability guard. Public/package acceptance is qualified separately.
 public sealed class HostContentWriteTests : IDisposable
 {
-    private readonly string _root = Directory.CreateTempSubdirectory("sunder-content-write-").FullName;
+    private readonly string _root = Directory.CreateDirectory(Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(),
+        "sunder-content-write-" + Guid.NewGuid().ToString("N"))).FullName;
 
     [Theory]
     [InlineData("")]

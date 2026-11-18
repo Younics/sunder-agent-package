@@ -106,6 +106,10 @@ internal static class LocalSecurePathEngine
                 {
                     ResourceOperation = directoryOperation with { ResourceIndex = claim.ResourceIndex },
                 });
+                if (directoryLease is null && capabilities.Any(LocalResourceReference.IsDirectoryOperationReference))
+                {
+                    throw new LocalResourceReapprovalRequiredException(requestedPath);
+                }
             }
             if (claim is not null && claim.ConfiguredRoot is null)
             {
@@ -309,6 +313,11 @@ internal static class LocalSecurePathEngine
             try
             {
                 using var directoryLease = resourceReferences.BorrowDirectoryOperation(context with { ResourceOperation = exactOperation });
+                if (directoryLease is null
+                    && context.ApprovedResourceCapabilities.Any(LocalResourceReference.IsDirectoryOperationReference))
+                {
+                    return false;
+                }
                 using var authority = HostSecurePathEngine.Capture(
                     config.WorkspacePaths,
                     claim.LogicalPath,
