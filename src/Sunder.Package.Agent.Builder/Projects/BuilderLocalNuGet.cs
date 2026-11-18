@@ -18,7 +18,8 @@ internal static partial class BuilderLocalNuGet
         ["Sunder.Package.Build", "Sunder.Package.Templates", "Sunder.Sdk", "Sunder.Sdk.Avalonia", "Sunder.Sdk.Stacks", "Sunder.Sdk.Worker"];
 
     /// <summary>Diagnostic entry point and production job resolution. A missing pointer returns the original options.</summary>
-    internal static async Task<BuilderProjectDriverOptions> LoadOptionsAsync(BuilderProjectDriverOptions options, CancellationToken token = default)
+    internal static async Task<BuilderProjectDriverOptions> LoadOptionsAsync(BuilderProjectDriverOptions options, CancellationToken token = default,
+        Action? afterCopyChunk = null)
     {
         token.ThrowIfCancellationRequested();
         var root = BuilderJobValidation.Absolute(options.CacheRootPath, "Builder tools cache");
@@ -40,7 +41,7 @@ internal static partial class BuilderLocalNuGet
             if (source.StartsWith(@"\\", StringComparison.Ordinal)) throw new InvalidDataException("The NuGet override requires a local folder, not a network share.");
             CheckPath(source);
             if (!Directory.Exists(source)) throw new DirectoryNotFoundException($"Local NuGet feed is missing: {source}");
-            return await RetainAsync(options, root, source, token).ConfigureAwait(false);
+            return await RetainAsync(options, root, source, token, afterCopyChunk).ConfigureAwait(false);
         }
         catch (Exception error) when (error is IOException or InvalidDataException or ArgumentException or JsonException or
             UnauthorizedAccessException or System.Xml.XmlException or InvalidOperationException or KeyNotFoundException)
@@ -49,7 +50,8 @@ internal static partial class BuilderLocalNuGet
         }
     }
 
-    private static async Task<BuilderProjectDriverOptions> RetainAsync(BuilderProjectDriverOptions options, string root, string source, CancellationToken token)
+    private static async Task<BuilderProjectDriverOptions> RetainAsync(BuilderProjectDriverOptions options, string root, string source, CancellationToken token,
+        Action? afterCopyChunk)
     {
         var selected = BuilderLocalPackageFeed.Select(source, PackageIds.Order(StringComparer.Ordinal).ToArray(), npm: false);
         var versions = selected.ToDictionary(item => item.Id, item => item.Version, StringComparer.Ordinal);
@@ -69,7 +71,7 @@ internal static partial class BuilderLocalNuGet
             {
                 token.ThrowIfCancellationRequested();
                 var destination = Path.Combine(stagedFeed, item.Name);
-                var package = await CopyPackageAsync(item.Path, destination, MaximumTotalBytes - total, token).ConfigureAwait(false);
+                var package = await CopyPackageAsync(item.Path, destination, MaximumTotalBytes - total, token, afterCopyChunk).ConfigureAwait(false);
                 if ((total += package.Length) > MaximumTotalBytes) throw new InvalidDataException("The six local NuGet archives exceed 1 GiB.");
                 await ValidatePackageAsync(destination, item.Id, item.Version, versions, token).ConfigureAwait(false);
                 packages.Add(package);
@@ -139,7 +141,8 @@ internal static partial class BuilderLocalNuGet
 
     private sealed record PackageBytes(string Name, long Length, string Sha256);
 
-    private static async Task<PackageBytes> CopyPackageAsync(string source, string destination, long remaining, CancellationToken token)
+    private static async Task<PackageBytes> CopyPackageAsync(string source, string destination, long remaining, CancellationToken token,
+        Action? afterCopyChunk)
     {
         CheckPath(source);
         var stamp = File.GetLastWriteTimeUtc(source);
@@ -156,6 +159,7 @@ internal static partial class BuilderLocalNuGet
             {
                 if ((copied += read) > length) throw new IOException("Local NuGet archive changed while being copied.");
                 await output.WriteAsync(buffer.AsMemory(0, read), token).ConfigureAwait(false);
+                afterCopyChunk?.Invoke();
             }
             if (copied != length) throw new IOException("Local NuGet archive was truncated while being copied.");
             await output.FlushAsync(token).ConfigureAwait(false);

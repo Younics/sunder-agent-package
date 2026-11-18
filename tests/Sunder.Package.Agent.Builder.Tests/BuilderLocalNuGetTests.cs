@@ -275,18 +275,18 @@ public sealed class BuilderLocalNuGetTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, cancellation.Token));
         Assert.False(Directory.Exists(fixture.Snapshots));
 
-        fixture.WritePackage("Sunder.Package.Build", paddingBytes: 64 * 1024 * 1024);
+        fixture.WritePackage("Sunder.Package.Build", paddingBytes: 128 * 1024);
         using var copying = new CancellationTokenSource();
-        var work = BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, copying.Token);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!Directory.Exists(fixture.Snapshots) || !Directory.EnumerateDirectories(fixture.Snapshots, ".stage-*").Any(stage =>
-            File.Exists(Path.Combine(stage, "feed", "Sunder.Package.Build.1.1.0.nupkg"))))
+        var copiedChunk = false;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, copying.Token, () =>
         {
-            Assert.False(work.IsCompleted, "Resolution must still be copying the bounded fixture when cancelled.");
-            await Task.Delay(1, deadline.Token);
-        }
-        copying.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => work);
+            var stage = Assert.Single(Directory.EnumerateDirectories(fixture.Snapshots, ".stage-*"));
+            var target = Path.Combine(stage, "feed", "Sunder.Package.Build.1.1.0.nupkg");
+            Assert.InRange(new FileInfo(target).Length, 1, new FileInfo(fixture.Archive("Sunder.Package.Build")).Length - 1);
+            copiedChunk = true;
+            copying.Cancel();
+        }));
+        Assert.True(copiedChunk, "Cancellation must occur after an actual partial staging write.");
         Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.Snapshots));
     }
 
