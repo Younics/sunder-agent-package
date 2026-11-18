@@ -176,8 +176,8 @@ public sealed class AgentCatalogSourceMigrationTests
                 </Project>
                 """);
             await BuilderSourceMigrationTests.Run(root, "restore", "Catalog.csproj", "--disable-parallel");
-            await BuilderSourceMigrationTests.Run(root, "build", "Catalog.csproj", "--no-restore");
-            using var content = File.OpenRead(Path.Combine(root, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/AgentCatalogSource.dll"));
+            var diagnostics = await BuilderSourceMigrationTests.Run(root, "build", "Catalog.csproj", "--no-restore");
+            using var content = File.OpenRead(BuilderSourceMigrationTests.RequireProbeOutput(root, "AgentCatalogSource", diagnostics));
             var assembly = load.LoadFromStream(content);
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name!.StartsWith("Sunder.Package.Agent", StringComparison.Ordinal));
             Assert.DoesNotContain(assembly.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Agent.Execution.Common");

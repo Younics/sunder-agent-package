@@ -59,6 +59,13 @@ public sealed partial class BuilderSourceMigrationTests
     {
         var start = new ProcessStartInfo(DotnetBuildHost) { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         start.ArgumentList.Add(arguments[0]);
+        // Newer SDK CLIs can infer --configuration from the inherited environment
+        // independently of forwarded MSBuild properties. Pin the CLI option too.
+        if (arguments[0] is "build" or "run")
+        {
+            start.ArgumentList.Add("--configuration");
+            start.ArgumentList.Add(FixtureConfiguration);
+        }
         start.ArgumentList.Add("-p:Configuration=" + FixtureConfiguration);
         start.ArgumentList.Add("-v:minimal");
         foreach (var argument in arguments.Skip(1)) start.ArgumentList.Add(argument);
