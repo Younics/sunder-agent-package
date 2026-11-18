@@ -94,11 +94,11 @@ jobs:
         run: |
           set -euo pipefail
           packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"
-          args=()
+          args=(--mode "$MODE" --packages "$packages")
           [[ "$STRESS" != true ]] || args+=(--stress)
           python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
             --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" \
-            --mode "$MODE" --packages "$packages" "${args[@]}"
+            "${args[@]}"
       - name: Retain component diagnostics
         if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

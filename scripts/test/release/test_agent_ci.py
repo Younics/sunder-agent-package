@@ -1,9 +1,11 @@
 """Ordinary CI uses exact inputs without production approval or cache synthesis."""
 import argparse
+from contextlib import nullcontext
 import io
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import shutil
 import subprocess
@@ -20,6 +22,7 @@ import platform
 import test_lanes
 import ci_platforms
 import bash_runtime
+import test_filesystems
 
 fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].setUp
 
@@ -79,6 +82,29 @@ class AgentCiTests(unittest.TestCase):
         run.assert_not_called()
         prepare.assert_not_called()
         self.assertFalse((self.source / "artifacts/reports").exists())
+
+    def test_workflow_optional_stress_arguments_preserve_bash_nounset_and_exact_arguments(self):
+        workflows = SCRIPTS.parent / ".github/workflows"
+        for workflow, step, component in (
+                ("sunder-package-component.yml", "Build and test the selected component", True),
+                ("sunder-package-smoke.yml", "Build and test selected reference mode", False)):
+            text = (workflows / workflow).read_text()
+            section = text.split("      - name: " + step + "\n", 1)[1].split("\n      - name:", 1)[0]
+            script = "set -euo pipefail\n" + textwrap.dedent(section.split("        run: |\n", 1)[1])
+            script = script.replace("python3 -B scripts/ci/agent_ci.py validate", 'printf "%s\\n" validate')
+            for stress in ("false", "true"):
+                with self.subTest(workflow=workflow, stress=stress):
+                    environment = {**os.environ, "RUNNER_TEMP": str(self.root / "input space"),
+                                   "MODE": "package", "PACKAGE": "younics.ai.agent", "STRESS": stress}
+                    result = subprocess.run(bash_runtime.command("-c", script), env=environment,
+                                            text=True, capture_output=True, timeout=10)
+                    self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                    expected = ["validate", "--core", "../sunder-core", "--inputs",
+                                environment["RUNNER_TEMP"] + "/agent-inputs", "--tools",
+                                environment["RUNNER_TEMP"] + "/core-tools", "--mode", "package"]
+                    expected += ["--packages", '["younics.ai.agent"]'] if component else ["--shared"]
+                    if stress == "true": expected.append("--stress")
+                    self.assertEqual(expected, result.stdout.splitlines())
 
     def test_selected_builds_and_reports_share_the_owned_project_inventory(self):
         selected = "younics.ai.agent.provider.openai"
@@ -567,6 +593,41 @@ class AgentCiTests(unittest.TestCase):
             test_lanes.validate("state", "source", stress=True)
         self.assertEqual(["source", "required-linux", "stress", "source-artifacts"], calls)
 
+    def test_required_linux_policy_names_current_cases_in_their_owning_projects(self):
+        rows = ci.inputs.inventory(SCRIPTS.parent)["packages"]
+        for method in test_lanes.POLICY["requiredLinux"]:
+            owner = test_lanes.POLICY["requiredLinuxOwners"][method]
+            project = next(row["projectPath"] for row in rows if row["packageId"] == owner)
+            tests = SCRIPTS.parent / "tests" / (Path(project).stem + ".Tests")
+            declarations = [path for path in tests.glob("*.cs")
+                            if re.search(r"\b(?:void|Task|ValueTask)\s+" + re.escape(method) + r"\s*\(", path.read_text())]
+            self.assertEqual(1, len(declarations), f"{owner}: required case {method} must exist exactly once")
+
+    def test_required_docker_lane_provisions_selected_image_and_never_hides_pull_failure(self):
+        self.write_test_inventory()
+        inventory = self.source / "artifacts/reports/test-inventory.json"
+        value = json.loads(inventory.read_text())
+        owner = "younics.ai.agent.execution.docker"
+        value["projects"][0]["owner"] = owner
+        inventory.write_text(json.dumps(value))
+        state = dict(source=str(self.source), selectedPackages=[owner])
+        image = "registry.test/integration@sha256:" + "a" * 64
+        for fails in (False, True):
+            calls = []
+            with self.subTest(pull_fails=fails), patch.object(ci, "context", return_value=(state, {})), \
+                 patch.object(sys, "platform", "linux"), patch.dict(os.environ, SUNDER_DOCKER_INTEGRATION_IMAGE=image), \
+                 patch.object(test_lanes, "tests", side_effect=lambda state, lane: calls.append(lane)), \
+                 patch.object(test_lanes, "source_artifacts"), patch.object(test_lanes, "report") as report, \
+                 patch.object(test_lanes, "run", side_effect=subprocess.CalledProcessError(7, "docker pull") if fails
+                              else lambda *args, **kwargs: calls.append("docker-pull")) as provision:
+                if fails:
+                    with self.assertRaises(subprocess.CalledProcessError): test_lanes.validate("state", "source")
+                else:
+                    test_lanes.validate("state", "source")
+                provision.assert_called_once_with("docker", "pull", "--", image, cwd=self.source, env={})
+                self.assertEqual(["source"] if fails else ["source", "docker-pull", "required-linux"], calls)
+                report.assert_called_once_with("source", "linux")
+
     def test_required_linux_lane_rejects_missing_test_identity_even_with_successful_command(self):
         self.write_test_inventory()
         results = self.source / "artifacts/test-results/required"
@@ -607,6 +668,65 @@ class AgentCiTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no discovery header"):
             test_lanes.discovered_tests("adapter crashed")
 
+    def test_macos_filesystem_prerequisites_partition_exact_cases_without_changing_alias_roots(self):
+        directory = self.source / "tests/Fixture.Tests"
+        directory.mkdir(parents=True)
+        (directory / "Cases.cs").write_text('''namespace Fixture;
+public class Cases {
+    [FileSystemFact(TestFileSystemCapability.CaseSensitiveDirectories, "Distinct names are required.")]
+    public void Sensitive() {}
+    [Fact]
+    public void Ordinary() {}
+}''')
+        project = "tests/Fixture.Tests/Fixture.Tests.csproj"
+        inventory = dict(projects=[dict(path=project, modes=["source"], owner="fixture",
+                                       sources=["tests/Fixture.Tests/Cases.cs"])])
+        output = self.root / "filesystem-results"
+        output.mkdir()
+        previous = dict(os.environ)
+        common = ["dotnet", "test", "solution", "--no-build", "--no-restore"]
+        for fails in (False, True):
+            calls = []
+            primary = test_lanes.TestProjectFailure(1, "ordinary assertions")
+            def execute(*args):
+                calls.append((args[4], args[5], os.environ.get("TMPDIR")))
+                if fails and len(calls) == 1: raise primary
+                return 1
+            with self.subTest(ordinary_fails=fails), patch.object(sys, "platform", "darwin"), \
+                 patch.object(ci, "context", return_value=({"home": str(self.root)}, {})), \
+                 patch.object(test_lanes, "run_project", side_effect=execute), \
+                 patch.object(test_filesystems, "case_sensitive_volume", return_value=nullcontext(self.root / "sensitive")) as volume:
+                if fails:
+                    with self.assertRaises(test_lanes.TestProjectFailure) as caught:
+                        test_lanes.run_project_with_filesystems("state", self.source, project, common, "Category!=Artifact", output, inventory, "source")
+                    self.assertIs(primary, caught.exception)
+                else:
+                    self.assertEqual(2, test_lanes.run_project_with_filesystems("state", self.source, project, common, "Category!=Artifact", output, inventory, "source"))
+                self.assertEqual("(Category!=Artifact)&FullyQualifiedName!=Fixture.Cases.Sensitive", calls[0][0])
+                self.assertEqual(previous.get("TMPDIR"), calls[0][2])
+                self.assertEqual("(Category!=Artifact)&(FullyQualifiedName=Fixture.Cases.Sensitive)", calls[1][0])
+                self.assertEqual(output / "case-sensitive", calls[1][1])
+                self.assertEqual(str(self.root / "sensitive"), calls[1][2])
+                volume.assert_called_once()
+            self.assertEqual(previous, dict(os.environ))
+
+    def test_filesystem_volume_detaches_on_test_failure_but_never_deletes_a_failed_detach(self):
+        for fails in ("test", "detach", "create"):
+            log = self.root / ("filesystem-" + fails + ".log")
+            commands = []
+            def run(arguments, **kwargs):
+                commands.append(arguments)
+                code = 7 if arguments[1] == fails else 0
+                return subprocess.CompletedProcess(arguments, code, stdout="", stderr="")
+            with self.subTest(fails=fails), patch.object(test_filesystems.subprocess, "run", side_effect=run), \
+                 patch.object(test_filesystems, "require_case_sensitive"), \
+                 patch.object(test_filesystems.shutil, "rmtree") as cleanup:
+                with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                    with test_filesystems.case_sensitive_volume(self.root, log):
+                        raise RuntimeError("test failed")
+                self.assertEqual(fails != "detach", bool(cleanup.call_count))
+                self.assertEqual(["create"] if fails == "create" else ["create", "attach", "detach"],
+                                 [command[1] for command in commands])
 
     def test_builder_diagnostics_use_release_build_then_independently_verified_focused_and_full_runs(self):
         self.write_test_inventory()

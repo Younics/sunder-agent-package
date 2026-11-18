@@ -222,6 +222,16 @@ def read_records(root: Path, suffix: str, violations: list[str]):
             violations.append(f"{path.relative_to(root)}: invalid evidence: {error}")
 
 
+def canonical_test_display_name(name: str) -> str:
+    # xUnit discovery can emit a Unicode scalar while its TRX display formatter
+    # emits the equivalent UTF-16 surrogate escapes. Do not decode literal escaped
+    # backslashes, lone surrogates, other string escapes or different test data.
+    return re.sub(
+        r"(?<!\\)((?:\\\\)*)\\u(d[89ab][0-9a-f]{2})\\u(d[cdef][0-9a-f]{2})",
+        lambda match: match[1] + chr(0x10000 + ((int(match[2], 16) - 0xd800) << 10) + int(match[3], 16) - 0xdc00),
+        name, flags=re.IGNORECASE)
+
+
 def discovery_violations(root: Path, results: list[dict[str, object]], discoveries) -> list[str]:
     """Each selection is checked against its own adapter discovery on this runner.
 
@@ -235,16 +245,17 @@ def discovery_violations(root: Path, results: list[dict[str, object]], discoveri
         expected = discovery["tests"]
         observed = [row for row in results if row["trx"] == report and row["project"] == project]
         covered.add((project, report))
-        names = Counter(row["test"] for row in observed)
-        selected = Counter(expected)
+        names = Counter(canonical_test_display_name(row["test"]) for row in observed)
+        selected = Counter(canonical_test_display_name(name) for name in expected)
         methods = {row["fullyQualifiedName"] for row in observed}
         for name, count in selected.items():
             if names[name] < count and name not in methods:
                 violations.append(f"{report}: discovery omitted result '{name}'")
         for row in observed:
-            if row["test"] not in expected and row["fullyQualifiedName"] not in expected:
+            name = canonical_test_display_name(row["test"])
+            if name not in selected and row["fullyQualifiedName"] not in expected:
                 violations.append(f"{report}: result was not discovered: '{row['test']}'")
-            elif names[row["test"]] > selected[row["test"]] and row["fullyQualifiedName"] not in expected:
+            elif names[name] > selected[name] and row["fullyQualifiedName"] not in expected:
                 violations.append(f"{report}: result repeated beyond discovery: '{row['test']}'")
         if expected and not observed:
             violations.append(f"{report}: selected project produced no results")
@@ -561,14 +572,10 @@ def expected_skip(
             should_skip = True
             reason = "A real permission-denied fixture requires a non-root Unix user."
     elif attribute == "DockerIntegrationFact":
-        if platform == "windows":
-            should_skip = True
-            reason = "The Docker bind-mount integration test requires a Unix host."
-        else:
-            should_skip = (
-                environment.get("SUNDER_DOCKER_INTEGRATION") != "1"
-                and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
-            )
+        should_skip = (
+            environment.get("SUNDER_DOCKER_INTEGRATION") != "1"
+            and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+        )
     elif attribute == "PackageArtifactsFact":
         should_skip = (
             not environment.get("SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "").strip()

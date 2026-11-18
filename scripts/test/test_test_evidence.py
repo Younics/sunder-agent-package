@@ -98,6 +98,46 @@ public sealed class EvidenceTests
         self.assertEqual(5, report["summary"]["total"])
         self.assertEqual([], report["evidenceViolations"])
 
+    def test_discovery_accepts_only_equivalent_utf16_surrogate_pair_display_escaping(self):
+        self.rows = [
+            ("UnicodeTheory", '(value: "文-😀")', "Passed", ""),
+            ("UnicodeTheory", r'(value: "\\ud83d\\ude00")', "Passed", ""),
+        ]
+        self.write_reports()
+        path = self.results / "Fixture.Tests.trx"
+        tree = ET.parse(path)
+        result = tree.find("Results/UnitTestResult")
+        original = result.get("testName")
+        discovery_path = self.results / "Fixture.Tests.discovery.json"
+        discovery = json.loads(discovery_path.read_text())
+        for spelling, equivalent in (
+                (r"\ud83d\ude00", True), (r"\uD83D\uDE00", True), (r"\\ud83d\\ude00", False),
+                (r"\ud83d", False), (r"\ude00\ud83d", False), (r"\ud83d\ude01", False)):
+            with self.subTest(spelling=spelling):
+                result.set("testName", original.replace("😀", spelling))
+                tree.write(path)
+                observed, _ = evidence.read_trx(self.results, path)
+                violations = evidence.discovery_violations(self.results, observed, [(discovery_path, discovery)])
+                self.assertEqual(not equivalent, bool(violations), violations)
+                if equivalent:
+                    # Canonical matching must retain both exact rows and multiplicity.
+                    self.assertTrue(evidence.discovery_violations(self.results, observed[:-1], [(discovery_path, discovery)]))
+                    self.assertTrue(evidence.discovery_violations(self.results, observed + [observed[0]], [(discovery_path, discovery)]))
+                    self.assertIn(spelling, observed[0]["test"], "Original report spelling must be preserved")
+
+    def test_docker_skip_policy_matches_explicit_opt_in_on_every_host(self):
+        policy = dict(attribute="DockerIntegrationFact", platform=None, capability=None,
+                      project="fixture.tests", owner="fixture", fullyQualifiedName="Fixture.Docker",
+                      reason="Set SUNDER_DOCKER_INTEGRATION=1 and provide a reachable Docker daemon.")
+        for platform in ("linux", "macos", "windows"):
+            for environment in ({}, {"SUNDER_DOCKER_INTEGRATION": "1"}, {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}):
+                with self.subTest(platform=platform, environment=environment):
+                    observed = evidence.expected_skip(policy, platform, environment)
+                    if environment:
+                        self.assertIsNone(observed, "An opted-in/required Docker case must execute")
+                    else:
+                        self.assertEqual(policy["reason"], observed["reason"])
+
     def test_discovered_theory_rows_and_whole_methods_cannot_disappear(self):
         for omitted in (1, 3):
             with self.subTest(omitted=omitted):

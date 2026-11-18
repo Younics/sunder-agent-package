@@ -90,6 +90,48 @@ def run_project(state_path, source, project, common, filter_value, output):
     return len(cases)
 
 
+def run_project_with_filesystems(state_path, source, project, common, filter_value, output, inventory, mode):
+    rows = [row for row in inventory["projects"] if row["path"] == project and row.get("sources")]
+    policies = evidence_reader()["skip_policy"](source, dict(projects=rows), mode, None, None) if sys.platform == "darwin" else []
+    methods = sorted({row["fullyQualifiedName"] for row in policies
+                      if "CaseSensitiveDirectories" in [row["capability"], *row["additionalCapabilities"]]})
+    if not methods:
+        return run_project(state_path, source, project, common, filter_value, output)
+    # Keep alias/security cases on the ordinary volume. Only cases declaring the
+    # distinct-name prerequisite move to the provisioned volume, exactly once.
+    base = f"({filter_value})&" if filter_value else ""
+    ordinary = base + "&".join("FullyQualifiedName!=" + method for method in methods)
+    sensitive = base + "(" + "|".join("FullyQualifiedName=" + method for method in methods) + ")"
+    count, failure = 0, None
+    try:
+        count += run_project(state_path, source, project, common, ordinary, output)
+    except TestProjectFailure as error:
+        failure = error
+    import agent_ci
+    from test_filesystems import case_sensitive_volume
+    state, _ = agent_ci.context(state_path)
+    scoped = output / "case-sensitive"
+    scoped.mkdir(exist_ok=True)
+    previous = os.environ.get("TMPDIR")
+    try:
+        with case_sensitive_volume(state["home"], scoped / "filesystem.log") as temporary:
+            try:
+                os.environ["TMPDIR"] = str(temporary)
+                count += run_project(state_path, source, project, common, sensitive, scoped)
+            except TestProjectFailure as error:
+                if failure is None: failure = error
+                else: agent_ci.note_error(failure, str(error))
+            finally:
+                if previous is None: os.environ.pop("TMPDIR", None)
+                else: os.environ["TMPDIR"] = previous
+    except BaseException as error:
+        if failure is None: raise
+        agent_ci.note_error(failure, "Case-sensitive prerequisite also failed: " + agent_ci.describe_error(error))
+        raise failure from error
+    if failure is not None: raise failure
+    return count
+
+
 def tests(state_path, lane):
     import agent_ci
     state, _ = agent_ci.context(state_path)
@@ -127,7 +169,7 @@ def tests(state_path, lane):
         count, failures = 0, []
         for project in projects:
             try:
-                count += run_project(state_path, source, project, common, filter_value, output)
+                count += run_project_with_filesystems(state_path, source, project, common, filter_value, output, inventory, mode)
             except TestProjectFailure as error:
                 if lane not in ("source", "package"): raise
                 failures.append((project, error))
@@ -193,7 +235,7 @@ def source_artifacts(state_path):
 
 def validate(state_path, mode, stress=False):
     import agent_ci
-    state, _ = agent_ci.context(state_path)
+    state, environment = agent_ci.context(state_path)
     source = Path(state["source"])
     previous = dict(os.environ)
     # Match inventory scoping and required-case filters, which use sys.platform.
@@ -220,7 +262,15 @@ def validate(state_path, mode, stress=False):
                 if platform == "linux":
                     os.environ.update(SUNDER_DOCKER_INTEGRATION="1", SUNDER_REQUIRE_TEST_PREREQUISITES="1")
                     owners = {row["owner"] for row in json.loads((source / "artifacts/reports/test-inventory.json").read_text())["projects"]}
-                    if owners & set(POLICY["requiredLinuxOwners"].values()):
+                    required_owners = owners & set(POLICY["requiredLinuxOwners"].values())
+                    if state.get("selectedPackages") is not None:
+                        required_owners &= set(state["selectedPackages"])
+                    if required_owners:
+                        if "younics.ai.agent.execution.docker" in required_owners:
+                            # The test deliberately inspects an already-provisioned
+                            # image. Acquisition belongs to the owning CI lane.
+                            run("docker", "pull", "--", os.environ.get("SUNDER_DOCKER_INTEGRATION_IMAGE", "node:22-alpine"),
+                                cwd=source, env=environment)
                         tests(state_path, "required-linux")
                     if stress: tests(state_path, "stress")
                 if state.get("selectedPackages") is not None:
@@ -260,7 +310,7 @@ def builder_diagnostics(state_path, inventory_path):
         output.mkdir()
         report_args = dict(results=output, inventory=inventory_path, output=root / (stage + ".json"))
         try:
-            if not run_project(state_path, source, BUILDER_PROJECT, common, selection, output):
+            if not run_project_with_filesystems(state_path, source, BUILDER_PROJECT, common, selection, output, inventory, "source"):
                 raise ValueError("Builder diagnostics selected zero tests")
         except BaseException as error:
             try:

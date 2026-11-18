@@ -435,10 +435,10 @@ jobs:
           PACKAGES: ${{ needs.prepare.outputs.packages }}
           STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          args=()
+          args=(--mode "$MODE" --shared)
           [[ "$STRESS" != true ]] || args+=(--stress)
           python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
-            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" --mode "$MODE" --shared "${args[@]}"
+            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" "${args[@]}"
       - name: Retain CI reports
         if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

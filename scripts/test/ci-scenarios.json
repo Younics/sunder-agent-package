@@ -1,11 +1,11 @@
 {
   "artifactProducer": "CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload",
   "requiredLinux": [
-    "ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback",
+    "ApplyPatch_ExistingFileUpdate_PreservesTheOriginalObject",
     "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
   ],
   "requiredLinuxOwners": {
-    "ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback": "younics.ai.agent.tools.files",
+    "ApplyPatch_ExistingFileUpdate_PreservesTheOriginalObject": "younics.ai.agent.tools.files",
     "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation": "younics.ai.agent.execution.docker"
   },
   "stress": {
