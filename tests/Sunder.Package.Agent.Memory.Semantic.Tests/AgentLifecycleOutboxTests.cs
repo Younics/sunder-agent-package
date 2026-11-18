@@ -126,6 +126,24 @@ public sealed class AgentLifecycleOutboxTests
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
 
+        // Hold the failed job until this test explicitly admits its retry. A
+        // slow commit can outlast the real backoff before DeleteWorkspace returns.
+        using (var connection = Open(store.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                CREATE TRIGGER HoldFirstSessionCleanupRetry
+                AFTER UPDATE OF AttemptCount ON AgentSessionCleanupJobs
+                WHEN NEW.AttemptCount = 1 AND NEW.Status = 'Pending'
+                BEGIN
+                    UPDATE AgentSessionCleanupJobs
+                    SET NextAttemptAtUtc = '9999-12-31T23:59:59.9999999+00:00'
+                    WHERE JobId = NEW.JobId;
+                END;
+                """;
+            command.ExecuteNonQuery();
+        }
+
         await workspaces.DeleteWorkspaceAsync(workspace.WorkspaceId);
 
         Assert.Equal([session.SessionId], cleaner.SessionIds);
@@ -142,9 +160,22 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal("Pending", pending.Status);
         Assert.Equal(1, pending.AttemptCount);
         Assert.Equal("cleanup_callback_failure (System.InvalidOperationException)", pending.LastError);
+        Assert.Equal(DateTimeOffset.MaxValue, pending.NextAttemptAtUtc);
 
+        using (var connection = Open(store.DatabasePath))
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                DROP TRIGGER HoldFirstSessionCleanupRetry;
+                UPDATE AgentSessionCleanupJobs
+                SET NextAttemptAtUtc = $now
+                WHERE JobId = $jobId;
+                """;
+            command.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
+            command.Parameters.AddWithValue("$jobId", pending.JobId);
+            Assert.Equal(1, command.ExecuteNonQuery());
+        }
         await using var dispatcher = new AgentSessionCleanupDispatcher(store, catalog.SessionCleaners);
-        await Task.Delay(300);
         await dispatcher.FlushAsync();
         Assert.Equal("Completed", Assert.Single(store.ListSessionCleanupJobs()).Status);
         Assert.Equal([session.SessionId, session.SessionId], cleaner.SessionIds);
