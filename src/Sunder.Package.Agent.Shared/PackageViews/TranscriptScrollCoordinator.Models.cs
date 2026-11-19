@@ -107,7 +107,9 @@ internal readonly record struct TranscriptViewportMutationDiagnostic(
     string GeometryCycle,
     string MarkdownRevisions,
     int CollapseClamps = 0,
-    double HeaderDisplacement = 0);
+    double HeaderDisplacement = 0,
+    string TerminalReason = "",
+    double ElapsedMilliseconds = 0);
 
 internal enum TranscriptProgrammaticOffsetWriteSource
 {
@@ -195,6 +197,9 @@ internal sealed partial class TranscriptScrollCoordinator
     {
         private IDisposable? _viewportAuthorityLease = viewportAuthorityLease;
         private readonly CancellationTokenSource _watchdogCancellation = new();
+        public long StartedAt { get; } = System.Diagnostics.Stopwatch.GetTimestamp();
+        public string TerminalReason { get; set; } = string.Empty;
+        public double ElapsedMilliseconds { get; set; }
 
         public long Generation { get; } = generation;
 

@@ -122,9 +122,18 @@ public sealed class SkillImportReplacementTests
             var context = new TestPackageContext(root);
             const int saveCount = 24;
             var stores = Enumerable.Range(0, saveCount).Select(_ => new SkillStore(context)).ToArray();
+            using var trace = new InterferenceTrace("Skills.storage-writers");
 
-            await Task.WhenAll(stores.Select((store, index) => Task.Run(() =>
-                store.SaveSkill(CreateRecord($"skill-{index:00}")))));
+            await Task.WhenAll(stores.Select((store, index) =>
+            {
+                trace.Record("writer-queued", index);
+                return Task.Run(() =>
+                {
+                    trace.Record("writer-start", index);
+                    try { store.SaveSkill(CreateRecord($"skill-{index:00}")); }
+                    finally { trace.Record("writer-finish", index); }
+                });
+            }));
 
             Assert.Equal(saveCount, new SkillStore(context).ListSkills().Count);
         }

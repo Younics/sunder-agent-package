@@ -151,10 +151,12 @@ public sealed class AgentChatPagingTests
     [AvaloniaFact]
     public async Task AgentChatView_RepeatedPagingResizeAndGroupCollapseKeepContentVisible()
     {
+        using var scheduling = new InterferenceTrace("View.paging-resize");
         var phase = "setup";
         void Stage(string stage)
         {
             phase = stage;
+            scheduling.Record(stage);
             if (Environment.GetEnvironmentVariable("SUNDER_TRANSCRIPT_REGRESSION_TRACE") is { Length: > 0 } path)
                 File.AppendAllText(path, stage + Environment.NewLine);
         }
@@ -207,6 +209,23 @@ public sealed class AgentChatPagingTests
                 var sourceKey = exactKey is AgentApp::Sunder.Package.Agent.Shared.PackageViews.TranscriptActivityGroupAnchor grouped ? grouped.SourceAnchor : exactKey;
                 var sourceIndex = Array.FindIndex(model.Messages.ToArray(), row => Equals(row.AnchorKey, sourceKey));
                 File.AppendAllText(path, $"{stage}: offset={viewer.Offset.Y},extent={viewer.Extent.Height},viewport={viewer.Viewport.Height},exact={exactKey},index={exactIndex},sourceIndex={sourceIndex},model={model.TranscriptViewportAnchor?.AnchorKey}; {string.Join("; ", rows)}; {coordinator.DiagnosticSnapshot}{Environment.NewLine}");
+            }
+            void TraceMutation(string stage, int iteration = -1, int? width = null)
+            {
+                var mutation = coordinator.DiagnosticSnapshot.Mutation;
+                scheduling.Record(stage, new
+                {
+                    phase,
+                    iteration,
+                    width,
+                    generation = mutation?.Generation,
+                    status = mutation?.Status.ToString(),
+                    passes = mutation?.Passes,
+                    corrections = mutation?.Corrections,
+                    geometryPending = mutation?.GeometryPending,
+                    terminalReason = mutation?.TerminalReason,
+                    elapsedMilliseconds = mutation?.ElapsedMilliseconds,
+                });
             }
             async Task SettleCombinedMarkdownAsync()
             {
@@ -303,6 +322,7 @@ public sealed class AgentChatPagingTests
                         await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
                         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
                         TraceGeometry($"resized {width}");
+                        TraceMutation("resize-snapshot", iteration, width);
                     }
                     await WaitForPendingCoordinatorOperationsAsync(view).WaitAsync(TimeSpan.FromSeconds(10));
                     TraceGeometry("resize coordinator settled");
@@ -312,6 +332,7 @@ public sealed class AgentChatPagingTests
                     top = header.TranslatePoint(default, viewer)!.Value.Y;
                     TestContext.Current.TestOutputHelper?.WriteLine(
                         $"Resize settled ({phase}): {coordinator.DiagnosticSnapshot}");
+                    TraceMutation("resize-settled", iteration);
                     Assert.Equal(AgentApp::Sunder.Package.Agent.Shared.PackageViews.TranscriptViewportMutationStatus.Completed,
                         coordinator.DiagnosticSnapshot.Mutation?.Status);
                     Assert.InRange(Math.Abs(top - resizeTop), 0, 1);
@@ -361,6 +382,7 @@ public sealed class AgentChatPagingTests
             }
             finally
             {
+                TraceMutation("test-final");
                 tracing = false;
                 viewer.LayoutUpdated -= QueueFrame;
             }

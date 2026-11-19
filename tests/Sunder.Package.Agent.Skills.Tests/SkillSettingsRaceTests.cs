@@ -201,9 +201,25 @@ public sealed class SkillSettingsRaceTests(ITestOutputHelper output)
         Assert.Empty(viewModel.StatusText);
     }
 
-    private async Task WaitForRuntimeRefreshIdleAsync(SkillSettingsViewModel viewModel)
+    private async Task WaitForRuntimeRefreshIdleAsync(
+        SkillSettingsViewModel viewModel,
+        [System.Runtime.CompilerServices.CallerMemberName] string test = "")
     {
         var refresh = viewModel.RuntimeRefreshIdle;
+        var loop = typeof(SkillSettingsViewModel)
+            .GetField("_runtimeRefresh", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
+            .GetValue(viewModel)!;
+        object? Field(string name) => loop.GetType()
+            .GetField(name, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?.GetValue(loop);
+        using var scheduling = new InterferenceTrace("Skills.refresh-wait." + test, () => new
+        {
+            refresh = refresh.Status.ToString(),
+            loop = (Field("_loop") as Task)?.Status.ToString(),
+            dirty = Field("_dirty"),
+            running = Field("_running"),
+            activeCancellation = (Field("_activeRefresh") as CancellationTokenSource)?.IsCancellationRequested,
+        });
+        scheduling.Record("wait-start");
         var dispatcher = typeof(SkillSettingsViewModel)
             .GetField("_uiDispatcher", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?
             .GetValue(viewModel);
@@ -214,10 +230,15 @@ public sealed class SkillSettingsRaceTests(ITestOutputHelper output)
                 $"{stage}: refresh={refresh.Status}, dispatcher={dispatcher?.GetType().Name}, application={Avalonia.Application.Current?.GetType().Name ?? "null"}, context={SynchronizationContext.Current?.GetType().Name ?? "null"}, processors={Environment.ProcessorCount}, poolThreads={ThreadPool.ThreadCount}, availableWorkers={availableWorkers}, queued={ThreadPool.PendingWorkItemCount}");
         }
         Trace("Runtime refresh wait");
-        try { await refresh.WaitAsync(TimeSpan.FromSeconds(2)); }
+        try
+        {
+            await refresh.WaitAsync(TimeSpan.FromSeconds(2));
+            scheduling.Record("wait-completed");
+        }
         catch (TimeoutException)
         {
             Trace("Runtime refresh timeout");
+            scheduling.Record("wait-timeout");
             throw;
         }
     }

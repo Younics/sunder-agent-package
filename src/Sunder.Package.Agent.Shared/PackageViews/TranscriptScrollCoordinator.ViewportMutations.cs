@@ -188,7 +188,8 @@ internal sealed partial class TranscriptScrollCoordinator
             {
                 TerminalizeViewportMutation(
                     transaction,
-                    TranscriptViewportMutationStatus.BudgetExhausted);
+                    TranscriptViewportMutationStatus.BudgetExhausted,
+                    "Watchdog");
             }
         }, DispatcherPriority.Background);
     }
@@ -315,7 +316,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
         if (transaction.Passes >= ViewportMutationMaxPasses)
         {
-            TerminalizeViewportMutation(transaction, TranscriptViewportMutationStatus.BudgetExhausted);
+            TerminalizeViewportMutation(transaction, TranscriptViewportMutationStatus.BudgetExhausted, "PassLimit");
             return;
         }
 
@@ -344,7 +345,8 @@ internal sealed partial class TranscriptScrollCoordinator
                     {
                         TerminalizeViewportMutation(
                             transaction,
-                            TranscriptViewportMutationStatus.BudgetExhausted);
+                            TranscriptViewportMutationStatus.BudgetExhausted,
+                            "CorrectionLimit");
                         return;
                     }
 
@@ -392,7 +394,7 @@ internal sealed partial class TranscriptScrollCoordinator
 
         if (transaction.Passes >= ViewportMutationMaxPasses)
         {
-            TerminalizeViewportMutation(transaction, TranscriptViewportMutationStatus.BudgetExhausted);
+            TerminalizeViewportMutation(transaction, TranscriptViewportMutationStatus.BudgetExhausted, "PassLimit");
             return;
         }
 
@@ -647,7 +649,8 @@ internal sealed partial class TranscriptScrollCoordinator
 
     private void TerminalizeViewportMutation(
         ViewportMutationTransaction transaction,
-        TranscriptViewportMutationStatus status)
+        TranscriptViewportMutationStatus status,
+        string? reason = null)
     {
         if (transaction.IsTerminal)
         {
@@ -655,6 +658,8 @@ internal sealed partial class TranscriptScrollCoordinator
         }
 
         transaction.Status = status;
+        transaction.TerminalReason = reason ?? status.ToString();
+        transaction.ElapsedMilliseconds = System.Diagnostics.Stopwatch.GetElapsedTime(transaction.StartedAt).TotalMilliseconds;
         if (ReferenceEquals(_activeViewportMutation, transaction))
         {
             _activeViewportMutation = null;
@@ -784,7 +789,9 @@ internal sealed partial class TranscriptScrollCoordinator
                     $"e={fingerprint.ExtentHeight},v={fingerprint.ViewportHeight},i={fingerprint.ItemsHeight},a={fingerprint.AnchorTop},s={fingerprint.GeometrySourceFingerprint},p={fingerprint.GeometryPending}")),
             transaction.MarkdownRevisions,
             transaction.CollapseClamps,
-            transaction.HeaderDisplacement);
+            transaction.HeaderDisplacement,
+            transaction.TerminalReason,
+            transaction.ElapsedMilliseconds);
 
     private static long QuantizeGeometry(double value)
         => double.IsFinite(value) ? checked((long)Math.Round(value * 4)) : 0;

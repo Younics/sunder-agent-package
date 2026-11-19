@@ -1,0 +1,83 @@
+{
+  "scope": "diagnostic-only-not-qualification",
+  "caseIdentity": "sha256 of UTF-8 compact JSON sorted [testId,testName] pairs plus LF; identical in retained full and scoped TRX",
+  "coreCommit": "5a51f2040634bfef166516b04342f5115fb1be6a",
+  "inputRun": 44466930456,
+  "inputs": {
+    "id": 14503916919,
+    "sha256": "d03fb5b71ab46b9ae5d1a65b6f88f626c15fb04214cca3a586dc84e40a25396a"
+  },
+  "ownerSha256": "6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb",
+  "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+  "profiles": [
+    {
+      "id": "skills",
+      "owner": "younics.ai.agent.skills",
+      "rid": "win-arm64",
+      "runner": "windows-11-arm",
+      "tools": {"id": 14502409525, "sha256": "b3b338a9493ea4412e112b52d55d2d9915005b503b66e4e3f48d214af384e976"},
+      "project": "tests/Sunder.Package.Agent.Skills.Tests/Sunder.Package.Agent.Skills.Tests.csproj",
+      "prelude": [],
+      "target": "FullyQualifiedName~RuntimeRefresh_StaleInitializationSnapshotCannotOverwriteLatestRows|FullyQualifiedName~DeleteThenCreate_DelayedDeleteSnapshotCannotRemoveCreatedSelection",
+      "partition": "FullyQualifiedName~Store_ConcurrentInstancesDoNotLoseUpdates",
+      "partitionExclude": "FullyQualifiedName!~Store_ConcurrentInstancesDoNotLoseUpdates",
+      "mixedTargets": "FullyQualifiedName~RuntimeRefresh_StaleInitializationSnapshotCannotOverwriteLatestRows|FullyQualifiedName~DeleteThenCreate_DelayedDeleteSnapshotCannotRemoveCreatedSelection|FullyQualifiedName~Store_ConcurrentInstancesDoNotLoseUpdates|FullyQualifiedName~RuntimeTransfer_RejectsUnsafeOrOversizedArchiveBeforeImport|FullyQualifiedName~SkillSettingsViewModel_Delete_CompactLayout_ReturnsToListAndClearSelection",
+      "expectedCaseIdentities": {
+        "Sunder.Package.Agent.Skills.Tests": {"count": 97, "sha256": "d3de9ce68e53e5a3e919a25a3d7fda0ac4831834a83b6e31bacab89c874c9591"},
+        "focused": {"count": 2, "sha256": "9f58974956a57ef2bfcb711c1b2ffb7d449f68aac44019db01981df32fe759be"},
+        "partition": {"count": 1, "sha256": "c4be779b54cd6f6d4af78ae89f32813b7a22dcebdabde2de3fe478c39c4e169b"},
+        "partitionExclude": {"count": 96, "sha256": "d8589b1667c340bf5a69994e5dd20076944b1053a0eacc4a770b59694510c1a9"},
+        "mixedTargets": {"count": 7, "sha256": "046d63fde0363d25c1e3d9393198b2a95eb33270975673ba117843206c4e9b07"}
+      },
+      "referenceTrxSha256": {
+        "Sunder.Package.Agent.Skills.Tests": {
+          "44414793236": "b47d6e365951d01d0c97dd9d831d48defe2dbd6f78709eea8e83cd915bc2dbca",
+          "44466930456": "e5918f20daeb1eb335d996f202f67b651feec659f582bb59450524625099524c"
+        }
+      }
+    },
+    {
+      "id": "view",
+      "owner": "younics.ai.agent",
+      "rid": "osx-arm64",
+      "runner": "macos-15",
+      "tools": {"id": 14502039393, "sha256": "05e23a6e9fcb26be4328462189757abe08852803e3651a4ed090f04341125b69"},
+      "project": "tests/Sunder.Package.Agent.View.Tests/Sunder.Package.Agent.View.Tests.csproj",
+      "prelude": [
+        "tests/Sunder.Package.Agent.History.Tests/Sunder.Package.Agent.History.Tests.csproj",
+        "tests/Sunder.Package.Agent.Presentation.State.Tests/Sunder.Package.Agent.Presentation.State.Tests.csproj",
+        "tests/Sunder.Package.Agent.Runtime.Tests/Sunder.Package.Agent.Runtime.Tests.csproj"
+      ],
+      "target": "FullyQualifiedName~AgentChatView_RepeatedPagingResizeAndGroupCollapseKeepContentVisible",
+      "partition": "FullyQualifiedName~AgentChatView_RepeatedPagingResizeAndGroupCollapseKeepContentVisible",
+      "partitionExclude": "FullyQualifiedName!~AgentChatView_RepeatedPagingResizeAndGroupCollapseKeepContentVisible",
+      "expectedCaseIdentities": {
+        "Sunder.Package.Agent.History.Tests": {"count": 174, "sha256": "9ba16cb1eb1f69f934a6d2c905de6d4416c60a01429450c0f330b9a79b90cbca"},
+        "Sunder.Package.Agent.Presentation.State.Tests": {"count": 74, "sha256": "ce97c645dc729b56351966bee9d07330bed01646d689a8b58f4788836ca16b87"},
+        "Sunder.Package.Agent.Runtime.Tests": {"count": 707, "sha256": "30f98ea8fb93ed838e5c2226c704417a7780da32386c9421c927f2e64de58db3"},
+        "Sunder.Package.Agent.View.Tests": {"count": 180, "sha256": "65d049226f1d9810c427b54ad3574e64f9d8a673ac202474ee0e63b5884e6f83"},
+        "focused": {"count": 1, "sha256": "f974536c080fdf12c074b20b834b6ff86d67bd7ff1ed560818d805f4b2d00740"},
+        "partition": {"count": 1, "sha256": "f974536c080fdf12c074b20b834b6ff86d67bd7ff1ed560818d805f4b2d00740"},
+        "partitionExclude": {"count": 179, "sha256": "2529c895f104254610e2cdf8a44cffa1097daf8b51a9fc97072016b034dad49f"}
+      },
+      "referenceTrxSha256": {
+        "Sunder.Package.Agent.History.Tests": {
+          "44414793236": "e08e4b7a100e973810e92aca25ea3338f938bf111f168cea33eb1a30a0f16f87",
+          "44466930456": "858fb416dcb37c5e8601175de49d00b515dc2dfc0f564e892305f30f7051e854"
+        },
+        "Sunder.Package.Agent.Presentation.State.Tests": {
+          "44414793236": "afac367a618377c8eaad433e37db63585e13df3b8c5b2e75187ad025226232ef",
+          "44466930456": "8c83f4a1b6acdbf2f08038546749b0375092ff6b3e70687c12650315a3c49f38"
+        },
+        "Sunder.Package.Agent.Runtime.Tests": {
+          "44414793236": "c508f7d4f285b2bf9a977d51be90a8cbc95e8e07c9593f8dc589368c18f4462d",
+          "44466930456": "3e34812cf7a23b1f7bf3ed4f83104127864daf5936ec359de6952a17df779298"
+        },
+        "Sunder.Package.Agent.View.Tests": {
+          "44414793236": "9a530cb37a542d092bb5f88851c578ba16ad5c9df6afa5cfeb4e692beb9cadfd",
+          "44466930456": "04ac6319d180f919a6dea42b0b9c763525b0e48a2dba2879088996ded5d91250"
+        }
+      }
+    }
+  ]
+}
