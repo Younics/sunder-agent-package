@@ -227,7 +227,12 @@ internal static partial class RenderedTranscriptGeometry
                 Extent: transcript.Extent.Height,
                 Viewport: transcript.Viewport.Height);
             var renderedContentPending = GetCoordinatorRenderedContentPending(coordinator);
-            if (!renderedContentPending
+            // A transcript hidden during presentation can report the same zero geometry for several passes.
+            var geometryReady = transcript.IsEffectivelyVisible
+                && current.Extent > 0
+                && current.Viewport > 0
+                && !renderedContentPending;
+            if (geometryReady
                 && previous is { } prior
                 && Math.Abs(current.Offset - prior.Offset) <= 0.01
                 && Math.Abs(current.Extent - prior.Extent) <= 0.01
@@ -244,7 +249,7 @@ internal static partial class RenderedTranscriptGeometry
                 stablePasses = 0;
             }
 
-            previous = current;
+            previous = geometryReady ? current : null;
             await Task.Delay(1);
         }
 
