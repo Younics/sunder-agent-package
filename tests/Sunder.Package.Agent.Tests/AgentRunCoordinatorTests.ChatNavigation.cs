@@ -1251,44 +1251,61 @@ public sealed partial class AgentRunCoordinatorTests
         );
         using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
             new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
-        using var viewModel = new SubsessionsViewModel(
+        var dispatcher = InlineAgentPresentationDispatcher.Instance;
+        var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
             runtimeAdapter,
-            runtimeAdapter, InlineAgentPresentationDispatcher.Instance);
+            runtimeAdapter, dispatcher);
+        var liveUpdate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnTranscriptChanged()
+        {
+            if (viewModel.Messages.Count >= 2)
+                liveUpdate.TrySetResult();
+        }
 
-        await viewModel.OnNavigatedToAsync(
-            new PackageViewNavigationContext(
-                SubagentConstants.SubsessionsViewId,
-                new Dictionary<string, string?>
-                {
-                    [SubagentConstants.SubsessionNavigationSessionIdKey] =
-                        childSession.SessionId.ToString("D"),
-                }
-            )
-        );
+        try
+        {
+            await viewModel.OnNavigatedToAsync(
+                new PackageViewNavigationContext(
+                    SubagentConstants.SubsessionsViewId,
+                    new Dictionary<string, string?>
+                    {
+                        [SubagentConstants.SubsessionNavigationSessionIdKey] =
+                            childSession.SessionId.ToString("D"),
+                    }
+                )
+            );
 
-        Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
-        Assert.DoesNotContain(
-            viewModel.Subsessions,
-            session => session.SessionId == parentSessionId
-        );
-        Assert.Contains(
-            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
-            row => row.Content == "Child transcript content."
-        );
+            await dispatcher.InvokeAsync(() =>
+            {
+                Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
+                Assert.DoesNotContain(viewModel.Subsessions, session => session.SessionId == parentSessionId);
+                Assert.Contains(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+                    row => row.Content == "Child transcript content.");
+                viewModel.TranscriptChanged += OnTranscriptChanged;
+            });
 
-        runtime.SessionService.AppendTextTurn(
-            childSession.SessionId,
-            AgentMessageRole.Assistant,
-            "Live child update."
-        );
+            runtime.SessionService.AppendTextTurn(
+                childSession.SessionId,
+                AgentMessageRole.Assistant,
+                "Live child update."
+            );
 
-        await WaitUntilAsync(() => viewModel.Messages.Count >= 2);
-        Assert.Contains(
-            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
-            row => row.Content == "Live child update."
-        );
+            await liveUpdate.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await dispatcher.InvokeAsync(() =>
+                Assert.Contains(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+                    row => row.Content == "Live child update."));
+        }
+        finally
+        {
+            // Disposal clears the compact rows, so it must use the same dispatcher as live updates.
+            await dispatcher.InvokeAsync(() =>
+            {
+                viewModel.TranscriptChanged -= OnTranscriptChanged;
+                viewModel.Dispose();
+            });
+        }
     }
 
     [Fact]

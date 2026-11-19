@@ -368,7 +368,7 @@ public sealed class SolutionPackageInventoryTests
         var lanes = File.ReadAllText(Path.Combine(root, "scripts/ci/test_lanes.py"));
         using var platforms = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "eng/ci/platforms.json")));
         Assert.False(File.Exists(Path.Combine(root, ".circleci/config.yml")));
-        Assert.Equal(new[] { "agent-platform-parity-tmp.yml", "sunder-agent-cohort-rollback.yml", "sunder-package-component.yml", "sunder-package-release.yml", "sunder-package-smoke.yml" },
+        Assert.Equal(new[] { "sunder-agent-cohort-rollback.yml", "sunder-package-component.yml", "sunder-package-qualify.yml", "sunder-package-release.yml", "sunder-package-smoke.yml" },
             Directory.EnumerateFiles(Path.Combine(root, ".github/workflows"), "*.yml").Select(Path.GetFileName).Order(StringComparer.Ordinal));
         Assert.Contains("branches: [main]", workflow, StringComparison.Ordinal);
         Assert.Contains("workflow_dispatch:", workflow, StringComparison.Ordinal);

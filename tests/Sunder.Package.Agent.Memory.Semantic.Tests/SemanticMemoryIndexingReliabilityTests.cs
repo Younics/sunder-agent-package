@@ -171,7 +171,9 @@ public sealed class SemanticMemoryIndexingReliabilityTests
     [Fact]
     public async Task BackgroundService_RepeatedMonitorTicks_DoNotCallProviderForCurrentSession()
     {
-        await using var harness = new IndexingHarness();
+        // Expiring the configuration cache legitimately rechecks provider identity.
+        // This case tests steady-state monitor ticks with the normal cache policy.
+        await using var harness = new IndexingHarness(useProductionConfigurationCache: true);
         harness.AddMemory("A durable memory that is already semantically current.");
         await harness.StartWorkerAsync();
         await WaitUntilAsync(() => harness.ActiveEmbeddings.Count == 1
@@ -747,12 +749,14 @@ public sealed class SemanticMemoryIndexingReliabilityTests
         private readonly Dictionary<ControlledEmbeddingProvider, Sunder.Sdk.Services.ServiceProvider<IEmbeddingProviderService>> _embeddingProviders = [];
         private readonly int _queueCapacity;
         private readonly TimeSpan _monitorInterval;
+        private readonly TimeSpan? _configurationCacheDuration;
         private long _runtimeGeneration;
 
-        public IndexingHarness(int queueCapacity = 8, TimeSpan? monitorInterval = null)
+        public IndexingHarness(int queueCapacity = 8, TimeSpan? monitorInterval = null, bool useProductionConfigurationCache = false)
         {
             _queueCapacity = queueCapacity;
             _monitorInterval = monitorInterval ?? TimeSpan.FromMilliseconds(40);
+            _configurationCacheDuration = useProductionConfigurationCache ? null : TimeSpan.FromMilliseconds(500);
             var now = DateTimeOffset.UtcNow;
             Session = new AgentSessionRecord
             {
@@ -851,7 +855,7 @@ public sealed class SemanticMemoryIndexingReliabilityTests
                 _runtimeServices,
                 _embeddingServices,
                 settings,
-                configurationCacheDuration: TimeSpan.FromMilliseconds(500));
+                configurationCacheDuration: _configurationCacheDuration);
             var backend = new SemanticMemoryRetrievalBackend(Store, resolver, settings);
             var worker = new SemanticMemoryIndexingBackgroundService(
                 Store,
