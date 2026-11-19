@@ -44,6 +44,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
         if (OperatingSystem.IsMacOS() && sandbox.StartsWith("/var/", StringComparison.Ordinal)) sandbox = "/private" + sandbox;
         Exception? failure = null;
         string? lastCommandDiagnostic = null;
+        var traceDirectory = Environment.GetEnvironmentVariable("SUNDER_AGENT_OWNER_COMMAND_TRACE_DIR");
+        var commandNumber = 0;
         try
         {
             // An unchanged copy of the authored repository topology, not a test
@@ -120,10 +122,17 @@ public sealed partial class AgentOwnerSourceMigrationTests
                     foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" }) start.Environment[key] = "http://127.0.0.1:1";
                     start.Environment["NO_PROXY"] = start.Environment["no_proxy"] = "";
                 }
+                var trace = traceDirectory is null ? null : Path.Combine(traceDirectory, $"{++commandNumber:D2}-{command}");
+                if (trace is not null)
+                {
+                    Directory.CreateDirectory(traceDirectory!);
+                    start.ArgumentList.Add("-bl:" + trace + ".binlog");
+                }
                 using var process = Process.Start(start)!;
+                TraceOwnerPhase($"stack-evidence:process:{process.Id}:{command}");
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(900));
-                var output = process.StandardOutput.ReadToEndAsync();
-                var error = process.StandardError.ReadToEndAsync();
+                var output = ReadOutput(process.StandardOutput, trace is null ? null : trace + ".stdout.log");
+                var error = ReadOutput(process.StandardError, trace is null ? null : trace + ".stderr.log");
                 try { await process.WaitForExitAsync(timeout.Token); }
                 catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
                 var text = await output + await error;
@@ -156,6 +165,19 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 if (failure is not null) throw new AggregateException("Owner input probe and cleanup both failed.", failure, cleanup);
                 throw cleanup;
             }
+        }
+
+        static async Task<string> ReadOutput(StreamReader input, string? path)
+        {
+            if (path is null) return await input.ReadToEndAsync();
+            using var log = new StreamWriter(path) { AutoFlush = true };
+            var text = new System.Text.StringBuilder();
+            while (await input.ReadLineAsync() is { } line)
+            {
+                log.WriteLine(line);
+                text.AppendLine(line);
+            }
+            return text.ToString();
         }
     }
 

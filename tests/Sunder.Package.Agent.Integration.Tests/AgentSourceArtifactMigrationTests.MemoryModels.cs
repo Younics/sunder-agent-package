@@ -26,6 +26,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static async Task VerifyRoleLocalMemoryModels(Assembly worker, Assembly app, Assembly agentOwner)
     {
+        using var statusTrace = new MemoryStatusTrace();
+        statusTrace.Note("role-models.start");
         AssertMemorySemanticOwnership(worker, app: false);
         AssertMemorySemanticOwnership(app, app: true);
         Assert.NotSame(worker.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true), app.GetType("Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentSessionRecord", true));
@@ -74,7 +76,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var registration in options.Providers)
             state.Add("younics.ai.agent.memory.semantic",
                 registration.ProviderId == "semantic.memory.inspector" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector") : CurrentPublicRpcDescriptors.Get(registration.ContractId),
-                registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
+                registration.Handler,
+                statusTrace.Enabled && registration.ProviderId == "semantic.memory.inspector"
+                    ? new MemoryStatusTraceHandler(registration.Handler, statusTrace) : registration.Handler,
+                Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
 
         await VerifyAgentMemoryCleanup(agentOwner, store, state);
 
@@ -109,15 +114,36 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True((bool)persisted.GetType().GetProperty("IsPinned")!.GetValue(persisted)!);
 
         var reset = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Action onReset = () => reset.TrySetResult();
+        Action onReset = () => { statusTrace.Note("app.reset"); reset.TrySetResult(); };
         gatewayType.GetEvent("ResetRequired")!.AddEventHandler(gateway, onReset);
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Action onChanged = () => changed.TrySetResult();
+        Action onChanged = () => { statusTrace.Note("app.worker"); changed.TrySetResult(); };
         gatewayType.GetEvent("SemanticWorkerStatusChanged")!.AddEventHandler(gateway, onChanged);
-        await Call("InitializeAsync", CancellationToken.None);
-        await reset.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True((bool)indexingType.GetMethod("QueueMemoryIndex")!.Invoke(indexing, [memoryId, "profile.role-local"])!);
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var statusEvent = indexingType.GetEvent("StatusChanged")!;
+        Action onWorker = () => statusTrace.Note("worker.status");
+        if (statusTrace.Enabled) statusEvent.AddEventHandler(indexing, onWorker);
+        try
+        {
+            statusTrace.Note("app.initialize");
+            await Call("InitializeAsync", CancellationToken.None);
+            await reset.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            statusTrace.Note("app.initial-reset-observed");
+            NoteWorkerStatus("queue.before");
+            Assert.True((bool)indexingType.GetMethod("QueueMemoryIndex")!.Invoke(indexing, [memoryId, "profile.role-local"])!);
+            NoteWorkerStatus("queue.accepted");
+            await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            statusTrace.Note("app.worker-observed");
+        }
+        catch (TimeoutException)
+        {
+            NoteWorkerStatus("notification.timeout");
+            statusTrace.Note("app.stream-available:" + gatewayType.GetProperty("IsOwnerStreamAvailable")!.GetValue(gateway));
+            throw;
+        }
+        finally
+        {
+            if (statusTrace.Enabled) statusEvent.RemoveEventHandler(indexing, onWorker);
+        }
         var metrics = (await Call("GetMetricsSnapshotAsync", CancellationToken.None))!;
         Assert.Same(app, metrics.GetType().Assembly);
         var inspector = options.Providers.Single(value => value.ProviderId == "semantic.memory.inspector");
@@ -135,6 +161,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await ownerLifetime.DisposeAsync();
         Assert.False(IsIndexing());
         Assert.True(((Task)indexingType.GetProperty("Completion")!.GetValue(indexing)!).IsCompleted);
+
+        void NoteWorkerStatus(string label)
+        {
+            if (!statusTrace.Enabled) return;
+            var status = indexingType.GetMethod("GetStatus")!.Invoke(indexing, null)!;
+            var type = status.GetType();
+            statusTrace.Note($"{label}:pending={type.GetProperty("PendingItemCount")!.GetValue(status)},processed={type.GetProperty("ProcessedItemCount")!.GetValue(status)}");
+        }
 
         Task Stage(string method, params object[] arguments)
             => ((Task)typeof(SunderWorkerComposition).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!
