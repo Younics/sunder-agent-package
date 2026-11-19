@@ -15,14 +15,6 @@ on:
         description: Include locked-package compatibility on the behavior runners
         type: boolean
         default: false
-      builder-diagnostics:
-        description: Run focused then full Builder tests on Windows/Linux
-        type: boolean
-        default: false
-      windows-filesystem-native:
-        description: Retained compatibility input; six-platform behavior is always required
-        type: boolean
-        default: false
   workflow_call:
     inputs:
       core_commit:
@@ -74,17 +66,10 @@ jobs:
         id: selection
         env:
           PACKAGES: ${{ inputs.packages }}
-          BUILDER_DIAGNOSTICS: ${{ inputs.builder-diagnostics }}
-          WINDOWS_FILESYSTEM_NATIVE: ${{ inputs.windows-filesystem-native }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           FULL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          if [[ "$WINDOWS_FILESYSTEM_NATIVE" == true ]]; then
-            test "$BUILDER_DIAGNOSTICS" != true
-            python3 -B scripts/ci/version_selection.py --packages '["younics.ai.agent.execution.local"]'
-          elif [[ "$BUILDER_DIAGNOSTICS" == true ]]; then
-            python3 -B scripts/ci/version_selection.py --packages '["younics.sunder.package.maker"]'
-          elif [[ "$PACKAGES" == \[* ]]; then
+          if [[ "$PACKAGES" == \[* ]]; then
             python3 -B scripts/ci/version_selection.py --packages "$PACKAGES"
           elif [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
             python3 -B scripts/ci/version_selection.py --manual "${PACKAGES:-all}"
@@ -102,13 +87,11 @@ jobs:
       - id: matrix
         if: steps.selection.outputs.selected_count != '0'
         env:
-          PACKAGE_TESTS: ${{ (inputs.package-tests || steps.selection.outputs.full == 'true') && !inputs.builder-diagnostics }}
+          PACKAGE_TESTS: ${{ inputs.package-tests || steps.selection.outputs.full == 'true' }}
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
-          WINDOWS_FILESYSTEM_NATIVE: ${{ inputs.windows-filesystem-native }}
         run: |
           args=()
           [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
-          [[ "$WINDOWS_FILESYSTEM_NATIVE" != true ]] || args+=(--windows-filesystem-native)
           python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
 
   preflight:
@@ -329,7 +312,7 @@ jobs:
   components:
     name: Validate component
     needs: [prepare, dependencies, tools]
-    if: needs.prepare.outputs.selected_count != '0' && !inputs.builder-diagnostics
+    if: needs.prepare.outputs.selected_count != '0'
     strategy:
       fail-fast: false
       matrix:
@@ -345,7 +328,7 @@ jobs:
   verifier:
     name: Prepare archive verifier
     needs: [prepare, tools]
-    if: needs.prepare.outputs.selected_count != '0' && !inputs.builder-diagnostics
+    if: needs.prepare.outputs.selected_count != '0'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -384,9 +367,9 @@ jobs:
           if-no-files-found: error
 
   source:
-    name: ${{ inputs.builder-diagnostics && 'Builder diagnostics' || 'Shared family' }} · ${{ matrix.mode }} · ${{ matrix.rid }}
+    name: Shared family · ${{ matrix.mode }} · ${{ matrix.rid }}
     needs: [prepare, dependencies, tools]
-    if: needs.prepare.outputs.selected_count != '0' && (needs.prepare.outputs.full == 'true' || inputs.builder-diagnostics)
+    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.full == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     strategy:
@@ -423,13 +406,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
-      - name: Run focused then full Builder diagnostics
-        if: github.event_name == 'workflow_dispatch' && inputs.builder-diagnostics
-        run: |
-          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
-            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" --packages '["younics.sunder.package.maker"]' --builder-diagnostics
       - name: Build and test selected reference mode
-        if: github.event_name != 'workflow_dispatch' || !inputs.builder-diagnostics
         env:
           MODE: ${{ matrix.mode }}
           PACKAGES: ${{ needs.prepare.outputs.packages }}
@@ -450,7 +427,6 @@ jobs:
             sunder-agent-package/artifacts/stress
             sunder-agent-package/artifacts/source-family
             sunder-agent-package/artifacts/source-commands
-            sunder-agent-package/artifacts/builder-diagnostics
           if-no-files-found: error
           retention-days: 14
 
@@ -466,5 +442,20 @@ jobs:
       - name: Require all selected validation jobs
         env:
           JOB_RESULTS: ${{ toJSON(needs) }}
-          BUILDER_DIAGNOSTICS: ${{ inputs.builder-diagnostics }}
         run: python3 -B scripts/ci/workflow_summary.py validate
+      - name: Select test-owned required execution evidence
+        id: evidence
+        if: needs.prepare.outputs.selected_count != '0'
+        env:
+          PACKAGES: ${{ needs.prepare.outputs.packages }}
+        run: python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --plan
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: steps.evidence.outputs.has_requirements == 'true'
+        with:
+          pattern: ${{ steps.evidence.outputs.pattern }}
+          path: required-results
+      - name: Require exact platform case execution
+        if: steps.evidence.outputs.has_requirements == 'true'
+        env:
+          PACKAGES: ${{ needs.prepare.outputs.packages }}
+        run: python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --results required-results

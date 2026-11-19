@@ -458,7 +458,8 @@ jobs:
         if: steps.recovery.outputs.retained != 'true'
         run: |
           set -euo pipefail
-          export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
+          SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
+          export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN
           bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/release "artifacts/installed-native-metrics/$RID" "$CORE_COMMIT" published
           python3 -B scripts/release/native_runtime_evidence.py export-installed "artifacts/installed-native-metrics/$RID" "artifacts/installed-native/native-installed-$RID.tar.gz"
       - name: Retain published installed diagnostics

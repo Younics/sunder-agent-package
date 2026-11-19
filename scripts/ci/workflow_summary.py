@@ -14,7 +14,7 @@ def outcomes(jobs, expected):
             raise ValueError(f"{name}: expected {outcome}, observed {jobs[name]['result']}")
 
 
-def verify(jobs, mode, *, builder_diagnostics=False, operation=None):
+def verify(jobs, mode, *, operation=None):
     if mode == "component":
         if operation not in ("test", "native", "publish"):
             raise ValueError("Unknown component operation")
@@ -34,8 +34,7 @@ def verify(jobs, mode, *, builder_diagnostics=False, operation=None):
             raise ValueError("Invalid unpublished dependency selection")
         expected = {"preflight": active, "dependency-discovery": active, "tools": active,
             "bootstrap": active and bool(pending), "dependencies": active,
-            "components": active and not builder_diagnostics, "verifier": active and not builder_diagnostics,
-            "source": active and (outputs["full"] == "true" or builder_diagnostics)}
+            "components": active, "verifier": active, "source": active and outputs["full"] == "true"}
     elif mode == "release":
         build = active and outputs["resume"] != "true"
         production = int(jobs["production"]["outputs"]["selected_count"]) if build else 0
@@ -56,8 +55,7 @@ def verify(jobs, mode, *, builder_diagnostics=False, operation=None):
 
 if __name__ == "__main__":
     try:
-        message = verify(json.loads(os.environ["JOB_RESULTS"]), sys.argv[1],
-            builder_diagnostics=os.environ.get("BUILDER_DIAGNOSTICS") == "true", operation=os.environ.get("OPERATION"))
+        message = verify(json.loads(os.environ["JOB_RESULTS"]), sys.argv[1], operation=os.environ.get("OPERATION"))
         print(message)
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:

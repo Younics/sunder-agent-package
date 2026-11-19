@@ -172,9 +172,9 @@ def prepare(args):
     root = new_directory(args.work)
     home.mkdir()
     try:
-        for project in projects:
-            subprocess.run(["dotnet", "restore", str(source / project), "--locked-mode", *arguments(props),
-                            *arguments(restore_inputs)], env=env, check=True)
+        build_project = project_scope.write_build_graph(source, projects, root)
+        subprocess.run(["dotnet", "restore", str(build_project), "--locked-mode", *arguments(props),
+                        *arguments(restore_inputs)], env=env, check=True)
         tools = (core_tools.verify(core, args.tools) if getattr(args, "tools", None)
                  else core_tools.prepare(core, root / "tools"))
         package_tools = (core_tools.package_tasks(source,
@@ -189,11 +189,13 @@ def prepare(args):
             if paths: command.append("-p:SunderPackageCandidatePath=" + "%3B".join(paths))
             if inputs.catalog_requirements(lock): command.append("-p:SunderPlatformCatalogPath=" + str(catalog))
             if paths or inputs.catalog_requirements(lock): subprocess.run(command, cwd=source, env=env, check=True)
-        state = dict(schemaVersion=2, source=str(source), core=str(core), sourceCommit=head(source), coreCommit=head(core),
+        state = dict(schemaVersion=3, source=str(source), core=str(core), sourceCommit=head(source), coreCommit=head(core),
                       home=str(home), cache=str(cache), properties=props, sourceInputs=before,
                       candidates=[str(path) for path in candidates], catalog=str(catalog) if catalog else None,
-                      packages=scope, selectedPackages=selection, projects=projects, tools=str(tools),
-                      inputHashes={str(path): inputs.file_sha(path) for path in [*candidates, *([catalog] if catalog else []), *package_tools.values(), tools / core_tools.MANIFEST,
+                      packages=scope, selectedPackages=selection, projects=projects, buildProject=str(build_project), tools=str(tools),
+                      inputHashes={str(path): inputs.file_sha(path) for path in [build_project,
+                                    *([source / "Sunder.AgentPackage.slnx"] if len(projects) > 1 else []),
+                                    *candidates, *([catalog] if catalog else []), *package_tools.values(), tools / core_tools.MANIFEST,
                                    *[path for path in sorted(tools.rglob("*")) if path.is_file()]]})
         (root / "ci-state.json").write_bytes(inputs.canonical(state) + b"\n")
         print(root / "ci-state.json")
@@ -203,11 +205,13 @@ def prepare(args):
 
 def context(path):
     import core_tools
+    import project_scope
     path = Path(path).resolve(strict=True)
     state = inputs.load(path)
     inputs.closed(state, "schemaVersion source core sourceCommit coreCommit home cache properties sourceInputs candidates catalog inputHashes"
-                  + (" packages selectedPackages projects tools" if state.get("schemaVersion") == 2 else ""))
-    inputs.require(state["schemaVersion"] in (1, 2) and head(state["source"]) == state["sourceCommit"]
+                  + (" packages selectedPackages projects tools" if state.get("schemaVersion") in (2, 3) else "")
+                  + (" buildProject" if state.get("schemaVersion") == 3 else ""))
+    inputs.require(state["schemaVersion"] in (1, 2, 3) and head(state["source"]) == state["sourceCommit"]
                    and head(state["core"]) == state["coreCommit"], "CI checkout identity changed")
     inputs.require(inputs.source_snapshot(state["source"]) == state["sourceInputs"], "CI contract/release inputs changed")
     inputs.require(all(inputs.file_sha(file) == digest for file, digest in state["inputHashes"].items()), "CI input/tool bytes changed")
@@ -215,8 +219,15 @@ def context(path):
         inputs.require(not state["candidates"] and state["catalog"] is None, "Dependency-free test roots cannot receive contract inputs")
     else:
         inputs.verify_selected_files(state["source"], state["candidates"], state["catalog"], state.get("packages"))
-    if state["schemaVersion"] == 2:
+    if state["schemaVersion"] in (2, 3):
         core_tools.verify(state["core"], state["tools"])
+    if state["schemaVersion"] == 3:
+        target = project_scope.build_target(state["source"], state["projects"], path.parent)
+        inputs.require(state["buildProject"] == str(target) and str(target) in state["inputHashes"],
+                       "CI build graph differs from the prepared roots")
+        if len(state["projects"]) > 1:
+            inputs.require(inputs.load(target) == project_scope.filter_document(state["source"], state["projects"]),
+                           "CI solution filter differs from the prepared roots")
     props = state["properties"]
     inputs.require(props["SunderUseSourceSdk"] in ("true", "false") and props["Configuration"] == "Release"
                    and props["SunderPackageBuildTaskSourceIsImmutable"] == "true" and props["SunderContractCacheRoot"] == state["cache"],
@@ -241,6 +252,8 @@ def execute(state_path, command, cwd=None, log=None):
         if state.get("projects"):
             target = Path(cwd or state["source"]) / command[2]
             prepared = {Path(state["source"]) / project for project in state["projects"]}
+            if state.get("buildProject"):
+                prepared.add(Path(state["buildProject"]))
             inputs.require("Sunder.AgentPackage.slnx" in state["projects"] or target.resolve() in {project.resolve() for project in prepared},
                            "Command targets a project outside the prepared component scope: " + str(target))
         command += arguments(state["properties"])
@@ -404,9 +417,15 @@ def validate(args):
         if builder_diagnostics:
             test_lanes.builder_diagnostics(state, inventory_path)
             return
-        for project in args.project:
-            status = execute(state, ["dotnet", "build", project, "-c", "Release", "--no-restore"])
-            if status: raise subprocess.CalledProcessError(status, "dotnet build " + project)
+        prepared = inputs.load(state)
+        build_project = prepared["buildProject"]
+        reports = source / "artifacts/reports"
+        (reports / "build-selection.json").write_bytes(inputs.canonical(dict(
+            schemaVersion=1, projects=prepared["projects"], buildProject=build_project,
+            sha256=prepared["inputHashes"][build_project])) + b"\n")
+        command = ["dotnet", "build", build_project, "-c", "Release", "--no-restore"]
+        status = execute(state, command, log=reports / "build.log")
+        if status: raise subprocess.CalledProcessError(status, command)
         test_lanes.validate(state, args.mode, args.stress)
 
 

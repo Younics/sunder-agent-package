@@ -96,7 +96,7 @@ selection. Both `preflight` and `validate` accept `--packages '[]'` to stop befo
 tool execution when no versions are selected.
 
 `validate` discovers tests, resolves and hydrates
-exact inputs, build the projects and their provider dependency, execute the selected suites and
+exact inputs, builds the selected projects and their provider dependencies, executes the selected suites and
 verify combined evidence. Its temporary tools/cache are cleaned on success or
 failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
 local inputs. Source readers precede the required all-family artifact producer;
@@ -104,6 +104,14 @@ required Linux/Docker cases run once in their owning lane. `--stress` adds the
 scheduled Linux repetitions. Report directories replace prior CI runs; hosted
 reports expire after fourteen days, while immutable release handoffs keep their
 release-specific retention.
+
+Restore and build each use one ordinary MSBuild graph. Multiple selected roots
+produce a temporary `.slnf` over the authored solution; a single project or the
+full solution stays unchanged. Dependencies and generated providers are still
+built normally, with locked restore and the same source/package properties.
+The prepared graph and solution bytes are integrity-bound. Build selection,
+UTF-8 output, elapsed time and exit status are retained under `artifacts/reports/`.
+This does not replace the fresh all-family artifact test with prebuilt packing.
 
 Completed assertion failures retain discovery/TRX evidence and allow the remaining
 independent source/package test projects to run. Capture, integrity, discovery,
@@ -114,10 +122,23 @@ failure summary, and reporting failures remain attached to the original error.
 `--builder-diagnostics` prepares verified source-mode Release inputs, builds Builder,
 then runs its portability fixtures followed by the complete Builder project. Each
 stage verifies fresh discovery, TRX and declared skips, retaining reports under
-`artifacts/builder-diagnostics/`. The manual **Validate** input `builder-diagnostics`
-runs this sequence on Windows and Linux. Full source/package **Validate** and native
-release qualification are subsequent checkpoints; reusable release calls always
-run the normal validation lanes.
+`artifacts/builder-diagnostics/`. This is a local, owning-suite diagnostic command,
+not a feature switch in **Validate**, **Qualify** or **Release**. Those workflows
+always use the normal package/inventory-selected validation lanes.
+
+**Qualify** (`sunder-package-qualify.yml`) is manual-only, defaults to `all`, and
+accepts the same package IDs as **Validate**. It includes locked-package checks,
+does not publish, and does not cancel an active qualification on a later push.
+The old branch-specific parity wrapper is retired.
+
+Required platform execution inventories live in
+`scripts/test/required-platform-cases.json`, not workflow Python or feature
+branches. The reusable validation summary downloads only matching owner/mode/RID
+reports and runs `scripts/ci/required_test_evidence.py`. Exact identities/counts,
+missing scopes, duplicates, failures and skips remain strict. Changes to that
+test-owned policy require review; generic orchestration must not regenerate or
+silently relax it. Scenario selectors in `scripts/test/ci-scenarios.json` likewise
+belong to test policy, not version-selected build/deploy decisions.
 
 Nested Python-to-Bash calls use `scripts/ci/bash_runtime.py`. Actions binds the
 running shell's absolute executable in `SUNDER_BASH_EXECUTABLE`; local Windows

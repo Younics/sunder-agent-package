@@ -145,9 +145,10 @@ also cover exact-object receipts, incomplete writes, mapped readers and edits wi
 original delete/policy-change rights or parent write access. The superseded separate-file
 publication helpers have been retired. Native Unix/ARM64 and final archive acceptance
 remain separate required gates; skipped filesystem capabilities are not qualification.
-The manual Validate option `windows-filesystem-native` selects the Local
-component and adds native Windows ARM64 to the ordinary Windows x64/Linux lanes; it
-does not publish or establish six-platform final-archive acceptance.
+Manual **Validate** or **Qualify** selects package IDs through the ordinary
+inventory. Both Windows ABIs are part of the six-platform behavior matrix, not a
+feature-specific opt-in. The test-owned required-case inventory rejects missing
+or skipped native execution; it does not establish final-archive acceptance.
 This is an implementation checkpoint, not a supported read-only Windows profile.
 Completion requires the same successful Files read/write/edit/patch/delete contract
 on every supported OS, without OS-specific public methods, flags or reduced tests.

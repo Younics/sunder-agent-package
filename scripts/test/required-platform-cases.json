@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "requirements": [
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderPathIdentityTests",
+      "expectedCount": 9
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderWindowsCachePrivacyTests",
+      "expectedCount": 11
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderPackagePathIdentityTests",
+      "expectedCount": 7
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "ToolchainContainmentCannotAdmitACaseDistinctSibling",
+      "expectedCount": 2
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "CopiedReceiptCannotGrantLeaseOrRemovalAuthorityToACaseDistinctWorkspace",
+      "expectedCount": 2
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderLocalBackendTests",
+      "methodName": "ExpectedInspectionCannotAuthorizeACaseDistinctEntryOrProjectFolder",
+      "expectedCount": 2
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "ToolchainContainmentAcceptsAnExistingCaseAliasAndItsMissingChildren",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "RestartThroughAnExistingStorageAliasPreservesCapturedOwnershipAndSuccessfulRemoval",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderLocalBackendTests",
+      "methodName": "BuildCannotAdoptChangedPhysicalSpellingAfterTheExpectedInspectionWasCaptured",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "CapturedStorageCoordinateCannotBeReboundByForgingItsNewPhysicalSpelling",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "LeaseOrRemovalRechecksItsCapturedPhysicalCoordinateAfterWaitingForTheOperationLock",
+      "expectedCount": 2
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "RepairNeverReplacesARenamedPhysicalTreeAfterTheArchiveDownloadAwait",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "FirstInstallCannotReplaceNewCaseAliasStorageAfterItsDownloadAwait",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.sunder.package.maker",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Tests.BuilderToolchainTests",
+      "methodName": "LeaseCannotReturnHealthyAfterItsPhysicalDirectoryChangesDuringTheVersionProbe",
+      "expectedCount": 1
+    },
+    {
+      "owner": "younics.ai.agent.execution.local",
+      "mode": "source",
+      "rids": ["win-x64", "win-arm64"],
+      "className": "Sunder.Package.Agent.Execution.Local.Tests.WindowsSecureMutationTests",
+      "expectedCount": 34,
+      "cases": [
+        "ContentUpdate_PreservesSecurityWithoutPolicyOrNamespaceWriteRights(partialFailure: False)",
+        "ContentUpdate_PreservesSecurityWithoutPolicyOrNamespaceWriteRights(partialFailure: True)",
+        "UserFileCreation_MatchesOrdinaryCurrentUserCreationPolicy",
+        "ContentUpdate_ReadOnlyOriginalIsRejectedWithoutClearingItsAttribute",
+        "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 512, partialFailure: False)",
+        "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 512, partialFailure: True)",
+        "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 2048, partialFailure: False)",
+        "ContentUpdate_RetainsAlternateStreamsExtendedAttributesAndStorage(attributeValue: 2048, partialFailure: True)",
+        "ContentUpdate_MappedReaderObservesWritesAndLengthFailureIsExplicit(shrink: False)",
+        "ContentUpdate_MappedReaderObservesWritesAndLengthFailureIsExplicit(shrink: True)",
+        "CreatedAncestors_AreBorrowedBeforeSiblingCaptureAndSessionOwnsTheirLifetime",
+        "CreatedAncestors_ConcurrentApprovedSiblingsShareTheCreationObject",
+        "CreatedAncestors_ExpiredOrRevokedCapabilitiesCannotBorrowButTransferredAuthorityKeepsOwnership(expires: False)",
+        "CreatedAncestors_ExpiredOrRevokedCapabilitiesCannotBorrowButTransferredAuthorityKeepsOwnership(expires: True)",
+        "CreatedAncestors_NestedBorrowSupportsCreationAndCancellationWithoutReopeningOwnedDirectories",
+        "DifferentIntegrityPolicy_RemainsAttachedToTheEditedObject(partialFailure: False)",
+        "DifferentIntegrityPolicy_RemainsAttachedToTheEditedObject(partialFailure: True)",
+        "MetadataChangedDuringContentUpdate_RetainsTheConcurrentChange(changeSecurity: False)",
+        "MetadataChangedDuringContentUpdate_RetainsTheConcurrentChange(changeSecurity: True)",
+        "ReparseSourceRace_RejectsTheLinkAndPreservesTheOutsideTarget",
+        "ContentChangeBeforeWritableAcquisition_RejectsStaleValidator",
+        "DirectoryDelete_RecoveryNeverMovesAnUnrelatedReplacement(injectConflict: False)",
+        "DirectoryDelete_RecoveryNeverMovesAnUnrelatedReplacement(injectConflict: True)",
+        "ExistingWriter_RespectsPerStreamSharingWithoutLosingEitherStream(streamSuffix: \"\")",
+        "ExistingWriter_RespectsPerStreamSharingWithoutLosingEitherStream(streamSuffix: \":metadata\")",
+        "NewStreamDuringContentUpdate_RemainsOnTheSameObject",
+        "DeleteCancellationBeforeQuarantine_DoesNotMoveTheOriginal",
+        "LargeAlternateStream_IsRetainedWithoutCopyingOrTruncatingIt",
+        "CaseSensitiveDirectory_UpdatesOnlyTheExactCasedTarget",
+        "ContentUpdate_WriteDenyingDaclRetainsOriginalAndIndependentStreams",
+        "NativeHandles_CreateFlushRenameAndDeleteWithoutPathFallbacks",
+        "ContentUpdate_HardLinkSubstitutionLeavesBothObjectsUnchanged",
+        "CreatedDirectory_RetiresOnlyItsExactIdentity",
+        "ContentWrites_UseExactUtf16ChildNames"
+      ]
+    }
+  ]
+}

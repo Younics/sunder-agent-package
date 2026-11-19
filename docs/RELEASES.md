@@ -47,8 +47,10 @@ The GitHub entry points are:
   stress validation remains available. Releases supply their exact selected IDs
   and additionally run locked-package compatibility. Manual dispatch can also
   select comma-separated `packages` or `all`; full selection includes locked-SDK
-  compatibility. `package-tests` adds compatibility to a partial selection, and
-  `builder-diagnostics` selects the separate focused/full Builder diagnostic lane.
+  compatibility. `package-tests` adds compatibility to a partial selection.
+- `sunder-package-qualify.yml` (**Qualify**): manual package selection, defaulting
+  to `all`, through the same source/locked-package validation. It neither publishes
+  nor substitutes feature-specific diagnostics for qualification.
 - `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
 - `sunder-agent-cohort-rollback.yml`: validates and retains a reviewed reverse plan for
@@ -57,17 +59,25 @@ The GitHub entry points are:
 They share `sunder-package-component.yml` for component tests, native production/
 composition and per-package publication. Each operation has a strict outcome summary.
 
-Both workflows end with **Summary**, which rejects failed, cancelled or unexpectedly
+Validation and release end with **Summary**, which rejects failed, cancelled or unexpectedly
 skipped selected jobs. Interrupted publication recovers the retained plan and bytes
 and skips validation/build. A completed same-source publication becomes a no-op.
 
 Test ownership comes from `SunderTestOwner`. Component jobs select exactly their
 owned suites and evaluate their real project-reference closure for restore and
-contract hydration. Shared `agent-family` assertions run once per reference mode
+contract hydration. Selected roots restore/build as one ordinary graph over the
+authored solution; generated providers and dependencies are not bypassed.
+Shared `agent-family` assertions run once per reference mode
 and behavior platform during full validation. Linux retains the owning filesystem
 security and real-Docker cases. Per-project discovery, reports and their expected
 inventory use the same selection. The all-fifteen source-artifact lane remains a
 required full-validation integration checkpoint.
+
+The reusable validation summary also verifies the test-owned
+`scripts/test/required-platform-cases.json` inventory. Required cases must execute
+once with their exact identities/counts on every declared RID, with no failures
+or skips. This applies to release validation as well as manual qualification;
+package versions and feature names do not change orchestration.
 
 After owned source tests and any required/stress cases pass, each selected canonical
 project runs `PackSunderPackage`. Its archive payload must match the existing role

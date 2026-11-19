@@ -87,15 +87,15 @@ class VersionSelectionTests(unittest.TestCase):
                     broken[name]["result"] = outcome
                     with self.subTest(mode=mode, job=name, outcome=outcome), self.assertRaises(ValueError):
                         summary.verify(broken, mode, **options)
-        for count, pending, builder in ((0, False, False), (1, False, False), (15, True, False), (1, True, True)):
+        for count, pending in ((0, False), (1, False), (15, True), (1, True)):
             active = count > 0
             required = dict(prepare=True, preflight=active, tools=active, bootstrap=pending, dependencies=active,
-                components=active and not builder, verifier=active and not builder, source=count == 15 or builder)
+                components=active, verifier=active, source=count == 15)
             required["dependency-discovery"] = active
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
             jobs["prepare"]["outputs"] = dict(selected_count=str(count), full=str(count == 15).lower())
             jobs["dependency-discovery"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])
-            audit(jobs, "validate", builder_diagnostics=builder)
+            audit(jobs, "validate")
         for count, resume, owner, production in ((0, False, False, 0), (1, False, False, 1), (1, False, True, 0), (15, False, True, 14), (1, True, True, 0)):
             active, build = count > 0, count > 0 and not resume
             consumers = [f"consumer-{index}" for index in range(count - int(owner))]

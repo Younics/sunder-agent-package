@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import subprocess
+import xml.etree.ElementTree as ET
 
 import release_inputs as inputs
 
@@ -14,6 +15,29 @@ def projects(source, selected, inventory, mode):
     roots = {row["projectPath"] for row in rows if row["packageId"] in selected}
     roots.update(row["path"] for row in inventory["projects"] if mode in row["modes"])
     return sorted(roots)
+
+
+def build_target(source, roots, directory):
+    """One ordinary MSBuild graph; no dependency or generated-provider shortcuts."""
+    inputs.require(roots and len(roots) == len(set(roots)), "Build roots must be nonempty and distinct")
+    return Path(source) / roots[0] if len(roots) == 1 else Path(directory) / "selected.slnf"
+
+
+def filter_document(source, roots):
+    source = Path(source)
+    solution = source / "Sunder.AgentPackage.slnx"
+    members = {row.attrib["Path"] for row in ET.parse(solution).iter("Project")}
+    inputs.require(all(root in members for root in roots), "Selected build root is not in the owning solution")
+    return dict(solution=dict(path=str(solution), projects=sorted(roots)))
+
+
+def write_build_graph(source, roots, directory):
+    target = build_target(source, roots, directory)
+    if len(roots) > 1:
+        # Building .slnf is supported by the pinned .NET 10 SDK. Its newer CLI
+        # authoring commands are not required, and the authored solution is unchanged.
+        target.write_bytes(inputs.canonical(filter_document(source, roots)) + b"\n")
+    return target
 
 
 def packages(source, roots, properties, env):

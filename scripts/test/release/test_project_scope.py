@@ -69,6 +69,28 @@ class ProjectScopeTests(unittest.TestCase):
         self.assertEqual(manifest, agent_ci.inputs.validate_manifest(
             self.source, manifest, self.source_sha, self.core_sha, [owner["packageId"], component["packageId"]]))
 
+    def test_selected_graph_uses_the_authored_solution_and_keeps_every_root(self):
+        roots = [row["projectPath"] for row in self.rows[:2]]
+        solution = self.source / "Sunder.AgentPackage.slnx"
+        solution.write_text("<Solution>" + "".join(f'<Project Path="{row["projectPath"]}" />' for row in self.rows) + "</Solution>")
+        target = project_scope.write_build_graph(self.source, roots[::-1], self.root)
+        self.assertEqual(self.root / "selected.slnf", target)
+        self.assertEqual(dict(solution=dict(path=str(solution), projects=sorted(roots))), json.loads(target.read_text()))
+        self.assertEqual(roots, [row["projectPath"] for row in self.rows[:2]])
+        self.assertEqual(solution, project_scope.write_build_graph(self.source, [solution.name], self.root))
+        self.assertEqual(self.source / roots[0], project_scope.write_build_graph(self.source, [roots[0]], self.root))
+        self.assertEqual({row["projectPath"] for row in self.rows},
+                         {row.attrib["Path"] for row in project_scope.ET.parse(solution).iter("Project")})
+
+    def test_empty_duplicate_and_nonmember_graph_roots_fail_closed(self):
+        solution = self.source / "Sunder.AgentPackage.slnx"
+        solution.write_text(f'<Solution><Project Path="{self.rows[0]["projectPath"]}" /></Solution>')
+        for roots in ([], [self.rows[0]["projectPath"]] * 2,
+                      [self.rows[0]["projectPath"], self.rows[1]["projectPath"]]):
+            with self.subTest(roots=roots), self.assertRaises(ValueError):
+                project_scope.write_build_graph(self.source, roots, self.root)
+        self.assertFalse((self.root / "selected.slnf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
