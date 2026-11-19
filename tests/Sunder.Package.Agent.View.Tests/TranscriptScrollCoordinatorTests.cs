@@ -819,52 +819,67 @@ public sealed class TranscriptScrollCoordinatorTests
         var scrollViewer = new ScrollViewer { Content = items };
         var window = new Window { Width = 320, Height = 240, Content = scrollViewer };
         window.Show();
-        for (var attempt = 0; attempt < 100 && renderedCount == 0; attempt++)
+        try
         {
+            for (var attempt = 0; attempt < 100 && renderedCount == 0; attempt++)
+            {
+                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                await Task.Delay(1);
+            }
+            Assert.True(renderedCount > 0);
+            var renderer = Assert.Single(presenter.Children.OfType<StableMarkdownRenderer>());
+            scrollViewer.Offset = new Vector(0, 500);
+            using var coordinator = new TranscriptScrollCoordinator(
+                scrollViewer,
+                items,
+                canLoadOlderRows: () => false,
+                loadOlderRowsAsync: (_, _) => Task.FromResult(false),
+                canLoadNewerRows: () => false,
+                loadNewerRowsAsync: (_, _) => Task.FromResult(false),
+                hasNewerRows: () => false,
+                isFollowingLatest: () => false);
+            presenter.Rendered += (_, _) => coordinator.OnRenderedContentChanged();
+            renderer.SelectAll();
+
+            coordinator.BeginViewportMutation();
+            builder.Append("\n\n" + string.Join(
+                "\n\n",
+                Enumerable.Repeat("## Deferred heading\n\nDeferred body.", 40)));
+            coordinator.OnViewportContentChanged();
             await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-            await Task.Delay(1);
+            Assert.Equal(
+                TranscriptViewportMutationStatus.Active,
+                coordinator.DiagnosticSnapshot.Mutation?.Status);
+
+            using var settlement = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var cancellation = settlement.Token;
+            renderer.ClearSelection();
+            // Let selection release queue the render, then wait for the document
+            // before spending the bounded headless layout passes.
+            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render, cancellation);
+            await renderer.PendingRenderOperations.WaitAsync(cancellation);
+            for (var attempt = 0;
+                 attempt < 200 && coordinator.DiagnosticSnapshot.Mutation?.Status
+                     == TranscriptViewportMutationStatus.Active;
+                 attempt++)
+            {
+                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render, cancellation);
+                // The presenter queues its geometry confirmation at Background.
+                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background, cancellation);
+            }
+            await coordinator.PendingPagingOperations.WaitAsync(cancellation);
+
+            Assert.Equal(
+                TranscriptViewportMutationStatus.Completed,
+                coordinator.DiagnosticSnapshot.Mutation?.Status);
+            Assert.False(presenter.IsRenderPending);
+            Assert.Equal(builder.ToString(), renderer.RenderedSource);
+            await presenter.PendingRenderOperations.WaitAsync(cancellation);
         }
-        Assert.True(renderedCount > 0);
-        var renderer = Assert.Single(presenter.Children.OfType<StableMarkdownRenderer>());
-        scrollViewer.Offset = new Vector(0, 500);
-        using var coordinator = new TranscriptScrollCoordinator(
-            scrollViewer,
-            items,
-            canLoadOlderRows: () => false,
-            loadOlderRowsAsync: (_, _) => Task.FromResult(false),
-            canLoadNewerRows: () => false,
-            loadNewerRowsAsync: (_, _) => Task.FromResult(false),
-            hasNewerRows: () => false,
-            isFollowingLatest: () => false);
-        presenter.Rendered += (_, _) => coordinator.OnRenderedContentChanged();
-        renderer.SelectAll();
-
-        coordinator.BeginViewportMutation();
-        builder.Append("\n\n" + string.Join(
-            "\n\n",
-            Enumerable.Repeat("## Deferred heading\n\nDeferred body.", 40)));
-        coordinator.OnViewportContentChanged();
-        await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-        Assert.Equal(
-            TranscriptViewportMutationStatus.Active,
-            coordinator.DiagnosticSnapshot.Mutation?.Status);
-
-        renderer.ClearSelection();
-        for (var attempt = 0;
-             attempt < 200 && coordinator.DiagnosticSnapshot.Mutation?.Status
-                 == TranscriptViewportMutationStatus.Active;
-             attempt++)
+        finally
         {
-            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            window.Close();
         }
-        await coordinator.PendingPagingOperations.WaitAsync(TimeSpan.FromSeconds(2));
-
-        Assert.Equal(
-            TranscriptViewportMutationStatus.Completed,
-            coordinator.DiagnosticSnapshot.Mutation?.Status);
-        Assert.False(presenter.IsRenderPending);
-        await presenter.PendingRenderOperations;
-        window.Close();
     }
 
     [AvaloniaFact]
