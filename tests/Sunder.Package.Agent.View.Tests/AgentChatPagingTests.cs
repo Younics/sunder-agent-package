@@ -310,6 +310,8 @@ public sealed class AgentChatPagingTests
                     TraceGeometry("resize Markdown settled");
                     header = Header();
                     top = header.TranslatePoint(default, viewer)!.Value.Y;
+                    TestContext.Current.TestOutputHelper?.WriteLine(
+                        $"Resize settled ({phase}): {coordinator.DiagnosticSnapshot}");
                     Assert.Equal(AgentApp::Sunder.Package.Agent.Shared.PackageViews.TranscriptViewportMutationStatus.Completed,
                         coordinator.DiagnosticSnapshot.Mutation?.Status);
                     Assert.InRange(Math.Abs(top - resizeTop), 0, 1);

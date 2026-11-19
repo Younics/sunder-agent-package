@@ -5,10 +5,11 @@ using SkillsApp::Sunder.Package.Agent.Skills.Runtime;
 using SkillsApp::Sunder.Package.Agent.Skills.Services;
 using SkillsApp::Sunder.Package.Agent.Shared.Presentation;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
-public sealed class SkillSettingsRaceTests
+public sealed class SkillSettingsRaceTests(ITestOutputHelper output)
 {
     [Theory]
     [InlineData(true, 2, false)]
@@ -115,7 +116,7 @@ public sealed class SkillSettingsRaceTests
         gateway.RaiseSkillsChanged();
         await gateway.Second.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         gateway.Second.Response.TrySetResult([Skill("fresh", "Fresh skill")]);
-        await viewModel.RuntimeRefreshIdle.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForRuntimeRefreshIdleAsync(viewModel);
 
         gateway.First.Response.TrySetResult([Skill("stale", "Stale skill")]);
         await viewModel.InitializeAsync();
@@ -146,7 +147,7 @@ public sealed class SkillSettingsRaceTests
         Assert.Same(created, viewModel.SelectedSkill);
 
         gateway.ReleaseDelayedDeleteSnapshot.TrySetResult();
-        await viewModel.RuntimeRefreshIdle.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForRuntimeRefreshIdleAsync(viewModel);
 
         Assert.Same(created, Assert.Single(viewModel.Skills));
         Assert.Same(created, viewModel.SelectedSkill);
@@ -198,6 +199,27 @@ public sealed class SkillSettingsRaceTests
         Assert.Equal(publicationsAfterDrainage, Volatile.Read(ref publications));
         Assert.Empty(viewModel.Skills);
         Assert.Empty(viewModel.StatusText);
+    }
+
+    private async Task WaitForRuntimeRefreshIdleAsync(SkillSettingsViewModel viewModel)
+    {
+        var refresh = viewModel.RuntimeRefreshIdle;
+        var dispatcher = typeof(SkillSettingsViewModel)
+            .GetField("_uiDispatcher", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)?
+            .GetValue(viewModel);
+        void Trace(string stage)
+        {
+            ThreadPool.GetAvailableThreads(out var availableWorkers, out _);
+            output.WriteLine(
+                $"{stage}: refresh={refresh.Status}, dispatcher={dispatcher?.GetType().Name}, application={Avalonia.Application.Current?.GetType().Name ?? "null"}, context={SynchronizationContext.Current?.GetType().Name ?? "null"}, processors={Environment.ProcessorCount}, poolThreads={ThreadPool.ThreadCount}, availableWorkers={availableWorkers}, queued={ThreadPool.PendingWorkItemCount}");
+        }
+        Trace("Runtime refresh wait");
+        try { await refresh.WaitAsync(TimeSpan.FromSeconds(2)); }
+        catch (TimeoutException)
+        {
+            Trace("Runtime refresh timeout");
+            throw;
+        }
     }
 
     private static IAdaptiveEditorLifecycleAdapter Adapt(
