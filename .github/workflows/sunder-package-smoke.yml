@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       candidate:
-        description: Exact Agent SHA with the reviewed macOS and Presentation fixture repairs
+        description: Exact Agent SHA with the single-source-pack artifact fixture
         type: string
         required: true
 
@@ -38,7 +38,7 @@ jobs:
         with:
           ref: ${{ inputs.candidate }}
           path: sunder-agent-package
-          fetch-depth: 3
+          fetch-depth: 4
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

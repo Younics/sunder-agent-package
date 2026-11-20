@@ -15,7 +15,8 @@ import agent_ci as ci
 
 BASE = "181f3ec7c0e0622a858d2bd1b71fca98c75c31ff"
 FOCUSED = "c07451211fa1396003a2a4e9786368fe95d06dac"
-CANDIDATE = "34ffb98bf680c70ce5a4e793633994b6d0dd08a6"
+BASELINE = "34ffb98bf680c70ce5a4e793633994b6d0dd08a6"
+CANDIDATE = "260c1c02666fc67f98776d20954fadd15f9a7d11"
 CORE = "5a51f2040634bfef166516b04342f5115fb1be6a"
 PINS = {
     "inputs": (14561616437, "6a599ffa502387724d77cc01ef916b31f00d47ff7ed0223bdca63184a2dc2dbd"),
@@ -29,6 +30,13 @@ CHANGED = [f"{TEST_ROOT}/AgentOwnerSourceMigrationTests.StackImport.cs",
            f"{TEST_ROOT}/AgentSourceArtifactMigrationTests.MemoryModels.cs",
            f"{PRESENTATION}/SubsessionLiveRefreshTests.cs",
            f"{PRESENTATION}/SubsessionRuntimeCatalogServiceProxy.cs"]
+OPTIMIZATION = [
+    f"{TEST_ROOT}/AgentSourceArtifactMigrationTests.{suffix}.cs"
+    for suffix in ("Anthropic", "Builder", "CanonicalBuild", "Docker", "Files", "Gemini", "LMStudio", "Local",
+                   "Mcp", "MemoryWorker", "OpenAi", "Scenarios", "Shell", "Skills", "Subagents", "Web")
+] + [f"{TEST_ROOT}/AgentSourceArtifactMigrationTests.cs", f"{TEST_ROOT}/{PROJECT}.csproj",
+     f"{TEST_ROOT}/xunit.runner.json", "scripts/ci/test_lanes.py", "scripts/test/release/test_agent_ci.py"]
+CHANGED += OPTIMIZATION
 
 
 def acquire(pin, directory):
@@ -87,10 +95,12 @@ def main():
     if sys.platform != "darwin" or platform.machine() != arch:
         raise ValueError("Incorrect native runner")
     if (ci.head(core), git("rev-parse", "HEAD"), args.candidate, git("rev-parse", "HEAD^"),
-            git("rev-parse", "HEAD~2")) != (CORE, CANDIDATE, CANDIDATE, FOCUSED, BASE):
+            git("rev-parse", "HEAD~2"), git("rev-parse", "HEAD~3")) != (CORE, CANDIDATE, CANDIDATE, BASELINE, FOCUSED, BASE):
         raise ValueError("Incorrect candidate/Core checkout")
-    if git("status", "--porcelain") or sorted(git("diff", "--name-only", BASE, "HEAD").splitlines()) != sorted(CHANGED):
-        raise ValueError("Candidate did not contain exactly the four reviewed fixture changes")
+    if (git("status", "--porcelain")
+            or sorted(git("diff", "--name-only", BASE, "HEAD").splitlines()) != sorted(CHANGED)
+            or sorted(git("diff", "--name-only", BASELINE, "HEAD").splitlines()) != sorted(OPTIMIZATION)):
+        raise ValueError("Candidate did not contain exactly the reviewed fixture and test-diagnostic changes")
     # MSBuild imports environment variables as case-insensitive properties.
     # Do not allow workflow routing to override the test's fresh archive path.
     if any(key.casefold() == "candidate" for key in os.environ):
