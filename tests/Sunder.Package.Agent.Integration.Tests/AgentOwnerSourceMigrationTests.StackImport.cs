@@ -61,9 +61,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var locked = File.ReadAllBytes(lockPath);
             var baseline = File.ReadAllBytes(baselinePath);
             var taskAssembly = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
+            var configuration = CanonicalPackageRoles.Configuration;
             var common = new[]
             {
-                "-p:Configuration=" + CanonicalPackageRoles.Configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
+                "-p:Configuration=" + configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
                 "-p:SunderContractCacheRoot=" + cache, "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
                 "-p:SunderSdkProject=" + Sdk("Sunder.Sdk"), "-p:SunderSdkWorkerProject=" + Sdk("Sunder.Sdk.Worker"),
                 "-p:SunderSdkAvaloniaProject=" + Sdk("Sunder.Sdk.Avalonia"), "-p:SunderSdkStacksProject=" + Sdk("Sunder.Sdk.Stacks"),
@@ -77,9 +78,18 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "-nodeReuse:false", "-nologo",
             };
             await Command("restore", ["--disable-parallel", "--no-dependencies", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
-            await Command("build", ["--no-restore"]);
             var generatedRoot = CanonicalPackageRoles.Analysis(projectRoot);
+            // The byte baseline needs the ordinary exact-RID build's role plan,
+            // not a second compilation and package composition. Both rejection
+            // probes and recovery still run the full Build entry point below.
+            await Command("build", ["--no-restore", "-t:_PlanSunderPackageRoles",
+                "-p:TargetFramework=net10.0", "-p:SunderPackageRidBuild=true", "-p:AppendRuntimeIdentifierToOutputPath=false",
+                "-p:SunderPackageAuthoringIntermediateRoot=" + Path.Combine(projectRoot, "obj", configuration, "net10.0"),
+                "-p:IntermediateOutputPath=" + Path.GetDirectoryName(generatedRoot) + Path.DirectorySeparatorChar,
+                "-p:SunderPackageAuthoringOutputRoot=" + Path.Combine(projectRoot, "bin", configuration, "net10.0"),
+                "-p:OutputPath=" + Path.Combine(projectRoot, "bin", configuration, "net10.0") + Path.DirectorySeparatorChar]);
             var generated = Snapshot();
+            Assert.NotEmpty(generated);
             var cachedCatalog = Path.Combine(cache, "platform-catalogs", platform.GetProperty("selectedAuthorityContentIdentity").GetString() + ".json");
             var original = File.ReadAllBytes(cachedCatalog);
             var corrupt = original.ToArray(); corrupt[0] ^= 1;
