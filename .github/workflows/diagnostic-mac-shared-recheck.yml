@@ -1,0 +1,74 @@
+# Scoped verification ref only. Do not merge.
+name: macOS source recheck
+on:
+  workflow_call:
+    inputs:
+      candidate: {type: string, required: true}
+      rid: {type: string, required: true}
+      runner: {type: string, required: true}
+      stage: {type: string, required: true}
+
+jobs:
+  verify:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: ${{ inputs.stage == 'focused' && 180 || 360 }}
+    env:
+      MSBUILDDISABLENODEREUSE: "1"
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: diagnostic
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate }}
+          path: sunder-agent-package
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: 5a51f2040634bfef166516b04342f5115fb1be6a
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Verify exact source inputs and run selected boundary
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          RID: ${{ inputs.rid }}
+          STAGE: ${{ inputs.stage }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B ../diagnostic/scripts/test/verify-mac-shared-recheck.py "$STAGE" "$RID" "$CANDIDATE" "$RUNNER_TEMP/mac-source-recheck"
+      - name: Retain small reports and traces first
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-source-recheck-${{ inputs.stage }}-${{ inputs.rid }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/mac-source-recheck/evidence/
+            sunder-agent-package/artifacts/reports/
+            sunder-agent-package/artifacts/test-results/
+            sunder-agent-package/artifacts/source-family/
+            sunder-agent-package/artifacts/source-commands/
+            !${{ runner.temp }}/mac-source-recheck/evidence/**/*.dmp
+            !${{ runner.temp }}/mac-source-recheck/evidence/**/*.binlog
+            !sunder-agent-package/artifacts/**/*.dmp
+            !sunder-agent-package/artifacts/**/*.binlog
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain binlogs and dumps separately
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-source-recheck-process-${{ inputs.stage }}-${{ inputs.rid }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/mac-source-recheck/evidence/**/*.binlog
+            ${{ runner.temp }}/mac-source-recheck/evidence/**/*.dmp
+            sunder-agent-package/artifacts/**/*.binlog
+            sunder-agent-package/artifacts/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 14

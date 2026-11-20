@@ -1,0 +1,31 @@
+using Xunit;
+
+namespace Sunder.Package.Agent.Tests;
+
+public sealed partial class AgentSourceArtifactMigrationTests
+{
+    // Focused diagnostic only. Shared lanes run the unmodified checkout and all
+    // fifteen source artifacts.
+    [AgentPublicSourceMigrationFact]
+    public async Task Diagnostic_MemoryArtifact_StatusDelivery()
+    {
+        var repository = BuilderSourceMigrationTests.FindRepository();
+        var core = Path.GetFullPath(Path.Combine(repository, "..", "sunder-core"));
+        var driver = Environment.GetEnvironmentVariable("SUNDER_AGENT_CORE_TEST_DRIVER");
+        Assert.True(File.Exists(driver), "Use the verified Core test driver.");
+        var root = Directory.CreateTempSubdirectory("sunder-agent-memory-status-recheck-").FullName;
+        var completed = false;
+        try
+        {
+            var cache = Path.Combine(root, "fixture-cache");
+            await PrepareOwnerArtifact(root, driver!, cache);
+            await VerifyMemoryWorkerArtifact(root, core, driver!, cache);
+            completed = true;
+        }
+        finally
+        {
+            try { RetainArtifactAttempt(root, completed); }
+            finally { Directory.Delete(root, recursive: true); }
+        }
+    }
+}
