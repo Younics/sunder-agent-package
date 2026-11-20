@@ -1,4 +1,4 @@
-"""Recheck just the changed macOS boundaries, then their complete source lanes."""
+"""Run both complete macOS shared-source lanes after focused verification."""
 import argparse
 import os
 from pathlib import Path, PurePosixPath
@@ -12,7 +12,6 @@ SOURCE = Path.cwd().resolve()
 DIAGNOSTIC = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(SOURCE / "scripts/ci"))
 import agent_ci as ci
-import test_lanes
 
 BASE = "181f3ec7c0e0622a858d2bd1b71fca98c75c31ff"
 CORE = "5a51f2040634bfef166516b04342f5115fb1be6a"
@@ -69,43 +68,8 @@ def bind_inputs(root, candidate):
     return dict(previous=original_sha, candidate=ci.inputs.file_sha(prepared / ci.inputs.MANIFEST))
 
 
-def run_focus(args, root, evidence, core, case):
-    project = f"{TEST_ROOT}/{PROJECT}.csproj"
-    prepared = root / "prepared"
-    ci.prepare(argparse.Namespace(source=SOURCE, core=core, work=prepared, mode="source", packages=None,
-                                  project=[project], inputs=root / "inputs", candidate=None, catalog=None, tools=root / "tools"))
-    state = prepared / "ci-state.json"
-    status = ci.execute(state, ["dotnet", "build", project, "-c", "Release", "--no-restore", f"-bl:{evidence / 'build.binlog'}"],
-                        log=evidence / "build.log")
-    if status:
-        return status
-    tests = evidence / "test-results"
-    tests.mkdir()
-    os.environ.update(SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION="1", SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES="1",
-                      SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE=str(evidence / "source-commands"))
-    base = ["dotnet", "test", project, "-c", "Release", "--no-build", "--no-restore", "--filter", f"FullyQualifiedName={case}"]
-    log = tests / (PROJECT + ".discovery.log")
-    status = ci.execute(state, [*base, "--list-tests", "--verbosity", "quiet"], log=log)
-    if status:
-        return status
-    cases = test_lanes.discovered_tests(log.read_text(encoding="utf-8"))
-    if cases != [case]:
-        raise ValueError(f"Unexpected focused test selection: {cases}")
-    discovery = dict(schemaVersion=1, project=PROJECT, filter=base[-1], report=PROJECT + ".trx", tests=cases, prerequisites={})
-    (tests / (PROJECT + ".discovery.json")).write_bytes(ci.inputs.canonical(discovery) + b"\n")
-    watchdog = ["--blame"] if args.rid == "osx-arm64" else ["--blame-hang", "--blame-hang-timeout", "15m", "--blame-hang-dump-type", "mini"]
-    status = ci.execute(state, [*base, "--logger", f"trx;LogFileName={PROJECT}.trx", "--results-directory", str(tests),
-                                "--diag", str(tests / (PROJECT + ".vstest.log")), *watchdog], log=tests / (PROJECT + ".run.log"))
-    if not status:
-        rows = test_lanes.project_results(tests, PROJECT, discovery)
-        if [(row["test"], row["outcome"]) for row in rows] != [(case, "passed")]:
-            raise ValueError("The focused case did not pass exactly once")
-    return status
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=["focused", "shared"])
     parser.add_argument("rid", choices=["osx-arm64", "osx-x64"])
     parser.add_argument("candidate")
     parser.add_argument("output", type=Path)
@@ -121,9 +85,13 @@ def main():
         raise ValueError("Incorrect candidate/Core checkout")
     if git("status", "--porcelain") or sorted(git("diff", "--name-only", BASE, "HEAD").splitlines()) != sorted(CHANGED):
         raise ValueError("Candidate did not contain exactly the two reviewed fixture changes")
+    # MSBuild imports environment variables as case-insensitive properties.
+    # Do not allow workflow routing to override the test's fresh archive path.
+    if any(key.casefold() == "candidate" for key in os.environ):
+        raise ValueError("Diagnostic environment must not supply the MSBuild Candidate property")
     acquire("inputs", root / "original-inputs")
     acquire(args.rid, root / "tools")
-    for key in ("GH_TOKEN", "GITHUB_TOKEN"):
+    for key in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_MAC_RECHECK_SHA", "SUNDER_MAC_RECHECK_RID"):
         os.environ.pop(key, None)
     owner = root / "original-inputs/younics.ai.agent.2.0.0.sunderpkg"
     if (owner.stat().st_size, ci.inputs.file_sha(owner)) != (
@@ -132,28 +100,16 @@ def main():
     input_manifests = bind_inputs(root, args.candidate)
     os.environ["SUNDER_AGENT_OWNER_TEST_TRACE"] = str(evidence / "owner-phase.log")
     ci.configure_console()
-    case = overlay = None
-    if args.stage == "focused":
-        case = "Sunder.Package.Agent.Tests.AgentOwnerSourceMigrationTests.OwnerSource_MatchesCurrentContractsWithRoleHandoff"
-        if args.rid == "osx-arm64":
-            case = "Sunder.Package.Agent.Tests.AgentSourceArtifactMigrationTests.Diagnostic_MemoryArtifact_StatusDelivery"
-            path = SOURCE / TEST_ROOT / "MacSharedRecheckMemory.cs"
-            with path.open("xb") as dest:
-                dest.write(Path(__file__).with_name("mac-shared-recheck-memory.cs.txt").read_bytes())
-            overlay = dict(path=path.relative_to(SOURCE).as_posix(), sha256=ci.inputs.file_sha(path))
-    recipe = dict(scope="only macOS source; not all-fifteen qualification", stage=args.stage, rid=args.rid,
+    recipe = dict(scope="only macOS source; not all-fifteen qualification", stage="shared", rid=args.rid,
                   candidate=args.candidate, diagnostic=ci.head(DIAGNOSTIC), core=CORE, architecture=arch,
-                  inputsArtifact=PINS["inputs"][0], toolsArtifact=PINS[args.rid][0], case=case, overlay=overlay,
+                  inputsArtifact=PINS["inputs"][0], toolsArtifact=PINS[args.rid][0], case=None, overlay=None,
                   inputManifests=input_manifests,
                   changed={path: ci.inputs.file_sha(SOURCE / path) for path in CHANGED})
     (evidence / "recipe.json").write_bytes(ci.inputs.canonical(recipe) + b"\n")
-    if case:
-        result = run_focus(args, root, evidence, core, case)
-    else:
-        result = subprocess.run([sys.executable, "-B", "scripts/ci/agent_ci.py", "validate",
-                                 "--mode", "source", "--shared", "--stress", "--core", str(core),
-                                 "--inputs", str(root / "inputs"), "--tools", str(root / "tools")], check=False).returncode
-    if git("diff", "--name-only", "HEAD") or (overlay is None and git("status", "--porcelain")):
+    result = subprocess.run([sys.executable, "-B", "scripts/ci/agent_ci.py", "validate",
+                             "--mode", "source", "--shared", "--stress", "--core", str(core),
+                             "--inputs", str(root / "inputs"), "--tools", str(root / "tools")], check=False).returncode
+    if git("status", "--porcelain"):
         raise ValueError("Authored checkout changed while testing")
     return result
 

@@ -1,44 +1,80 @@
-# Scoped verification ref only. These workflows must not be merged.
-name: Verify repaired macOS shared-source boundaries
+# Scoped verification ref only. Do not merge.
+name: Verify the two complete macOS shared-source lanes
 on:
   workflow_dispatch:
     inputs:
       candidate:
-        description: Exact repaired Agent SHA
+        description: Exact repaired Agent SHA with both focused probes already verified
         type: string
         required: true
 
 permissions:
   contents: read
   actions: read
+env:
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  focused:
-    name: Focused source · ${{ matrix.rid }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - {rid: osx-arm64, runner: macos-15}
-          - {rid: osx-x64, runner: macos-15-intel}
-    uses: ./.github/workflows/diagnostic-mac-shared-recheck.yml
-    with:
-      candidate: ${{ inputs.candidate }}
-      rid: ${{ matrix.rid }}
-      runner: ${{ matrix.runner }}
-      stage: focused
   shared:
     name: Shared source · ${{ matrix.rid }}
-    needs: [focused]
     strategy:
       fail-fast: false
       matrix:
         include:
           - {rid: osx-arm64, runner: macos-15}
           - {rid: osx-x64, runner: macos-15-intel}
-    uses: ./.github/workflows/diagnostic-mac-shared-recheck.yml
-    with:
-      candidate: ${{ inputs.candidate }}
-      rid: ${{ matrix.rid }}
-      runner: ${{ matrix.runner }}
-      stage: shared
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: diagnostic
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.candidate }}
+          path: sunder-agent-package
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: 5a51f2040634bfef166516b04342f5115fb1be6a
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Verify exact source inputs and run shared source
+        env:
+          SUNDER_MAC_RECHECK_SHA: ${{ inputs.candidate }}
+          SUNDER_MAC_RECHECK_RID: ${{ matrix.rid }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B ../diagnostic/scripts/test/verify-mac-shared-recheck.py "$SUNDER_MAC_RECHECK_RID" "$SUNDER_MAC_RECHECK_SHA" "$RUNNER_TEMP/mac-source-recheck"
+      - name: Retain small reports and traces first
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-source-recheck-shared-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/mac-source-recheck/evidence/
+            sunder-agent-package/artifacts/reports/
+            sunder-agent-package/artifacts/test-results/
+            sunder-agent-package/artifacts/source-family/
+            sunder-agent-package/artifacts/source-commands/
+            !sunder-agent-package/artifacts/**/*.dmp
+            !sunder-agent-package/artifacts/**/*.binlog
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain binlogs and dumps separately
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mac-source-recheck-process-shared-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/**/*.binlog
+            sunder-agent-package/artifacts/**/*.dmp
+          if-no-files-found: ignore
+          retention-days: 14
