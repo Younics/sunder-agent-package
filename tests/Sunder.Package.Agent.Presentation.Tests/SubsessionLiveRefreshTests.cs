@@ -40,9 +40,11 @@ public sealed class SubsessionLiveRefreshTests
         services.SessionService.ReportRunActivity(child.SessionId, revision, AgentRunActivityKind.Reasoning, "Reviewing saved work.");
         services.SessionService.ReportRunActivity(child.SessionId, revision, AgentRunActivityKind.Retrying, "Servers overloaded",
             new AgentRunRetryState(3, DateTimeOffset.UtcNow.AddMinutes(2), "Servers overloaded", true));
+        var initialResetForwarded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new AgentRuntimeCatalog(services.SessionService, profiles, services.WorkspaceService);
         services.ExtensionCatalog.AddRuntimeCatalog(new SubsessionRuntimeCatalogServiceProxy(
-            AgentRoleBoundary.As<Sunder.Generated.Packages.Younics_Ai_Agent_Services.IRuntimeCatalogService>(catalog)));
+            AgentRoleBoundary.As<Sunder.Generated.Packages.Younics_Ai_Agent_Services.IRuntimeCatalogService>(catalog))
+        { InitialWatchResetForwarded = initialResetForwarded });
         using var adapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, services.ExtensionCatalog);
         var model = adapter.CreateViewModel();
         using var view = new SubsessionsView(model);
@@ -53,7 +55,7 @@ public sealed class SubsessionLiveRefreshTests
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(SubagentConstants.SubsessionsViewId,
                 new Dictionary<string, string?> { [SubagentConstants.SubsessionNavigationSessionIdKey] = child.SessionId.ToString("D") }));
             model.IsDetailedTranscript = detailed;
-            await WaitForPendingCoordinatorOperationsAsync(view);
+            await WaitForBootstrapAndCoordinatorAsync();
             var footer = model.RunActivityRow;
             Assert.False(model.HasLoadError, model.StatusText);
             Assert.Equal(child.SessionId, model.SelectedSubsession?.SessionId);
@@ -74,6 +76,31 @@ public sealed class SubsessionLiveRefreshTests
             Assert.False(footer.IsVisible);
         }
         finally { window.Close(); }
+
+        async Task WaitForBootstrapAndCoordinatorAsync()
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            var parentObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnSessionChanged(Guid id) { if (id == parent.SessionId) parentObserved.TrySetResult(); }
+            // Subscribe after the view model so its refresh is queued before this
+            // callback. The parent change follows both startup resets on the same
+            // stream without publishing any new child activity.
+            adapter.SessionChanged += OnSessionChanged;
+            try
+            {
+                await initialResetForwarded.Task.WaitAsync(deadline.Token);
+                services.SessionService.UpdateSession(parent with { Title = "Parent after catalog bootstrap" });
+                await parentObserved.Task.WaitAsync(deadline.Token);
+                await GetPendingCoordinatorOperations(view).WaitAsync(deadline.Token);
+            }
+            catch (OperationCanceledException exception) when (deadline.IsCancellationRequested)
+            {
+                throw new TimeoutException(
+                    $"Subsession startup did not settle: reset forwarded={initialResetForwarded.Task.IsCompleted}, parent observed={parentObserved.Task.IsCompleted}.",
+                    exception);
+            }
+            finally { adapter.SessionChanged -= OnSessionChanged; }
+        }
     }
 
     [AvaloniaTheory]

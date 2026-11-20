@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Tests;
@@ -24,6 +25,7 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
     internal static AgentServices.IRuntimeCatalogService Create(IAgentRuntimeCatalog catalog) => new SubsessionRuntimeCatalogServiceProxy(catalog);
 
     internal Func<AgentTranscriptToolDetailRequest, CancellationToken, ValueTask<AgentTranscriptToolDetailRecord?>>? ToolDetailOverride { get; set; }
+    internal TaskCompletionSource? InitialWatchResetForwarded { get; init; }
 
     public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsAsync(CancellationToken token = default) => _fallback.ListSessionsAsync(token);
     public ValueTask<IReadOnlyList<AgentSessionRecord>> ListSessionsForProfileAsync(string profileId, CancellationToken token = default) => _fallback.ListSessionsForProfileAsync(profileId, token);
@@ -57,5 +59,16 @@ internal sealed class SubsessionRuntimeCatalogServiceProxy : AgentServices.IRunt
     public ValueTask<AgentProfileRecord?> GetProfileAsync(string profileId, CancellationToken token = default) => _fallback.GetProfileAsync(profileId, token);
     public ValueTask<AgentProfileModelBindingRecord?> GetSessionModelBindingAsync(Guid sessionId, string capabilityKind, CancellationToken token = default) => _fallback.GetSessionModelBindingAsync(sessionId, capabilityKind, token);
     public ValueTask<AgentProfileModelBindingRecord?> GetModelBindingAsync(string profileId, string capabilityKind, CancellationToken token = default) => _fallback.GetModelBindingAsync(profileId, capabilityKind, token);
-    public IAsyncEnumerable<AgentRuntimeCatalogEvent> WatchAsync(CancellationToken token = default) => _fallback.WatchAsync(token);
+    public IAsyncEnumerable<AgentRuntimeCatalogEvent> WatchAsync(CancellationToken token = default)
+        => InitialWatchResetForwarded is { } forwarded ? ObserveInitialResetAsync(forwarded, token) : _fallback.WatchAsync(token);
+
+    private async IAsyncEnumerable<AgentRuntimeCatalogEvent> ObserveInitialResetAsync(
+        TaskCompletionSource forwarded, [EnumeratorCancellation] CancellationToken token)
+    {
+        await foreach (var change in _fallback.WatchAsync(token).ConfigureAwait(false))
+        {
+            yield return change;
+            if (change is AgentRuntimeCatalogResetEvent { Sequence: 1 }) forwarded.TrySetResult();
+        }
+    }
 }
