@@ -1,9 +1,9 @@
 """Recheck just the changed macOS boundaries, then their complete source lanes."""
 import argparse
-import json
 import os
 from pathlib import Path, PurePosixPath
 import platform
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -46,6 +46,27 @@ def acquire(pin, directory):
 
 def git(*args):
     return subprocess.check_output(["git", *args], cwd=SOURCE, text=True).strip()
+
+
+def bind_inputs(root, candidate):
+    original, prepared = root / "original-inputs", root / "inputs"
+    original_sha = ci.inputs.file_sha(original / ci.inputs.MANIFEST)
+    intake = ci.inputs.verify(SOURCE, original, original_sha, BASE, CORE)
+    if intake["lockSetSha256"] != "80871aed82e828c552288bfd210fac2558cfa44f50ca93e14e8187dfff9348c3":
+        raise ValueError("Incorrect all-family lock set")
+    if len(intake["packageIds"]) != 15:
+        raise ValueError("Expected the full authored lock-set scope")
+    prepared.mkdir()
+    index = dict(schemaVersion=3, coreCommit=CORE, packageIds=intake["packageIds"],
+                 candidates=[item["asset"] for item in intake["candidates"]], platformCatalog=intake["platformCatalog"]["asset"])
+    for item in [*index["candidates"], index["platformCatalog"]]:
+        name = item["name"]
+        shutil.copyfile(original / name, prepared / name)
+    (prepared / "ci-inputs.json").write_bytes(ci.inputs.canonical(index) + b"\n")
+    sealed = ci.inputs.fetch(SOURCE, prepared, candidate, CORE, packages=intake["packageIds"], prepared=True)
+    if sealed != dict(intake, artifactSourceCommit=candidate):
+        raise ValueError("Scoped input reseal must change only the Agent source binding")
+    return dict(previous=original_sha, candidate=ci.inputs.file_sha(prepared / ci.inputs.MANIFEST))
 
 
 def run_focus(args, root, evidence, core, case):
@@ -100,17 +121,15 @@ def main():
         raise ValueError("Incorrect candidate/Core checkout")
     if git("status", "--porcelain") or sorted(git("diff", "--name-only", BASE, "HEAD").splitlines()) != sorted(CHANGED):
         raise ValueError("Candidate did not contain exactly the two reviewed fixture changes")
-    acquire("inputs", root / "inputs")
+    acquire("inputs", root / "original-inputs")
     acquire(args.rid, root / "tools")
     for key in ("GH_TOKEN", "GITHUB_TOKEN"):
         os.environ.pop(key, None)
-    owner = root / "inputs/younics.ai.agent.2.0.0.sunderpkg"
+    owner = root / "original-inputs/younics.ai.agent.2.0.0.sunderpkg"
     if (owner.stat().st_size, ci.inputs.file_sha(owner)) != (
             32002626, "6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb"):
         raise ValueError("Incorrect approved owner bytes")
-    package_inputs = json.loads((root / "inputs/cold-inputs.json").read_text())
-    if package_inputs["lockSetSha256"] != "80871aed82e828c552288bfd210fac2558cfa44f50ca93e14e8187dfff9348c3":
-        raise ValueError("Incorrect all-family lock set")
+    input_manifests = bind_inputs(root, args.candidate)
     os.environ["SUNDER_AGENT_OWNER_TEST_TRACE"] = str(evidence / "owner-phase.log")
     ci.configure_console()
     case = overlay = None
@@ -125,6 +144,7 @@ def main():
     recipe = dict(scope="only macOS source; not all-fifteen qualification", stage=args.stage, rid=args.rid,
                   candidate=args.candidate, diagnostic=ci.head(DIAGNOSTIC), core=CORE, architecture=arch,
                   inputsArtifact=PINS["inputs"][0], toolsArtifact=PINS[args.rid][0], case=case, overlay=overlay,
+                  inputManifests=input_manifests,
                   changed={path: ci.inputs.file_sha(SOURCE / path) for path in CHANGED})
     (evidence / "recipe.json").write_bytes(ci.inputs.canonical(recipe) + b"\n")
     if case:
