@@ -816,6 +816,7 @@ class AgentCiTests(unittest.TestCase):
              patch.object(test_lanes, "project_results", return_value=[{"outcome": "passed"}]):
             self.assertEqual(1, test_lanes.run_project("state", self.source, "Fixture.Tests.csproj", common, "Lane=Test", output))
             self.assertIn("--blame-hang", run.call_args.args[1])
+            self.assertNotIn("console;verbosity=normal", run.call_args.args[1])
             self.assertIn("--diag", run.call_args.args[1])
             record = json.loads((output / "Fixture.Tests.discovery.json").read_text())
             self.assertEqual(cases, record["tests"])
@@ -828,6 +829,7 @@ class AgentCiTests(unittest.TestCase):
             cases.append("Fixture.Tests." + test_lanes.POLICY["artifactProducer"])
             test_lanes.run_project("state", self.source, "Fixture.Tests.csproj", common, "Lane=Artifact", output)
             self.assertIn("--blame", run.call_args.args[1])
+            self.assertIn("console;verbosity=normal", run.call_args.args[1])
             self.assertNotIn("--blame-hang", run.call_args.args[1])
         with self.assertRaisesRegex(ValueError, "no discovery header"):
             test_lanes.discovered_tests("adapter crashed")

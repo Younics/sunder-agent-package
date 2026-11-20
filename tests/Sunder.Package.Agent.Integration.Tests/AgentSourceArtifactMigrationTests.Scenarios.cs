@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
@@ -5,8 +6,8 @@ namespace Sunder.Package.Agent.Tests;
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     // Shared owner/import preparation happens once. Each selected canonical root
-    // is built once; combined family assertions consume those exact outputs.
-    private static async Task VerifySelectedPackageArtifacts(
+    // is built and packed once; combined family assertions consume those exact outputs.
+    private async Task VerifySelectedPackageArtifacts(
         string root, string core, string driver, string archive, string cache,
         IReadOnlySet<string> selected)
     {
@@ -35,7 +36,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         // Files and Shell behavior probes use the real Local execution boundary.
         if (required.Overlaps(["younics.ai.agent.tools.files", "younics.ai.agent.tools.shell"]))
             required.Add("younics.ai.agent.execution.local");
-        foreach (var scenario in scenarios)
-            if (required.Contains(scenario.PackageId)) await scenario.Verify();
+        foreach (var scenario in scenarios.Where(scenario => required.Contains(scenario.PackageId)))
+        {
+            var timer = Stopwatch.StartNew();
+            _output.WriteLine($"Source artifact {scenario.PackageId}: verification started");
+            try { await scenario.Verify(); }
+            finally { _output.WriteLine($"Source artifact {scenario.PackageId}: verification ended after {timer.Elapsed:c}"); }
+        }
     }
 }

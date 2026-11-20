@@ -16,15 +16,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Tools.Shell/Runtime/ShellWorkerBindings.Legacy.cs",
         "src/Sunder.Package.Agent.Tools.Shell/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyShellArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyShellArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Tools.Shell", "ShellWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Tools.Shell", "ShellWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         var owned = CanonicalPackageRoles.ReadOwnedBaseline(worker);
         AssertHeadlessRoleOutput(worker);
         await VerifyShellBehavior(worker, Path.Combine(root, "LocalWorker"));
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         Assert.Equal(owned, CanonicalPackageRoles.ReadOwnedBaseline(worker));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));

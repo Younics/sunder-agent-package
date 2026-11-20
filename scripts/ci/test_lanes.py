@@ -78,7 +78,9 @@ def run_project(state_path, source, project, common, filter_value, output):
         return 0
     # The all-family case owns bounded child builds and the existing CI job budget;
     # one ordinary-case watchdog must not truncate its fifteen-family production.
-    diagnostics = ["--blame"] if any(POLICY["artifactProducer"] in case for case in cases) else ["--blame-hang", "--blame-hang-timeout", "15m"]
+    diagnostics = (["--blame", "--logger", "console;verbosity=normal"]
+                   if any(POLICY["artifactProducer"] in case for case in cases)
+                   else ["--blame-hang", "--blame-hang-timeout", "15m"])
     command = [*base, "--logger", f"trx;LogFileName={name}.trx", "--results-directory", str(output),
                "--diag", str(output / (name + ".vstest.log")), *diagnostics]
     status = agent_ci.execute(state_path, command, log=output / (name + ".run.log"))

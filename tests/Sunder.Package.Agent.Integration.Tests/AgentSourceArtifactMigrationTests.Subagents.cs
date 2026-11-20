@@ -53,15 +53,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Subagents/Rpc/CapabilityCatalogClient.cs",
     ];
 
-    private static async Task VerifySubagentsArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifySubagentsArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
         var required = new[] { "younics.ai.agent.runtime.catalog", "younics.ai.agent.behavior.loop", "younics.ai.agent.run.control", "younics.ai.agent.child.run.executor" };
-        var canonical = await BuildCanonicalFamily(root, "Subagents", "SubagentsWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Subagents", "SubagentsWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Subagents");
         await VerifySubagentsRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

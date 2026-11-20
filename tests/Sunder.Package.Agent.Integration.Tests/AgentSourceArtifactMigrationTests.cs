@@ -2,11 +2,16 @@ using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
+    private readonly ITestOutputHelper _output;
+
+    public AgentSourceArtifactMigrationTests(ITestOutputHelper output) => _output = output;
+
     [AgentPublicSourceMigrationFact]
     public async Task CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload()
     {
@@ -50,14 +55,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
     }
 
-    private static async Task<CanonicalFamilyBuild> PrepareOwnerArtifact(string root, string driver, string cache)
+    private async Task<CanonicalFamilyBuild> PrepareOwnerArtifact(string root, string driver, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Agent", "Worker", cache);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Agent", "Worker", cache);
         var worker = canonical.Directory;
         await VerifyGeneratedAppView(worker, "Agent");
         await VerifyOwnerAppRole(worker);
-        // Pack independently rechecks the actual canonical source and selections.
-        await canonical.Pack();
         var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");
         Assert.True(File.Exists(archive));
         VerifyArchive(archive);

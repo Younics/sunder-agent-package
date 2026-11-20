@@ -22,14 +22,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Execution.Local/Rpc/ProviderComposition.cs",
         "src/Sunder.Package.Agent.Execution.Local/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyLocalArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyLocalArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Execution.Local", "LocalWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Execution.Local", "LocalWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Execution.Local");
         await VerifyLocalRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

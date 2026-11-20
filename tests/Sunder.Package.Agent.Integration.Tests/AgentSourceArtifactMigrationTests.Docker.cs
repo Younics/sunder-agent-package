@@ -21,14 +21,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Execution.Docker/Rpc/DockerWorkerBindings.cs", "src/Sunder.Package.Agent.Execution.Docker/App/DockerAppBindings.Legacy.cs",
         "src/Sunder.Package.Agent.Execution.Docker/Rpc/AppComposition.cs", "src/Sunder.Package.Agent.Execution.Docker/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyDockerArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyDockerArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Execution.Docker", "DockerWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Execution.Docker", "DockerWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Execution.Docker");
         await VerifyDockerRoles(root, worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

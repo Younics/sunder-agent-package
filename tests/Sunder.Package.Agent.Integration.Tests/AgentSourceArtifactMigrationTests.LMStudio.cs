@@ -19,14 +19,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Provider.LMStudio/Runtime/LMStudioWorkerBindings.Legacy.cs",
         "src/Sunder.Package.Agent.Provider.LMStudio/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyLMStudioArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyLMStudioArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Provider.LMStudio", "LMStudioWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Provider.LMStudio", "LMStudioWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Provider.LMStudio");
         await VerifyLMStudioRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertProviderArchiveHasNoCentralProtocol(archive);
