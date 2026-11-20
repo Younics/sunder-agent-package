@@ -14,6 +14,8 @@ sys.path.insert(0, str(SOURCE / "scripts/ci"))
 import agent_ci as ci
 
 BASE = "181f3ec7c0e0622a858d2bd1b71fca98c75c31ff"
+FOCUSED = "c07451211fa1396003a2a4e9786368fe95d06dac"
+CANDIDATE = "34ffb98bf680c70ce5a4e793633994b6d0dd08a6"
 CORE = "5a51f2040634bfef166516b04342f5115fb1be6a"
 PINS = {
     "inputs": (14561616437, "6a599ffa502387724d77cc01ef916b31f00d47ff7ed0223bdca63184a2dc2dbd"),
@@ -22,8 +24,11 @@ PINS = {
 }
 PROJECT = "Sunder.Package.Agent.Integration.Tests"
 TEST_ROOT = f"tests/{PROJECT}"
+PRESENTATION = "tests/Sunder.Package.Agent.Presentation.Tests"
 CHANGED = [f"{TEST_ROOT}/AgentOwnerSourceMigrationTests.StackImport.cs",
-           f"{TEST_ROOT}/AgentSourceArtifactMigrationTests.MemoryModels.cs"]
+           f"{TEST_ROOT}/AgentSourceArtifactMigrationTests.MemoryModels.cs",
+           f"{PRESENTATION}/SubsessionLiveRefreshTests.cs",
+           f"{PRESENTATION}/SubsessionRuntimeCatalogServiceProxy.cs"]
 
 
 def acquire(pin, directory):
@@ -81,10 +86,11 @@ def main():
     arch = "arm64" if args.rid == "osx-arm64" else "x86_64"
     if sys.platform != "darwin" or platform.machine() != arch:
         raise ValueError("Incorrect native runner")
-    if ci.head(core) != CORE or git("rev-parse", "HEAD") != args.candidate or git("rev-parse", "HEAD^") != BASE:
+    if (ci.head(core), git("rev-parse", "HEAD"), args.candidate, git("rev-parse", "HEAD^"),
+            git("rev-parse", "HEAD~2")) != (CORE, CANDIDATE, CANDIDATE, FOCUSED, BASE):
         raise ValueError("Incorrect candidate/Core checkout")
     if git("status", "--porcelain") or sorted(git("diff", "--name-only", BASE, "HEAD").splitlines()) != sorted(CHANGED):
-        raise ValueError("Candidate did not contain exactly the two reviewed fixture changes")
+        raise ValueError("Candidate did not contain exactly the four reviewed fixture changes")
     # MSBuild imports environment variables as case-insensitive properties.
     # Do not allow workflow routing to override the test's fresh archive path.
     if any(key.casefold() == "candidate" for key in os.environ):
