@@ -55,7 +55,7 @@ public sealed class SubsessionLiveRefreshTests
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(SubagentConstants.SubsessionsViewId,
                 new Dictionary<string, string?> { [SubagentConstants.SubsessionNavigationSessionIdKey] = child.SessionId.ToString("D") }));
             model.IsDetailedTranscript = detailed;
-            await WaitForBootstrapAndCoordinatorAsync();
+            await WaitForBootstrapAndCoordinatorAsync(view, adapter, initialResetForwarded.Task, services.SessionService, parent);
             var footer = model.RunActivityRow;
             Assert.False(model.HasLoadError, model.StatusText);
             Assert.Equal(child.SessionId, model.SelectedSubsession?.SessionId);
@@ -76,31 +76,33 @@ public sealed class SubsessionLiveRefreshTests
             Assert.False(footer.IsVisible);
         }
         finally { window.Close(); }
+    }
 
-        async Task WaitForBootstrapAndCoordinatorAsync()
+    private static async Task WaitForBootstrapAndCoordinatorAsync(
+        SubsessionsView view, CatalogBackedSubsessionRuntimeAdapter adapter, Task initialResetForwarded,
+        AgentSessionService sessions, AgentSessionRecord parent)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var parentObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnSessionChanged(Guid id) { if (id == parent.SessionId) parentObserved.TrySetResult(); }
+        // Subscribe after the view model so its refresh is queued before this
+        // callback. The parent change follows both startup resets on the same
+        // stream without publishing any new child activity.
+        adapter.SessionChanged += OnSessionChanged;
+        try
         {
-            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            var parentObserved = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-            void OnSessionChanged(Guid id) { if (id == parent.SessionId) parentObserved.TrySetResult(); }
-            // Subscribe after the view model so its refresh is queued before this
-            // callback. The parent change follows both startup resets on the same
-            // stream without publishing any new child activity.
-            adapter.SessionChanged += OnSessionChanged;
-            try
-            {
-                await initialResetForwarded.Task.WaitAsync(deadline.Token);
-                services.SessionService.UpdateSession(parent with { Title = "Parent after catalog bootstrap" });
-                await parentObserved.Task.WaitAsync(deadline.Token);
-                await GetPendingCoordinatorOperations(view).WaitAsync(deadline.Token);
-            }
-            catch (OperationCanceledException exception) when (deadline.IsCancellationRequested)
-            {
-                throw new TimeoutException(
-                    $"Subsession startup did not settle: reset forwarded={initialResetForwarded.Task.IsCompleted}, parent observed={parentObserved.Task.IsCompleted}.",
-                    exception);
-            }
-            finally { adapter.SessionChanged -= OnSessionChanged; }
+            await initialResetForwarded.WaitAsync(deadline.Token);
+            sessions.UpdateSession(parent with { Title = "Parent after catalog bootstrap" });
+            await parentObserved.Task.WaitAsync(deadline.Token);
+            await GetPendingCoordinatorOperations(view).WaitAsync(deadline.Token);
         }
+        catch (OperationCanceledException exception) when (deadline.IsCancellationRequested)
+        {
+            throw new TimeoutException(
+                $"Subsession startup did not settle: reset forwarded={initialResetForwarded.IsCompleted}, parent observed={parentObserved.Task.IsCompleted}.",
+                exception);
+        }
+        finally { adapter.SessionChanged -= OnSessionChanged; }
     }
 
     [AvaloniaTheory]
@@ -128,8 +130,10 @@ public sealed class SubsessionLiveRefreshTests
         var revision = lease.Key.RunRevision;
         var transcriptResets = 0;
         services.SessionService.TranscriptReset += _ => transcriptResets++;
+        var initialResetForwarded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var catalog = new AgentRuntimeCatalog(services.SessionService, profiles, services.WorkspaceService);
-        var proxy = new SubsessionRuntimeCatalogServiceProxy(AgentRoleBoundary.As<Sunder.Generated.Packages.Younics_Ai_Agent_Services.IRuntimeCatalogService>(catalog));
+        var proxy = new SubsessionRuntimeCatalogServiceProxy(AgentRoleBoundary.As<Sunder.Generated.Packages.Younics_Ai_Agent_Services.IRuntimeCatalogService>(catalog))
+        { InitialWatchResetForwarded = initialResetForwarded };
         services.ExtensionCatalog.AddRuntimeCatalog(proxy);
         using var adapter = new CatalogBackedSubsessionRuntimeAdapter(scope.Context, services.ExtensionCatalog);
         var model = adapter.CreateViewModel();
@@ -143,7 +147,9 @@ public sealed class SubsessionLiveRefreshTests
         {
             await view.OnNavigatedToAsync(new PackageViewNavigationContext(SubagentConstants.SubsessionsViewId,
                 new Dictionary<string, string?> { [SubagentConstants.SubsessionNavigationSessionIdKey] = child.SessionId.ToString("D") }));
-            await Settle();
+            // The later refresh must race live turns, not an outstanding
+            // startup resnapshot that can retire the row under test.
+            await Settle(waitForBootstrap: true);
             model.IsDetailedTranscript = detailed;
             await Settle();
             if (!detailed)
@@ -155,10 +161,13 @@ public sealed class SubsessionLiveRefreshTests
             Assert.True(tools.Length == 1, $"{model.StatusText}; messages={model.Messages.Count}; groups={model.Messages.OfType<SubsessionActivityGroupRowViewModel>().Count()}; detailed={detailed}");
             var row = tools.Single();
             var invalidationTrace = string.Empty;
+            var wasExpanded = row.IsExpanded;
             row.PropertyChanged += (_, change) =>
             {
-                if (change.PropertyName == nameof(row.IsExpanded) && !row.IsExpanded)
+                if (change.PropertyName != nameof(row.IsExpanded)) return;
+                if (wasExpanded && !row.IsExpanded)
                     invalidationTrace = Environment.StackTrace;
+                wasExpanded = row.IsExpanded;
             };
             var viewer = view.FindControl<ScrollViewer>("TranscriptScrollViewer")!;
             var repeater = view.FindControl<ItemsRepeater>("TranscriptItemsControl")!;
@@ -202,7 +211,7 @@ public sealed class SubsessionLiveRefreshTests
                 await GetPendingRuntimeRefresh(model).WaitAsync(TimeSpan.FromSeconds(5));
                 await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-                Assert.True(row.IsExpanded, invalidationTrace);
+                Assert.True(row.IsExpanded, $"Retained={model.Messages.Contains(row)}; canceled={canceled}. {invalidationTrace}");
                 Assert.Same(previous, row.ExpandedDetails);
                 Assert.False(canceled);
             }
@@ -241,9 +250,12 @@ public sealed class SubsessionLiveRefreshTests
         }
         finally { release.TrySetResult(); window.Close(); }
 
-        async Task Settle()
+        async Task Settle(bool waitForBootstrap = false)
         {
-            await WaitForPendingCoordinatorOperationsAsync(view);
+            if (waitForBootstrap)
+                await WaitForBootstrapAndCoordinatorAsync(view, adapter, initialResetForwarded.Task, services.SessionService, parent);
+            else
+                await WaitForPendingCoordinatorOperationsAsync(view);
             for (var pass = 0; pass < 100; pass++)
             {
                 var presenters = view.GetVisualDescendants().OfType<SubagentsApp::Sunder.Package.Agent.Shared.PackageViews.StreamingMarkdownPresenter>()
