@@ -1,4 +1,6 @@
-using Sunder.Package.Agent.Skills.Services;
+extern alias SkillsWorker;
+
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Storage;

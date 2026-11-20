@@ -11,7 +11,7 @@ namespace Sunder.Package.Agent.Tests;
 
 // Reflection negotiates the actual generated graph in its owning role assembly.
 // Ordinary component suites must not borrow this from an executable artifact test.
-internal static class GeneratedPackageCompositionFixture
+internal static partial class GeneratedPackageCompositionFixture
 {
     internal static (SunderWorkerOptions Options, IAsyncDisposable Lifetime, IServiceProvider Services) CreateGeneratedWorker(
         Assembly worker, IPackageContext context, ISunderRpcClient rpc)
@@ -29,30 +29,6 @@ internal static class GeneratedPackageCompositionFixture
         var shutdown = options.OnShutdown!;
         var services = (IServiceProvider)shutdown.Target!.GetType().GetProperty("Services", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(shutdown.Target)!;
         return (options, new GeneratedShutdownLifetime(shutdown), services);
-    }
-
-    internal static ServiceProvider CreateGeneratedApp(Assembly app, IPackageContext context, ISunderRpcClient rpc,
-        IBackgroundTaskQueue? background = null, IPackageWorkerExecutionObservations? executionObservations = null)
-    {
-        Assert.DoesNotContain(app.GetTypes(), type => type.Name == "AppPackageModule");
-        var module = (ISunderAppPackageModule)Activator.CreateInstance(app.GetType("Sunder.Generated.Package.AppModule", true)!)!;
-        var services = new ServiceCollection();
-        module.ConfigureAppServices(services, context);
-        Assert.DoesNotContain(services, service => service.ServiceType == typeof(IPackageContext) || service.ServiceType == typeof(ISunderRpcClient)
-            || service.ServiceType == typeof(IPackageNotificationService) || service.ServiceType == typeof(IBackgroundTaskQueue)
-            || service.ServiceType == typeof(IPackageSettingsNavigationService) || service.ServiceType == typeof(IPackageShellViewService)
-            || service.ServiceType == typeof(IPackageDevelopmentService) || service.ServiceType == typeof(IPackageLogNavigationService)
-            || service.ServiceType == typeof(IPackageAppStateUpdates) || service.ServiceType == typeof(IPackageWorkerExecutionObservations));
-        services.AddSingleton(context); services.AddSingleton(rpc);
-        services.AddSingleton<IPackageNotificationService>(NullPackageNotificationService.Instance);
-        services.AddSingleton<IPackageSettingsNavigationService>(NullPackageSettingsNavigationService.Instance);
-        services.AddSingleton<IPackageShellViewService>(new CapturingHistoryShellViewService());
-        services.AddSingleton<IPackageDevelopmentService>(new CompositionDevelopmentHost());
-        services.AddSingleton<IPackageLogNavigationService>(new CompositionDevelopmentHost());
-        services.AddSingleton<IPackageAppStateUpdates, BuilderUiStateUpdates>();
-        if (executionObservations is not null) services.AddSingleton(executionObservations);
-        if (background is not null) services.AddSingleton(background);
-        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true });
     }
 
     internal static async Task ActivateGeneratedComposition(SunderWorkerOptions options)

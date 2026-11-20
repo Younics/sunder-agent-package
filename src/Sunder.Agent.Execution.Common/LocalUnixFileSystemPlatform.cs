@@ -95,11 +95,12 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
         }
     }
 
-    public void CreateDirectory(LocalSecureHandle parent, string name)
+    public LocalSecureHandle CreateDirectory(LocalSecureHandle parent, string name)
     {
         ValidateName(name);
         LocalUnixNative.MakeDirectory(parent.Handle.DangerousGetHandle().ToInt32(), name);
         LocalUnixNative.Sync(parent.Handle.DangerousGetHandle().ToInt32());
+        return OpenChild(parent, name, parent.Identity.Volume, requireDirectory: true);
     }
 
     public LocalSecureHandle CreateExclusiveFile(
@@ -269,7 +270,7 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
                 metadata.Mode,
                 metadata.UserId,
                 metadata.GroupId,
-                () => new SafeFileHandle(new IntPtr(LocalUnixNative.Duplicate(descriptor)), ownsHandle: true));
+                static handle => new SafeFileHandle(new IntPtr(LocalUnixNative.Duplicate(handle.DangerousGetHandle().ToInt32())), ownsHandle: true));
         }
         catch
         {
@@ -304,8 +305,7 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
                 parent,
                 name,
                 quarantineName,
-                current,
-                reservation);
+                current);
             current = null;
             LocalUnixNative.Sync(parentDescriptor);
             if (transaction.Handle.Identity != expectedIdentity
@@ -326,7 +326,7 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
                 }
                 else
                 {
-                    RestoreQuarantineName(parent, name, quarantineName, reservation);
+                    RestoreQuarantineName(parent, name, quarantineName);
                 }
             }
             catch (Exception recoveryException)
@@ -347,22 +347,13 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
     private void RestoreQuarantineName(
         LocalSecureHandle parent,
         string targetName,
-        string quarantineName,
-        LocalSecureMutationReservation reservation)
+        string quarantineName)
     {
         var parentDescriptor = parent.Handle.DangerousGetHandle().ToInt32();
         try
         {
-            try
-            {
-                LocalUnixNative.RenameNoReplace(parentDescriptor, quarantineName, parentDescriptor, targetName);
-            }
-            catch (LocalSecureFileAlreadyExistsException)
-            {
-                var conflictName = reservation.TakeQuarantineName();
-                LocalUnixNative.RenameNoReplace(parentDescriptor, targetName, parentDescriptor, conflictName);
-                LocalUnixNative.RenameNoReplace(parentDescriptor, quarantineName, parentDescriptor, targetName);
-            }
+            // Never move or replace a new arrival to make room for restoration.
+            LocalUnixNative.RenameNoReplace(parentDescriptor, quarantineName, parentDescriptor, targetName);
             using var restored = OpenChild(parent, targetName, parent.Identity.Volume, requireDirectory: false);
             LocalUnixNative.Sync(parentDescriptor);
         }
@@ -381,8 +372,7 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
         LocalSecureHandle parent,
         string targetName,
         string quarantineName,
-        LocalSecureHandle handle,
-        LocalSecureMutationReservation reservation) : IDisposable
+        LocalSecureHandle handle) : IDisposable
     {
         private int _state;
 
@@ -409,7 +399,7 @@ internal sealed partial class LocalUnixFileSystemPlatform : ILocalSecureFileSyst
 
             try
             {
-                owner.RestoreQuarantineName(parent, targetName, quarantineName, reservation);
+                owner.RestoreQuarantineName(parent, targetName, quarantineName);
                 using var restored = owner.OpenChild(
                     parent,
                     targetName,

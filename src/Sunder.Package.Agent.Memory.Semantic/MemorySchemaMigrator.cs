@@ -9,7 +9,7 @@ internal sealed class MemorySchemaMigrator(string databasePath)
 
     private static readonly Version MinimumFtsSecureDeleteVersion = new(3, 42, 0);
 
-    internal const string BaselineSql = """
+    internal static readonly string BaselineSql = """
         CREATE TABLE MemorySchemaMigrations (
             Version INTEGER PRIMARY KEY,
             Name TEXT NOT NULL,
@@ -185,7 +185,7 @@ internal sealed class MemorySchemaMigrator(string databasePath)
             ON SemanticLifecycleInbox (EventSequence);
         CREATE INDEX IX_SemanticDeletionMaintenance_State
             ON SemanticDeletionMaintenance (State, CreatedAtUtc);
-        """;
+        """.Replace("\r\n", "\n", StringComparison.Ordinal);
 
     internal const string BaselineChecksum = "ed3e1696f550d4f3b16bf440806d60fbfc8a90d7004c5605621f4963bbbb2de1";
 

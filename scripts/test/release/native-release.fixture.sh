@@ -10,11 +10,12 @@ native_builder="$script_dir/build-native-family.ps1"
 native_helper="$script_dir/native-family.py"
 output_auditor="$script_dir/generate-package-output-audit.sh"
 native_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.cs"
+maker_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.Maker.cs"
 
 lock_report="$(bash "$lock_verifier" "$repository_root")"
 printf '%s\n' "$lock_report"
-grep -Fq 'Verified 35 release locks and 15 primary package projects' <<< "$lock_report" \
-  || { printf 'Canonical release fixture requires the current 35-project lock inventory.\n' >&2; exit 1; }
+grep -Fq 'Verified 43 release locks and 15 primary package projects' <<< "$lock_report" \
+  || { printf 'Canonical release fixture requires the current 43-project lock inventory.\n' >&2; exit 1; }
 test ! -e "$script_dir/Sunder.Agent.ReleaseSigning.targets"
 test ! -e "$script_dir/sign-worker-apphost.ps1"
 grep -Fq 'expectedEntryPoint' "$native_builder"
@@ -34,12 +35,22 @@ if grep -Eq 'SignedCurrentRidExecutionRuntimeFixture|ObserveSupportedAsync|packa
   exit 1
 fi
 grep -Fq 'AssertRuntimeLaunch' "$native_smoke"
-grep -Fq 'VerifyBuilderProjectLifecycleAsync' "$native_smoke"
-grep -Fq 'SUNDER_AGENT_BUILDER_SDK_VERSION' "$native_smoke"
-grep -Fq 'kind = "add-path-entry"' "$native_smoke"
-grep -Fq '"new", "console"' "$native_smoke"
-grep -Fq '"build", projectRoot' "$native_smoke"
-grep -Fq '"publish", projectRoot' "$native_smoke"
+grep -Fq 'VerifyBuilderProjectLifecycleAsync' "$maker_smoke"
+grep -Fq 'SUNDER_AGENT_BUILDER_SDK_VERSION' "$maker_smoke"
+grep -Fq 'SUNDER_AGENT_BUILDER_NUGET_FEED' "$maker_smoke"
+grep -Fq '"start-job"' "$maker_smoke"
+grep -Fq 'RunJobAsync("create")' "$maker_smoke"
+grep -Fq 'RunJobAsync("archive"' "$maker_smoke"
+grep -Fq 'PrepareNativeDevelopmentPackageAsync' "$maker_smoke"
+grep -Fq 'Maker authored, native package!' "$maker_smoke"
+grep -Fq 'makerViewAcceptance = false' "$maker_smoke"
+grep -Fq 'PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost' "$native_smoke"
+grep -Fq 'RegistryPackagePolicySynchronizer' "$native_smoke"
+grep -Fq 'AppProcessPolicySupervisor' "$repository_root/tests/fixtures/NativeAppRpcStartupHook.cs"
+if grep -Eq '"execute-process"|"new", "console"|"publish", projectRoot' "$native_smoke" "$maker_smoke"; then
+  printf 'Maker acceptance must use current finite jobs and a real package, not the retired console/process smoke.\n' >&2
+  exit 1
+fi
 grep -Fq 'SunderAgentNativeReleaseTestSource' "$test_targets"
 grep -Fq '$(MSBuildProjectName)' "$test_targets"
 grep -Fq 'Sunder.Runtime.Host.Tests' "$test_targets"
@@ -77,4 +88,4 @@ grep -Fq 'Release lock does not resolve Sunder.Sdk.Worker within declared' "$fai
 
 python3 -B "$fixture_scripts/native-family.fixture.py"
 
-printf 'Native release source fixture passed: 35 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'
+printf 'Native release source fixture passed: 43 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'

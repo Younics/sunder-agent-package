@@ -10,11 +10,14 @@ import sys
 import tempfile
 
 sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
+import bash_runtime
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
 import agent_publication as publication
 import agent_release as r
 import agent_selection as selection
+import native_runtime_evidence as native_execution
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMON = {selection.PLAN, "native-test-evidence.json", "package-output-audit.json", "release-provenance.json", "toolchain.txt"}
@@ -49,6 +52,11 @@ def primary_names(plan, row, coordinator=False):
     return COMMON | {selection.archive_name(package) for package in packages}
 
 
+def execution_bundle_names(directory):
+    value = r.load(directory / "native-test-evidence.json")
+    return {row["path"] for row in value["executionBundles"]} if value.get("schemaVersion") == 6 else set()
+
+
 def persist(path, data):
     path = Path(path)
     if path.exists():
@@ -61,13 +69,15 @@ def persist(path, data):
 
 def verify_primary(core, directory, plan):
     source_guard(core, plan)
+    r.require(r.load(directory / "native-test-evidence.json").get("schemaVersion") == 6,
+              "New release staging requires schema 6 development execution evidence; historical readers do not qualify new releases")
     subprocess.run([sys.executable, "-B", str(ROOT / "scripts/release/native-family.py"), "verify",
         str(directory / "native-test-evidence.json"), str(directory), str(ROOT / "packages.json"), str(directory / selection.PLAN),
         plan["artifactSourceCommit"], os.environ["CORE_TAG"], os.environ["CORE_COMMIT"], os.environ["CORE_BUILD_VERSION"]], check=True)
     with tempfile.TemporaryDirectory() as temporary:
         audit = Path(temporary) / "audit.json"
-        subprocess.run(["bash", str(ROOT / "scripts/release/generate-package-output-audit.sh"), str(directory),
-            str(directory / "native-test-evidence.json"), str(ROOT), str(audit)], check=True)
+        subprocess.run(bash_runtime.command(ROOT / "scripts/release/generate-package-output-audit.sh", directory,
+            directory / "native-test-evidence.json", ROOT, audit), check=True)
         r.require(audit.read_bytes() == (directory / "package-output-audit.json").read_bytes(), "Native output audit changed")
     return r.verify_family(ROOT, directory, plan["registryOrigin"])
 
@@ -106,6 +116,7 @@ def verify_provenance(directory, plan, release_id, family):
 
 def files_for(directory, plan, row, coordinator=False):
     names = primary_names(plan, row, coordinator)
+    if coordinator: names |= execution_bundle_names(directory)
     records = [dict(path=name, size=(directory / name).stat().st_size, sha256=r.file_sha(directory / name)) for name in sorted(names)]
     evidence = directory / ".github" / row["key"]
     persist(evidence / "SHA256SUMS", "".join(f"{item['sha256']}  {item['path']}\n" for item in records).encode())
@@ -123,7 +134,42 @@ def files_for(directory, plan, row, coordinator=False):
         receipt = "agent-family-cohort-" + cohort.request_hash(proposed) + ".json"
         if (directory / receipt).exists():
             files[receipt] = directory / receipt
+    if coordinator and (directory / native_execution.INSTALLED).exists():
+        files[native_execution.INSTALLED] = directory / native_execution.INSTALLED
+        for rid in native_execution.RIDS:
+            for suffix in (".json", ".tar.gz"):
+                name = "native-installed-" + rid + suffix
+                files[name] = directory / name
     return files
+
+
+def installed_native_value(directory, plan, family, *, exact_directory=False):
+    records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
+               for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
+    value = native_execution.installed_set(directory, records, os.environ["CORE_COMMIT"], plan["registryOrigin"], exact_directory=exact_directory)
+    return dict(value, artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
+
+
+def retain_installed_native(core, directory, plan, receipts_directory):
+    targets, infos, family = verified(core, directory, plan)
+    records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
+               for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
+    value = native_execution.installed_set(receipts_directory, records, os.environ["CORE_COMMIT"], plan["registryOrigin"])
+    value.update(artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
+    for record in value["bundles"]:
+        persist(directory / record["path"], (Path(receipts_directory) / record["path"]).read_bytes())
+    persist(directory / native_execution.INSTALLED, r.canonical(value) + b"\n")
+    row, store = targets[0]
+    if infos[0]["draft"]:
+        store.upload(infos[0]["id"], [directory / record["path"] for record in value["bundles"]] + [directory / native_execution.INSTALLED])
+    store.verify(infos[0]["id"], files_for(directory, plan, row, True))
+
+
+def require_installed_native(directory, plan, family):
+    path = directory / native_execution.INSTALLED
+    r.require(path.exists(), "Complete six-RID installed native acceptance is required before visibility or announcement")
+    expected = installed_native_value(directory, plan, family)
+    r.require(path.read_bytes() == r.canonical(expected) + b"\n", "Retained installed native evidence differs from the exact selected source, Registry or final archives")
 
 
 def stage(core, directory, plan):
@@ -164,7 +210,7 @@ def stage(core, directory, plan):
     # run can recover the complete tested batch without rebuilding any archive.
 
 
-def recover(core, directory, plan):
+def recover(core, directory, plan, *, read_only=False):
     source_guard(core, plan)
     selection.retain(plan, directory)
     row, store = stores(core, plan)[0]
@@ -179,7 +225,12 @@ def recover(core, directory, plan):
             store.download(asset, directory / asset["name"])
     family = verify_primary(core, directory, plan)
     verify_provenance(directory, plan, info["id"], family)
-    stage(core, directory, plan)
+    if read_only:
+        verified(core, directory, plan)
+        if (directory / native_execution.INSTALLED).exists():
+            require_installed_native(directory, plan, family)
+    else:
+        stage(core, directory, plan)
 
 
 def verified(core, directory, plan):
@@ -198,41 +249,103 @@ def verified(core, directory, plan):
     return targets, infos, value
 
 
+def registry_version(directory, plan, record, expected, availability=None):
+    with tempfile.TemporaryDirectory() as temporary:
+        expectation = Path(temporary) / "expected.json"
+        expectation.write_bytes(r.canonical(expected) + b"\n")
+        result = Path(temporary) / "publication.json"
+        command = bash_runtime.command(ROOT / "scripts/release/publish-registry-package.sh")
+        if availability:
+            command += ["--verify-only", "--current-availability", availability]
+        subprocess.run([*command, "--initial-yanked", str(expectation), "--publication-output", str(result),
+            plan["registryOrigin"], str(directory / record["path"]), record["packageId"], record["version"]], check=True)
+        return r.publication_evidence(r.load(result), record)
+
+
 def registry_versions(directory, plan, value, availability=None):
     selected_ids = {row["packageId"] for row in selection.selected(plan)}
     order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
     records = {item["packageId"]: item for item in value["artifacts"]}
     retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2 and availability is not None)
     observed = []
-    with tempfile.TemporaryDirectory() as temporary:
-        for package_id in order:
-            record = records[package_id]
-            expected = Path(temporary) / "expected.json"
-            expected.write_bytes(r.canonical(retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))) + b"\n")
-            result = Path(temporary) / (package_id + ".json")
-            current = availability if package_id in selected_ids else "Listed"
-            command = ["bash", str(ROOT / "scripts/release/publish-registry-package.sh")]
-            if current:
-                command += ["--verify-only", "--current-availability", current]
-            subprocess.run([*command, "--initial-yanked", str(expected), "--publication-output", str(result),
-                plan["registryOrigin"], str(directory / record["path"]),
-                package_id, record["version"]], check=True)
-            observed.append(r.publication_evidence(r.load(result), record))
+    for package_id in order:
+        record = records[package_id]
+        expected = retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId")))
+        observed.append(registry_version(directory, plan, record, expected, availability if package_id in selected_ids else "Listed"))
     # Ownership is observed from the Registry, per package. A later run compares
     # the same immutable evidence, including owners, instead of supplying an owner.
     persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
 
 
-def publish_versions(core, directory, plan):
-    targets, infos, value = verified(core, directory, plan)
+def publication_receipt(directory, plan, record, publication):
+    return dict(schemaVersion=1, artifactSourceCommit=plan["artifactSourceCommit"], registryOrigin=plan["registryOrigin"],
+        planSha256=r.file_sha(directory / selection.PLAN), archive=record,
+        publication=r.publication_evidence(publication, record))
+
+
+def read_component_receipt(directory, plan, record, path):
+    data = r.regular(path).read_bytes()
+    value = r.decode(data)
+    r.require(value == publication_receipt(directory, plan, record, value["publication"])
+              and data == r.canonical(value) + b"\n", "Component publication receipt source, selection or archive differs")
+    return value["publication"]
+
+
+def publish_component(core, directory, plan, package_id, receipts_directory, owner_receipts=None):
+    _, infos, value = verified(core, directory, plan)
+    selected_ids = {row["packageId"] for row in selection.selected(plan)}
+    r.require(package_id in selected_ids, "Cannot publish an unselected component")
+    records = {item["packageId"]: item for item in value["artifacts"]}
+    record = records[package_id]
+    retained = r.read_publications(directory, value["artifacts"], required=(directory / REQUEST).exists())
     if (directory / REQUEST).exists():
-        visibility(core, directory, plan)
-        return
-    r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
-    registry_versions(directory, plan, value)
+        # A recovered visibility attempt already has durable per-package identity
+        # evidence. Only the coordinator may reconcile or change shared visibility.
+        observed = retained[package_id]
+    else:
+        r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
+        owner = "younics.ai.agent"
+        if package_id != owner and owner in selected_ids:
+            r.require(owner_receipts is not None, "Selected owner must finish publication before its consumers")
+            read_component_receipt(directory, plan, records[owner], Path(owner_receipts) / (owner + ".json"))
+        observed = registry_version(directory, plan, record,
+            retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId"))))
+    path = Path(receipts_directory) / (package_id + ".json")
+    persist(path, r.canonical(publication_receipt(directory, plan, record, observed)) + b"\n")
+    return path
+
+
+def merge_component_publications(core, directory, plan, receipts_directory):
+    """The only writer of shared recovery metadata; leaves write separate receipts."""
+    targets, infos, value = verified(core, directory, plan)
+    selected_ids = {row["packageId"] for row in selection.selected(plan)}
+    receipts_directory = Path(receipts_directory)
+    r.require({path.name for path in receipts_directory.iterdir()} == {package_id + ".json" for package_id in selected_ids},
+              "Missing, extra or duplicate component publication receipts")
+    retained = r.read_publications(directory, value["artifacts"])
+    observed = []
+    for record in value["artifacts"]:
+        package_id = record["packageId"]
+        if package_id in selected_ids:
+            observed.append(read_component_receipt(directory, plan, record, receipts_directory / (package_id + ".json")))
+        else:
+            observed.append(registry_version(directory, plan, record,
+                retained.get(package_id, r.publication(record, plan.get("ownerPrincipalId"))), "Listed"))
+    persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
     row, store = targets[0]
     store.upload(infos[0]["id"], [directory / r.PUBLICATIONS])
     store.verify(infos[0]["id"], files_for(directory, plan, row, True))
+
+
+def publish_versions(core, directory, plan):
+    # Local/recovery entry point uses the same leaves and single-writer merge as CI.
+    with tempfile.TemporaryDirectory(prefix="sunder-component-publications-") as temporary:
+        order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
+        selected_ids = {row["packageId"] for row in selection.selected(plan)}
+        for package_id in order:
+            if package_id in selected_ids:
+                publish_component(core, directory, plan, package_id, temporary, temporary)
+        merge_component_publications(core, directory, plan, temporary)
 
 
 def cohort_request(plan, value, revision, retained_tags=None):
@@ -262,6 +375,7 @@ def advancing_tags(proposed, observed):
 def visibility(core, directory, plan):
     targets, infos, value = verified(core, directory, plan)
     r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2)
+    require_installed_native(directory, plan, value)
     _, store = targets[0]
     info = infos[0]
     path = directory / REQUEST
@@ -328,19 +442,34 @@ def finalize(core, directory, plan):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("stage", "recover", "publish", "visibility", "guard", "finalize"))
+    parser.add_argument("action", choices=("stage", "recover", "publish", "publish-component", "merge-publications", "retain-installed-native", "visibility", "guard", "finalize"))
     parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
+    parser.add_argument("--package")
+    parser.add_argument("--receipts", type=Path)
+    parser.add_argument("--owner-receipts", type=Path)
+    parser.add_argument("--read-only", action="store_true", help="Recover and verify without changing tags or release assets.")
     args = parser.parse_args()
+    r.require(not args.read_only or args.action == "recover", "Read-only is a recovery option, not a publication bypass")
     directory, core = args.directory.resolve(), args.core.resolve(strict=True)
     plan = selection.load(directory / selection.PLAN, ROOT)
     if args.action == "stage": stage(core, directory, plan)
-    elif args.action == "recover": recover(core, directory, plan)
+    elif args.action == "recover": recover(core, directory, plan, read_only=args.read_only)
     elif args.action == "publish": publish_versions(core, directory, plan)
+    elif args.action == "publish-component":
+        r.require(args.package and args.receipts, "Component publication needs --package and --receipts")
+        publish_component(core, directory, plan, args.package, args.receipts, args.owner_receipts)
+    elif args.action == "merge-publications":
+        r.require(args.receipts, "Publication merge needs --receipts")
+        merge_component_publications(core, directory, plan, args.receipts)
+    elif args.action == "retain-installed-native":
+        r.require(args.receipts, "Installed native acceptance retention needs --receipts")
+        retain_installed_native(core, directory, plan, args.receipts)
     elif args.action == "visibility": visibility(core, directory, plan)
     elif args.action == "finalize": finalize(core, directory, plan)
     else:
         targets, infos, value = verified(core, directory, plan)
+        require_installed_native(directory, plan, value)
         r.require(infos[0]["draft"], "Cohort mutation requires its coordinator draft")
         proposed = cohort.request(r.load(directory / REQUEST))
         r.require(proposed == cohort_request(plan, value, proposed["expectedPackagePolicyRevision"], proposed["distTags"]), "Cohort source binding differs")

@@ -310,7 +310,7 @@ public partial class SubsessionsView : UserControl,
                 StringComparison.Ordinal)
             && Volatile.Read(ref _anchoredNavigationGeneration) == 0)
         {
-            _transcriptBehavior.MarkInitialPlacementPending(_navigationCancellation?.Token ?? default);
+            _transcriptBehavior.OnTranscriptSelectionChanging(_navigationCancellation?.Token ?? default);
         }
     }
 

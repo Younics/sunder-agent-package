@@ -32,14 +32,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Skills/Rpc/SkillsRuntimeBindings.cs",
     ];
 
-    private static async Task VerifySkillsArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifySkillsArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Skills", "SkillsWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Skills", "SkillsWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Skills");
         await VerifySkillsRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

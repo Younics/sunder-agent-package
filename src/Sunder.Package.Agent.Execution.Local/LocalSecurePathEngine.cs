@@ -98,6 +98,19 @@ internal static class LocalSecurePathEngine
             var claim = authorizationContext is null
                 ? null
                 : FindClaim(authorizationContext, fullPath);
+            // Borrow before any capture/traversal: a Windows creation object
+            // intentionally prevents independent no-delete-sharing ancestor opens.
+            if (claim?.ConfiguredRoot is not null && authorizationContext?.ResourceOperation is { } directoryOperation)
+            {
+                directoryLease = resourceReferences?.BorrowDirectoryOperation(authorizationContext with
+                {
+                    ResourceOperation = directoryOperation with { ResourceIndex = claim.ResourceIndex },
+                });
+                if (directoryLease is null && capabilities.Any(LocalResourceReference.IsDirectoryOperationReference))
+                {
+                    throw new LocalResourceReapprovalRequiredException(requestedPath);
+                }
+            }
             if (claim is not null && claim.ConfiguredRoot is null)
             {
                 var claimedOperation = authorizationContext!.ResourceOperation
@@ -118,11 +131,24 @@ internal static class LocalSecurePathEngine
             }
             if (authority is null)
             {
-                authority = HostSecurePathEngine.Capture(
-                    config.WorkspacePaths,
-                    fullPath,
-                    cancellationToken: cancellationToken,
-                    allowMissingSuffix: true);
+                try
+                {
+                    authority = HostSecurePathEngine.Capture(
+                        config.WorkspacePaths,
+                        fullPath,
+                        cancellationToken: cancellationToken,
+                        allowMissingSuffix: true,
+                        createdDirectories: directoryLease?.Authority);
+                }
+                catch (Exception exception) when (claim is not null
+                    && exception is IOException or UnauthorizedAccessException)
+                {
+                    // A supplied claim must be revalidated, not converted into
+                    // fresh authority. Windows may reject an independent open of
+                    // another operation's retained creation object before its
+                    // changed identity chain can be compared to that claim.
+                    throw new LocalSecureApprovalChangedException(fullPath);
+                }
             }
 
             var scope = HostSecurePathEngine.ClassifyConfiguredRoot(
@@ -174,7 +200,6 @@ internal static class LocalSecurePathEngine
             var exactOperation = operation with { ResourceIndex = claim.ResourceIndex };
             var exactContext = authorizationContext with { ResourceOperation = exactOperation };
             var configuredRoot = scope.ConfiguredRoot;
-            if (insideConfiguredScope) directoryLease = resourceReferences?.BorrowDirectoryOperation(exactContext);
             if (!insideConfiguredScope
                 && string.Equals(exactOperation.ActionId, "files.mutate", StringComparison.Ordinal))
             {
@@ -287,10 +312,17 @@ internal static class LocalSecurePathEngine
             LocalConfiguredRootResolution scope;
             try
             {
+                using var directoryLease = resourceReferences.BorrowDirectoryOperation(context with { ResourceOperation = exactOperation });
+                if (directoryLease is null
+                    && context.ApprovedResourceCapabilities.Any(LocalResourceReference.IsDirectoryOperationReference))
+                {
+                    return false;
+                }
                 using var authority = HostSecurePathEngine.Capture(
                     config.WorkspacePaths,
                     claim.LogicalPath,
-                    allowMissingSuffix: claim.ConfiguredRoot is not null);
+                    allowMissingSuffix: claim.ConfiguredRoot is not null,
+                    createdDirectories: directoryLease?.Authority);
                 scope = HostSecurePathEngine.ClassifyConfiguredRoot(
                     config.WorkspacePaths,
                     authority);

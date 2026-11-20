@@ -30,7 +30,7 @@ public sealed partial class BuilderSourceMigrationTests
         throw new InvalidOperationException("Agent repository root was not found.");
     }
 
-    internal static Task Run(string directory, params string[] arguments)
+    internal static Task<string> Run(string directory, params string[] arguments)
         => Run(directory, TimeSpan.FromMinutes(3), arguments);
 
     // SDK commands must retain the build host even when VSTest uses a newer CLR.
@@ -55,10 +55,17 @@ public sealed partial class BuilderSourceMigrationTests
         }
     }
 
-    internal static async Task Run(string directory, TimeSpan timeLimit, params string[] arguments)
+    internal static async Task<string> Run(string directory, TimeSpan timeLimit, params string[] arguments)
     {
         var start = new ProcessStartInfo(DotnetBuildHost) { WorkingDirectory = directory, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
         start.ArgumentList.Add(arguments[0]);
+        // Newer SDK CLIs can infer --configuration from the inherited environment
+        // independently of forwarded MSBuild properties. Pin the CLI option too.
+        if (arguments[0] is "build" or "run")
+        {
+            start.ArgumentList.Add("--configuration");
+            start.ArgumentList.Add(FixtureConfiguration);
+        }
         start.ArgumentList.Add("-p:Configuration=" + FixtureConfiguration);
         start.ArgumentList.Add("-v:minimal");
         foreach (var argument in arguments.Skip(1)) start.ArgumentList.Add(argument);
@@ -75,7 +82,18 @@ public sealed partial class BuilderSourceMigrationTests
                 + await output + Environment.NewLine + await error, exception);
         }
         catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
-        Assert.True(process.ExitCode == 0, await output + Environment.NewLine + await error);
+        var diagnostics = await output + Environment.NewLine + await error;
+        Assert.True(process.ExitCode == 0, diagnostics);
+        return diagnostics;
+    }
+
+    internal static string RequireProbeOutput(string directory, string assemblyName, string diagnostics)
+    {
+        var path = Path.Combine(directory, "bin", FixtureConfiguration, "net10.0", assemblyName + ".dll");
+        Assert.True(File.Exists(path), $"Probe build host '{DotnetBuildHost}' did not emit '{path}'.{Environment.NewLine}"
+            + diagnostics + Environment.NewLine + "Observed assemblies: "
+            + string.Join(", ", Directory.EnumerateFiles(directory, "*.dll", SearchOption.AllDirectories).Take(32)));
+        return path;
     }
 }
 

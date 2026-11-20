@@ -360,37 +360,68 @@ public sealed partial class AgentRunCoordinatorTests
             new TestTool(toolId)
         );
         var sessionId = await runtime.CreateSessionAsync(toolId);
+        using var dispatcher = new QueuedAgentPresentationDispatcher();
         using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
             runtime.PermissionService,
-            runtime.RunCoordinator
+            runtime.RunCoordinator,
+            dispatcher
         );
         await viewModel.InitializeAsync();
-        var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
-        var secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspace.WorkspaceId);
-        await WaitUntilAsync(() => viewModel.Workspaces.Any(workspace => workspace.WorkspaceId == secondWorkspace.WorkspaceId));
-
-        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
-            workspace.WorkspaceId == secondWorkspace.WorkspaceId
-        );
+        var published = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var publicationRelease = new ManualResetEventSlim();
+        NotifyCollectionChangedEventHandler onWorkspaceAdded = (_, _) =>
+        {
+            if (viewModel.Workspaces.Count > 1 && published.TrySetResult(dispatcher.CheckAccess()))
+            {
+                // The test's finally releases this dedicated UI thread even when a
+                // checkpoint fails. Never throw an assertion on an unowned callback.
+                publicationRelease.Wait();
+            }
+        };
+        await dispatcher.InvokeAsync(() => viewModel.Workspaces.CollectionChanged += onWorkspaceAdded);
+        var selectSecondWorkspace = Task.CompletedTask;
+        AgentSessionRecord secondSession;
+        string secondWorkspaceId;
+        try
+        {
+            var secondWorkspace = runtime.WorkspaceService.CreateWorkspace("Second Workspace");
+            secondWorkspaceId = secondWorkspace.WorkspaceId;
+            secondSession = runtime.SessionService.CreateSession("Second Workspace Session", workspaceId: secondWorkspaceId);
+            Assert.True(await published.Task.WaitAsync(TimeSpan.FromSeconds(2)));
+            // A collection item is visible before its snapshot finishes applying. User
+            // navigation must queue behind that publication, not write into suppression.
+            selectSecondWorkspace = dispatcher.InvokeAsync(() => viewModel.SelectedWorkspace = viewModel.Workspaces.Single(
+                workspace => workspace.WorkspaceId == secondWorkspaceId));
+            Assert.False(selectSecondWorkspace.IsCompleted);
+        }
+        finally
+        {
+            publicationRelease.Set();
+            await selectSecondWorkspace;
+            await dispatcher.InvokeAsync(() => viewModel.Workspaces.CollectionChanged -= onWorkspaceAdded);
+        }
         await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == secondSession.SessionId);
 
-        Assert.Equal(secondWorkspace.WorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
-        Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == sessionId);
-        Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
-        Assert.True(viewModel.CanUseChat);
-
-        viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace =>
-            workspace.WorkspaceId == runtime.CurrentWorkspaceId
-        );
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(secondWorkspaceId, viewModel.SelectedWorkspace?.WorkspaceId);
+            Assert.Equal(secondSession.SessionId, viewModel.SelectedSession?.SessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == sessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+            Assert.True(viewModel.CanUseChat);
+            viewModel.SelectedWorkspace = viewModel.Workspaces.Single(workspace => workspace.WorkspaceId == runtime.CurrentWorkspaceId);
+        });
         await WaitUntilAsync(() => viewModel.SelectedSession?.SessionId == sessionId);
 
-        Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
-        Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
-        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(sessionId, viewModel.SelectedSession?.SessionId);
+            Assert.Contains(viewModel.Sessions, session => session.SessionId == sessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == secondSession.SessionId);
+        });
     }
 
     [Fact]
@@ -1220,44 +1251,61 @@ public sealed partial class AgentRunCoordinatorTests
         );
         using var runtimeAdapter = WorkerBackedSubagentManagementGateway.ForRuntime(
             new TestPackageContext(runtime.RootPath), runtime.ExtensionCatalog);
-        using var viewModel = new SubsessionsViewModel(
+        var dispatcher = InlineAgentPresentationDispatcher.Instance;
+        var viewModel = new SubsessionsViewModel(
             runtimeAdapter,
             runtimeAdapter,
             runtimeAdapter,
-            runtimeAdapter, InlineAgentPresentationDispatcher.Instance);
+            runtimeAdapter, dispatcher);
+        var liveUpdate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        void OnTranscriptChanged()
+        {
+            if (viewModel.Messages.Count >= 2)
+                liveUpdate.TrySetResult();
+        }
 
-        await viewModel.OnNavigatedToAsync(
-            new PackageViewNavigationContext(
-                SubagentConstants.SubsessionsViewId,
-                new Dictionary<string, string?>
-                {
-                    [SubagentConstants.SubsessionNavigationSessionIdKey] =
-                        childSession.SessionId.ToString("D"),
-                }
-            )
-        );
+        try
+        {
+            await viewModel.OnNavigatedToAsync(
+                new PackageViewNavigationContext(
+                    SubagentConstants.SubsessionsViewId,
+                    new Dictionary<string, string?>
+                    {
+                        [SubagentConstants.SubsessionNavigationSessionIdKey] =
+                            childSession.SessionId.ToString("D"),
+                    }
+                )
+            );
 
-        Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
-        Assert.DoesNotContain(
-            viewModel.Subsessions,
-            session => session.SessionId == parentSessionId
-        );
-        Assert.Contains(
-            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
-            row => row.Content == "Child transcript content."
-        );
+            await dispatcher.InvokeAsync(() =>
+            {
+                Assert.Equal(childSession.SessionId, viewModel.SelectedSubsession?.SessionId);
+                Assert.DoesNotContain(viewModel.Subsessions, session => session.SessionId == parentSessionId);
+                Assert.Contains(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+                    row => row.Content == "Child transcript content.");
+                viewModel.TranscriptChanged += OnTranscriptChanged;
+            });
 
-        runtime.SessionService.AppendTextTurn(
-            childSession.SessionId,
-            AgentMessageRole.Assistant,
-            "Live child update."
-        );
+            runtime.SessionService.AppendTextTurn(
+                childSession.SessionId,
+                AgentMessageRole.Assistant,
+                "Live child update."
+            );
 
-        await WaitUntilAsync(() => viewModel.Messages.Count >= 2);
-        Assert.Contains(
-            viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
-            row => row.Content == "Live child update."
-        );
+            await liveUpdate.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await dispatcher.InvokeAsync(() =>
+                Assert.Contains(viewModel.Messages.OfType<SubsessionTextTranscriptRowViewModel>(),
+                    row => row.Content == "Live child update."));
+        }
+        finally
+        {
+            // Disposal clears the compact rows, so it must use the same dispatcher as live updates.
+            await dispatcher.InvokeAsync(() =>
+            {
+                viewModel.TranscriptChanged -= OnTranscriptChanged;
+                viewModel.Dispose();
+            });
+        }
     }
 
     [Fact]

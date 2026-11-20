@@ -10,7 +10,7 @@ compares the qualified proposal to the separately reviewed byte records.
 import argparse
 import copy
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 import xml.etree.ElementTree as ET
@@ -53,7 +53,7 @@ def expected_inventory(root):
     for contract in contracts.values():
         require(contract["methods"] == sorted(set(contract["methods"])) and contract["methods"]
                 and set(contract["streams"]) <= set(contract["methods"]), "Invalid method/stream expectation")
-        require(contract["source"].startswith(str(Path(packages[contract["packageId"]]["projectPath"]).parent) + "/"), "Contract source owner differs")
+        require(contract["source"].startswith(PurePosixPath(packages[contract["packageId"]]["projectPath"]).parent.as_posix() + "/"), "Contract source owner differs")
         if contract["exposure"] == "public": require(contract["packageId"] == AGENT, "Public API owner differs")
     expected["packageVersions"] = {package_id: package["version"] for package_id, package in actual.items()}
     return expected, inventory
@@ -74,7 +74,7 @@ def verify_source(root, expected):
     require(sorted(public) == sorted(c["contractId"] for c in expected["contracts"] if c["exposure"] == "public"),
             "Authored public declarations differ from the approved 18-API inventory")
     # This private service intentionally uses the ordinary-service default identity.
-    profile = release.source_file(root, "src/Sunder.Package.Agent/Services/AgentProfileService.cs").read_text()
+    profile = release.source_file(root, "src/Sunder.Package.Agent/Services/AgentProfileService.cs").read_text(encoding="utf-8-sig")
     require("[SunderService]" in profile and "class AgentProfileService" in profile, "Default private profile service differs")
     providers.setdefault(AGENT, []).append("younics.ai.agent.agent.profile.provider")
     solution = [p.attrib["Path"].replace("\\", "/") for p in ET.parse(root / "Sunder.AgentPackage.slnx").iter("Project")]
@@ -85,10 +85,10 @@ def verify_source(root, expected):
         require(solution.count(package["projectPath"]) == 1, "Canonical project absent/duplicated in solution")
         require(not any(project.findall(".//" + tag) for tag in ("SunderPackageRole", "SunderPackageAppProject", "SunderPackagePrimaryProject", "ProjectReference")), "Noncanonical authored role graph")
         require((project.findtext(".//SunderSdkAvaloniaReference") == "true") == package["hasApp"], "Authored App role differs")
-        metadata = (root / Path(package["projectPath"]).parent / "PackageMetadata.cs").read_text()
+        metadata = (root / Path(package["projectPath"]).parent / "PackageMetadata.cs").read_text(encoding="utf-8-sig")
         require(f'Id = "{package["packageId"]}"' in metadata and "SunderPackageDependency" not in metadata, "Package metadata identity/dependency differs")
     for contract in expected["contracts"]:
-        source = release.source_file(root, contract["source"]).read_text()
+        source = release.source_file(root, contract["source"]).read_text(encoding="utf-8-sig")
         require("[SunderService" in source, "Missing authored service: " + contract["source"])
         if contract["contractId"] != "younics.ai.agent.agent.profile":
             require(f'ContractId = "{contract["contractId"]}"' in source and f'ServiceId = "{contract["service"]}"' in source, "Source contract/service identity differs")
@@ -234,7 +234,7 @@ def qualified_contract_lock(root, frame, package):
     path = release.source_file(root / "src", frame["contractLock"])
     require(release.file_sha(path) == frame["contractLockSha256"], "Qualified contract lock bytes differ")
     selected = release.load(path)
-    reviewed = release.load(release.source_file(root, str(Path(package["projectPath"]).parent / "sunder-contracts.lock.json")))
+    reviewed = release.load(release.source_file(root, (PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json").as_posix()))
     # Core may select a fresh same-version source artifact in a qualified obj copy.
     # That changes content identities, never the separately reviewed import intent
     # or public contract tuples. No authored selection or expectation is rewritten.
@@ -290,7 +290,7 @@ def propose(root, evidence_path, expected, inventory):
         frame, plan = qualification["inputs"], qualification["rolePlan"]
         require(qualification["schemaVersion"] == 1 and qualification["leaf"] == "sunder-dev", "Expected Core role qualification V1")
         require(frame["packageId"] == package_id and frame["packageVersion"] == package_version(package_id, expected)
-                and frame["project"] == str(Path(package["projectPath"]).relative_to("src"))
+                and frame["project"] == PurePosixPath(package["projectPath"]).relative_to("src").as_posix()
                 and frame["configuration"] == evidence["configuration"] and frame["runtimeIdentifier"] == evidence["rid"]
                 and frame["targetFramework"] == "net10.0", "Qualified source coordinates differ")
         require(plan["hasApp"] == package["hasApp"] and [r["role"] for r in plan["roles"]] == (["worker", "app"] if package["hasApp"] else ["worker"]), "Qualified roles differ")
@@ -331,7 +331,7 @@ def propose(root, evidence_path, expected, inventory):
         manifest, _, _ = release.archive_metadata(archive_path)
         verify_manifest(manifest, package, expected, inventory)
         require({t["rid"] for t in manifest["targets"]} == {evidence["rid"]}, "Qualified artifact RID differs")
-        pin(release.source_file(root, str(Path(package["projectPath"]).parent / "sunder-contracts.lock.json")))
+        pin(release.source_file(root, (PurePosixPath(package["projectPath"]).parent / "sunder-contracts.lock.json").as_posix()))
         locked = qualified_contract_lock(root, frame, package)
         release.verify_consumer_projection(locked, manifest, role_uses=source_uses["roleUses"])
         with zipfile.ZipFile(archive_path) as archive:
@@ -349,7 +349,7 @@ def propose(root, evidence_path, expected, inventory):
     require(all(release.file_sha(path) == sha for path, sha in inputs.items()), "Verification inputs changed")
     return dict(schemaVersion=1, inventorySha256=release.file_sha(root / INVENTORY),
                 contracts=sorted(records, key=lambda c: c["contractId"]),
-                qualificationInputs={str(path.relative_to(root)): sha for path, sha in sorted(inputs.items())})
+                qualificationInputs={path.relative_to(root).as_posix(): sha for path, sha in sorted(inputs.items())})
 
 
 def main():

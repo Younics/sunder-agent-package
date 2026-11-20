@@ -231,6 +231,33 @@ class ReleaseTests(unittest.TestCase):
         path.write_bytes(path.read_bytes() + b"\n")
         self.assertNotEqual(expected, release.locks(self.source))
 
+    def test_current_owned_projection_reviews_are_bound_to_exact_retained_snapshots(self):
+        source = Path(__file__).resolve().parents[3]
+        paths = sorted((source / "src").glob("*/sunder-contracts.owned.json"))
+        self.assertTrue(paths)
+        for path in paths:
+            baseline = release.load(path)
+            release.owned_contracts(baseline, baseline["packageId"])
+        baseline = release.load(source / "src/Sunder.Package.Agent/sunder-contracts.owned.json")
+        original = release.canonical(baseline)
+        key = next(key for key, record in baseline["contracts"].items() if "projectionReviews" in record)
+        changes = {
+            "unknown field": lambda record: record.update(foreign=True),
+            "empty": lambda record: record.update(projectionReviews=[]),
+            "duplicate": lambda record: record["projectionReviews"].append(copy.deepcopy(record["projectionReviews"][0])),
+            "snapshot": lambda record: record["projectionReviews"][0].update(contractVersion="99.0.0"),
+            "descriptor": lambda record: record["projectionReviews"][0].update(descriptorSha256="a" * 64),
+            "kind": lambda record: record["projectionReviews"][0].update(reviewKind="unreviewed"),
+            "bytes": lambda record: record["projectionReviews"][0].update(canonicalProjection="{}"),
+            "projection fields": lambda record: record["projectionReviews"][0].update(canonicalProjection="{}", projectionSha256=release.sha(b"{}")),
+        }
+        for label, mutate in changes.items():
+            with self.subTest(label=label):
+                bad = copy.deepcopy(baseline)
+                mutate(bad["contracts"][key])
+                with self.assertRaises(release.Invalid): release.owned_contracts(bad, bad["packageId"])
+        self.assertEqual(original, release.canonical(baseline))
+
     def test_consumer_roles_are_closed_and_readiness_is_coalesced_per_role(self):
         contract = {"authorityKind": "package", "resolvedContractVersion": "1.0.0"}
         bundle = {"contractId": "example.shared", "contractVersion": "1.0.0"}
@@ -732,12 +759,14 @@ class CohortTests(unittest.TestCase):
 
     def test_guard_failure_stops_before_post_and_guard_receives_no_registry_credentials(self):
         credentials = {"SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43,
+                       "SUNDER_REGISTRY_API_KEY": "api-key-fixture",
                        "SUNDER_REGISTRY_PUBLISH_TOKEN": "publish-fixture",
                        "SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON": '["fixture-guard"]'}
         def reject(command, *, env, check):
             self.assertEqual(["fixture-guard"], command)
-            self.assertNotIn("SUNDER_REGISTRY_CLI_TOKEN", env)
-            self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", env)
+            self.assertFalse(any(key in env for key in (
+                "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN")),
+                "Registry credential leaked into guard environment")
             self.assertTrue(check)
             raise subprocess.CalledProcessError(1, command)
         with patch.dict(os.environ, credentials), patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
@@ -746,9 +775,10 @@ class CohortTests(unittest.TestCase):
                 cohort.apply("https://registry.test", self.req, self.res)
             send.assert_not_called()
 
-    def test_missing_or_malformed_owner_credential_never_falls_back_to_publish_token(self):
+    def test_missing_or_malformed_owner_credential_never_falls_back_to_api_key(self):
         for token in ("", "sunder_cli_invalid"):
             with self.subTest(token=token), patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": token,
+                    "SUNDER_REGISTRY_API_KEY": "sunder_pub_v1_" + "b" * 43,
                     "SUNDER_REGISTRY_PUBLISH_TOKEN": "publish-fixture"}), patch.object(cohort, "http") as send:
                 with self.assertRaisesRegex(release.Invalid, "owner credential"):
                     cohort.apply("https://registry.test", self.req, self.res)
@@ -757,10 +787,13 @@ class CohortTests(unittest.TestCase):
     def test_api_key_mode_requires_the_key_and_never_falls_back_to_human_credentials(self):
         token = "sunder_pub_v1_" + "b" * 43
         with patch.dict(os.environ, {"SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE": "api-key",
-                "SUNDER_REGISTRY_PUBLISH_TOKEN": token, "SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}):
+                "SUNDER_REGISTRY_API_KEY": token, "SUNDER_REGISTRY_PUBLISH_TOKEN": "sunder_pub_v1_" + "c" * 43,
+                "SUNDER_REGISTRY_CLI_TOKEN": "sunder_cli_" + "a" * 43}):
             self.assertEqual(token, cohort.mutation_credential(self.request))
-            with patch.dict(os.environ, {"SUNDER_REGISTRY_PUBLISH_TOKEN": ""}), self.assertRaisesRegex(release.Invalid, "no CLI credential fallback"):
-                cohort.mutation_credential(self.request)
+            for invalid in ("", "sunder_pub_v1_invalid", "sunder_cli_" + "a" * 43):
+                with self.subTest(key=invalid), patch.dict(os.environ, {"SUNDER_REGISTRY_API_KEY": invalid}), \
+                        self.assertRaisesRegex(release.Invalid, "no CLI credential fallback"):
+                    cohort.mutation_credential(self.request)
             reverse = copy.deepcopy(self.request)
             reverse["versions"][0].update(expectedAvailability="Listed", availability="Yanked")
             with self.assertRaisesRegex(release.Invalid, "only forward"):
@@ -771,13 +804,17 @@ class CohortTests(unittest.TestCase):
         paths = []
         def send(command, **kwargs):
             self.assertNotIn(token, " ".join(command))
-            self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", kwargs["env"])
+            self.assertFalse(any(key in kwargs["env"] for key in (
+                "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")),
+                "Credential leaked into HTTP child environment")
             header_path = Path(next(command[i + 1][1:] for i, arg in enumerate(command) if arg == "--header" and command[i + 1].startswith("@")))
             paths.append(header_path)
             self.assertEqual("Authorization: Bearer " + token + "\n", header_path.read_text())
             self.assertEqual(0, header_path.stat().st_mode & 0o077)
             return subprocess.CompletedProcess(command, 0, b"{}\n200")
-        with patch.dict(os.environ, {"SUNDER_REGISTRY_PUBLISH_TOKEN": token}), patch.object(cohort.subprocess, "run", side_effect=send):
+        with patch.dict(os.environ, {"GH_TOKEN": "github-fixture", "GITHUB_TOKEN": "github-fixture",
+                                   "SUNDER_REGISTRY_API_KEY": token, "SUNDER_REGISTRY_PUBLISH_TOKEN": "legacy-fixture",
+                                   "SUNDER_REGISTRY_CLI_TOKEN": "human-fixture"}), patch.object(cohort.subprocess, "run", side_effect=send):
             self.assertEqual((200, b"{}", 0), cohort.http("https://registry.test", "/api/v1/me/package-cohorts/availability", b"{}", token))
         self.assertTrue(all(not path.exists() for path in paths))
 
@@ -897,11 +934,13 @@ class CohortTests(unittest.TestCase):
             retained.update(schemaVersion=2, registryOrigin=registry, artifactSourceCommit=provenance["artifactSourceCommit"],
                             releaseId=424242, request=proposed, result=committed)
         with patch.dict(os.environ), patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
+                patch.object(pipeline, "require_installed_native") as installed, \
                 patch.object(pipeline, "registry_versions") as versions, patch.object(cohort, "http", side_effect=http), \
                 patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                 patch.object(cohort, "apply", side_effect=apply) as mutate, patch.object(receipts, "upload"), \
                 patch.object(receipts, "download_bytes", side_effect=lambda *args: retained), patch.object(cohort, "confirm") as confirm:
             pipeline.visibility(self.root / "core", self.root, plan)
+            installed.assert_called_once_with(self.root, plan, provenance)
             mutate.assert_called_once()
             confirm.assert_called_once()
             self.assertEqual(["Yanked", "Listed"], [call.args[3] for call in versions.call_args_list])
@@ -932,12 +971,14 @@ class CohortTests(unittest.TestCase):
             mutate(value)
             return 200, release.encoded(value), 0
         with patch.object(pipeline, "verified", return_value=([(None, store)], [{"id": 424242, "draft": True}], provenance)), \
+                patch.object(pipeline, "require_installed_native") as installed, \
                 patch.object(pipeline, "registry_versions"), patch.object(cohort, "http", side_effect=http), \
                 patch.object(cohort, "current_tags", return_value=self.result["previousTags"]), \
                 patch.object(cohort, "apply") as apply:
             for name, mutate in mutations.items():
                 with self.subTest(case=name), self.assertRaises(release.Invalid):
                     pipeline.visibility(self.root / "core", self.root, plan)
+                installed.assert_called_with(self.root, plan, provenance)
                 self.assertFalse((self.root / pipeline.REQUEST).exists())
             store.upload.assert_not_called()
             apply.assert_not_called()
@@ -1082,6 +1123,17 @@ class ReverseTests(unittest.TestCase):
             self.assertEqual(1, send.call_count)
         self.assertEqual({"request.json", "result.json"}, {p.name for p in output.iterdir()})
         self.assertEqual(self.result["previousTags"], release.load(output / "result.json")["resultingTags"])
+
+    def test_reverse_plan_validates_and_retains_request_without_credentials_or_mutation(self):
+        output = self.root / "reverse-plan"
+        with patch.dict(os.environ, {"SUNDER_REGISTRY_CLI_TOKEN": "", "SUNDER_REGISTRY_API_KEY": "",
+                                    "SUNDER_REGISTRY_PUBLISH_TOKEN": ""}), patch.object(cohort, "apply") as apply, \
+                patch.object(cohort, "mutation_credential") as credential:
+            reversal.plan(*self.args[:6], "reviewed-reverse", "43", str(output))
+        apply.assert_not_called()
+        credential.assert_not_called()
+        self.assertEqual({"request.json"}, {path.name for path in output.iterdir()})
+        self.assertEqual(cohort.reverse(self.request, self.result, "reviewed-reverse", 43), release.load(output / "request.json"))
 
 
 if __name__ == "__main__":

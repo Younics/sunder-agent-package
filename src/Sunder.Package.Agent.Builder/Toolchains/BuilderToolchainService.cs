@@ -7,6 +7,7 @@ namespace Sunder.Package.Agent.Builder;
 public sealed partial class BuilderToolchainService : IDisposable
 {
     private readonly string root;
+    private readonly IReadOnlyDictionary<BuilderProjectKind, string> installationParents;
     private readonly IBuilderToolchainCatalog catalog;
     private readonly IBuilderToolchainTransport transport;
     private readonly IBuilderLocalProcessRunner processes;
@@ -48,13 +49,24 @@ public sealed partial class BuilderToolchainService : IDisposable
         processes = processRunner ?? new BuilderLocalProcessRunner();
         this.executableCandidates = executableCandidates ?? DiscoverExecutableCandidates;
         clock = timeProvider ?? TimeProvider.System;
+        BuilderToolchainFiles.CheckPath(root, root);
         BuilderToolchainFiles.CreatePrivateDirectory(root);
+        root = BuilderPhysicalPath.ReadExisting(root);
         foreach (var name in new[] { "installed", "staging", "locks", "state", "cache", "probes" })
         {
             var path = Path.Combine(root, name);
             BuilderToolchainFiles.CheckPath(root, path);
             BuilderToolchainFiles.CreatePrivateDirectory(path);
         }
+        var parents = new Dictionary<BuilderProjectKind, string>();
+        foreach (var kind in new[] { BuilderProjectKind.Dotnet, BuilderProjectKind.Node })
+        {
+            var path = Path.Combine(root, "installed", KindName(kind), this.platform.For(kind));
+            BuilderToolchainFiles.CheckPath(root, path);
+            parents.Add(kind, BuilderPhysicalPath.ReadLocation(path));
+            BuilderToolchainFiles.CheckPath(root, path);
+        }
+        installationParents = parents;
     }
 
     public string RootPath => root;
@@ -151,8 +163,15 @@ public sealed partial class BuilderToolchainService : IDisposable
             {
                 ValidateOwned(installation);
                 using var operation = await LockAsync(installation.Kind, installation.Version, cancellationToken).ConfigureAwait(false);
+                ValidateOwned(installation);
                 release = operation.BeginSelection();
-                installation = await ReadManagedAsync(installation.Kind, installation.Version, cancellationToken).ConfigureAwait(false);
+                var current = await ReadManagedAsync(installation.Kind, installation.Version, cancellationToken).ConfigureAwait(false);
+                ValidateOwned(installation);
+                if (!Directory.Exists(installation.RootPath))
+                    throw new BuilderToolchainException("verification", "The captured installation directory disappeared during selection. Reload its current state before retrying.", true);
+                if (!string.Equals(installation.RootPath, current.RootPath, StringComparison.Ordinal))
+                    throw new InvalidOperationException("The captured toolchain installation changed during selection.");
+                installation = current;
             }
             else
             {
@@ -200,11 +219,11 @@ public sealed partial class BuilderToolchainService : IDisposable
         ValidateOwned(installation);
         if (!IsCurrent(installation)) return await EnsureAsync(installation.Kind, progress: progress, cancellationToken: cancellationToken).ConfigureAwait(false);
         using (var operation = await LockAsync(installation.Kind, installation.Version, cancellationToken).ConfigureAwait(false))
-        using (operation.BeginMutation()) { }
+        using (operation.BeginMutation()) { ValidateOwned(installation); }
         var (releases, state) = await RefreshCatalogAsync(installation.Kind, cancellationToken).ConfigureAwait(false);
         var release = releases?.SingleOrDefault(item => item.Version == installation.Version)
             ?? throw new BuilderToolchainException("catalog", $"Cannot repair {installation.Version} from the official catalog. {state.Error}", true);
-        return await InstallAsync(release, repair: true, progress, cancellationToken).ConfigureAwait(false);
+        return await InstallAsync(release, repair: true, progress, cancellationToken, installation).ConfigureAwait(false);
     }
 
     public async Task RemoveAsync(BuilderToolchainInstallation installation, IProgress<string>? progress = null,
@@ -214,7 +233,7 @@ public sealed partial class BuilderToolchainService : IDisposable
         ValidateOwned(installation);
         using var operation = await LockAsync(installation.Kind, installation.Version, cancellationToken).ConfigureAwait(false);
         using var mutation = operation.BeginMutation();
-        BuilderToolchainFiles.CheckPath(root, installation.RootPath);
+        ValidateOwned(installation);
         cancellationToken.ThrowIfCancellationRequested();
         if (!Directory.Exists(installation.RootPath)) return;
         // Commit removal by rename. Cancellation never leaves a half-deleted ready installation.

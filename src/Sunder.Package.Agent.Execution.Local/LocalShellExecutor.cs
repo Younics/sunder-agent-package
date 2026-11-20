@@ -69,10 +69,10 @@ internal sealed class LocalShellExecutor(IPackageContext packageContext, LocalSh
                 break;
 
             case AgentShellSyntaxKinds.Cmd:
-                startInfo.ArgumentList.Add("/d");
-                startInfo.ArgumentList.Add("/s");
-                startInfo.ArgumentList.Add("/c");
-                startInfo.ArgumentList.Add(command);
+                // cmd.exe parses a command tail, not CRT argv: ArgumentList
+                // backslash-escapes embedded quotes and corrupts redirection or
+                // quoted executables. /s removes only this outer quote pair.
+                startInfo.Arguments = "/d /s /c \"" + command + "\"";
                 break;
 
             case AgentShellSyntaxKinds.PosixSh:

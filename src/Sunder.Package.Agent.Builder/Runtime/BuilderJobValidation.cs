@@ -40,8 +40,10 @@ internal static class BuilderJobValidation
             if (request.Kind == BuilderProjectKind.Node ? Path.GetFileName(entry) != "sunder.package.json" : !entry.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("The entry point does not match the project kind.");
         }
-        if (request.Expected is { } expected && (expected.Kind != request.Kind || !Same(Absolute(expected.EntryPoint, "Expected entry point"), entry!) ||
-            !Same(Absolute(expected.ProjectFolder, "Expected project folder"), folder!))) throw new ArgumentException("The expected inspection describes a different project.");
+        if (request.Expected is { } expected && (expected.Kind != request.Kind
+            || !string.Equals(Absolute(expected.EntryPoint, "Expected entry point"), entry, StringComparison.Ordinal)
+            || !string.Equals(Absolute(expected.ProjectFolder, "Expected project folder"), folder, StringComparison.Ordinal)))
+            throw new ArgumentException("The expected inspection describes a different project.");
         if (request.Operation == "save-metadata")
         {
             if (request.Expected is null) throw new ArgumentException("Saving metadata requires the last source inspection.");
@@ -65,6 +67,12 @@ internal static class BuilderJobValidation
         if (string.IsNullOrWhiteSpace(path) || path.Length > 4096 || path.Any(char.IsControl) || !Path.IsPathFullyQualified(path))
             throw new ArgumentException(label + " must be a bounded absolute local path.");
         var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        // These OS-owned macOS aliases are already permitted by the source
+        // guard. Normalize them before capture/gates so direct job and scaffold
+        // inputs agree with physical inspection; never follow arbitrary links.
+        if (OperatingSystem.IsMacOS() && (full is "/var" or "/tmp"
+            || full.StartsWith("/var/", StringComparison.Ordinal) || full.StartsWith("/tmp/", StringComparison.Ordinal)))
+            full = "/private" + full;
         if (full == Path.GetPathRoot(full)) throw new ArgumentException(label + " must not be a filesystem root.");
         return full;
     }

@@ -7,13 +7,14 @@ public sealed partial class BuilderPackageOperations
     private async Task<T> WithViewSessionAsync<T>(BuilderProjectInspection project, Func<IPackageDevelopmentSession, CancellationToken, Task<T>> action, CancellationToken token, string? expectedOwner = null)
     {
         using var operation = Begin(token);
-        var gate = Gate(project.EntryPoint);
+        var key = ProjectKey(project.EntryPoint);
+        var gate = GateForKey(key);
         var entered = false;
         try
         {
             await gate.WaitAsync(operation.Token).ConfigureAwait(false); entered = true;
             operation.Token.ThrowIfCancellationRequested();
-            var session = GetSession(project.EntryPoint) ?? throw new InvalidOperationException("Load this exact development package in Maker before accessing its open view.");
+            var session = SessionForKey(key) ?? throw new InvalidOperationException("Load this exact development package in Maker before accessing its open view.");
             if (expectedOwner is not null && session.Identity != expectedOwner) throw new InvalidOperationException("The selected development owner was replaced. Query current package views again; never replay an old input.");
             RequireMutable(session);
             if (session.SourcePackageId != project.PackageId)

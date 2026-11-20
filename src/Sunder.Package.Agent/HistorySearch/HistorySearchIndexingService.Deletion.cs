@@ -37,7 +37,6 @@ internal sealed partial class HistorySearchIndexingService
                     lock (_pendingLock)
                     {
                         _rebuildRequested = true;
-                        _embeddingRebuildRequested = false;
                         _startupReconciliationRequired = false;
                         _manuallyCleared = false;
                     }

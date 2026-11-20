@@ -40,28 +40,55 @@ silently replace selected candidates or rewrite locks to match a new archive.
 
 ## Active Release Boundaries
 
-There are three GitHub workflows:
+The GitHub entry points are:
 
 - `sunder-package-smoke.yml` (**Validate**): PR/merge-queue versions compare against
   the immutable event base before toolchain setup; weekly/manual full source and
   stress validation remains available. Releases supply their exact selected IDs
-  and additionally run locked-package compatibility.
+  and additionally run locked-package compatibility. Manual dispatch can also
+  select comma-separated `packages` or `all`; full selection includes locked-SDK
+  compatibility. `package-tests` adds compatibility to a partial selection.
+- `sunder-package-qualify.yml` (**Qualify**): manual package selection, defaulting
+  to `all`, through the same source/locked-package validation. It neither publishes
+  nor substitutes feature-specific diagnostics for qualification.
 - `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
   through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
-- `sunder-agent-cohort-rollback.yml`: an explicit reviewed reverse of an unannounced
-  cohort, sharing the release concurrency group.
+- `sunder-agent-cohort-rollback.yml`: validates and retains a reviewed reverse plan for
+  an unannounced cohort without Registry mutation, sharing the release concurrency group.
 
-Both workflows end with **Summary**, which rejects failed, cancelled or unexpectedly
+They share `sunder-package-component.yml` for component tests, native production/
+composition and per-package publication. Each operation has a strict outcome summary.
+
+Validation and release end with **Summary**, which rejects failed, cancelled or unexpectedly
 skipped selected jobs. Interrupted publication recovers the retained plan and bytes
 and skips validation/build. A completed same-source publication becomes a no-op.
 
-Test ownership comes from the existing `SunderTestOwner` metadata. A selected
-extension runs its owned suites plus `agent-family` boundary suites; an owner
-version bump selects all consumer suites. Linux retains the required filesystem
-security and real-Docker cases. The all-fifteen source-artifact lane remains an
-integration requirement for nonempty source validation; its project dependency
-closure and full-graph restore are required even for a single selected extension.
-Per-project discovery, reports and their expected inventory use the same selection.
+Test ownership comes from `SunderTestOwner`. Component jobs select exactly their
+owned suites and evaluate their real project-reference closure for restore and
+contract hydration. Selected roots restore/build as one ordinary graph over the
+authored solution; generated providers and dependencies are not bypassed.
+Shared `agent-family` assertions run once per reference mode
+and behavior platform during full validation. Linux retains the owning filesystem
+security and real-Docker cases. Per-project discovery, reports and their expected
+inventory use the same selection. The all-fifteen source-artifact lane remains a
+required full-validation integration checkpoint.
+
+The reusable validation summary also verifies the test-owned
+`scripts/test/required-platform-cases.json` inventory. Required cases must execute
+once with their exact identities/counts on every declared RID, with no failures
+or skips. This applies to release validation as well as manual qualification;
+package versions and feature names do not change orchestration.
+
+After owned source tests and any required/stress cases pass, each selected canonical
+project runs `PackSunderPackage`. Its archive payload must match the existing role
+outputs used by those tests, and packing must leave those outputs unchanged. The
+scoped archives, payload inventories, pack logs and hash/size receipt are retained
+under `artifacts/source-components`. The full-family lane additionally exercises
+the combined behavioral probes and requires all fifteen archives.
+
+Locked-SDK compatibility uses each suite's declared `PackageCompatibility` cases.
+A component with no owned compatibility cases retains `compatibility-selection.json`
+and exits before restore or build. A declared lane that discovers zero tests fails.
 
 Agent CircleCI and the separate acceptance/promotion dispatch workflows are retired.
 Native byte qualification, exact input validation, package/platform policy and
@@ -73,9 +100,12 @@ and [cold release inputs](cold-release-inputs.md).
 Workflow configuration has these owners:
 
 - `global.json` and the exact Core checkout supply .NET/Node/npm toolchains through
-  `.github/actions/setup/action.yml`.
-- `eng/ci/platforms.json` supplies native and source/package behavior matrices.
-  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables.
+  `.github/actions/setup/action.yml`. The action also binds native Bash for nested
+  Python script calls through `SUNDER_BASH_EXECUTABLE` (Git Bash on Windows).
+- `eng/ci/platforms.json` supplies native, preflight and source/package behavior matrices.
+  Behavior is required on all six OS/architecture targets, not only Windows/Linux x64.
+  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables
+  for tools, preflight and behavior alike; retained reports are RID-labelled.
 - `scripts/test/ci-scenarios.json` owns required test selections; `agent_ci.py test`
   and `report` execute/check them. `run-ci-checks.py source|release` discovers script checks.
 - `compatibility/agent-current-inventory.json` remains the independently reviewed
@@ -91,6 +121,14 @@ validator. It invokes Core's `RestoreSunderContracts`, uses an isolated cache an
 retained toolset, and runs normal parallel builds. Generated test providers are a
 project dependency built with the tests; discovery and execution retain per-run
 evidence. It does not write approval or cold-release receipts.
+Verified candidate/catalog paths are supplied to the initial ordinary NuGet restore,
+where Core also hydrates missing contracts. These restore-only byte sources are not
+inherited by test/build children. The import-free owner supplies only its exact
+catalog, without an empty candidate override or a runner-local input seed.
+Package-mode preparation selects the installed locked NuGet Build tasks and binds
+all their hashes into the prepared state. Native producers and composition therefore
+use identical published tooling across operating systems; platform-built Core tools
+remain the source-mode toolset and test-driver handoff.
 
 `dependency_inputs.py` discovers dependencies automatically. The locked
 `Sunder.Package.Build` NuGet version identifies its published Core release/tag and
@@ -98,22 +136,32 @@ source commit. Other SDK packages retain their independent locked versions.
 Published Agent archive/catalog assets are located from their actual identities;
 identical coordinator copies are allowed, conflicting copies are rejected.
 
-If an exact selected dependency was never published, the resolver can build its
-same-version canonical source against its locked NuGet dependencies, in dependency
-order, and export the local Core catalog. This uses the production Release/CI
-package build mode even when preparing source-mode tests. Full content identities,
-public inventories and descriptor/ABI tuples must still reproduce the committed
-locks. It never silently selects another
+If an exact selected owner was never published, discovery retains its exact catalog
+and schedules six native package/RID leaves against locked NuGet dependencies.
+One composition job verifies all six qualified leaves and produces the immutable
+owner candidate. Admission checks full content identities, public inventories and
+descriptor/ABI tuples against the committed locks before any consumer build.
+It never silently selects another
 version, substitutes mismatched bytes or rewrites a lock. Missing published bytes
 without matching authored source are a genuine dependency error, not a request for
 an operator-supplied SHA or asset locator.
 
-Actions runs this resolver once in **Prepare exact dependencies** on Linux. It
-retains `agent-dependency-inputs` and passes the `cold-inputs.json` SHA-256 to source,
-package-mode, all six native and assembly jobs. Each consumer checks that digest,
+Actions runs discovery once on Linux and prepares verified Core tools once per
+needed platform. It retains `agent-prepared-dependencies`, optional
+`agent-candidate-<package>` bootstrap outputs, then seals `agent-dependency-inputs`.
+The `cold-inputs.json` SHA-256 is passed to source, package-mode and native jobs.
+Each consumer checks that digest,
 source/Core commits, locks and candidate/catalog bytes before hydration. Runners
 never independently regenerate the selected owner archive. A failed identity check
 retains the rejected bytes and original log and stops downstream work.
+
+Before dependency production, **Check scripts** runs inventory generation and
+dependency-independent script checks on Linux and Windows. It uses the same
+version-selection gate, so an empty selection installs no toolchains and runs no
+preflight. The Summary requires its successful outcome for every active selection.
+Behavior jobs generate their own scoped inventories from their actual checkout;
+script suites run once per preflight platform. Inventory failures print and retain
+stdout, stderr, command and exit status without leaving invalid/stale JSON evidence.
 
 This bundle is dependency evidence, not native release qualification. Final family
 verification still requires the composed native owner identity to equal every
@@ -140,6 +188,7 @@ execution; explicit denied-network/cold acceptance remains a separate profile.
 For local validation:
 
 ```sh
+python3 -B scripts/ci/agent_ci.py preflight
 python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output /tmp/agent-inputs
 python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core \
   --inputs /tmp/agent-inputs --work /tmp/agent-ci
@@ -184,24 +233,37 @@ apphost, SDK or toolchain. Generated App roles are retained where authored.
 
 Unchanged packages are downloaded from exact numeric published-release assets,
 with their original hash/size and six-RID native evidence. They are not rebuilt or
-repacked. Every native smoke test still installs and exercises **all fifteen**
-packages: selected current-RID outputs plus unchanged universal archives. Mixed
+repacked. Every native phase still exercises **all fifteen** packages: the exact
+final selected archives plus unchanged universal archives. Pre-publication execution
+uses supported development imports; post-publication execution installs authenticated
+published bytes under genuine Registry policy. Mixed
 package versions are expected. The final output audit and Runtime/App gates still
 inspect all fifteen archives. Exact reviewed dependency candidates/catalogs remain
 separate dependency inputs; changing a version never regenerates a dependency lock.
 
-Release restore preserves the complete six-RID graph. Native Build selects its RID
-only after locked restore and explicit contract hydration. Current-RID smoke archives
-and final fan-in consume Core-qualified role inputs with
+Release restore preserves the complete six-RID graph. One package × RID job selects
+its native RID after locked restore and explicit contract hydration. Each package
+is composed once from all six Core-qualified leaves with
 `SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false` and an explicit
 `SunderPackagePrebuiltRoleInputsFile`; they never rebuild captured role bytes.
 
-`native-family.py record`, `assemble` and `verify` own bounded transport and exact
-module/runtimeconfig/deps/shared/App byte comparisons. Native smoke exercises real
+`native-family.py collect-component`, `compose-component`, `gather`, `record-final`
+and `finalize` own bounded transport and exact module/runtimeconfig/deps/shared/App
+byte comparisons. Schema 6 binds every native smoke record to the final archive
+hash/size, exact execution methods, phase scope and original Maker/preparation reports;
+fan-in verifies and copies those bytes without another Pack. The schema-3/4/5 readers
+remain for retained evidence, not new release staging. Native smoke exercises real
 official .NET installation, every Worker lifecycle, domain RPC/auth/SQLite behavior,
 crash recovery, cleanup and Builder's separate SDK path. Core metric budgets and
-the current-RID installed-projection gate remain enforced. Fan-in runs the retained
-Agent archive tests and the real Core Runtime/App family tests before publication.
+the current-RID projection-size gate remain enforced. Fan-in retains the Agent archive
+and Core Runtime/App gates. The pre-publication Core family selection now uses local
+development admission for all fifteen universal archives, then consumes a hash-bound
+Runtime snapshot in a genuine supervised App process. It preserves Runtime-first
+execution order, fresh evidence roots and credential isolation; schema/phase and
+archive/catalog changes fail before App activation. The installed lifecycle remains
+separately selected, not reclassified as development evidence. This adaptation still
+needs real full-family execution qualification; the pre-Main artifact hook does not
+exercise ordinary App startup, package views, Maker UI or published-installed behavior.
 
 ## Stable Boundary
 
@@ -222,17 +284,23 @@ and public install-plan postchecks. The pipeline:
    is the coordinator and retains all selected tested archives for recovery; other
    drafts retain their own archive. Each retains the plan, full-family reports,
    source/material/byte provenance, checksums, SBOM and original toolchain record.
-3. Calls `publish-registry-package.sh --initial-yanked` in dependency order. Each
-   selected immutable version is downloaded and verified before advancing.
-   Unchanged versions are verified read-only as Listed. The coordinator retains
+3. Publishes the selected owner first, then independent consumer leaves through
+   `publish-registry-package.sh --initial-yanked`. Each leaf retains an immutable
+   `agent-publication-<package>` receipt; consumers require the selected owner's
+   receipt. Unchanged versions are verified read-only as Listed. A single writer
+   merges the exact receipt set, and the coordinator retains
    `registry-publications.json`: the Registry-returned publication evidence for
    every tested package, including its actual owner. Retries and later readback
    compare that immutable evidence before visibility changes or announcement.
-4. Retains one complete cohort request with its idempotency key and current policy
+4. Runs published-installed acceptance on all six native RIDs, anonymously downloading
+   the exact immutable family over HTTPS and checking genuine policy. A single writer durably retains
+   `installed-native-test-evidence.json` and all twelve RID receipt/bundle assets on
+   the coordinator. No development-import result can satisfy this gate.
+5. Retains one complete cohort request with its idempotency key and current policy
    revision on the draft **before** any availability mutation.
-5. Commits the selected-batch Yanked→Listed transition and its dist tags in
+6. Commits the selected-batch Yanked→Listed transition and its dist tags in
    one Registry operation; preserves its exact request/result for recovery.
-6. Confirms the committed result against fresh policy and the owner's retained
+7. Confirms the committed result against fresh policy and the owner's retained
    operation, rechecks public package/projection bytes and six-RID install plans,
    then finalizes those drafts with `make_latest=false`, coordinator last.
 
@@ -257,7 +325,7 @@ exact package/platform subject set. Initial visibility requests `minimumPackageP
 confirmation supplies the retained committed revision/fingerprint and rejects older or
 same-revision conflicting identities. Responses require a valid policy fingerprint and
 the fixed 24-hour UTC observation interval. The confirmation check additionally requires
-Allowed Listed packages and Supported platform catalogs before exact owner-token result
+Allowed Listed packages and Supported platform catalogs before exact release-API-key result
 readback. PostgreSQL is authoritative: this retained floor checks client consistency and
 does not independently prove absence of database rollback. Checkpoint/topology fields and
 external policy stores are absent from the current release protocol.
@@ -281,9 +349,12 @@ immutable bytes require investigation and a new version, not clobbering an old o
 
 ### Reviewed Non-Security Reverse
 
-The explicit rollback workflow uses a new reviewed idempotency key and current
+The explicit rollback-plan workflow uses a new reviewed idempotency key and current
 policy revision, requires an unannounced numeric draft and the exact forward
-receipt, then restores the captured prior tag map and Yanks the cohort atomically.
+receipt, then validates a request to restore the captured prior tag map and Yank the
+cohort atomically. CI retains that request but never applies it or receives human
+Registry credentials. Execution is a separate authenticated operator recovery task,
+not an API-key privilege or an automatic release action.
 Supply `release_id`, `expected_package_policy_revision`, `idempotency_key` and
 `confirmation=reverse-unannounced-cohort`. The protected-main resolver derives the
 source commit, tag and forward-receipt digest from that draft and rejects missing
@@ -319,7 +390,7 @@ separate execution result.
   tags do not trigger a second publication workflow. No manually created tag needed.
 - Environment variable `SUNDER_REGISTRY_API_URL`: the Registry HTTPS origin, without an `/api/v1` suffix.
   Source/lock hashes and dependency locations are derived, never per-release settings.
-- One environment secret `SUNDER_REGISTRY_PUBLISH_TOKEN`, created at Registry
+- One environment secret `SUNDER_REGISTRY_API_KEY`, created at Registry
   **Dashboard → API keys**, with `package:publish` and `package:release` for all
   fifteen exact package IDs. The Registry derives the publisher from the key and
   enforces package ownership/maintainer permissions; no owner ID is configured in
@@ -327,8 +398,20 @@ separate execution result.
   preserve the existing owner, and atomic cohort release requires that owner's key.
   `package:promote-latest` is unnecessary for staged atomic releases. API keys support
   a 1–90 day lifetime or **Never**; rotate expiring keys before their selected expiry.
-- The separate reviewed reverse workflow still requires a human
-  `SUNDER_REGISTRY_CLI_TOKEN`; a release API key intentionally cannot roll back.
+  The same secret name is preserved through reusable-workflow calls and resolved
+  in the protected publication job. Agent scripts never fall back to the legacy
+  `SUNDER_REGISTRY_PUBLISH_TOKEN` name; the released Core CLI retains that separate
+  environment interface for its `--credential-source environment` option.
+- No human CLI login token or native-read secret belongs in CI. Exact-version
+  canonical downloads, including staged `Yanked` versions, are anonymous Registry
+  operations; `Yanked` controls selection, not confidentiality. Installed-native
+  jobs require the pinned HTTPS origin, exact downloaded hashes/lengths and real
+  policy observations, not `/api/v1/me`. They still fail on missing, changed or
+  denied bytes without a development fallback. Publication keys remain confined
+  to publication/forward visibility steps and are stripped from build, validation,
+  HTTP-child and App-proxy environments, together with legacy credential names.
+- The separate reviewed reverse workflow produces a plan only. Release API keys
+  intentionally cannot roll back; no workflow accepts a human recovery token.
 - Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays.
   RID suffixes use uppercase underscores. Defaults use native Windows2022/Windows11ARM,
   Ubuntu24x64/ARM and macOS15Intel/ARM runners.

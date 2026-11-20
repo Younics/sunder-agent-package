@@ -4,7 +4,7 @@ public sealed record BuilderProjectDriverOptions(string CacheRootPath)
 {
     /// <summary>Stable workspace exclusion, independent of retained feed and template caches.</summary>
     public string ProjectMutationLockRootPath { get; init; } = Path.Combine(CacheRootPath, "project-locks");
-    public string DotnetTemplateVersion { get; init; } = "1.0.2";
+    public string DotnetTemplateVersion { get; init; } = "1.1.0";
     public string NodeSdkVersion { get; init; } = "1.0.2";
     public string NodeCreatorVersion { get; init; } = "1.0.2";
     public string? DotnetTemplatePackagePath { get; init; }

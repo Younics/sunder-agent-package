@@ -107,8 +107,8 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\Sunder.Package.Agent.Tools.Web\WebToolsConfiguration.cs" Link="TestSupport\WebToolsConfiguration.cs" />
-    <Compile Include="../Shared/Presentation/*.cs;../Shared/Consumers/*.cs"
-             Link="TestSupport/%(Filename)%(Extension)" />
+    <Compile Include="../Shared/Rendered/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs"
+             Exclude="../Shared/Consumers/SubagentsWorkerAliases.cs" Link="TestSupport/%(Filename)%(Extension)" />
   </ItemGroup>
   <Import Project="../RegressionTestHarness.props" />
   <Import Project="../PackageContextFixtures.props" />

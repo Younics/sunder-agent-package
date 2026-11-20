@@ -36,8 +36,10 @@ internal sealed class LocalSecureHandle(
     uint mode,
     uint userId,
     uint groupId,
-    Func<SafeFileHandle> duplicateHandle,
-    bool caseSensitiveDirectory = false) : IDisposable
+    Func<SafeFileHandle, SafeFileHandle> duplicateHandle,
+    bool caseSensitiveDirectory = false,
+    bool mutationExclusive = false,
+    Func<SafeFileHandle, SafeFileHandle>? duplicateForTraversal = null) : IDisposable
 {
     public SafeFileHandle Handle { get; } = handle;
 
@@ -59,64 +61,30 @@ internal sealed class LocalSecureHandle(
 
     public bool CaseSensitiveDirectory { get; } = caseSensitiveDirectory;
 
-    public SafeFileHandle DuplicateHandle() => duplicateHandle();
+    // Windows mutation handles deny competing delete (and regular-file write)
+    // opens. A retained approval handle is identity evidence, not that lock.
+    public bool MutationExclusive { get; } = mutationExclusive;
+
+    public SafeFileHandle DuplicateHandle() => duplicateHandle(Handle);
 
     public LocalSecureHandle Retain()
     {
         var copy = DuplicateHandle();
         return new LocalSecureHandle(copy, FullPath, Kind, Identity, Length, LinkCount, Mode, UserId, GroupId,
-            () => OperatingSystem.IsWindows() ? LocalWindowsNative.Duplicate(copy)
-                : new SafeFileHandle(new IntPtr(LocalUnixNative.Duplicate(copy.DangerousGetHandle().ToInt32())), ownsHandle: true),
-            CaseSensitiveDirectory);
+            duplicateHandle, CaseSensitiveDirectory, MutationExclusive, duplicateForTraversal);
+    }
+
+    internal LocalSecureHandle RetainForTraversal()
+    {
+        if (duplicateForTraversal is null)
+            return Retain();
+
+        var copy = duplicateForTraversal(Handle);
+        return new LocalSecureHandle(copy, FullPath, Kind, Identity, Length, LinkCount, Mode, UserId, GroupId,
+            duplicateHandle, CaseSensitiveDirectory, mutationExclusive: false);
     }
 
     public void Dispose() => Handle.Dispose();
-}
-
-internal sealed class LocalSecureTemporaryFile(
-    string name,
-    string fullPath,
-    SafeFileHandle handle,
-    LocalSecureIdentity identity,
-    bool hasDirectoryEntry,
-    Func<SafeFileHandle> duplicateHandle) : IDisposable
-{
-    private LocalSecureHandle? _publishedTarget;
-
-    public string Name { get; } = name;
-
-    public string FullPath { get; } = fullPath;
-
-    public SafeFileHandle Handle { get; } = handle;
-
-    public LocalSecureIdentity Identity { get; } = identity;
-
-    public bool HasDirectoryEntry { get; private set; } = hasDirectoryEntry;
-
-    public SafeFileHandle DuplicateHandle() => duplicateHandle();
-
-    public bool WasPublished { get; set; }
-
-    public void MarkDirectoryEntryRemoved() => HasDirectoryEntry = false;
-
-    public void RetainPublishedTarget(LocalSecureHandle target)
-    {
-        if (Interlocked.CompareExchange(ref _publishedTarget, target, null) is not null)
-        {
-            target.Dispose();
-            throw new InvalidOperationException("The published target was already retained.");
-        }
-    }
-
-    public LocalSecureHandle TakePublishedTarget()
-        => Interlocked.Exchange(ref _publishedTarget, null)
-           ?? throw new LocalSecureApprovalChangedException(FullPath);
-
-    public void Dispose()
-    {
-        Interlocked.Exchange(ref _publishedTarget, null)?.Dispose();
-        Handle.Dispose();
-    }
 }
 
 internal sealed class LocalSecureMutationReservation(
@@ -156,12 +124,24 @@ internal interface ILocalSecureFileSystemPlatform
         out LocalSecureHandle? child,
         bool writable = false);
 
-    void CreateDirectory(LocalSecureHandle parent, string name);
+    LocalSecureHandle CreateDirectory(LocalSecureHandle parent, string name);
 
     LocalSecureHandle CreateExclusiveFile(
         LocalSecureHandle parent,
         string name,
         uint unixMode);
+
+    // User files inherit ordinary creation policy. Internal challenge/staging
+    // files continue to use the separate, explicitly private creation API above.
+    LocalSecureHandle CreateUserFile(LocalSecureHandle parent, string name);
+
+    // Opens without truncation, then checks the retained approved identity.
+    // Content writes do not require delete or security-policy modification rights.
+    LocalSecureHandle OpenFileForContentUpdate(
+        LocalSecureHandle parent, string name, LocalSecureHandle expectedTarget);
+
+    // Refresh metadata through the actual object, never by reopening its pathname.
+    LocalSecureHandle RetainContentTarget(LocalSecureHandle target);
 
     void Flush(LocalSecureHandle handle);
 
@@ -172,31 +152,6 @@ internal interface ILocalSecureFileSystemPlatform
     LocalSecureMutationReservation ReserveMutationSlots(
         LocalSecureHandle parent,
         int slotCount,
-        CancellationToken cancellationToken);
-
-    LocalSecureTemporaryFile CreateTemporaryFile(
-        LocalSecureHandle parent,
-        string name,
-        LocalSecureMutationReservation reservation);
-
-    void PublishTemporaryFile(
-        LocalSecureHandle parent,
-        LocalSecureTemporaryFile temporaryFile,
-        string targetName,
-        bool overwrite,
-        LocalSecureTargetExpectation expectation,
-        LocalSecureHandle? expectedTarget,
-        Func<LocalSecureHandle, bool>? finalTargetValidator,
-        LocalSecureMutationReservation reservation,
-        Action beforeMutationSyscall,
-        Action afterQuarantineBeforeMetadata,
-        Action beforePostQuarantineSync,
-        Action afterValidationBeforePublish,
-        Action afterNamedTemporaryCopyChunk,
-        Action beforeNamedTemporaryPublish,
-        Action afterPublishedFileSync,
-        Action afterPublishedParentSync,
-        Action beforePostPublicationRestore,
         CancellationToken cancellationToken);
 
     void DeleteEntry(
@@ -210,22 +165,6 @@ internal interface ILocalSecureFileSystemPlatform
         Action afterQuarantine,
         CancellationToken cancellationToken);
 
-    void DeleteTemporaryFile(
-        LocalSecureHandle parent,
-        LocalSecureTemporaryFile temporaryFile,
-        LocalSecureMutationReservation reservation);
-}
-
-internal readonly record struct LocalSecureTargetExpectation(
-    bool Exists,
-    LocalSecureIdentity? Identity,
-    bool ApprovalBound)
-{
-    public static LocalSecureTargetExpectation Missing(bool approvalBound)
-        => new(Exists: false, Identity: null, approvalBound);
-
-    public static LocalSecureTargetExpectation Existing(LocalSecureIdentity identity, bool approvalBound)
-        => new(Exists: true, identity, approvalBound);
 }
 
 internal interface ILocalSecureFileSystemHooks
@@ -236,20 +175,18 @@ internal interface ILocalSecureFileSystemHooks
 internal enum LocalSecureFileSystemCheckpoint
 {
     BeforeOpen,
-    BeforePublish,
-    BeforePublishSyscall,
-    AfterQuarantineBeforeMetadata,
-    BeforePostQuarantineSync,
-    AfterValidationBeforePublish,
-    AfterNamedTemporaryCopyChunk,
-    BeforeNamedTemporaryPublish,
-    AfterPublishedFileSync,
-    AfterPublishedParentSync,
-    BeforePostPublicationRestore,
     BeforeUnlink,
     BeforeUnlinkSyscall,
     AfterValidationBeforeDelete,
     AfterDeleteBeforeAuthorityCapture,
+    BeforeContentUpdateOpen,
+    BeforeContentWrite,
+    AfterContentWriteChunk,
+    BeforeContentLength,
+    AfterContentLength,
+    AfterContentFileSync,
+    AfterCreatedFileParentSync,
+    BeforeContentReceipt,
 }
 
 internal class LocalSecurePathException(string message, Exception? innerException = null)
@@ -269,6 +206,10 @@ internal sealed class LocalSecureApprovalChangedException(string path)
 
 internal sealed class LocalSecureContentChangedException(string path)
     : LocalSecurePathException($"The file content changed before mutation: {path}");
+
+internal sealed class LocalSecureIncompleteMutationException(string path, Exception innerException)
+    : LocalSecurePathException(
+        $"The file mutation did not complete; the exact target may remain empty or partially modified: {path}", innerException);
 
 internal sealed class LocalSecureMutationRecoveryException(string path, Exception innerException)
     : LocalSecurePathException(

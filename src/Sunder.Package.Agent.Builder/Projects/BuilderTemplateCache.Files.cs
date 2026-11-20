@@ -28,7 +28,8 @@ internal sealed partial class BuilderTemplateCache
             if (File.Exists(current)) throw Unsafe(current, "is a file rather than a directory");
             if (!Directory.Exists(current)) continue;
             if ((File.GetAttributes(current) & FileAttributes.Device) != 0) throw Unsafe(current, "is not a regular directory");
-            if (!OperatingSystem.IsWindows())
+            if (OperatingSystem.IsWindows()) BuilderWindowsStorageSecurity.RequireSafeAncestor(current);
+            else
             {
                 var mode = File.GetUnixFileMode(current);
                 if ((mode & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0 && (mode & UnixFileMode.StickyBit) == 0)
@@ -41,6 +42,7 @@ internal sealed partial class BuilderTemplateCache
     {
         CheckAncestors(path);
         if (!Directory.Exists(path)) throw Unsafe(path, "is missing");
+        if (OperatingSystem.IsWindows()) BuilderWindowsStorageSecurity.RequirePrivateDirectory(path);
         if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & OtherPermissions) != 0)
             throw Unsafe(path, "is not private to its user");
     }
@@ -102,6 +104,7 @@ internal sealed partial class BuilderTemplateCache
         if (!File.Exists(path)) return;
         if ((File.GetAttributes(path) & FileAttributes.Device) != 0 || new FileInfo(path).Length > maximumBytes)
             throw Unsafe(path, "is not a bounded regular state file");
+        if (OperatingSystem.IsWindows()) BuilderWindowsStorageSecurity.RequirePrivateFile(path);
         if (!OperatingSystem.IsWindows() && (File.GetUnixFileMode(path) & OtherPermissions) != 0)
             throw Unsafe(path, "is not private to its user");
     }
@@ -127,7 +130,7 @@ internal sealed partial class BuilderTemplateCache
         var created = false;
         try
         {
-            await using (var stream = new FileStream(temporary, PrivateFileOptions(FileMode.CreateNew, FileAccess.Write, FileShare.None)))
+            await using (var stream = OpenPrivateFile(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 created = true;
                 await stream.WriteAsync(bytes, token).ConfigureAwait(false);
@@ -142,12 +145,9 @@ internal sealed partial class BuilderTemplateCache
         finally { if (created) File.Delete(temporary); }
     }
 
-    private static FileStreamOptions PrivateFileOptions(FileMode mode, FileAccess access, FileShare share)
-    {
-        var options = new FileStreamOptions { Mode = mode, Access = access, Share = share };
-        if (!OperatingSystem.IsWindows()) options.UnixCreateMode = PrivateFileMode;
-        return options;
-    }
+    private static FileStream OpenPrivateFile(string path, FileMode mode, FileAccess access, FileShare share)
+        => OperatingSystem.IsWindows() ? BuilderWindowsStorageSecurity.OpenPrivateFile(path, mode, access, share)
+            : new FileStream(path, new FileStreamOptions { Mode = mode, Access = access, Share = share, UnixCreateMode = PrivateFileMode });
 
     private static void CheckHomeTree(string home)
     {
@@ -160,6 +160,11 @@ internal sealed partial class BuilderTemplateCache
                 if (++count > 16384 || directory.Depth > 32) throw Unsafe(home, "exceeds the template state inspection limit");
                 if (entry.LinkTarget is not null || (entry.Attributes & (FileAttributes.ReparsePoint | FileAttributes.Device)) != 0)
                     throw Unsafe(entry.FullName, "contains linked or special template state");
+                if (OperatingSystem.IsWindows())
+                {
+                    if (entry is DirectoryInfo) BuilderWindowsStorageSecurity.RequirePrivateDirectory(entry.FullName);
+                    else BuilderWindowsStorageSecurity.RequirePrivateFile(entry.FullName);
+                }
                 if (entry is DirectoryInfo) pending.Push((entry.FullName, directory.Depth + 1));
             }
     }

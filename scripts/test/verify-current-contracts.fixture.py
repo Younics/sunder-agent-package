@@ -3,9 +3,10 @@
 import copy
 import importlib.util
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("current_contracts", Path(__file__).with_name("verify-current-contracts.py"))
 verifier = importlib.util.module_from_spec(spec)
@@ -31,6 +32,15 @@ class CurrentContractsTests(unittest.TestCase):
         self.assertFalse(any("path.migrator" in c["contractId"] for c in self.expected["contracts"]))
         self.assertFalse(any("descriptorSha256" in c for c in self.expected["contracts"]))
         self.assertEqual(31, len(self.expected["contracts"]))
+        load = verifier.release.load
+        changed = copy.deepcopy(self.expected)
+        changed["contracts"][0]["source"] = "src/Another.Package/Contract.cs"
+        for native_path in (PurePosixPath, PureWindowsPath):
+            with self.subTest(native_path=native_path.__name__), patch.object(verifier, "Path", native_path):
+                self.assertEqual((self.expected, self.inventory), verifier.expected_inventory(ROOT))
+                with patch.object(verifier.release, "load", side_effect=lambda path: changed if path == ROOT / verifier.INVENTORY else load(path)), \
+                     self.assertRaisesRegex(ValueError, "Contract source owner differs"):
+                    verifier.expected_inventory(ROOT)
 
     def test_matching_snapshot_is_a_proposal_not_an_expectation_write(self):
         before = copy.deepcopy(self.expected)
@@ -188,12 +198,14 @@ class CurrentContractsTests(unittest.TestCase):
 
             def frame(value):
                 qualified.write_text(json.dumps(value))
-                return dict(contractLock=str(qualified.relative_to(root / "src")),
+                return dict(contractLock=qualified.relative_to(root / "src").as_posix(),
                             contractLockSha256=verifier.release.file_sha(qualified))
 
             evidence = frame(selected)
             before = authored.read_bytes()
-            self.assertEqual(selected, verifier.qualified_contract_lock(root, evidence, package))
+            for native_path in (PurePosixPath, PureWindowsPath):
+                with self.subTest(native_path=native_path.__name__), patch.object(verifier, "Path", native_path):
+                    self.assertEqual(selected, verifier.qualified_contract_lock(root, evidence, package))
             with self.assertRaisesRegex(ValueError, "bytes differ"):
                 verifier.qualified_contract_lock(root, dict(evidence, contractLockSha256="0" * 64), package)
             changes = [

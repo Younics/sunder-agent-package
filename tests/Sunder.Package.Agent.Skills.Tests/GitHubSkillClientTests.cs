@@ -1,8 +1,10 @@
+extern alias SkillsWorker;
+
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Sunder.Package.Agent.Skills.Services;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Xunit;
 
 namespace Sunder.Package.Agent.Skills.Tests;

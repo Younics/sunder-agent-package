@@ -1,15 +1,19 @@
 {
   "artifactProducer": "CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload",
   "requiredLinux": [
-    "ApplyPatch_LinuxAtEmptyPathEperm_UsesPortablePublishFallback",
+    "ApplyPatch_ExistingFileUpdate_PreservesTheOriginalObject",
     "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
   ],
+  "requiredLinuxOwners": {
+    "ApplyPatch_ExistingFileUpdate_PreservesTheOriginalObject": "younics.ai.agent.tools.files",
+    "DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation": "younics.ai.agent.execution.docker"
+  },
   "stress": {
     "repetitions": 3,
-    "filter": "(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsFinalMutationHandles_BlockInPlaceEntryReplacement&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
+    "filter": "(FullyQualifiedName~RaceTests&FullyQualifiedName!~Write_RejectsTemporaryNameSubstitutionBeforePublish&FullyQualifiedName!~WindowsMutations_ReachCommitCheckpointsAndPreserveOutsidePaths&FullyQualifiedName!~RecursiveDelete_RejectsCaseFoldedAliasOfNestedConfiguredRoot)|FullyQualifiedName~DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation"
   },
   "coreFamily": {
-    "Sunder.Runtime.Host.Tests": ["Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily"],
-    "Sunder.App.Tests": ["Sunder.App.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInApp"]
+    "Sunder.Runtime.Host.Tests": ["Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.DevelopmentArchives_ActivateUnloadReloadAndReplaceAsOneFamily", "Sunder.Runtime.Host.Tests.AgentPackageReleaseSmokeTests.MakerStandalone_CurrentArchiveActivatesAndRejectsInvalidArgumentsWithoutAgent"],
+    "Sunder.App.Integration.Tests": ["Sunder.App.Integration.Tests.AgentPackageReleaseSmokeTests.RuntimeProducedAgentSnapshot_MaterializesAndActivatesInSupervisedApp"]
   }
 }

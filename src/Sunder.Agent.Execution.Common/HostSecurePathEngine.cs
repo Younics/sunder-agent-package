@@ -54,14 +54,15 @@ internal static class HostSecurePathEngine
         string fullPath,
         ILocalSecureFileSystemHooks? hooks = null,
         CancellationToken cancellationToken = default,
-        bool allowMissingSuffix = false)
+        bool allowMissingSuffix = false,
+        LocalCreatedDirectoryAuthority? createdDirectories = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         fullPath = NormalizePath(fullPath);
         var selectedRoot = SelectConfiguredRoot(configuredRoots, fullPath);
         var anchorStart = selectedRoot ?? Path.GetPathRoot(fullPath)
             ?? throw new InvalidOperationException($"Path '{fullPath}' has no filesystem root.");
-        var root = OpenRoot(anchorStart, hooks, cancellationToken);
+        var root = OpenRoot(anchorStart, hooks, cancellationToken, createdDirectories);
         try
         {
             return CaptureFromRoot(
@@ -69,7 +70,8 @@ internal static class HostSecurePathEngine
                 fullPath,
                 hooks,
                 cancellationToken,
-                allowMissingSuffix);
+                allowMissingSuffix,
+                createdDirectories);
         }
         catch
         {
@@ -83,7 +85,8 @@ internal static class HostSecurePathEngine
         string fullPath,
         ILocalSecureFileSystemHooks? hooks = null,
         CancellationToken cancellationToken = default,
-        bool allowMissingSuffix = false)
+        bool allowMissingSuffix = false,
+        LocalCreatedDirectoryAuthority? createdDirectories = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         fullPath = NormalizePath(fullPath);
@@ -111,7 +114,7 @@ internal static class HostSecurePathEngine
                     root,
                     descendants,
                     retainedTarget: null,
-                    allowMissingSuffix);
+                    allowMissingSuffix) { CreatedDirectories = createdDirectories };
             }
 
             for (var index = 0; index < segments.Count; index++)
@@ -121,7 +124,9 @@ internal static class HostSecurePathEngine
                 var isFinal = index == segments.Count - 1;
                 caseSensitivePath |= OperatingSystem.IsWindows() && current.CaseSensitiveDirectory;
                 hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforeOpen, current.FullPath, segment);
-                if (!root.Platform.TryOpenChild(
+                if (!TryOpenChild(
+                        root.Platform,
+                        createdDirectories,
                         current,
                         segment,
                         root.Volume,
@@ -146,7 +151,7 @@ internal static class HostSecurePathEngine
                         root,
                         descendants,
                         retainedTarget: null,
-                        allowMissingSuffix);
+                        allowMissingSuffix) { CreatedDirectories = createdDirectories };
                 }
 
                 if (isFinal)
@@ -166,7 +171,7 @@ internal static class HostSecurePathEngine
                         root,
                         descendants,
                         retainedTarget,
-                        allowMissingSuffix);
+                        allowMissingSuffix) { CreatedDirectories = createdDirectories };
                 }
 
                 descendants.Add(child!);
@@ -191,7 +196,8 @@ internal static class HostSecurePathEngine
     public static LocalSecureRoot OpenRoot(
         string path,
         ILocalSecureFileSystemHooks? hooks = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        LocalCreatedDirectoryAuthority? createdDirectories = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var fullPath = NormalizePath(path);
@@ -208,7 +214,9 @@ internal static class HostSecurePathEngine
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 hooks?.OnCheckpoint(LocalSecureFileSystemCheckpoint.BeforeOpen, current.FullPath, segment);
-                current = platform.OpenChild(current, segment, volume, requireDirectory: true);
+                if (!TryOpenChild(platform, createdDirectories, current, segment, volume, requireDirectory: true, out var child))
+                    throw new LocalSecurePathNotFoundException(Path.Combine(current.FullPath, segment));
+                current = child!;
                 handles.Add(current);
             }
             return new LocalSecureRoot(platform, handles, fullPath, volume);
@@ -222,6 +230,12 @@ internal static class HostSecurePathEngine
             throw;
         }
     }
+
+    private static bool TryOpenChild(ILocalSecureFileSystemPlatform platform, LocalCreatedDirectoryAuthority? createdDirectories,
+        LocalSecureHandle parent, string name, ulong volume, bool requireDirectory, out LocalSecureHandle? child)
+        => createdDirectories is not null
+            ? createdDirectories.TryOpenChild(platform, parent, name, volume, requireDirectory, out child)
+            : platform.TryOpenChild(parent, name, volume, requireDirectory, out child);
 
     public static LocalSecureRootIdentitySet OpenRootIdentitySet(
         IReadOnlyList<string> paths,
@@ -270,7 +284,7 @@ internal static class HostSecurePathEngine
 
             try
             {
-                using var root = OpenRoot(lexicalRoot, hooks, cancellationToken);
+                using var root = OpenRoot(lexicalRoot, hooks, cancellationToken, authority.CreatedDirectories);
                 return IsIdentityChainPrefix(root.HandleIdentities, authority.RetainedPathIdentities)
                     ? LocalConfiguredRootResolution.Configured(
                         lexicalRoot,
@@ -297,7 +311,7 @@ internal static class HostSecurePathEngine
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                using var root = OpenRoot(configuredRoot, hooks, cancellationToken);
+                using var root = OpenRoot(configuredRoot, hooks, cancellationToken, authority.CreatedDirectories);
                 if (root.HandleIdentities.Count > matchedDepth
                     && IsIdentityChainPrefix(root.HandleIdentities, authority.RetainedPathIdentities))
                 {
@@ -597,6 +611,7 @@ internal sealed class LocalSecureApprovalLease(
         LocalSecureRoot root;
         IReadOnlyList<LocalSecureHandle> ancestors;
         LocalSecureHandle? target;
+        IDisposable? directoryLifetime;
         lock (_syncRoot)
         {
             root = _authorityRoot ?? throw new LocalSecureApprovalChangedException(Binding.FullPath);
@@ -605,17 +620,26 @@ internal sealed class LocalSecureApprovalLease(
             _authorityRoot = null;
             _retainedAncestors = null;
             _retainedTarget = null;
+            directoryLifetime = CreatedDirectoryLifetime;
+            CreatedDirectoryLifetime = null;
         }
-        return LocalSecurePathSession.CreateApproved(
-            root,
-            ancestors,
-            target,
-            Binding,
-            createParents,
-            allowMissingSuffix,
-            hooks,
-            cancellationToken,
-            CreatedDirectories);
+        try
+        {
+            var session = LocalSecurePathSession.CreateApproved(
+                root,
+                ancestors,
+                target,
+                Binding,
+                createParents,
+                allowMissingSuffix,
+                hooks,
+                cancellationToken,
+                CreatedDirectories);
+            session.TakeCreatedDirectoryLifetime(CreatedDirectories, directoryLifetime);
+            directoryLifetime = null;
+            return session;
+        }
+        finally { directoryLifetime?.Dispose(); }
     }
 
     public void Dispose()

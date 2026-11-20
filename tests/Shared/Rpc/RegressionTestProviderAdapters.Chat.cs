@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
 using System.Runtime.Loader;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -28,13 +27,10 @@ internal sealed class RegressionTestChatProvider(IAgentChatProvider provider, Ge
     public async IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        // Resolve the qualified role lazily: linked harness consumers must not
-        // require a compile-time alias or friend access to a provider's internals.
+        // Resolve the declared worker-role dependency lazily, without friend
+        // access. Never probe a sibling package's possibly stale build output.
         // The real shared provider stream still owns every streaming operation.
-        var assembly = AssemblyLoadContext.Default.Assemblies.FirstOrDefault(value => value.GetName().Name == "Sunder.Package.Agent.Provider.Gemini")
-            ?? AssemblyLoadContext.Default.LoadFromAssemblyPath(Path.Combine(RegressionTestRpcDescriptors.RepositoryRoot,
-                "src/Sunder.Package.Agent.Provider.Gemini/bin", new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name,
-                "net10.0/sunder-roles/worker", RuntimeInformation.RuntimeIdentifier, "Sunder.Package.Agent.Provider.Gemini.dll"));
+        var assembly = AssemblyLoadContext.Default.LoadFromAssemblyName(new AssemblyName("Sunder.Package.Agent.Provider.Gemini"));
         var read = assembly.GetType("Sunder.Package.Agent.Provider.Shared.ProviderChatStream", true)!
             .GetMethod("ReadAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
         var parameters = read.GetParameters();

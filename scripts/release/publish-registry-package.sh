@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export LC_ALL=C
+registry_api_key="${SUNDER_REGISTRY_API_KEY:-}"
+unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_PUBLISH_TOKEN SUNDER_REGISTRY_CLI_TOKEN \
+  SUNDER_REGISTRY_NATIVE_READ_TOKEN SUNDER_AGENT_NATIVE_REGISTRY_TOKEN
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
@@ -75,10 +78,10 @@ version="$4"
   || { printf 'Registry API URL must be an absolute HTTPS origin without user info, path, query, or fragment.\n' >&2; exit 2; }
 [[ -f "$archive" ]] || { printf 'Registry package archive not found: %s\n' "$archive" >&2; exit 1; }
 if [[ "$verify_only" != true ]]; then
-  [[ -n "${SUNDER_REGISTRY_PUBLISH_TOKEN:-}" ]] \
-    || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN is not configured for Registry publication.\n' >&2; exit 1; }
-  [[ "$SUNDER_REGISTRY_PUBLISH_TOKEN" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
-    || { printf 'SUNDER_REGISTRY_PUBLISH_TOKEN must be a valid scoped sunder_pub_v1 publish token.\n' >&2; exit 1; }
+  [[ -n "$registry_api_key" ]] \
+    || { printf 'SUNDER_REGISTRY_API_KEY is not configured for Registry publication.\n' >&2; exit 1; }
+  [[ "$registry_api_key" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
+    || { printf 'SUNDER_REGISTRY_API_KEY must be a valid scoped sunder_pub_v1 API key.\n' >&2; exit 1; }
 fi
 
 for required_command in cat cmp curl cut grep jq mktemp sed sort tr unzip wc; do
@@ -753,8 +756,8 @@ publish_confirmed=false
 # The private temporary directory is removed by the existing exit trap. Keep the
 # bearer value out of argv, even on runners where process arguments are observable.
 authorization_file="$temp_dir/authorization.headers"
-(umask 077; printf 'Authorization: Bearer %s\n' "$SUNDER_REGISTRY_PUBLISH_TOKEN" > "$authorization_file")
-unset SUNDER_REGISTRY_PUBLISH_TOKEN
+(umask 077; printf 'Authorization: Bearer %s\n' "$registry_api_key" > "$authorization_file")
+unset registry_api_key
 if publish_response="$(curl --fail-with-body -sS \
   -H "@$authorization_file" \
   -H "X-Sunder-Expected-Resource-Id: $package_id" \

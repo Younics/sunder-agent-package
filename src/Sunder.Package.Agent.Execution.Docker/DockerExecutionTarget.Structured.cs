@@ -136,47 +136,6 @@ public sealed partial class DockerExecutionTarget
         }
     }
 
-    private static DockerApprovedResourceLease RedeemResourceApproval(
-        AgentExecutionTargetContext context,
-        DockerHostPathBinding path,
-        DockerStructuredIdentitySnapshot identity)
-    {
-        if (context.ApprovedResourceReferences.Count is 0 or > 128)
-        {
-            throw new DockerResourceApprovalException();
-        }
-        foreach (var reference in context.ApprovedResourceReferences)
-        {
-            if (DockerResourceReference.TryRedeem(
-                    reference,
-                    identity.NamespaceFingerprint,
-                    path,
-                    identity.MountIdentityChains,
-                    out var approvedLease))
-            {
-                return approvedLease!;
-            }
-        }
-        throw new DockerResourceApprovalException();
-    }
-
-    private async Task VerifyApprovedMountAsync(
-        DockerStructuredOperationLease operation,
-        DockerExecutionRuntimeConfig config,
-        DockerHostPathBinding path,
-        DockerApprovedResourceLease approval,
-        IReadOnlyList<DockerMountRootIdentityChain> currentMountIdentityChains,
-        CancellationToken cancellationToken)
-    {
-        var retained = approval.ValidateMountGeneration(path, currentMountIdentityChains);
-        await _mountIdentityVerifier.VerifyAsync(
-            operation.ContainerName,
-            config,
-            [new DockerVerifiedMount(path.Mount, retained)],
-            RunDockerAsync,
-            cancellationToken).ConfigureAwait(false);
-    }
-
     private static void AppendFingerprintSegment(StringBuilder builder, string value)
         => builder.Append(value.Length).Append(':').Append(value);
 

@@ -10,6 +10,14 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
+    internal static MemoryConsumerRuntime AddMemoryInspectorRuntime(RegressionTestRpcState state, Task initialResetRelease)
+    {
+        var runtime = new MemoryConsumerRuntime { InitialResetRelease = initialResetRelease };
+        AddGeneratedPeer(state, "younics.ai.agent", RegressionTestBindings.RuntimeCatalog,
+            new RegressionTestRuntimeCatalogProvider((AgentServices.IRuntimeCatalogService)runtime), "agent.runtime.catalog");
+        return runtime;
+    }
+
     private sealed class MemoryConsumerRpc(ISunderRpcClient inner) : ISunderRpcClient
     {
         internal int DiscoveryCount;
@@ -95,13 +103,15 @@ public sealed partial class AgentSourceArtifactMigrationTests
             => GenerateEmbeddingsAsync(modelId, texts, token);
     }
 
-    private class MemoryConsumerRuntime : AgentServices.IRuntimeCatalogService, IAgentRuntimeCatalog
+    internal class MemoryConsumerRuntime : AgentServices.IRuntimeCatalogService, IAgentRuntimeCatalog
     {
         private Action<Guid>? _sessionChanged;
         public AgentProfileRecord Profile { get; }
         public AgentSessionRecord Session { get; }
         internal int SessionSubscriberCount;
         internal TaskCompletionSource Subscribed { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal TaskCompletionSource WatchStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal Task? InitialResetRelease { get; init; }
         internal MemoryConsumerRuntime(AgentProfileRecord? profile = null)
         {
             Profile = profile ?? new("profile.generated", "Generated", null, null, null, null, "embedding", "embedding/model", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
@@ -203,6 +213,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             ResetRequired += Reset;
             try
             {
+                WatchStarted.TrySetResult();
+                if (InitialResetRelease is { } release) await release.WaitAsync(token);
                 Reset();
                 await foreach (var value in events.Reader.ReadAllAsync(token)) yield return value;
             }

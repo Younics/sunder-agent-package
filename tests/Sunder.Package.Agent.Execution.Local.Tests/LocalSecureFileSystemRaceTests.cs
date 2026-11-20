@@ -144,10 +144,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "dir", "sentinel.txt")));
     }
 
-    [PlatformTheory(TestPlatform.Linux, "Anonymous file publication fallback is Linux-specific.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Write_PublishesOnlyInPinnedParent(bool overwrite)
+    public async Task ContentWrite_UsesOnlyThePinnedParent(bool overwrite)
     {
         var fixture = CreateFixture();
         var targetName = overwrite ? "existing.txt" : "created.txt";
@@ -156,12 +156,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             await File.WriteAllTextAsync(Path.Combine(fixture.Pinned, targetName), "old");
         }
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, targetName), "OUTSIDE");
-        var hook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforePublish, targetName);
+        var hook = fixture.CreateSwapHook(LocalSecureFileSystemCheckpoint.BeforeContentWrite, targetName);
 
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
+        var result = await WriteContentAsync(
             fixture.Config,
             new AgentFileWriteRequest { Path = Path.Combine("pinned", targetName), Content = "new", Overwrite = overwrite },
-            false,
             CancellationToken.None,
             hooks: hook);
         hook.Restore();
@@ -172,172 +171,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(Directory.EnumerateFiles(fixture.Pinned, $".{targetName}.sunder-*.tmp"));
     }
 
-    [PlatformTheory(TestPlatform.Linux, "Anonymous publication through /proc/self/fd is Linux-specific.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LinuxWrite_AtEmptyPathEperm_UsesProcFallbackWithoutTemporaryLeak(bool overwrite)
-    {
-        var fixture = CreateFixture();
-        var targetName = overwrite ? "proc-existing.txt" : "proc-created.txt";
-        var target = Path.Combine(fixture.Workspace, targetName);
-        if (overwrite)
-        {
-            await File.WriteAllTextAsync(target, "old");
-        }
-        var methods = new List<LocalUnixAnonymousPublishMethod>();
-        AgentFileMutationResult result;
-        using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
-               {
-                   methods.Add(method);
-                   return method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : null;
-               }))
-        {
-            result = await LocalFileSystemExecutor.WriteFileAsync(
-                fixture.Config,
-                new AgentFileWriteRequest { Path = targetName, Content = "new", Overwrite = overwrite },
-                false,
-                CancellationToken.None);
-        }
-
-        Assert.False(result.IsError, result.Summary);
-        Assert.Equal("new", await File.ReadAllTextAsync(target));
-        Assert.Equal(
-            [LocalUnixAnonymousPublishMethod.EmptyPath, LocalUnixAnonymousPublishMethod.ProcSelfFd],
-            methods);
-        AssertNoTemporaryEntries(fixture.Workspace);
-    }
-
-    [PlatformTheory(TestPlatform.Linux, "Named fallback publication is Linux-specific.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LinuxWrite_WhenAnonymousLinksAreUnavailable_UsesNamedFallbackWithoutTemporaryLeak(bool overwrite)
-    {
-        var fixture = CreateFixture();
-        var target = Path.Combine(fixture.Workspace, "named-fallback.txt");
-        if (overwrite)
-        {
-            await File.WriteAllTextAsync(target, "old");
-        }
-        var methods = new List<LocalUnixAnonymousPublishMethod>();
-        AgentFileMutationResult result;
-        using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
-               {
-                   methods.Add(method);
-                   return method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : 2;
-               }))
-        {
-            result = await LocalFileSystemExecutor.WriteFileAsync(
-                fixture.Config,
-                new AgentFileWriteRequest { Path = "named-fallback.txt", Content = "content", Overwrite = overwrite },
-                false,
-                CancellationToken.None);
-        }
-
-        Assert.False(result.IsError, result.Summary);
-        Assert.Equal("content", await File.ReadAllTextAsync(target));
-        Assert.Equal(
-            [LocalUnixAnonymousPublishMethod.EmptyPath, LocalUnixAnonymousPublishMethod.ProcSelfFd],
-            methods);
-        AssertNoTemporaryEntries(fixture.Workspace);
-    }
-
-    [PlatformFact(
-        TestPlatform.Linux,
-        TestFileSystemCapability.FileSymbolicLinks,
-        "Named fallback substitution requires Linux file symbolic links.")]
-    public async Task LinuxNamedFallback_RejectsTemporaryEntrySubstitutionAndRestoresOriginal()
-    {
-        var fixture = CreateFixture();
-        var target = Path.Combine(fixture.Workspace, "named-attack.txt");
-        var outside = Path.Combine(fixture.Outside, "outside.txt");
-        await File.WriteAllTextAsync(target, "original");
-        await File.WriteAllTextAsync(outside, "OUTSIDE");
-        var hook = new NamedTemporaryEntrySwapHook(target, outside, fixture.Outside);
-        AgentFileMutationResult result;
-        try
-        {
-            using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
-                       method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : 2))
-            {
-                result = await LocalFileSystemExecutor.WriteFileAsync(
-                    fixture.Config,
-                    new AgentFileWriteRequest { Path = "named-attack.txt", Content = "replacement", Overwrite = true },
-                    false,
-                    CancellationToken.None,
-                    hooks: hook);
-            }
-        }
-        finally
-        {
-            hook.Restore();
-        }
-
-        Assert.True(hook.Invoked);
-        Assert.True(result.IsError);
-        Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
-        Assert.Equal("original", await File.ReadAllTextAsync(target));
-        Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
-        AssertNoTemporaryEntries(fixture.Workspace);
-    }
-
-    [PlatformFact(TestPlatform.Linux, "Named fallback no-replace behavior is Linux-specific.")]
-    public async Task LinuxNamedFallback_TargetCreationRaceRemainsNoReplaceAndCleansTemporaryEntry()
-    {
-        var fixture = CreateFixture();
-        var target = Path.Combine(fixture.Workspace, "named-race.txt");
-        var hook = new CreateAtFinalPublishHook(target, "ATTACKER");
-        AgentFileMutationResult result;
-        using (LocalUnixNative.OverrideAnonymousPublishErrors(method =>
-                   method == LocalUnixAnonymousPublishMethod.EmptyPath ? 1 : 2))
-        {
-            result = await LocalFileSystemExecutor.WriteFileAsync(
-                fixture.Config,
-                new AgentFileWriteRequest { Path = "named-race.txt", Content = "new", Overwrite = false },
-                false,
-                CancellationToken.None,
-                hooks: hook);
-        }
-
-        Assert.True(hook.Invoked);
-        Assert.True(result.IsError);
-        Assert.Equal(FileOperation.FileExistsErrorCode, result.ErrorCode);
-        Assert.Equal("ATTACKER", await File.ReadAllTextAsync(target));
-        AssertNoTemporaryEntries(fixture.Workspace);
-    }
-
-    [PlatformFact(
-        TestPlatform.MacOS,
-        TestFileSystemCapability.FileSymbolicLinks,
-        "Named temporary substitution requires macOS file symbolic links.")]
-    public async Task Write_RejectsTemporaryNameSubstitutionBeforePublish()
-    {
-        var fixture = CreateFixture();
-        var target = Path.Combine(fixture.Pinned, "target.txt");
-        var outside = Path.Combine(fixture.Outside, "outside.txt");
-        await File.WriteAllTextAsync(target, "old");
-        await File.WriteAllTextAsync(outside, "OUTSIDE");
-        var hook = new TemporaryEntrySwapHook(target, outside);
-        try
-        {
-            var result = await LocalFileSystemExecutor.WriteFileAsync(
-                fixture.Config,
-                new AgentFileWriteRequest { Path = "pinned/target.txt", Content = "new", Overwrite = true },
-                false,
-                CancellationToken.None,
-                hooks: hook);
-
-            Assert.True(result.IsError);
-            Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
-            Assert.Equal("old", await File.ReadAllTextAsync(target));
-            Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
-        }
-        finally
-        {
-            hook.Restore();
-        }
-    }
-
-    [Theory]
+    [PlatformTheory(TestPlatform.Unix, TestFileSystemCapability.DirectorySymbolicLinks, "Pinned-parent unlink races require Unix strict mutations and directory links.")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task Delete_UnlinksOnlyFromPinnedParent(bool recursive)
@@ -449,13 +283,20 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "empty", "sentinel.txt")));
     }
 
+    [PlatformFact(TestPlatform.Unix, "Newline filename checks require Unix path components.")]
+    public Task Search_TraversesPinnedDirectoryAndPreservesNewlineNames()
+        => VerifyPinnedSearchNameAsync("line\nbreak.txt", "line\\nbreak.txt");
+
     [Fact]
-    public async Task Search_TraversesPinnedDirectoryAndPreservesNewlineNames()
+    public Task Search_TraversesPinnedDirectoryAndPreservesUnicodeNames()
+        => VerifyPinnedSearchNameAsync("snow 雪.txt", "snow 雪.txt");
+
+    private async Task VerifyPinnedSearchNameAsync(string name, string listingName)
     {
         var fixture = CreateFixture();
         var search = Path.Combine(fixture.Pinned, "search");
         Directory.CreateDirectory(search);
-        await File.WriteAllTextAsync(Path.Combine(search, "line\nbreak.txt"), "needle");
+        await File.WriteAllTextAsync(Path.Combine(search, name), "needle");
         Directory.CreateDirectory(Path.Combine(fixture.Outside, "search"));
         await File.WriteAllTextAsync(Path.Combine(fixture.Outside, "search", "secret.txt"), "needle OUTSIDE");
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
@@ -475,9 +316,9 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         hook.Restore();
 
         var match = Assert.Single(result.Matches);
-        Assert.Contains("line\\nbreak.txt", listing.Content, StringComparison.Ordinal);
+        Assert.Contains(listingName, listing.Content, StringComparison.Ordinal);
         Assert.False(result.IsError, result.ErrorMessage);
-        Assert.Contains("line\nbreak.txt", match.Path, StringComparison.Ordinal);
+        Assert.Contains(name, match.Path, StringComparison.Ordinal);
         Assert.DoesNotContain("OUTSIDE", match.Text, StringComparison.Ordinal);
         Assert.Equal("needle OUTSIDE", await File.ReadAllTextAsync(Path.Combine(fixture.Outside, "search", "secret.txt")));
     }
@@ -674,7 +515,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Empty(result.Matches);
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Mutation checkpoint CAS races require Unix file-descriptor semantics.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task SearchRejectsUnboundedExpressions(bool braceExpansion)
@@ -761,7 +602,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         var path = Path.Combine(fixture.Workspace, "cas-race.txt");
         await File.WriteAllTextAsync(path, "original");
         var hook = new ContentMutationHook(
-            delete ? LocalSecureFileSystemCheckpoint.BeforeUnlink : LocalSecureFileSystemCheckpoint.BeforePublish,
+            delete ? LocalSecureFileSystemCheckpoint.BeforeUnlink : LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen,
             path,
             "changed concurrently");
 
@@ -801,7 +642,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             content => content == "changed concurrently");
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Final mutation syscall races require Unix file-descriptor semantics.")]
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task FinalMutationSyscall_DoesNotPublishOrDeleteReplacementEntry(bool delete)
@@ -813,7 +654,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         await File.WriteAllTextAsync(target, "approved");
         await File.WriteAllTextAsync(replacement, "ATTACKER");
         var hook = new FinalRetargetingHook(
-            delete ? LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall : LocalSecureFileSystemCheckpoint.BeforePublishSyscall,
+            delete ? LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall : LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen,
             target,
             replacement,
             parked);
@@ -844,11 +685,11 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
     }
 
     [Fact]
-    public async Task MissingWriteTarget_CannotBeReplacedAtFinalPublishSyscall()
+    public async Task MissingWriteTarget_CannotBeAdoptedAtExclusiveCreation()
     {
         var fixture = CreateFixture();
         var target = Path.Combine(fixture.Workspace, "created-at-final.txt");
-        var hook = new CreateAtFinalPublishHook(target, "ATTACKER");
+        var hook = new CreateAtContentCommitHook(target, "ATTACKER");
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
@@ -862,18 +703,15 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         Assert.Equal("ATTACKER", await File.ReadAllTextAsync(target));
     }
 
-    [PlatformFact(TestPlatform.Windows, "Final mutation handle replacement is Windows-specific.")]
-    public async Task WindowsFinalMutationHandles_BlockInPlaceEntryReplacement()
+    [PlatformFact(TestPlatform.Windows, "Public Windows mutations must reach their secure commit checkpoints without affecting outside paths.")]
+    public async Task WindowsMutations_ReachCommitCheckpointsAndPreserveOutsidePaths()
     {
         var fixture = CreateFixture();
         var outside = Path.Combine(fixture.Outside, "outside.txt");
         await File.WriteAllTextAsync(outside, "OUTSIDE");
         var writeTarget = Path.Combine(fixture.Workspace, "windows-write.txt");
         await File.WriteAllTextAsync(writeTarget, "old");
-        var writeHook = new WindowsReplacementAttemptHook(
-            LocalSecureFileSystemCheckpoint.BeforePublishSyscall,
-            writeTarget,
-            outside);
+        var writeHook = new FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint.BeforeContentWrite);
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             fixture.Config,
@@ -884,10 +722,7 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
 
         var deleteTarget = Path.Combine(fixture.Workspace, "windows-delete.txt");
         await File.WriteAllTextAsync(deleteTarget, "delete");
-        var deleteHook = new WindowsReplacementAttemptHook(
-            LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall,
-            deleteTarget,
-            outside);
+        var deleteHook = new FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint.BeforeUnlinkSyscall);
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             fixture.Config,
             new AgentFileDeleteRequest { Path = "windows-delete.txt", Recursive = false },
@@ -896,11 +731,13 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
             hooks: deleteHook);
 
         Assert.False(write.IsError, write.Summary);
-        Assert.True(writeHook.Invoked && writeHook.Blocked);
+        Assert.True(writeHook.Invoked);
         Assert.Equal("new", await File.ReadAllTextAsync(writeTarget));
         Assert.False(delete.IsError, delete.Summary);
-        Assert.True(deleteHook.Invoked && deleteHook.Blocked);
+        Assert.True(deleteHook.Invoked);
+        Assert.False(File.Exists(deleteTarget));
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
+        AssertNoTemporaryEntries(fixture.Workspace);
     }
 
     [FileSystemFact(
@@ -1071,6 +908,10 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         => Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
 
+    private static ValueTask<AgentFileMutationResult> WriteContentAsync(LocalExecutionRuntimeConfig config,
+        AgentFileWriteRequest request, CancellationToken cancellationToken, ILocalSecureFileSystemHooks? hooks = null)
+        => LocalFileSystemExecutor.WriteFileAsync(config, request, false, cancellationToken, hooks: hooks);
+
     private static void AssertNoTemporaryEntries(string directory)
         => Assert.DoesNotContain(
             Directory.EnumerateFileSystemEntries(directory),
@@ -1155,104 +996,6 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    private sealed class TemporaryEntrySwapHook(
-        string targetPath,
-        string outsidePath) : ILocalSecureFileSystemHooks
-    {
-        private string? _parkedPath;
-        private string? _temporaryPath;
-
-        public void OnCheckpoint(LocalSecureFileSystemCheckpoint current, string parentPath, string? entryName)
-        {
-            if (_temporaryPath is not null
-                || current != LocalSecureFileSystemCheckpoint.BeforePublish
-                || !LocalSecurePathEngine.PathComparer.Equals(
-                    Path.Combine(parentPath, entryName ?? string.Empty),
-                    targetPath))
-            {
-                return;
-            }
-
-            var temporaryPath = Assert.Single(Directory.EnumerateFiles(parentPath, ".sunder-secure-temp-*"));
-            var parkedPath = temporaryPath + ".parked";
-            File.Move(temporaryPath, parkedPath);
-            try
-            {
-                File.CreateSymbolicLink(temporaryPath, outsidePath);
-            }
-            catch
-            {
-                File.Move(parkedPath, temporaryPath);
-                throw;
-            }
-            _temporaryPath = temporaryPath;
-            _parkedPath = parkedPath;
-        }
-
-        public void Restore()
-        {
-            if (_temporaryPath is null)
-            {
-                return;
-            }
-            File.Delete(_temporaryPath);
-            File.Delete(_parkedPath!);
-        }
-    }
-
-    private sealed class NamedTemporaryEntrySwapHook(
-        string targetPath,
-        string outsidePath,
-        string parkingDirectory) : ILocalSecureFileSystemHooks
-    {
-        private string? _parkedPath;
-        private string? _temporaryPath;
-
-        public bool Invoked { get; private set; }
-
-        public void OnCheckpoint(LocalSecureFileSystemCheckpoint current, string parentPath, string? entryName)
-        {
-            if (Invoked
-                || current != LocalSecureFileSystemCheckpoint.BeforeNamedTemporaryPublish
-                || !LocalSecurePathEngine.PathComparer.Equals(
-                    Path.Combine(parentPath, entryName ?? string.Empty),
-                    targetPath))
-            {
-                return;
-            }
-
-            Invoked = true;
-            var temporaryPath = Assert.Single(
-                Directory.EnumerateFileSystemEntries(parentPath),
-                path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
-            var parkedPath = Path.Combine(parkingDirectory, "parked-" + Guid.NewGuid().ToString("N"));
-            File.Move(temporaryPath, parkedPath);
-            try
-            {
-                File.CreateSymbolicLink(temporaryPath, outsidePath);
-            }
-            catch
-            {
-                File.Move(parkedPath, temporaryPath);
-                throw;
-            }
-            _temporaryPath = temporaryPath;
-            _parkedPath = parkedPath;
-        }
-
-        public void Restore()
-        {
-            if (_temporaryPath is not null)
-            {
-                File.Delete(_temporaryPath);
-            }
-            if (_parkedPath is not null)
-            {
-                File.Delete(_parkedPath);
-            }
-        }
-    }
-
     private sealed class FinalRetargetingHook(
         LocalSecureFileSystemCheckpoint checkpoint,
         string target,
@@ -1273,13 +1016,13 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    private sealed class CreateAtFinalPublishHook(string target, string content) : ILocalSecureFileSystemHooks
+    private sealed class CreateAtContentCommitHook(string target, string content) : ILocalSecureFileSystemHooks
     {
         public bool Invoked { get; private set; }
 
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
         {
-            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforePublishSyscall)
+            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforeContentWrite)
             {
                 return;
             }
@@ -1288,31 +1031,13 @@ public sealed class LocalSecureFileSystemRaceTests : IDisposable
         }
     }
 
-    private sealed class WindowsReplacementAttemptHook(
-        LocalSecureFileSystemCheckpoint checkpoint,
-        string target,
-        string outside) : ILocalSecureFileSystemHooks
+    private sealed class FinalMutationCheckpointHook(LocalSecureFileSystemCheckpoint checkpoint) : ILocalSecureFileSystemHooks
     {
         public bool Invoked { get; private set; }
 
-        public bool Blocked { get; private set; }
-
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint current, string parentPath, string? entryName)
         {
-            if (Invoked || current != checkpoint)
-            {
-                return;
-            }
-            Invoked = true;
-            try
-            {
-                File.Delete(target);
-                File.CreateSymbolicLink(target, outside);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                Blocked = true;
-            }
+            if (current == checkpoint) Invoked = true;
         }
     }
 

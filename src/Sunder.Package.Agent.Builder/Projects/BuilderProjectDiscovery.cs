@@ -40,6 +40,13 @@ public sealed class BuilderProjectDiscovery(Sunder.Sdk.Abstractions.SunderDevelo
     {
         entryPoint = Path.GetFullPath(entryPoint);
         if (!File.Exists(entryPoint)) throw new FileNotFoundException("Select a project entry point.", entryPoint);
+        // Capture filesystem spelling before metadata/preflight approval. Never
+        // normalize an already-approved identity by following its current path.
+        // Keep rejecting original linked source paths, not just their targets.
+        BuilderProjectSource.EnsureSafePath(Path.GetDirectoryName(entryPoint)!, entryPoint);
+        var physicalEntryPoint = BuilderPhysicalPath.ReadExisting(entryPoint);
+        BuilderProjectSource.EnsureSafePath(Path.GetDirectoryName(entryPoint)!, entryPoint);
+        entryPoint = physicalEntryPoint;
         var kind = Path.GetFileName(entryPoint) == "sunder.package.json" ? BuilderProjectKind.Node
             : entryPoint.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ? BuilderProjectKind.Dotnet
             : throw new NotSunderProjectException("Select a .csproj or sunder.package.json entry point.");

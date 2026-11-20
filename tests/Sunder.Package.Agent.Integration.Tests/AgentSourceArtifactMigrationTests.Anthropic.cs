@@ -19,14 +19,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Provider.Anthropic/Runtime/AnthropicWorkerBindings.Legacy.cs",
         "src/Sunder.Package.Agent.Provider.Anthropic/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyAnthropicArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyAnthropicArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Provider.Anthropic", "AnthropicWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Provider.Anthropic", "AnthropicWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Provider.Anthropic");
         await VerifyAnthropicRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertProviderArchiveHasNoCentralProtocol(archive);

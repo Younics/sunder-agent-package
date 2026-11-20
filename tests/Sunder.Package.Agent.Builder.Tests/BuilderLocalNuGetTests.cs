@@ -54,6 +54,28 @@ public sealed class BuilderLocalNuGetTests
         Assert.Equal(original, File.ReadAllBytes(options.DotnetTemplatePackagePath!));
     }
 
+    [Theory]
+    [InlineData("1.1.0", "1.0.0", true)]
+    [InlineData("1.1.1", "1.0.0", false)]
+    [InlineData("1.1.0", "2.0.0", false)]
+    public async Task SdkStyleTemplateUsesExactBuildSdkAndNuGetMinimumReferences(string sdkVersion, string minimum, bool accepted)
+    {
+        using var fixture = new Fixture(); fixture.CreateFeed();
+        fixture.WritePackage("Sunder.Package.Templates", buildSdkVersion: sdkVersion, templateMinimum: minimum);
+        var original = File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates"));
+        if (accepted)
+        {
+            var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
+            Assert.Equal(original, File.ReadAllBytes(options.DotnetTemplatePackagePath!));
+        }
+        else
+        {
+            await Assert.ThrowsAsync<InvalidDataException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.Snapshots));
+        }
+        Assert.Equal(original, File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates")));
+    }
+
     [Fact]
     public async Task MultipleVersionsOfOneLocalIdentityAreAmbiguousNotNewestSelection()
     {
@@ -253,18 +275,18 @@ public sealed class BuilderLocalNuGetTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, cancellation.Token));
         Assert.False(Directory.Exists(fixture.Snapshots));
 
-        fixture.WritePackage("Sunder.Package.Build", paddingBytes: 64 * 1024 * 1024);
+        fixture.WritePackage("Sunder.Package.Build", paddingBytes: 128 * 1024);
         using var copying = new CancellationTokenSource();
-        var work = BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, copying.Token);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        while (!Directory.Exists(fixture.Snapshots) || !Directory.EnumerateDirectories(fixture.Snapshots, ".stage-*").Any(stage =>
-            File.Exists(Path.Combine(stage, "feed", "Sunder.Package.Build.1.1.0.nupkg"))))
+        var copiedChunk = false;
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => BuilderLocalNuGet.LoadOptionsAsync(fixture.Options, copying.Token, () =>
         {
-            Assert.False(work.IsCompleted, "Resolution must still be copying the bounded fixture when cancelled.");
-            await Task.Delay(1, deadline.Token);
-        }
-        copying.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => work);
+            var stage = Assert.Single(Directory.EnumerateDirectories(fixture.Snapshots, ".stage-*"));
+            var target = Path.Combine(stage, "feed", "Sunder.Package.Build.1.1.0.nupkg");
+            Assert.InRange(new FileInfo(target).Length, 1, new FileInfo(fixture.Archive("Sunder.Package.Build")).Length - 1);
+            copiedChunk = true;
+            copying.Cancel();
+        }));
+        Assert.True(copiedChunk, "Cancellation must occur after an actual partial staging write.");
         Assert.Empty(Directory.EnumerateFileSystemEntries(fixture.Snapshots));
     }
 
@@ -316,12 +338,13 @@ public sealed class BuilderLocalNuGetTests
         await TerminalAsync(jobs, jobs.Start(fixture.CreateRequest()));
         var commands = fixture.Process.Requests.ToArray();
         Assert.Equal(new[] { "install", "list", "sunder-package" }, commands.Select(command => command.Arguments[1]));
-        Assert.StartsWith(fixture.Snapshots, commands[0].Arguments[2]);
+        Assert.StartsWith(fixture.Snapshots + Path.DirectorySeparatorChar, commands[0].Arguments[2]);
         Assert.Equal(File.ReadAllBytes(fixture.Archive("Sunder.Package.Templates")), File.ReadAllBytes(commands[0].Arguments[2]));
         var home = Assert.Single(commands.Select(command => command.Environment["DOTNET_CLI_HOME"]).Distinct());
         Assert.True(Encoding.UTF8.GetByteCount(home!) <= BuilderTemplateCache.MaximumHomeUtf8Bytes);
         Assert.Single(commands.Select(command => command.Environment["NUGET_PACKAGES"]).Distinct());
         Assert.Single(commands.Select(command => command.Environment["RestoreConfigFile"]).Distinct());
+        Assert.All(commands, AssertSdkResolverSettings);
     }
 
     [Fact]
@@ -340,7 +363,7 @@ public sealed class BuilderLocalNuGetTests
         release.SetResult();
         await TerminalAsync(jobs, id);
         var command1 = Assert.Single(fixture.Process.Requests);
-        Assert.StartsWith(selected, command1.Arguments[2]);
+        Assert.StartsWith(selected + Path.DirectorySeparatorChar, command1.Arguments[2]);
         Assert.Equal(Path.Combine(selected, "tools", "nuget-packages"), command1.Environment["NUGET_PACKAGES"]);
         Assert.Equal(Path.Combine(selected, "NuGet.Config"), command1.Environment["RestoreConfigFile"]);
         Assert.Equal(id, jobs.Start(first)); Assert.Single(fixture.Process.Requests);
@@ -367,12 +390,13 @@ public sealed class BuilderLocalNuGetTests
         Assert.NotEmpty(fixture.Process.Requests);
         var command = fixture.Process.Requests.Last();
         var config = command.Environment["RestoreConfigFile"]!;
-        Assert.StartsWith(fixture.Snapshots, config);
+        Assert.StartsWith(fixture.Snapshots + Path.DirectorySeparatorChar, config);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-packages"), command.Environment["NUGET_PACKAGES"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-http"), command.Environment["NUGET_HTTP_CACHE_PATH"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-plugins"), command.Environment["NUGET_PLUGINS_CACHE_PATH"]);
         Assert.Equal(Path.Combine(Path.GetDirectoryName(config)!, "tools", "nuget-scratch"), command.Environment["NUGET_SCRATCH"]);
         Assert.Null(command.Environment["NUGET_FALLBACK_PACKAGES"]);
+        Assert.All(fixture.Process.Requests, AssertSdkResolverSettings);
         Assert.Contains("-p:RestoreConfigFile=" + config, command.Arguments);
         if (operation == "setup")
         {
@@ -387,6 +411,30 @@ public sealed class BuilderLocalNuGetTests
             Assert.Contains("-restore", command.Arguments);
         }
         else Assert.Contains("-restore", command.Arguments);
+    }
+
+    private static void AssertSdkResolverSettings(BuilderLocalProcessRequest command)
+    {
+        var directory = OperatingSystem.IsWindows() ? Path.Combine(command.Environment["APPDATA"]!, "NuGet")
+            : Path.Combine(command.Environment["DOTNET_CLI_HOME"]!, ".nuget", "NuGet");
+        Assert.Equal(File.ReadAllBytes(command.Environment["RestoreConfigFile"]!), File.ReadAllBytes(Path.Combine(directory, "NuGet.Config")));
+    }
+
+    [Fact]
+    public async Task SdkResolverSettingsRejectChangedPrivateConfigWithoutRepairingItOrWritingProjectSource()
+    {
+        using var fixture = new Fixture(); fixture.CreateFeed();
+        var options = await BuilderLocalNuGet.LoadOptionsAsync(fixture.Options);
+        var environment = new Dictionary<string, string?>();
+        BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, null);
+        var directory = OperatingSystem.IsWindows() ? Path.Combine(environment["APPDATA"]!, "NuGet")
+            : Path.Combine(environment["DOTNET_CLI_HOME"]!, ".nuget", "NuGet");
+        var path = Path.Combine(directory, "NuGet.Config");
+        File.WriteAllText(path, "changed-private-settings");
+        Assert.Throws<InvalidDataException>(() => BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, null));
+        Assert.Equal("changed-private-settings", File.ReadAllText(path));
+        Assert.Empty(fixture.Process.Requests);
+        Assert.False(File.Exists(Path.Combine(fixture.Root, "NuGet.Config")));
     }
 
     [Fact]
@@ -478,7 +526,7 @@ public sealed class BuilderLocalNuGetTests
 
     private sealed class Fixture : IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "bln-" + Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "bln-" + Guid.NewGuid().ToString("N"));
         internal string Feed => PathOf("source feed");
         internal string PointerPath => Path.Combine(Options.CacheRootPath, "local-nuget.json");
         internal string Snapshots => Path.Combine(Options.CacheRootPath, "local-nuget");
@@ -492,7 +540,7 @@ public sealed class BuilderLocalNuGetTests
             Options = new(PathOf("development-toolchains/project-tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
             Tools = new(Root);
         }
-        internal string PathOf(string name) => Path.Combine(Root, name);
+        internal string PathOf(string name) => Path.GetFullPath(Path.Combine(Root, name));
         internal string Archive(string id) => Path.Combine(Feed, id + "." + Versions.GetValueOrDefault(id, "1.1.0") + ".nupkg");
         internal void Pointer(string json) { Directory.CreateDirectory(Options.CacheRootPath); File.WriteAllText(PointerPath, json); }
         internal void CreateFeed()
@@ -526,7 +574,8 @@ public sealed class BuilderLocalNuGetTests
                 _ => throw new NotSupportedException(method.Name),
             });
         }
-        internal void WritePackage(string id, string? failure = null, string marker = "original", int paddingBytes = 0, string? dependencyVersion = null)
+        internal void WritePackage(string id, string? failure = null, string marker = "original", int paddingBytes = 0, string? dependencyVersion = null,
+            string? buildSdkVersion = null, string? templateMinimum = null)
         {
             using var output = File.Create(Archive(id)); using var zip = new ZipArchive(output, ZipArchiveMode.Create);
             void Add(string path, string text = "artifact")
@@ -553,8 +602,9 @@ public sealed class BuilderLocalNuGetTests
             {
                 const string root = "content/sunder-package/"; const string project = root + "Sunder.Package.Template/";
                 Add(root + ".template.config/template.json", JsonSerializer.Serialize(new { identity = "Sunder.Package", shortName = "sunder-package", symbols = new { } }));
-                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"[{(failure == "template-dependency" ? "99.0.0" : Versions.GetValueOrDefault(package, "1.1.0"))}]\" />";
-                Add(project + "Sunder.Package.Template.csproj", "<Project><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + Reference("Sunder.Package.Build") + "</ItemGroup></Project>");
+                string Reference(string package) => $"<PackageReference Include=\"{package}\" Version=\"{templateMinimum ?? "[" + (failure == "template-dependency" ? "99.0.0" : Versions.GetValueOrDefault(package, "1.1.0")) + "]"}\" />";
+                var sdk = buildSdkVersion is null ? "" : $" Sdk=\"Sunder.Package.Build/{buildSdkVersion}\"";
+                Add(project + "Sunder.Package.Template.csproj", "<Project" + sdk + "><PropertyGroup><TargetFramework>" + (failure == "template-framework" ? "net9.0" : "net10.0") + "</TargetFramework></PropertyGroup><ItemGroup>" + Reference("Sunder.Sdk.Worker") + (buildSdkVersion is null ? Reference("Sunder.Package.Build") : "") + "</ItemGroup></Project>");
                 Add(project + "Views/Avalonia.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Avalonia") + "</ItemGroup></Project>");
                 Add(project + "Stacks/Stacks.PackageReferences.props", "<Project><ItemGroup>" + Reference("Sunder.Sdk.Stacks") + "</ItemGroup></Project>");
             }

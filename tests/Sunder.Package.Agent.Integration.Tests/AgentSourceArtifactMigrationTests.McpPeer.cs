@@ -101,12 +101,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 await context.Response.OutputStream.WriteAsync(bytes, _stop.Token);
             }
             catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
-            finally { context.Response.Close(); }
+            finally
+            {
+                if (_stop.IsCancellationRequested) context.Response.Abort();
+                else context.Response.Close();
+            }
         }
         public async ValueTask DisposeAsync()
         {
-            await _stop.CancelAsync(); _listener.Stop();
+            await _stop.CancelAsync();
             try { await _serve; await Task.WhenAll(_requests); }
+            // Windows response disposal still needs the listener's request queue.
+            // Drain every accepted handler before closing that shared handle.
             finally { _listener.Close(); _stop.Dispose(); }
         }
     }

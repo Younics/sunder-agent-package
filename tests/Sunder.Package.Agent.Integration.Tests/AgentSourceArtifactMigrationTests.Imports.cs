@@ -15,7 +15,7 @@ using MemoryWorker::Sunder.Package.Agent.Memory.Semantic;
 public sealed partial class AgentSourceArtifactMigrationTests
 {
     internal const string MemoryCleanerSource = "src/Sunder.Package.Agent.Memory.Semantic/Rpc/SessionCleanerProvider.cs";
-    private static async Task VerifyImports(string root, string core, string driver, string archive, string cache)
+    private static async Task PrepareOwnerImports(string root, string core, string driver, string archive, string cache)
     {
         var consumer = Path.Combine(root, "Consumer");
         var provider = Path.Combine(root, "Provider");
@@ -24,7 +24,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Directory.CreateDirectory(directory);
             var isProvider = directory == provider;
             WriteImportProject(directory, core, driver, cache, archive, isProvider);
-            File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"), Path.Combine(directory, "sunder-contracts.lock.json"));
+            CopyMinimalContractFixture(core, directory);
             File.WriteAllText(Path.Combine(directory, "Source.cs"), "public sealed class Seed;");
             await Run(directory, "restore", "Imported.csproj", "--disable-parallel");
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept");
@@ -53,26 +53,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
         await VerifyControlledReferenceParticipantsAsync(root, core, driver, archive, cache);
         await VerifyScriptedToolProvider(root, core, driver, archive, cache);
         await VerifyRejectedImports(root, consumer, archive, cache);
-        await VerifyWebArtifact(root, core, driver, archive, cache);
-        await VerifyLocalArtifact(root, core, driver, archive, cache);
-        await VerifyFilesArtifact(root, core, driver, archive, cache);
-        await VerifyShellArtifact(root, core, driver, archive, cache);
-        await VerifyBuilderArtifact(root, core, driver, archive, cache);
-        await VerifySubagentsArtifact(root, core, driver, archive, cache);
-        await VerifySkillsArtifact(root, core, driver, archive, cache);
-        await VerifyMemoryWorkerArtifact(root, core, driver, cache);
+    }
+
+    private static async Task VerifyCombinedImports(string root, string core, string driver, string archive, string cache)
+    {
+        var consumer = Path.Combine(root, "Consumer");
+        var provider = Path.Combine(root, "Provider");
         await VerifyMemoryProviders(root, consumer);
         await VerifyMemoryConsumers(root);
-        await VerifyMcpArtifact(root, core, driver, archive, cache);
-        await VerifyOpenAiArtifact(root, core, driver, archive, cache);
-        await VerifyDockerArtifact(root, core, driver, archive, cache);
-        await VerifyGeminiArtifact(root, core, driver, archive, cache);
-        await VerifyAnthropicArtifact(root, core, driver, archive, cache);
-        await VerifyLMStudioArtifact(root, core, driver, archive, cache);
         var memoryProvider = Path.Combine(root, "MemoryProvider");
         Directory.CreateDirectory(memoryProvider);
         WriteImportProject(memoryProvider, core, driver, cache, archive, provider: true, packageId: "younics.ai.agent.memory.semantic");
-        File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"), Path.Combine(memoryProvider, "sunder-contracts.lock.json"));
+        CopyMinimalContractFixture(core, memoryProvider);
         File.WriteAllText(Path.Combine(memoryProvider, "Source.cs"), "public sealed class Seed;");
         await Run(memoryProvider, "restore", "Imported.csproj", "--disable-parallel");
         await Run(memoryProvider, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept");
@@ -144,6 +136,17 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         finally { load.Unload(); }
         await VerifyAgentMetadataConsumers(root, core, driver, archive, cache);
+    }
+
+    private static void CopyMinimalContractFixture(string core, string destination)
+    {
+        // Git checkout policy may give this valid text fixture CRLF endings.
+        // Normalize only its disposable copy; production selections and the
+        // independently reviewed Core conformance fixture remain untouched.
+        var source = Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json");
+        var utf8 = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true);
+        File.WriteAllText(Path.Combine(destination, "sunder-contracts.lock.json"),
+            File.ReadAllText(source, utf8).ReplaceLineEndings("\n"), utf8);
     }
 
     private static void WriteImportProject(string root, string core, string driver, string cache, string archive, bool provider, string? packageId = null,

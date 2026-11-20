@@ -23,7 +23,10 @@ from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "ci"))
+import bash_runtime
 import native_release_inputs as inputs
+from test_native_runtime_evidence import native_documents
 
 SCRIPT = Path(__file__).resolve().parents[2] / "release"
 SPEC = importlib.util.spec_from_file_location("native_family", SCRIPT / "native-family.py")
@@ -92,8 +95,8 @@ def create_producer(root):
             bundle = directory / "bin/Release/net10.0/sunder-targets" / rid
             for filename, data in files.items():
                 write(bundle / "sunder-dev" / filename, data)
-            baseline = str(Path(project).parent / "sunder-contracts.owned.json")
-            lock = str(Path(project).parent / "sunder-contracts.lock.json")
+            baseline = (Path(project).parent / "sunder-contracts.owned.json").as_posix()
+            lock = (Path(project).parent / "sunder-contracts.lock.json").as_posix()
             fingerprint = inputs.digest(b"fixture compilation frame")
             receipt = {"schemaVersion": 1, "producer": {"name": "Sunder.Package.Build", "version": "1.1.0", "language": "csharp"},
                        "inputFingerprint": fingerprint, "lockSha256": inputs.digest((repository / lock).read_bytes()),
@@ -108,7 +111,7 @@ def create_producer(root):
                      "configuration": "Release", "targetFramework": "net10.0", "runtimeIdentifier": rid, "assemblyName": name,
                      "ownedBaseline": baseline, "ownedBaselineSha256": inputs.digest((repository / baseline).read_bytes()),
                      "contractLock": lock, "contractLockSha256": inputs.digest((repository / lock).read_bytes()), "properties": {}, "items": [],
-                     "sources": [{"path": str(Path(project).parent / "Source.cs"), "bytes": len(b"// reviewed source\n"), "sha256": inputs.digest(b"// reviewed source\n")}],
+                     "sources": [{"path": (Path(project).parent / "Source.cs").as_posix(), "bytes": len(b"// reviewed source\n"), "sha256": inputs.digest(b"// reviewed source\n")}],
                      "toolset": [], "externalInputs": []}
             evidence = inputs.compact({"schemaVersion": 1, "inputs": frame,
                                       "rolePlan": {"inputFingerprint": fingerprint, "nativePlanSha256": inputs.digest(b"native plan"),
@@ -134,7 +137,7 @@ def mock_dotnet(args):
     assert not any(arg.lower() in ("build", "compile", "restore", "-restore", "-t:build", "-t:getsunderpackageroleinputs") for arg in args)
     props = dict(arg[3:].split("=", 1) for arg in args if arg.startswith("-p:"))
     assert props["Configuration"] == "Release" and props["ContinuousIntegrationBuild"] == "true"
-    assert props["SunderPackageComposeRuntimeIdentifiers"].split("%3B") == list(inputs.RIDS)
+    assert props["SunderPackageComposeRuntimeIdentifiers"].strip('"').split(";") == list(inputs.RIDS)
     if props["SunderUseSourceSdk"] == "true":
         assert props["SunderPackageBuildTaskSourceIsImmutable"] == "true" and props["SunderPackageBuildTaskAssembly"]
     if os.environ.get("NATIVE_FIXTURE_CORE_FAILURE"):
@@ -252,6 +255,18 @@ class NativeFamilyFixture(unittest.TestCase):
         self.assemble()
         self.verify()
         self.assertEqual(len(self.log.read_text().splitlines()), 15)
+        # Exercise the real CLI/item boundary that the transport mock cannot model.
+        # Percent-escaped semicolons look correct as text but evaluate as one RID.
+        command = json.loads(self.log.read_text().splitlines()[0])
+        rid_property = next(arg for arg in command if arg.startswith("-p:SunderPackageComposeRuntimeIdentifiers="))
+        probe = self.work / "rid-list.proj"
+        probe.write_text('<Project><Target Name="Probe"><ItemGroup>'
+            '<Rid Include="$(SunderPackageComposeRuntimeIdentifiers)" />'
+            '</ItemGroup></Target></Project>')
+        result = subprocess.run(["dotnet", "msbuild", str(probe), "-t:Probe", "-getItem:Rid", rid_property],
+            capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual(list(inputs.RIDS), [item["Identity"] for item in json.loads(result.stdout)["Items"]["Rid"]])
         document = json.loads((self.output / "native-test-evidence.json").read_bytes())
         self.assertEqual(document["schemaVersion"], 3)
         self.assertEqual(len(document["finalArtifacts"]), 15)
@@ -265,8 +280,8 @@ class NativeFamilyFixture(unittest.TestCase):
         # Run the actual audit over the transport fixture: framework/runtimeconfig,
         # changed SDK versions and installed metrics must survive extracted tooling.
         audit = self.work / "package-output-audit.json"
-        result = subprocess.run(["bash", str(SCRIPT / "generate-package-output-audit.sh"), str(self.output),
-            str(self.output / "native-test-evidence.json"), str(self.repository), str(audit)], capture_output=True, text=True)
+        result = subprocess.run(bash_runtime.command(SCRIPT / "generate-package-output-audit.sh", self.output,
+            self.output / "native-test-evidence.json", self.repository, audit), capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stdout + result.stderr)
         report = json.loads(audit.read_bytes())
         self.assertEqual(set(family.FAMILY_PACKAGE_IDS), {row["packageId"] for row in report["packages"]})
@@ -371,6 +386,63 @@ class NativeFamilyFixture(unittest.TestCase):
         bad["nativeRuns"][0]["familyTests"].pop()
         with self.assertRaisesRegex(ValueError, "all fifteen Worker tests"):
             family.verify_document(bad, output, family.release_rows(self.repository, str(plan_path)), expected)
+
+        # The new producer retains one package/RID without a provisional archive.
+        # Compose each selected package once, then bind all six smoke runs to those
+        # exact final bytes and the fourteen/thirteen unchanged family members.
+        leaves, candidates, final, smoke = (self.work / name for name in ("component-leaves", "component-candidates", "component-final", "component-smoke"))
+        with patch.dict(os.environ, env):
+            for row in plan_rows:
+                if not row["selected"]: continue
+                component = family.component_identity(self.repository, row["packageId"], *VERSIONS[1:])
+                for rid in inputs.RIDS:
+                    family.collect_component(self.repository, leaves, rid, component)
+                family.compose_component(self.repository, leaves, candidates, component)
+                with self.assertRaisesRegex(ValueError, "immutable"):
+                    family.compose_component(self.repository, leaves, candidates, component)
+            final_identity = dict(expected, schemaVersion=6)
+            records = family.gather_candidates(self.repository, candidates, final, final_identity)
+            before_smoke = {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")}
+            for rid in inputs.RIDS:
+                metrics = self.work / "metrics" / rid
+                for path in metrics.glob("*.json"):
+                    metric = json.loads(path.read_bytes())
+                    metric["measurement"]["archiveBytes"] = (final / metric["measurement"]["archive"]).stat().st_size
+                    write(path, metric)
+                execution_records = [dict(packageId=next(key for key, version in expected["familyVersions"].items()
+                    if record["path"] == key + "." + version + ".sunderpkg"), archive=record["path"], size=record["size"], sha256=record["sha256"])
+                    for record in records]
+                execution_records.sort(key=lambda row: row["packageId"])
+                receipt, documents = native_documents(execution_records, rid, expected["core"]["commit"])
+                for name, data in documents.items(): write(metrics / name, data)
+                write(metrics / family.runtime_evidence.RECEIPT, receipt)
+                family.record_final(self.repository, candidates, final, metrics, smoke, rid, final_identity)
+            family.finalize_candidates(self.repository, smoke, final, final_identity)
+            self.assertEqual(4, len(self.log.read_text().splitlines()), "Only two legacy and two new component packs may execute")
+            self.assertEqual(before_smoke, {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")})
+            final_document = json.loads((final / "native-test-evidence.json").read_bytes())
+            self.assertEqual(records, final_document["finalArtifacts"])
+            self.assertEqual(6, len(final_document["executionBundles"]))
+            bundle = final / final_document["executionBundles"][0]["path"]
+            original = bundle.read_bytes()
+            bundle.write_bytes(original + b"changed original reports")
+            with self.assertRaisesRegex(ValueError, "execution report bundle differs"):
+                family.verify_document(final_document, final, family.release_rows(self.repository, str(plan_path)), final_identity)
+            bundle.write_bytes(original)
+            changed = copy.deepcopy(final_document)
+            run = changed["nativeRuns"][0]
+            selected_package = run["packages"][0]
+            selected_package["testedArchive"]["sha256"] = "f" * 64
+            next(test for test in run["familyTests"] if test["packageId"] == selected_package["packageId"])["testedArchive"]["sha256"] = "f" * 64
+            with self.assertRaisesRegex(ValueError, "exact final archive|receipt differs"):
+                family.verify_document(changed, final, family.release_rows(self.repository, str(plan_path)), final_identity)
+            component = family.component_identity(self.repository, next(iter(selected_ids)), *VERSIONS[1:])
+            receipt = candidates / (component["packageId"] + ".candidate.json")
+            value = json.loads(receipt.read_bytes())
+            value["nativeRuns"].pop()
+            write(receipt, value)
+            with self.assertRaisesRegex(ValueError, "exactly six"):
+                family.candidate_receipt(candidates, component)
         unchanged = next(row for row in plan_rows if not row["selected"])
         path = self.output / selection.archive_name(unchanged)
         path.write_bytes(path.read_bytes() + b"changed retained archive")
@@ -378,7 +450,7 @@ class NativeFamilyFixture(unittest.TestCase):
             str(plan_path), *VERSIONS[1:], str(self.repository)], env=env, capture_output=True, text=True)
         self.assertNotEqual(0, result.returncode)
         self.assertIn("Retained archive differs from the release plan", result.stderr)
-        self.assertEqual(2, len(self.log.read_text().splitlines()), "Pack ran after retained-byte substitution")
+        self.assertEqual(4, len(self.log.read_text().splitlines()), "Pack ran after retained-byte substitution")
 
     def test_source_use_projection_cannot_be_changed_apart_from_qualified_receipt(self):
         path = self.handoff / ("native-leaf-evidence-" + inputs.RIDS[0] + ".json")

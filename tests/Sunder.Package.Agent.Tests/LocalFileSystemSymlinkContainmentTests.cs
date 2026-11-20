@@ -1,0 +1,603 @@
+extern alias LocalWorker;
+extern alias DockerWorker;
+
+using System.Security.Cryptography;
+using System.Text;
+using DockerWorker::Sunder.Package.Agent.Execution.Docker;
+using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using Xunit;
+using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
+using AgentFileWriteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileWriteRequest;
+using AgentPermissionScopeClassificationBasis = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentPermissionScopeClassificationBasis;
+using AgentResourceClaim = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentResourceClaim;
+using AgentFileReadErrorCodes = Sunder.Package.Agent.Contracts.Models.AgentFileReadErrorCodes;
+using AgentPermissionBoundaryIds = Sunder.Package.Agent.Contracts.Models.AgentPermissionBoundaryIds;
+
+namespace Sunder.Package.Agent.Execution.Local.Tests;
+
+public sealed class LocalFileSystemSymlinkContainmentTests : IDisposable
+{
+    private readonly string _root = Path.Combine(
+        TemporaryDirectory.GetPhysicalTemporaryRoot(),
+        "sunder-local-path-tests",
+        Guid.NewGuid().ToString("N"));
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Directory escape checks require symbolic links.")]
+    public async Task ReadFileAsync_RejectsDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var secretPath = Path.Combine(outside, "secret.txt");
+        await File.WriteAllTextAsync(secretPath, "outside");
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+        var config = CreateConfig(workspace);
+
+        var result = await LocalFileSystemExecutor.ReadFileAsync(
+            config,
+            new AgentFileReadRequest { Path = Path.Combine("escape", "secret.txt") },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+
+        Assert.True(result.IsError);
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
+        Assert.Empty(result.Content);
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Directory resource checks require symbolic links.")]
+    public void ResolveFileResource_RejectsDirectorySymlink()
+    {
+        var (workspace, outside) = CreateDirectories();
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+        var config = CreateConfig(workspace);
+
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.ResolveFileResource(
+            config,
+            Path.Combine("escape", "file.txt"),
+            allowOutsideConfiguredScope: true));
+    }
+
+    [Fact]
+    public void ResolveFileResource_ClassifiesMissingDescendantsInsideConfiguredRoot()
+    {
+        var (workspace, _) = CreateDirectories();
+        var requestedPath = Path.Combine("new", "nested", "file.txt");
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            CreateConfig(workspace),
+            requestedPath,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Contains(
+            resource.ScopeClassificationBasis,
+            new[]
+            {
+                AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+                AgentPermissionScopeClassificationBasis.LexicalAndOpenedIdentity,
+            });
+        Assert.False(resource.Exists);
+        Assert.Equal(
+            OperatingSystem.IsWindows() ? HostSecurePathEngine.NormalizePath(workspace).ToUpperInvariant() : HostSecurePathEngine.NormalizePath(workspace),
+            Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [Fact]
+    public void ResolveFileResource_UninspectableConfiguredRootUsesPlatformScopeEvidence()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var target = Path.Combine(outside, "file.txt");
+        File.WriteAllText(target, "outside");
+        var missingRoot = Path.Combine(_root, "missing-workspace");
+        var config = new LocalExecutionRuntimeConfig([workspace, missingRoot], workspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            target,
+            allowOutsideConfiguredScope: true);
+
+        // Windows can exclude this path lexically; Unix requires opened ancestry.
+        Assert.Equal(OperatingSystem.IsWindows() ? AgentPermissionBoundaryIds.OutsideConfiguredScope : AgentPermissionBoundaryIds.Unknown, resource.PermissionBoundaryId);
+        Assert.Equal(
+            OperatingSystem.IsWindows() ? AgentPermissionScopeClassificationBasis.LexicalExclusion : AgentPermissionScopeClassificationBasis.Unresolved,
+            resource.ScopeClassificationBasis);
+        Assert.Null(Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [PlatformFact(TestPlatform.Windows, "This verifies Windows lexical scope exclusion.")]
+    public void ResolveFileResource_WindowsOutsideScopeUsesLexicalExclusion()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var target = Path.Combine(outside, "file.txt");
+        File.WriteAllText(target, "outside");
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            CreateConfig(workspace),
+            target,
+            allowOutsideConfiguredScope: true);
+
+        Assert.Equal(AgentPermissionBoundaryIds.OutsideConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.LexicalExclusion,
+            resource.ScopeClassificationBasis);
+    }
+
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS path aliases.")]
+    public void ResolveFileResource_MacCaseAliasUsesOpenedConfiguredRootIdentity()
+    {
+        var (workspace, _) = CreateDirectories();
+        var aliasedWorkspace = Path.Combine(
+            Path.GetDirectoryName(workspace)!,
+            Path.GetFileName(workspace).ToUpperInvariant());
+        var target = Path.Combine(workspace, "file.txt");
+        File.WriteAllText(target, "inside");
+        var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            target,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            resource.ScopeClassificationBasis);
+        Assert.Equal(
+            HostSecurePathEngine.NormalizePath(aliasedWorkspace),
+            Assert.IsType<AgentResourceClaim>(resource.ResourceClaim).ConfiguredRoot);
+    }
+
+    [PlatformFact(TestPlatform.MacCaseInsensitive, "This verifies case-insensitive macOS path aliases.")]
+    public void ResolveFileResource_MacCaseAliasClassifiesMissingDescendants()
+    {
+        var (workspace, _) = CreateDirectories();
+        var aliasedWorkspace = Path.Combine(
+            Path.GetDirectoryName(workspace)!,
+            Path.GetFileName(workspace).ToUpperInvariant());
+        var requestedPath = Path.Combine(workspace, "new", "nested", "file.txt");
+        var config = new LocalExecutionRuntimeConfig([aliasedWorkspace], aliasedWorkspace);
+
+        var resource = LocalResourceResolver.ResolveFileResource(
+            config,
+            requestedPath,
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentPermissionBoundaryIds.ConfiguredScope, resource.PermissionBoundaryId);
+        Assert.False(resource.Exists);
+        Assert.Equal(
+            AgentPermissionScopeClassificationBasis.OpenedAncestorIdentity,
+            resource.ScopeClassificationBasis);
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Host-path escape checks require symbolic links.")]
+    public void MapToHostPath_RejectsDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
+            CreateConfig(workspace),
+            Path.Combine("escape", "project")));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained host-path link checks require symbolic links.")]
+    public void MapToHostPath_RejectsContainedDirectorySymlink()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "target");
+        Directory.CreateDirectory(target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
+
+        Assert.ThrowsAny<LocalSecurePathException>(() => LocalResourceResolver.MapToHostPath(
+            CreateConfig(workspace),
+            Path.Combine("link", "project")));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Working-directory escape checks require symbolic links.")]
+    public void ResolveWorkingDirectory_RejectsDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+
+        Assert.Throws<InvalidOperationException>(() => LocalPathResolver.ResolveWorkingDirectory(
+            CreateConfig(workspace),
+            "escape",
+            allowOutsideConfiguredScope: false));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Default working-directory escape checks require symbolic links.")]
+    public void ResolveWorkingDirectory_RejectsDefaultDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var defaultWorkingDirectory = Path.Combine(workspace, "escape");
+        Directory.CreateSymbolicLink(defaultWorkingDirectory, outside);
+        var config = new LocalExecutionRuntimeConfig([workspace], defaultWorkingDirectory);
+
+        Assert.Throws<InvalidOperationException>(() => LocalPathResolver.ResolveWorkingDirectory(
+            config,
+            requestedWorkingDirectory: null,
+            allowOutsideConfiguredScope: false));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained working-directory link checks require symbolic links.")]
+    public void ResolveWorkingDirectory_ReturnsCanonicalPathForContainedDirectorySymlink()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "target");
+        Directory.CreateDirectory(target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
+
+        var resolved = LocalPathResolver.ResolveWorkingDirectory(
+            CreateConfig(workspace),
+            "link",
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(Physical(target), resolved);
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker host-path escape checks require symbolic links.")]
+    public void DockerMapToHostPath_RejectsDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+        var config = CreateDockerConfig(workspace);
+
+        Assert.ThrowsAny<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() => DockerPathResolver.MapToHostPath(config, "/workspace/escape/project"));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Docker contained-link checks require symbolic links.")]
+    public void DockerMapToHostPath_RejectsContainedDirectorySymlink()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "target");
+        Directory.CreateDirectory(target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
+
+        Assert.ThrowsAny<DockerWorker::Sunder.Agent.Execution.Common.LocalSecurePathException>(() =>
+            DockerPathResolver.MapToHostPath(CreateDockerConfig(workspace), "/workspace/link/project"));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Nested write escape checks require symbolic links.")]
+    public async Task WriteFileAsync_RejectsNewFileBelowDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+        var config = CreateConfig(workspace);
+        var outsidePath = Path.Combine(outside, "new", "file.txt");
+
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = Path.Combine("escape", "new", "file.txt"), Content = "outside", Overwrite = false },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
+        Assert.False(File.Exists(outsidePath));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.FileSymbolicLinks, "Dangling write-link checks require symbolic links.")]
+    public async Task WriteFileAsync_RejectsDanglingFileSymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var outsidePath = Path.Combine(outside, "new.txt");
+        File.CreateSymbolicLink(Path.Combine(workspace, "escape.txt"), outsidePath);
+        var config = CreateConfig(workspace);
+
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = "escape.txt", Content = "outside", Overwrite = false },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
+        Assert.False(File.Exists(outsidePath));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Delete escape checks require symbolic links.")]
+    public async Task DeleteFileAsync_RejectsDirectorySymlinkEscape()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var outsidePath = Path.Combine(outside, "keep.txt");
+        await File.WriteAllTextAsync(outsidePath, "keep");
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "escape"), outside);
+        var config = CreateConfig(workspace);
+
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(
+            config,
+            new AgentFileDeleteRequest { Path = Path.Combine("escape", "keep.txt"), Recursive = false },
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
+        Assert.True(File.Exists(outsidePath));
+    }
+
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks, "Contained file-operation link checks require symbolic links.")]
+    public async Task FileOperations_RejectDirectorySymlinkThatStaysInsideWorkspace()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "target");
+        Directory.CreateDirectory(target);
+        Directory.CreateSymbolicLink(Path.Combine(workspace, "link"), target);
+        var config = CreateConfig(workspace);
+
+        var writeResult = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = Path.Combine("link", "file.txt"), Content = "inside", Overwrite = false },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+        var readResult = await LocalFileSystemExecutor.ReadFileAsync(
+            config,
+            new AgentFileReadRequest { Path = Path.Combine("link", "file.txt") },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+        var deleteResult = await LocalFileSystemExecutor.DeleteFileAsync(
+            config,
+            new AgentFileDeleteRequest { Path = Path.Combine("link", "file.txt"), Recursive = false },
+            allowOutsideConfiguredScope: false);
+
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, writeResult.ErrorCode);
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, readResult.ErrorCode);
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, deleteResult.ErrorCode);
+        Assert.False(File.Exists(Path.Combine(target, "file.txt")));
+    }
+
+    [Fact]
+    public async Task FileOperations_PreserveWorkspaceRelativeNewFileBehavior()
+    {
+        var (workspace, _) = CreateDirectories();
+        var config = CreateConfig(workspace);
+        var relativePath = Path.Combine("new", "nested", "file.txt");
+
+        var writeResult = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = relativePath, Content = "content", Overwrite = false },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+        var readResult = await LocalFileSystemExecutor.ReadFileAsync(
+            config,
+            new AgentFileReadRequest { Path = relativePath },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+
+        Assert.False(writeResult.IsError, writeResult.Summary);
+        Assert.False(readResult.IsError, readResult.ErrorMessage);
+        Assert.Equal("content", readResult.Content);
+        Assert.Equal(Physical(Path.Combine(workspace, relativePath)), readResult.Path);
+    }
+
+    [Fact]
+    public async Task WriteFileAsync_PrecommitFailure_PreservesOriginal()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "important.txt");
+        await File.WriteAllTextAsync(target, "original");
+        var injector = new ThrowingWriteFaultInjector(LocalFileWriteFaultPoint.ContentPrepared);
+
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+                CreateConfig(workspace),
+                new AgentFileWriteRequest { Path = "important.txt", Content = "replacement", Overwrite = true },
+                allowOutsideConfiguredScope: false,
+                CancellationToken.None,
+                faultInjector: injector);
+
+        Assert.True(injector.Invoked);
+        Assert.True(result.IsError);
+        Assert.NotEqual(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
+        Assert.Equal("original", await File.ReadAllTextAsync(target));
+        Assert.Empty(Directory.EnumerateFiles(workspace, ".important.txt.sunder-*.tmp"));
+    }
+
+    [Fact]
+    public async Task WriteAndDelete_RejectStaleExpectedContentHashAtMutationBoundary()
+    {
+        var (workspace, _) = CreateDirectories();
+        var target = Path.Combine(workspace, "concurrent.txt");
+        await File.WriteAllTextAsync(target, "newer");
+        var staleHash = ContentHash("older");
+        var config = CreateConfig(workspace);
+
+        var write = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = "concurrent.txt", Content = "replacement", Overwrite = true, ExpectedContentHash = staleHash },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+        var delete = await LocalFileSystemExecutor.DeleteFileAsync(
+            config,
+            new AgentFileDeleteRequest { Path = "concurrent.txt", Recursive = false, ExpectedContentHash = staleHash },
+            allowOutsideConfiguredScope: false,
+            CancellationToken.None);
+
+        Assert.Equal("file-content-changed", write.ErrorCode);
+        Assert.Equal("file-content-changed", delete.ErrorCode);
+        Assert.Equal("newer", await File.ReadAllTextAsync(target));
+    }
+
+    [Fact]
+    public async Task OutsideApproval_ReadsRetainedTargetAndCannotBeReplayedForWrite()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var first = Path.Combine(outside, "first.txt");
+        var second = Path.Combine(outside, "second.txt");
+        await File.WriteAllTextAsync(first, "approved target");
+        await File.WriteAllTextAsync(second, "RETARGETED_SECRET");
+        var config = CreateConfig(workspace);
+        using var approved = LocalResourceAuthorityTestContext.Approve(config, first, "files.read");
+        Assert.StartsWith(
+            "local-resource-authority-v4:",
+            Assert.Single(approved.Context.ApprovedResourceCapabilities),
+            StringComparison.Ordinal);
+        File.Delete(first);
+        File.Move(second, first);
+
+        var read = await LocalFileSystemExecutor.ReadFileAsync(
+            config,
+            new AgentFileReadRequest { Path = first },
+            allowOutsideConfiguredScope: true,
+            CancellationToken.None,
+            approvedResourceReferences: approved.Context.ApprovedResourceReferences,
+            authorizationContext: approved.Context,
+            resourceReferences: approved.ResourceReferences);
+        var write = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = first, Content = "replacement", Overwrite = true },
+            allowOutsideConfiguredScope: true,
+            CancellationToken.None,
+            approvedResourceReferences: approved.Context.ApprovedResourceReferences,
+            authorizationContext: approved.Context,
+            resourceReferences: approved.ResourceReferences);
+
+        Assert.Null(read.ErrorCode);
+        Assert.Contains("approved target", read.Content, StringComparison.Ordinal);
+        Assert.DoesNotContain("RETARGETED_SECRET", read.Content, StringComparison.Ordinal);
+        Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, write.ErrorCode);
+        Assert.Equal("RETARGETED_SECRET", await File.ReadAllTextAsync(first));
+        Assert.False(File.Exists(second));
+    }
+
+    [Fact]
+    public async Task OutsideApproval_PreventsReparentingFromRedirectingDeletion()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var firstDirectory = Path.Combine(outside, "first");
+        var secondDirectory = Path.Combine(outside, "second");
+        Directory.CreateDirectory(firstDirectory);
+        Directory.CreateDirectory(secondDirectory);
+        var first = Path.Combine(firstDirectory, "victim.txt");
+        var second = Path.Combine(secondDirectory, "victim.txt");
+        await File.WriteAllTextAsync(first, "approved target");
+        await File.WriteAllTextAsync(second, "keep");
+        var requestedPath = first;
+        var config = CreateConfig(workspace);
+        using var approved = LocalResourceAuthorityTestContext.Approve(config, requestedPath, "files.mutate");
+        using var before = LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.Capture([workspace], first);
+        var parkedDirectory = Path.Combine(outside, "parked");
+        if (OperatingSystem.IsWindows())
+            Assert.Throws<IOException>(() => Directory.Move(firstDirectory, parkedDirectory));
+        else
+        {
+            Directory.Move(firstDirectory, parkedDirectory);
+            Directory.Move(secondDirectory, firstDirectory);
+        }
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(
+            config,
+            new AgentFileDeleteRequest { Path = requestedPath, Recursive = false },
+            allowOutsideConfiguredScope: true,
+            CancellationToken.None,
+            approvedResourceReferences: approved.Context.ApprovedResourceReferences,
+            authorizationContext: approved.Context,
+            resourceReferences: approved.ResourceReferences);
+
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.False(result.IsError, result.Summary);
+            Assert.False(File.Exists(first));
+            Assert.False(Directory.Exists(parkedDirectory));
+            var retainedPath = Assert.Single(Directory.EnumerateFiles(firstDirectory));
+            Assert.True(LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retainedPath)));
+            using var root = LocalWorker::Sunder.Agent.Execution.Common.HostSecurePathEngine.OpenRoot(firstDirectory);
+            using var retained = root.Platform.OpenChild(root.Handle, Path.GetFileName(retainedPath), root.Volume, false);
+            Assert.Equal(before.Binding.TargetIdentity, retained.Identity);
+            Assert.Equal("approved target", await File.ReadAllTextAsync(retainedPath));
+        }
+        else
+        {
+            Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, result.ErrorCode);
+            Assert.Equal("approved target", await File.ReadAllTextAsync(Path.Combine(parkedDirectory, "victim.txt")));
+        }
+        Assert.Equal("keep", await File.ReadAllTextAsync(Path.Combine(OperatingSystem.IsWindows() ? secondDirectory : firstDirectory, "victim.txt")));
+    }
+
+    [Fact]
+    public async Task OutsideApproval_RevalidatesBeforeWritableAcquisition()
+    {
+        var (workspace, outside) = CreateDirectories();
+        var first = Path.Combine(outside, "first-write.txt");
+        var second = Path.Combine(outside, "second-write.txt");
+        var parked = Path.Combine(outside, "parked-write.txt");
+        await File.WriteAllTextAsync(first, "first");
+        await File.WriteAllTextAsync(second, "second");
+        var config = CreateConfig(workspace);
+        using var approved = LocalResourceAuthorityTestContext.Approve(config, first, "files.mutate");
+        var hooks = new RetargetingContentHook(first, second, parked);
+
+        var result = await LocalFileSystemExecutor.WriteFileAsync(
+            config,
+            new AgentFileWriteRequest { Path = first, Content = "replacement", Overwrite = true },
+            allowOutsideConfiguredScope: true,
+            CancellationToken.None,
+            approvedResourceReferences: approved.Context.ApprovedResourceReferences,
+            faultInjector: null,
+            hooks: hooks,
+            authorizationContext: approved.Context,
+            resourceReferences: approved.ResourceReferences);
+
+        Assert.True(hooks.Invoked);
+        Assert.Equal(AgentFileReadErrorCodes.PathCanonicalizationFailed, result.ErrorCode);
+        Assert.Equal("first", await File.ReadAllTextAsync(parked));
+        Assert.Equal("second", await File.ReadAllTextAsync(first));
+        Assert.DoesNotContain(
+            Directory.EnumerateFiles(outside)
+                .Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
+                .Select(File.ReadAllText),
+            content => content == "second");
+    }
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_root))
+        {
+            Directory.Delete(_root, recursive: true);
+        }
+    }
+
+    private (string Workspace, string Outside) CreateDirectories()
+    {
+        var workspace = Path.Combine(_root, "workspace");
+        var outside = Path.Combine(_root, "outside");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(outside);
+        return (workspace, outside);
+    }
+
+    private static LocalExecutionRuntimeConfig CreateConfig(string workspace)
+        => new([workspace], workspace);
+
+    private static DockerExecutionRuntimeConfig CreateDockerConfig(string workspace)
+        => new("image", "container", "/bin/sh", [], [new DockerExecutionMount(workspace, "/workspace")], "/workspace");
+
+    private static string ContentHash(string content)
+        => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+
+    private static string Physical(string path) => LocalPathResolver.ResolvePhysicalPath(path);
+
+    private sealed class ThrowingWriteFaultInjector(LocalFileWriteFaultPoint faultPoint) : ILocalFileWriteFaultInjector
+    {
+        public bool Invoked { get; private set; }
+
+        public void OnFaultPoint(LocalFileWriteFaultPoint current)
+        {
+            if (current == faultPoint)
+            {
+                Invoked = true;
+                throw new IOException($"Injected failure at {current}.");
+            }
+        }
+    }
+
+    private sealed class RetargetingContentHook(string path, string replacement, string parked)
+        : ILocalSecureFileSystemHooks
+    {
+        public bool Invoked { get; private set; }
+
+        public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
+        {
+            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen)
+            {
+                return;
+            }
+
+            Invoked = true;
+            File.Move(path, parked);
+            File.Move(replacement, path);
+        }
+    }
+}

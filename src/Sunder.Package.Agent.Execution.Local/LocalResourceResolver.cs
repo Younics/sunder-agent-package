@@ -26,10 +26,12 @@ internal static class LocalResourceResolver
         LocalResourceReference? resourceReferences = null)
     {
         var fullPath = LocalSecurePathEngine.ResolveLexicalPath(config, path);
+        using var directoryLease = context is null ? null : resourceReferences?.BorrowDirectoryOperation(context);
         var authority = HostSecurePathEngine.Capture(
             config.WorkspacePaths,
             fullPath,
-            allowMissingSuffix: true);
+            allowMissingSuffix: true,
+            createdDirectories: directoryLease?.Authority);
         return ResolveFileResource(
             config,
             path,
@@ -149,10 +151,18 @@ internal static class LocalResourceResolver
                     "Outside Local authority requires an exact host-owned invocation binding.");
             }
             if (scope.Classification == LocalConfiguredScopeClassification.Configured
-                && operation is { CanIssueOutsideAuthority: true, ActionId: "files.mutate" }
-                && context is not null && resourceReferences is not null)
+                && operation is { ActionId: "files.mutate" }
+                && context is not null && resourceReferences is not null
+                && (operation.CanIssueOutsideAuthority
+                    || issueOutsideAuthority && authority?.CreatedDirectories is not null))
             {
-                authorityReferences = [.. authorityReferences, resourceReferences.IssueDirectoryOperation(context)];
+                // An exact post-mutation receipt must keep the same directory
+                // group alive and borrowable after planning authority is released.
+                // This internal issuance does not grant ownership of new paths.
+                authorityReferences = [.. authorityReferences, resourceReferences.IssueDirectoryOperation(context with
+                {
+                    ResourceOperation = operation with { CanIssueOutsideAuthority = true },
+                })];
             }
             var resourceReference = HostResourceClaim.CreateReference(claim);
             return new AgentResolvedResource

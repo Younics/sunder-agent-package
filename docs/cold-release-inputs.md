@@ -17,17 +17,21 @@ python3 -B scripts/release/release_inputs.py fetch \
 ```
 
 Both source identities above come from the actual checkouts, not configuration.
-`dependency_inputs.py` locates exact published dependencies or constructs a
-same-version unpublished canonical seed. Different bytes must match the committed
-selection; the resolver does not repair a stale lock. Identical coordinator asset
-copies are valid, conflicting copies are not. The output directory must be new
-and outside the source trees.
+`dependency_inputs.py` locates exact published dependencies. Unpublished owners
+are prepared in two phases: `agent_ci.py resolve --allow-missing` retains the
+catalog and available archives in `preparation.json`; six native component jobs
+produce one composed candidate, then `agent_ci.py complete-inputs` admits that
+archive against the unchanged production locks. A single-host seed is insufficient.
+Identical coordinator asset copies are valid, conflicting copies are not. The
+output directory must be new and outside the source trees.
 
-The generated [schema-2 input inventory](../scripts/release/cold-inputs.schema.json)
+The generated [schema-3 input inventory](../scripts/release/cold-inputs.schema.json)
 contains source/lock hashes, Core `buildToolVersion`, exact package content/public
-inventory identities and the selected Core catalog. Local file records contain
+inventory identities, sorted `packageIds` and the selected Core catalog. The scope
+includes the evaluated dependencies of selected test roots; each consumer may use
+a verified subset. Local file records contain
 `name`, `size` and `sha256`. Those are computed evidence, not operator approvals.
-The old numeric-locator schema-1 reader remains for explicitly retained cold fixtures;
+The schema-2 and numeric-locator schema-1 readers remain for retained cold fixtures;
 it is not normal CI/release configuration.
 
 Inputs must cover every committed direct and inventory-only contract selection.

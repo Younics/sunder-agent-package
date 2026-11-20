@@ -28,6 +28,9 @@ public sealed partial class BuilderToolchainTests
         {
             ["SystemRoot"] = systemRoot, ["PATH"] = null, ["NODE_OPTIONS"] = "--require untrusted-hook",
             ["DOTNET_ROOT"] = fixture.PathOf("wrong-sdk"), ["UNRELATED_HOST_SECRET"] = "must-not-be-copied",
+            ["HOME"] = fixture.PathOf("host-profile"), ["USERPROFILE"] = fixture.PathOf("host-profile"),
+            ["APPDATA"] = fixture.PathOf("host-credentials"), ["LOCALAPPDATA"] = fixture.PathOf("host-local"),
+            ["XDG_CONFIG_HOME"] = fixture.PathOf("host-config"), ["XDG_CACHE_HOME"] = fixture.PathOf("host-cache"),
         };
         var environment = service.CreateEnvironment(installation, key => variables.GetValueOrDefault(key), variables.Keys);
         var paths = environment["PATH"]!.Split(Path.PathSeparator);
@@ -37,6 +40,14 @@ public sealed partial class BuilderToolchainTests
         Assert.Contains(paths, path => System.IO.File.Exists(Path.Combine(path, shell)));
         Assert.Null(environment["NODE_OPTIONS"]);
         Assert.DoesNotContain("UNRELATED_HOST_SECRET", environment.Keys);
+        foreach (var name in OperatingSystem.IsWindows()
+            ? new[] { "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA", "ALLUSERSPROFILE" }
+            : new[] { "HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME" })
+        {
+            Assert.NotEqual(variables.GetValueOrDefault(name), environment[name]);
+            Assert.True(BuilderToolchainFiles.IsChild(environment[name]!, fixture.ManagedRoot));
+            Assert.True(Directory.Exists(environment[name]));
+        }
         Assert.Null(variables["PATH"]); // No parent/global environment mutation.
         var absolute = fixture.PathOf("explicit-command-tools");
         variables["PATH"] = string.Join(Path.PathSeparator, ".", "relative-tools", absolute, absolute);
@@ -56,7 +67,7 @@ public sealed partial class BuilderToolchainTests
         if (OperatingSystem.IsWindows()) start.Environment["SystemRoot"] = systemRoot;
         foreach (var (key, value) in environment) if (value is not null) start.Environment[key] = value;
         foreach (var argument in OperatingSystem.IsWindows()
-            ? new[] { "/d", "/c", "cmd /d /c echo builder-shell-ready" }
+            ? new[] { "/d", "/c", "cmd.exe", "/d", "/c", "echo", "builder-shell-ready" }
             : new[] { "-c", "exec sh -c 'printf builder-shell-ready'" }) start.ArgumentList.Add(argument);
         using var child = System.Diagnostics.Process.Start(start)!;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -521,7 +532,7 @@ public sealed partial class BuilderToolchainTests
 
     private sealed class Fixture : IBuilderToolchainCatalog, IBuilderToolchainTransport, IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-builder-toolchains", Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-builder-toolchains", Guid.NewGuid().ToString("N"));
         internal string ManagedRoot => PathOf("private-toolchains");
         internal FakeProcess Process { get; } = new();
         internal BuilderToolchainPlatform Platform { get; } = BuilderToolchainPlatform.Current;
@@ -534,7 +545,7 @@ public sealed partial class BuilderToolchainTests
         internal bool CorruptNpm;
         internal Func<CancellationToken, Task>? OnDownload;
         internal Fixture() => Directory.CreateDirectory(Root);
-        internal string PathOf(string path) => Path.Combine(Root, path);
+        internal string PathOf(string path) => Path.GetFullPath(Path.Combine(Root, path));
         internal string Project(string path) { var full = PathOf(path); Directory.CreateDirectory(full); return full; }
         internal BuilderToolchainService Service(Func<BuilderProjectKind, IReadOnlyList<string>>? candidates = null, SunderDevelopmentToolchain? versions = null)
             => new(ManagedRoot, versions ?? new("10.0.402", "24.22.0", "11.19.1"), this, this, Process, candidates ?? (_ => []), platform: Platform);
@@ -618,6 +629,7 @@ public sealed partial class BuilderToolchainTests
         internal string? ProjectDirectory;
         internal Dictionary<string, string> ExternalSelectedVersion { get; } = [];
         internal Dictionary<string, string> ResolvedExecutable { get; } = [];
+        internal Action? BeforeVersionResult;
 
         public Task<BuilderLocalProcessResult> RunAsync(BuilderLocalProcessRequest request, IProgress<string>? progress = null, CancellationToken cancellationToken = default)
         {
@@ -652,6 +664,7 @@ public sealed partial class BuilderToolchainTests
                 }
             }
             else output = "v" + output;
+            if (request.Arguments.SequenceEqual(["--version"])) BeforeVersionResult?.Invoke();
             return Task.FromResult(new BuilderLocalProcessResult(0, output + "\n", ""));
         }
     }

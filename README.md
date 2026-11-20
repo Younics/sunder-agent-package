@@ -116,23 +116,23 @@ oracles remain inert history, outside normal test/build/release inputs. See the
 
 ## Build From Source
 
-Restore NuGet dependencies first:
+The checked-in locks currently select unpublished local inputs. Retain the exact
+Main candidate and Core catalog from their matching handoff under
+`.sunder/contract-inputs/` (or select another directory with
+`SunderContractInputsRoot`). See [local restore inputs](scripts/README.md#local-contract-preparation)
+for the filenames and validation rules. Do not replace them with a fresh
+same-version build.
+
+Build normally; its ordinary restore fills the user contract cache automatically:
 
 ```sh
-dotnet restore Sunder.AgentPackage.slnx
-```
-
-On a fresh checkout or after clearing the contract cache, follow
-[local contract preparation](scripts/README.md#local-contract-preparation) with the
-exact Main package candidate and Core catalog selected by the checked-in locks.
-Then build normally:
-
-```sh
-dotnet build Sunder.AgentPackage.slnx --no-restore
+dotnet build Sunder.AgentPackage.slnx
 ```
 
 Workspace builds use sibling Core source; standalone clones use independently versioned NuGet
-packages. Build emits each current-RID `bin/<configuration>/<tfm>/sunder-dev`.
+packages. No Python preparation command or temporary cache override is needed.
+`dotnet restore Sunder.AgentPackage.slnx` also hydrates missing selected evidence;
+after restore, `--no-restore` builds remain offline. Build emits each current-RID `bin/<configuration>/<tfm>/sunder-dev`.
 Invoke `PackSunderPackage` on the same canonical project for all declared RIDs.
 For automatic development builds, run `dotnet watch build` from the package directory
 and enable `--watch` when loading its output in Sunder.

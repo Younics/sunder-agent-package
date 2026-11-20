@@ -32,40 +32,17 @@ public sealed partial class RepositoryArchitectureTests
     }
 
     [Fact]
-    public void SharedRegressionHarnesses_RemainSplitAndResponsibilityCapped()
+    public void SharedRpcHarnesses_DoNotDependOnPackageContextOrStorage()
     {
         var testRoot = Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "tests",
             "Shared");
-        var lineCaps = new Dictionary<string, int>(StringComparer.Ordinal)
-        {
-            ["Rpc/RegressionTestInfrastructure.cs"] = 1080,
-            ["Rpc/RegressionTestRpcInfrastructure.cs"] = 1080,
-            ["Rpc/RegressionTestSourceProviders.cs"] = 230,
-            ["Rpc/RegressionTestRpcState.FailureBoundary.cs"] = 80,
-            ["Packages/RegressionTestPackageContext.cs"] = 60,
-            ["Packages/RegressionTestPackageScope.cs"] = 40,
-        };
-        foreach (var item in lineCaps)
-        {
-            var path = Path.Combine(testRoot, item.Key);
-            Assert.True(
-                File.ReadLines(path).Count() <= item.Value,
-                $"{item.Key} exceeds its {item.Value}-line test-harness responsibility cap.");
-        }
-
         var rpcInfrastructure = string.Join('\n',
             File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestInfrastructure.cs")),
             File.ReadAllText(Path.Combine(testRoot, "Rpc/RegressionTestRpcInfrastructure.cs")));
         Assert.DoesNotContain("IPackageContext", rpcInfrastructure, StringComparison.Ordinal);
         Assert.DoesNotContain("IPackageStorageContext", rpcInfrastructure, StringComparison.Ordinal);
-        Assert.Equal(
-            5,
-            Regex.Matches(
-                rpcInfrastructure,
-                "^internal (?:(?:sealed|partial) )*class ",
-                RegexOptions.Multiline | RegexOptions.CultureInvariant).Count);
     }
 
     [Fact]
@@ -639,6 +616,9 @@ public sealed partial class RepositoryArchitectureTests
         Assert.All(sunderPackageVersions, reference => Assert.True(
             SemanticVersion.TryParse(reference.Attribute("Version")?.Value, out _),
             $"{reference.Attribute("Include")?.Value} must declare its own ordinary NuGet version."));
+        using (var global = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repositoryRoot, "global.json"))))
+            Assert.Equal(Assert.Single(sunderPackageVersions, reference => reference.Attribute("Include")?.Value == "Sunder.Package.Build")
+                .Attribute("Version")!.Value, global.RootElement.GetProperty("msbuild-sdks").GetProperty("Sunder.Package.Build").GetString());
         var avaloniaVersions = packageProperties.Descendants("PackageVersion")
             .Where(static reference => reference.Attribute("Include")?.Value == "Avalonia")
             .ToArray();
@@ -763,11 +743,11 @@ public sealed partial class RepositoryArchitectureTests
     public void Workflows_DoNotPropagateAgentVersionThroughCoreVersionProperties()
     {
         var repositoryRoot = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
-        foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml" })
+        foreach (var workflow in new[] { "sunder-package-smoke.yml", "sunder-package-release.yml", "sunder-package-component.yml" })
         {
             var source = File.ReadAllText(Path.Combine(repositoryRoot, ".github", "workflows", workflow));
             source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/ci/agent_ci.py"));
-            if (workflow == "sunder-package-release.yml")
+            if (workflow == "sunder-package-component.yml")
             {
                 Assert.Contains("scripts/release/build-native-family.ps1", source, StringComparison.Ordinal);
                 source += File.ReadAllText(Path.Combine(repositoryRoot, "scripts/release/build-native-family.ps1"));

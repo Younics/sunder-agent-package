@@ -7,22 +7,6 @@ internal sealed record DockerVerifiedMount(
     DockerExecutionMount Mount,
     LocalSecureRoot Root);
 
-internal sealed record DockerHostAccessPolicy(
-    string ContainerUser,
-    string Signature)
-{
-    public static DockerHostAccessPolicy Resolve()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException(
-                "Strict Docker bind-mount identity and mutation verification is unavailable on Windows.");
-        }
-        var user = $"{LocalUnixNative.GetEffectiveUserId()}:{LocalUnixNative.GetEffectiveGroupId()}";
-        return new DockerHostAccessPolicy(user, "host-posix-owner-v1:" + user);
-    }
-}
-
 internal interface IDockerMountIdentityVerifier
 {
     Task VerifyAsync(
@@ -72,7 +56,7 @@ internal sealed class DockerMountIdentityVerifier : IDockerMountIdentityVerifier
                 if (verify.ExitCode != 0)
                 {
                     throw new InvalidOperationException(AppendOutput(
-                        $"Docker bind mount '{verified.Mount.ContainerPath}' failed its bidirectional identity and nested read/write challenge. The container runs as the host UID/GID and must be able to read, write, and traverse this mount.",
+                        $"Docker bind mount '{verified.Mount.ContainerPath}' failed its bidirectional identity and nested read/write challenge. The configured container identity must be able to read, write, and traverse this mount.",
                         verify.Output));
                 }
 
@@ -80,9 +64,8 @@ internal sealed class DockerMountIdentityVerifier : IDockerMountIdentityVerifier
                 var cleanupCommand = string.Join(
                     " && ",
                     "set -eu",
-                    $"rm -f -- {DockerCommandRunner.Quote(responseFile)} {DockerCommandRunner.Quote(hostFile)}",
-                    $"rmdir -- {DockerCommandRunner.Quote(nestedDirectory)}",
-                    $"rmdir -- {DockerCommandRunner.Quote(challengePath)}");
+                    "rm -f -- " + string.Join(" ", challenge.ContainerFilesToRemove.Select(path => DockerCommandRunner.Quote(JoinContainerPath(challengePath, path)))),
+                    string.Join(" && ", challenge.ContainerDirectoriesToRemove.Select(path => "rmdir -- " + DockerCommandRunner.Quote(JoinContainerPath(challengePath, path)))));
                 var cleanup = await runDockerAsync(
                     ["exec", container, shell, "-c", cleanupCommand],
                     CancellationToken.None).ConfigureAwait(false);
@@ -93,6 +76,7 @@ internal sealed class DockerMountIdentityVerifier : IDockerMountIdentityVerifier
                         cleanup.Output));
                 }
                 challenge.VerifyContainerCleanup();
+                cancellationToken.ThrowIfCancellationRequested();
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -108,7 +92,7 @@ internal sealed class DockerMountIdentityVerifier : IDockerMountIdentityVerifier
     }
 
     private static string JoinContainerPath(string parent, string child)
-        => parent == "/" ? "/" + child : parent.TrimEnd('/') + "/" + child;
+        => child.Length == 0 ? parent : parent == "/" ? "/" + child : parent.TrimEnd('/') + "/" + child;
 
     private static string AppendOutput(string message, string output)
     {

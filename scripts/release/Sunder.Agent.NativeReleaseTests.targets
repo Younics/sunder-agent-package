@@ -1,6 +1,31 @@
 <Project>
   <ItemGroup Condition="'$(SunderAgentNativeReleaseTestSource)' != '' and '$(MSBuildProjectName)' == 'Sunder.Runtime.Host.Tests'">
     <Compile Include="$(SunderAgentNativeReleaseTestSource)"
-             Link="AgentNativeReleaseSmokeTests.agent-release.cs" />
+              Link="AgentNativeReleaseSmokeTests.agent-release.cs" />
+    <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Maker.cs"
+             Link="AgentNativeReleaseSmokeTests.Maker.agent-release.cs" />
+    <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Development.cs"
+             Link="AgentNativeReleaseSmokeTests.Development.agent-release.cs" />
+    <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.AppRpc.cs"
+             Link="AgentNativeReleaseSmokeTests.AppRpc.agent-release.cs" />
+    <ProjectReference Include="$(MSBuildProjectDirectory)/../../host/Sunder.App/Sunder.App.csproj"
+                      OutputItemType="_AgentNativeAppTargetPath" Private="false"
+                      Condition="'$(SunderAgentNativeAppTargetPath)' == ''" />
+    <Reference Include="Sunder.App" HintPath="$(SunderAgentNativeAppTargetPath)" Private="false"
+               Condition="'$(SunderAgentNativeAppTargetPath)' != ''" />
+    <_AgentNativeAppTargetPath Include="$(SunderAgentNativeAppTargetPath)" Condition="'$(SunderAgentNativeAppTargetPath)' != ''" />
   </ItemGroup>
+  <Target Name="BuildAgentNativeAppRpcStartupHook" AfterTargets="Build" DependsOnTargets="ResolveReferences"
+          Condition="'$(SunderAgentNativeReleaseTestSource)' != '' and '$(MSBuildProjectName)' == 'Sunder.Runtime.Host.Tests'"
+          Inputs="$(MSBuildThisFileFullPath);$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppRpcStartupHook.cs;@(_AgentNativeAppTargetPath);@(ReferencePathWithRefAssemblies)"
+          Outputs="$(TargetDir)agent-native-app-hook/Sunder.App.Tests.dll;$(TargetDir)sunder-agent-native-app-target-path.txt">
+    <Error Condition="'@(_AgentNativeAppTargetPath->Count())' != '1'" Text="Native App RPC requires one explicit source-built Sunder.App target." />
+    <MakeDir Directories="$(TargetDir)agent-native-app-hook" />
+    <Csc Sources="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppRpcStartupHook.cs"
+         References="@(ReferencePathWithRefAssemblies)" OutputAssembly="$(TargetDir)agent-native-app-hook/Sunder.App.Tests.dll"
+         TargetType="Library" TargetFramework="$(TargetFramework)" LangVersion="$(LangVersion)" Nullable="$(Nullable)"
+         NoConfig="true" NoLogo="true" NoStandardLib="true" Deterministic="true" TreatWarningsAsErrors="true"
+         ToolExe="$(CscToolExe)" ToolPath="$(CscToolPath)" />
+    <WriteLinesToFile File="$(TargetDir)sunder-agent-native-app-target-path.txt" Lines="@(_AgentNativeAppTargetPath->'%(FullPath)')" Overwrite="true" />
+  </Target>
 </Project>

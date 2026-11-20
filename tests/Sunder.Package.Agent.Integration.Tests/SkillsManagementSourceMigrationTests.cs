@@ -43,12 +43,26 @@ public sealed class SkillsManagementSourceMigrationTests
         var archive = CreateArchive("SKILL.md", "---\nname: Source Skill\n---\nSource transport import.");
         var transferId = await Upload(archive);
         var next = changes.MoveNextAsync().AsTask();
-        var imported = await ReadProjectionAsync(client.ImportTransferAsync(transferId));
+        SkillProjection imported;
+        try
+        {
+            imported = await ReadProjectionAsync(client.ImportTransferAsync(transferId));
+            Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(5)));
+        }
+        catch (Exception failure)
+        {
+            // Async iterators cannot be disposed with MoveNextAsync still pending.
+            try { await lifetime.CancelAsync(); }
+            catch (Exception cleanup) { failure.Data["Changes cancellation failure"] = cleanup; }
+            try { await next; }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+            catch (Exception cleanup) { failure.Data["Changes cleanup failure"] = cleanup; }
+            throw;
+        }
         var skill = Assert.Single(imported.Skills);
         Assert.Equal("Source Skill", skill.Name);
         Assert.Null(skill.SourceUri);
         Assert.Equal(skill.SkillId, Assert.Single(imported.ImportedSkillIds));
-        Assert.True(await next.WaitAsync(TimeSpan.FromSeconds(5)));
         Assert.Equal(1, changes.Current);
         Assert.Equal(skill.SkillId, Assert.Single((await ReadProjectionAsync(client.QueryAsync())).Skills).SkillId);
         Assert.Null(await package.Context.Storage.Files.ReadAsync($"skill-import-transfers/{transferId}/manifest.json"));

@@ -1,6 +1,13 @@
 using System.Runtime.CompilerServices;
 
 [assembly: InternalsVisibleTo("Sunder.Package.Agent.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.Runtime.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.View.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.Memory.Semantic.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.Skills.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.Subagents.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.Execution.Local.Tests")]
+[assembly: InternalsVisibleTo("Sunder.Package.Agent.History.Tests")]
 [assembly: InternalsVisibleTo("Sunder.Package.Agent.Integration.Tests")]
 [assembly: InternalsVisibleTo("Sunder.Package.Agent.Builder.Tests")]
 [assembly: InternalsVisibleTo("Sunder.Package.Agent.Mcp.Tests")]

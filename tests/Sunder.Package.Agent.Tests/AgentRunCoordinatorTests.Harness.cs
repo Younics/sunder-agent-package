@@ -598,6 +598,15 @@ public sealed partial class AgentRunCoordinatorTests
         }
     }
 
+    private sealed class QueuedAgentPresentationDispatcher : AgentPresentationDispatcher, IDisposable
+    {
+        private readonly DedicatedThreadDispatcher _dispatcher = new("Chat navigation test dispatcher");
+
+        public bool CheckAccess() => _dispatcher.CheckAccess();
+        public Task InvokeAsync(Action action) => _dispatcher.InvokeAsync(action);
+        public void Dispose() => _dispatcher.Dispose();
+    }
+
     private sealed class InlineAgentPresentationDispatcher : AgentPresentationDispatcher,
         SubagentsApp::Sunder.Package.Agent.Shared.Presentation.IPresentationDispatcher
     {

@@ -127,6 +127,9 @@ internal sealed class LocalResourceReference : IDisposable
         return null;
     }
 
+    internal static bool IsDirectoryOperationReference(string reference)
+        => reference.StartsWith(DirectoryPrefix, StringComparison.Ordinal);
+
     private static string DirectoryKey(AgentExecutionTargetContext context, AgentResourceOperationContext operation)
     {
         var key = new StringBuilder();

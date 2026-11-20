@@ -52,9 +52,7 @@ internal static class DockerLocalEndpointPolicy
                 "Docker execution requires the default or Docker Desktop local context.");
         }
 
-        if (!string.IsNullOrEmpty(host)
-            && !host.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
-            && !host.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrEmpty(host) && !IsLocalEndpoint(host))
         {
             throw new DockerExecutionDomainException(
                 "docker.endpoint.remote-unsupported",
@@ -69,15 +67,32 @@ internal static class DockerLocalEndpointPolicy
     public static string NormalizeEndpointReportedByDocker(string endpoint)
     {
         endpoint = endpoint.Trim();
-        if (string.IsNullOrEmpty(endpoint)
-            || (!endpoint.StartsWith("unix://", StringComparison.OrdinalIgnoreCase)
-                && !endpoint.StartsWith("npipe://", StringComparison.OrdinalIgnoreCase)))
+        if (!IsLocalEndpoint(endpoint))
         {
             throw new DockerExecutionDomainException(
                 "docker.endpoint.invalid",
                 "Docker execution requires a local unix or named-pipe daemon endpoint.");
         }
         return endpoint;
+    }
+
+    private static bool IsLocalEndpoint(string endpoint)
+    {
+        if (endpoint.Any(char.IsControl) || endpoint.IndexOfAny(['?', '#', '%']) >= 0) return false;
+        if (endpoint.StartsWith("unix:///", StringComparison.OrdinalIgnoreCase))
+        {
+            // No URI authority, backslash interpretation, or empty socket path.
+            return endpoint.Length > "unix:///".Length
+                && endpoint["unix:///".Length] != '/'
+                && !endpoint.Contains('\\');
+        }
+        const string localPipe = "npipe:////./pipe/";
+        if (!endpoint.StartsWith(localPipe, StringComparison.OrdinalIgnoreCase)) return false;
+        var pipe = endpoint[localPipe.Length..];
+        // The dot authority is the local machine. Never accept a remote server,
+        // UNC/device escape, userinfo, port, or a path normalized into one by CLI.
+        return pipe.Length > 0 && !pipe.Contains('\\') && !pipe.Contains(':')
+            && pipe.Split('/').All(part => part.Length > 0 && part is not "." and not "..");
     }
 
     private static string ReadCurrentContext()

@@ -21,7 +21,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var repository = BuilderSourceMigrationTests.FindRepository();
         var fixture = Directory.CreateDirectory(Path.Combine(root, "SystemPromptProvider")).FullName;
         WriteImportProject(fixture, core, driver, cache, ownerArchive, provider: true, packageId: "example.agent.prompt", assemblyName: "AgentPromptProvider");
-        File.Copy(Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json"), Path.Combine(fixture, "sunder-contracts.lock.json"));
+        CopyMinimalContractFixture(core, fixture);
         File.WriteAllText(Path.Combine(fixture, "Source.cs"), "public sealed class Seed;");
         await Run(fixture, "restore", "Imported.csproj", "--disable-parallel");
         await Run(fixture, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept");

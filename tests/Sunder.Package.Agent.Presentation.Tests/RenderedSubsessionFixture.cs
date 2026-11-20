@@ -24,34 +24,4 @@ internal static class RenderedSubsessionFixture
                 ["createdAtUtc"] = (createdAtUtc ?? DateTimeOffset.UtcNow).ToString("O"),
             });
 
-    internal static AgentTurnRecord CreateTextTurn(
-        Guid sessionId,
-        DateTimeOffset createdAtUtc,
-        string content)
-    {
-        var turnId = Guid.NewGuid();
-        return new AgentTurnRecord(
-            turnId,
-            sessionId,
-            AgentMessageRole.Assistant,
-            AgentTurnKind.Message,
-            [new AgentTurnItemRecord(
-                Guid.NewGuid(),
-                turnId,
-                0,
-                AgentTurnItemKind.Text,
-                content,
-                null,
-                null,
-                null,
-                null,
-                null,
-                null,
-                false,
-                false,
-                null,
-                null)],
-            createdAtUtc,
-            createdAtUtc);
-    }
 }

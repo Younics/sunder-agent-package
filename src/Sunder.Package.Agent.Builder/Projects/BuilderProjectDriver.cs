@@ -74,7 +74,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         var project = await InspectAsync(request, cancellationToken).ConfigureAwait(false);
         if (request.Operation != "save-metadata" && request.Expected is { } expected
             && (project.SourceRevision != expected.SourceRevision || project.PackageId != expected.PackageId
-                || project.Kind != expected.Kind || !string.Equals(project.EntryPoint, expected.EntryPoint, BuilderJobValidation.PathComparison)))
+                || project.Kind != expected.Kind || !string.Equals(project.EntryPoint, expected.EntryPoint, StringComparison.Ordinal)))
             throw new BuilderProjectConflictException("Project identity or source metadata changed after the accepted operation was prepared. Inspect the current project before starting another build.");
         reporter.Update(new() { Project = project, Message = "Project source inspected." });
         if (request.Operation == "upgrade-toolchain")
@@ -125,8 +125,12 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
 
     private async Task<BuilderProjectInspection> InspectAsync(BuilderJobRequest request, CancellationToken token)
     {
+        // Before approval, genuine input aliases may capture physical spelling.
+        // An expected inspection already carries its captured identity instead.
+        var folder = request.Expected is null ? BuilderPhysicalPath.ReadExisting(request.ProjectFolder!) : request.ProjectFolder;
         var project = await discovery.InspectAsync(request.EntryPoint!, token).ConfigureAwait(false);
-        if (project.Kind != request.Kind || !BuilderJobValidation.Same(project.ProjectFolder, request.ProjectFolder!)) throw new ArgumentException("The selected project does not match the job request.");
+        if (project.Kind != request.Kind || !string.Equals(project.ProjectFolder, folder, StringComparison.Ordinal))
+            throw new ArgumentException("The selected project does not match the job request.");
         if (request.Expected is { } expected && expected.SourceRevision != project.SourceRevision)
             throw new BuilderProjectConflictException("Project source changed since the last inspection. Reload it before retrying.");
         BuilderProjectSource.ValidateId(project.PackageId);
@@ -163,8 +167,8 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         }
         else
         {
-            BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, "sunder:dev:once");
-            await RunAsync(selection, ["run", "sunder:dev:once"], project.ProjectFolder, reporter, token, npm: true).ConfigureAwait(false);
+            BuilderProjectDriverOutputs.RequireScript(project.ProjectFolder, BuilderProjectDriverOutputs.NodeDevelopmentScript);
+            await RunAsync(selection, ["run", BuilderProjectDriverOutputs.NodeDevelopmentScript], project.ProjectFolder, reporter, token, npm: true).ConfigureAwait(false);
         }
         reporter.Update(new() { Phase = BuilderJobPhase.Validating });
         var identity = await BuilderProjectDriverOutputs.ValidateDevelopmentAsync(output, project, rid, requireApp, token).ConfigureAwait(false);
@@ -266,6 +270,7 @@ public sealed partial class BuilderProjectDriver : IBuilderJobDriver
         if (cliHome is not null) environment["DOTNET_CLI_HOME"] = cliHome;
         if (options.NuGetConfigPath is { } config)
         {
+            BuilderLocalNuGet.ConfigureSdkResolverEnvironment(options, environment, cliHome);
             environment["RestoreConfigFile"] = config;
             environment["NUGET_HTTP_CACHE_PATH"] = Path.Combine(options.CacheRootPath, "nuget-http");
             environment["NUGET_PLUGINS_CACHE_PATH"] = Path.Combine(options.CacheRootPath, "nuget-plugins");

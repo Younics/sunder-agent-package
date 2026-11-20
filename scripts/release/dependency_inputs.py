@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Resolve authored dependencies from publications, or build unpublished local seeds.
+"""Resolve published dependencies and admit qualified six-native owner candidates.
 
 No operator-supplied source SHA, asset locator or approval manifest is involved.
 Committed dependency identities remain authoritative and are never rewritten here.
 """
 from pathlib import Path
+import os
+import shutil
 import subprocess
 import tempfile
 from urllib.parse import quote
@@ -47,10 +49,13 @@ def locate(repository, published, name, digest=None):
         name=name, size=asset["size"], sha256=asset["digest"][7:]))
 
 
-def core_packages(source):
+def core_packages(source, packages=None):
     """Read exact NuGet resolutions; different Core packages may have different versions."""
     selected = set()
+    scope = inputs.package_scope(source, packages)
     for row in r.inventory(source)["packages"]:
+        if row["packageId"] not in scope:
+            continue
         path = Path(source) / Path(row["projectPath"]).parent / "packages.release.lock.json"
         for framework in r.load(path)["dependencies"].values():
             for name, entry in framework.items():
@@ -100,7 +105,7 @@ def coordinates(source, published=None):
 
 
 def record(path):
-    path = Path(path)
+    path = inputs.regular(path)
     return dict(name=path.name, size=path.stat().st_size, sha256=r.file_sha(path))
 
 
@@ -109,9 +114,9 @@ def run(command, source, home):
     subprocess.run(command, cwd=source, env=env, check=True)
 
 
-def catalog(source, core, destination, published):
+def catalog(source, core, destination, published, packages=None):
     required = {(item["authorityId"], item["selectedAuthorityRelease"], item["selectedAuthorityContentIdentity"])
-                for _, lock in inputs.lock_documents(source) for item in inputs.catalog_requirements(lock)}
+                for _, lock in inputs.lock_documents(source, packages) for item in inputs.catalog_requirements(lock)}
     r.require(len(required) == 1, "Expected one exact Core catalog dependency")
     authority, version, digest = next(iter(required))
     r.require(authority == "sunder.core", "Unknown platform catalog authority")
@@ -132,42 +137,25 @@ def catalog(source, core, destination, published):
     return path
 
 
-def seed(source, core, row, catalog_path, candidates, destination):
-    """Bootstrap a never-published dependency using its actual canonical project."""
-    project = source / row["projectPath"]
-    # A selected candidate must reproduce the production package, including the
-    # SDK payload/version. Source SDK references produce a different identity.
-    env_props = [*inputs.properties(source, "package"), "-p:GeneratePackageOnBuild=false"]
-    extra = ["-p:SunderPlatformCatalogPath=" + str(catalog_path)]
-    if candidates:
-        extra.append("-p:SunderPackageCandidatePath=" + "%3B".join(str(path) for path in candidates))
-    with tempfile.TemporaryDirectory(prefix="sunder-seed-home-") as home:
-        run(["dotnet", "restore", str(project), "--locked-mode", *env_props], source, home)
-        run(["dotnet", "msbuild", str(project), "-t:RestoreSunderContracts", *env_props, *extra], source, home)
-        run(["dotnet", "build", str(project), "-c", "Release", "--no-restore", *env_props, *extra], source, home)
-        run(["dotnet", "msbuild", str(project), "-t:PackSunderPackage", *env_props, *extra,
-             "-p:SunderPackageOutputPath=" + str(destination)], source, home)
-
-
-def resolve(source, core, destination):
+def resolve(source, core, destination, *, packages=None, allow_missing=False):
     r.require(not Path(destination).is_symlink(), "Linked dependency output")
     source, core, destination = Path(source).resolve(), Path(core).resolve(), Path(destination).resolve()
     r.require(not destination.exists() and not destination.is_relative_to(source) and not destination.is_relative_to(core), "Dependency output must be a new external directory")
     before = inputs.source_snapshot(source)
     try:
-        return resolve_dependencies(source, core, destination)
+        return resolve_dependencies(source, core, destination, packages, allow_missing=allow_missing)
     finally:
         r.require(inputs.source_snapshot(source) == before, "Dependency preparation changed authored source/locks")
 
 
-def resolve_dependencies(source, core, destination):
+def resolve_dependencies(source, core, destination, packages=None, *, allow_missing=False):
     identities = {(package_id, entry["selectedPackageVersion"], entry["selectedPackageContentIdentity"], entry["publicInventorySha256"])
-                  for _, lock in inputs.lock_documents(source) for package_id, entry in lock["packageArtifacts"].items()}
+                  for _, lock in inputs.lock_documents(source, packages) for package_id, entry in lock["packageArtifacts"].items()}
     r.require(len({item[0] for item in identities}) == len(identities), "Conflicting exact dependency selections for the same package")
     destination.mkdir(parents=True)
     core_releases = releases(CORE)
-    catalog_path = catalog(source, core, destination, core_releases)
-    agent_releases = releases(AGENT)
+    catalog_path = catalog(source, core, destination, core_releases, packages)
+    agent_releases = releases(AGENT) if identities else []
     paths, pending = {}, []
     for package_id, version, _, _ in sorted(identities):
         name = f"{package_id}.{version}.sunderpkg"
@@ -175,32 +163,65 @@ def resolve_dependencies(source, core, destination):
         if found:
             path = destination / name
             inputs.download(found[1], path)
-            key, _ = inputs.verify_candidate_file(source, path)
+            key, _ = inputs.verify_candidate_file(source, path, packages)
             r.require(key[0] == package_id, "Downloaded dependency has another package identity")
             paths[package_id] = path
         else:
             pending.append((package_id, version))
     authored = {row["packageId"]: row for row in r.inventory(source)["packages"]}
-    while pending:
-        ready = []
-        for package_id, version in pending:
-            row = authored.get(package_id)
-            r.require(row and row["version"] == version, f"Missing published dependency {package_id}@{version}; source cannot substitute another version")
-            lock = r.load(source / Path(row["projectPath"]).parent / "sunder-contracts.lock.json")
-            if set(lock["packageArtifacts"]) <= paths.keys():
-                ready.append((package_id, version))
-        r.require(ready, "Unpublished dependency cycle; use the existing authoring tools to correct the selections")
-        for package_id, version in ready:
-            path = destination / f"{package_id}.{version}.sunderpkg"
-            seed(source, core, authored[package_id], catalog_path, list(paths.values()), path)
-            key, _ = inputs.verify_candidate_file(source, path)
-            r.require(key[0] == package_id, "Generated dependency has another package identity")
-            paths[package_id] = path
-            pending.remove((package_id, version))
+    for package_id, version in pending:
+        row = authored.get(package_id)
+        r.require(row and row["version"] == version, f"Missing published dependency {package_id}@{version}; source cannot substitute another version")
+        lock = r.load(source / Path(row["projectPath"]).parent / "sunder-contracts.lock.json")
+        r.require(not lock["packageArtifacts"], "Unpublished dependency needs an already-qualified owner candidate")
+    r.require(not pending or allow_missing,
+              "Unpublished dependencies need exact six-native composed candidates; run dependency preparation with --allow-missing, then complete-inputs")
     # This checks full contract/content identities, not just matching filenames/versions.
-    inputs.verify_selected_files(source, list(paths.values()), catalog_path)
+    if not pending: inputs.verify_selected_files(source, list(paths.values()), catalog_path, packages)
     result = dict(schemaVersion=2, coreCommit=r.git(core, "rev-parse", "HEAD").decode().strip(),
                   candidates=[record(path) for _, path in sorted(paths.items())], platformCatalog=record(catalog_path))
-    r_path = destination / "ci-inputs.json"
+    if packages is not None:
+        result.update(schemaVersion=3, packageIds=inputs.package_scope(source, packages))
+    if pending:
+        result = dict(schemaVersion=1, sourceCommit=r.git(source, "rev-parse", "HEAD").decode().strip(),
+            sourceInputs=inputs.source_snapshot(source), inputs=result, pending=[package_id for package_id, _ in pending])
+    r_path = destination / ("preparation.json" if pending else "ci-inputs.json")
     r_path.write_bytes(r.canonical(result) + b"\n")
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("pending=" + r.canonical([package_id for package_id, _ in pending]).decode() + "\n")
+            output.write("packages=" + r.canonical(inputs.package_scope(source, packages)).decode() + "\n")
     return result
+
+
+def complete(source, core, directory, candidates):
+    """Admit composed native owners against unchanged production selections."""
+    source, core, directory, candidates = map(lambda path: Path(path).resolve(), (source, core, directory, candidates))
+    prepared = r.load(directory / "preparation.json")
+    r.closed(prepared, "schemaVersion sourceCommit sourceInputs inputs pending")
+    r.require(prepared["schemaVersion"] == 1 and prepared["sourceCommit"] == r.git(source, "rev-parse", "HEAD").decode().strip()
+        and prepared["sourceInputs"] == inputs.source_snapshot(source), "Dependency preparation source/selection changed")
+    value = prepared["inputs"]
+    r.require(value["coreCommit"] == r.git(core, "rev-parse", "HEAD").decode().strip(), "Dependency preparation Core source changed")
+    for asset in [*value["candidates"], value["platformCatalog"]]:
+        inputs.input_asset(asset, value["schemaVersion"])
+        r.require(record(directory / asset["name"]) == asset, "Prepared dependency bytes changed")
+    rows = {row["packageId"]: row for row in r.inventory(source)["packages"]}
+    r.require(prepared["pending"] and len(set(prepared["pending"])) == len(prepared["pending"]), "Invalid missing dependency selection")
+    from native_release_inputs import RIDS
+    for package_id in prepared["pending"]:
+        path = inputs.regular(candidates / (package_id + "." + rows[package_id]["version"] + ".sunderpkg"))
+        key, _ = inputs.verify_candidate_file(source, path, value.get("packageIds"))
+        manifest, _, _ = inputs.archive_metadata(path)
+        r.require(key[0] == package_id and sorted(target["rid"] for target in manifest["targets"] if target["role"] == "runtime") == sorted(RIDS),
+                  "Dependency owner must be the composed six-native candidate")
+        target = directory / path.name
+        r.require(not target.exists(), "Dependency candidates are immutable")
+        shutil.copyfile(path, target)
+        value["candidates"].append(record(target))
+    value["candidates"].sort(key=lambda item: item["name"])
+    inputs.verify_selected_files(source, [directory / item["name"] for item in value["candidates"]],
+        directory / value["platformCatalog"]["name"], value.get("packageIds"))
+    (directory / "ci-inputs.json").write_bytes(r.canonical(value) + b"\n")
+    (directory / "preparation.json").unlink()
+    return value

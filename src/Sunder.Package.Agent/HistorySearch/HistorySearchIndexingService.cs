@@ -15,7 +15,6 @@ internal sealed partial class HistorySearchIndexingService :
     IAsyncDisposable
 {
     private const int MaximumPendingKeys = 4_096;
-    private const int EmbeddingBatchSize = 16;
     private static readonly TimeSpan StreamingDebounce = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan ReconciliationInterval = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan InitialTextRebuildRetryDelay = TimeSpan.FromSeconds(1);
@@ -25,7 +24,6 @@ internal sealed partial class HistorySearchIndexingService :
     private readonly AgentLocalStore _authoritative;
     private readonly AgentSessionService _sessions;
     private readonly AgentWorkspaceService _workspaces;
-    private readonly HistoryEmbeddingProviderCatalog _embeddingProviders;
     private readonly HistorySemanticOperationFence _semanticFence;
     private readonly HistorySearchRuntimeState _state;
     private readonly TimeProvider _timeProvider;
@@ -47,10 +45,8 @@ internal sealed partial class HistorySearchIndexingService :
     private bool _periodicProjectionChanged;
     private bool _startupReconciliationRequired;
     private bool _rebuildRequested;
-    private bool _embeddingRebuildRequested;
     private bool _reconcileRequested;
     private bool _fullReconciliationRequested;
-    private bool _providerRefreshRequested;
     private DateTimeOffset? _textRebuildRetryAt;
     private int _textRebuildFailureCount;
     private bool _manuallyCleared;
@@ -62,7 +58,6 @@ internal sealed partial class HistorySearchIndexingService :
         AgentLocalStore authoritative,
         AgentSessionService sessions,
         AgentWorkspaceService workspaces,
-        HistoryEmbeddingProviderCatalog embeddingProviders,
         HistorySemanticOperationFence semanticFence,
         HistorySearchRuntimeState state,
         TimeProvider? timeProvider = null)
@@ -71,7 +66,6 @@ internal sealed partial class HistorySearchIndexingService :
         _authoritative = authoritative;
         _sessions = sessions;
         _workspaces = workspaces;
-        _embeddingProviders = embeddingProviders;
         _semanticFence = semanticFence;
         _state = state;
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -113,25 +107,21 @@ internal sealed partial class HistorySearchIndexingService :
         Signal();
     }
 
-    internal void RequestEmbeddingRebuild()
-    {
-        // Semantic projection work is dormant while History Search is local-only.
-    }
-
-    internal void RequestProviderRefresh()
-    {
-        // Provider discovery is intentionally disabled for local-only History Search.
-    }
-
     // Concurrency tests can pause work at an owned resource boundary without relying on scheduler timing.
     internal Func<ValueTask>? BeforeTurnProjectionWriteAsync { get; set; }
+    internal Func<int, CancellationToken, ValueTask>? AfterSessionScanAsync { get; set; }
 
     internal void ReportSemanticUnavailable(string failureCode, string message)
     {
         try
         {
             _projection.MarkSemanticUnavailable();
-            PublishSemanticUnavailable(_projection.GetConfiguration(), failureCode, message);
+            _state.Publish(status => status with
+            {
+                Availability = HistorySearchAvailability.Ready,
+                FailureCode = failureCode,
+                FailureMessage = message,
+            });
         }
         catch
         {
@@ -142,14 +132,8 @@ internal sealed partial class HistorySearchIndexingService :
     internal void QueueAuthoritativeTurnReindex(HistoryStoredDocument document)
         => QueueSession(document.SessionId, UtcNow);
 
-    internal async Task<HistoryProjectionConfiguration> ConfigureSemanticAsync(
-        bool enabled,
-        ResolvedEmbeddingSelection? selection,
-        CancellationToken cancellationToken = default)
+    internal async Task DisableSemanticAsync(CancellationToken cancellationToken = default)
     {
-        // The contract remains for a future semantic-search release, but this release is local-only.
-        enabled = false;
-        selection = null;
         await _semanticChangeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -157,16 +141,7 @@ internal sealed partial class HistorySearchIndexingService :
             await _operationGate.WaitAsync(CancellationToken.None).ConfigureAwait(false);
             try
             {
-                var configuration = _projection.ChangeConfiguration(
-                    enabled,
-                    enabled ? selection?.OwnedProvider.PackageId : null,
-                    enabled ? selection?.OwnedProvider.ProviderId : null,
-                    enabled ? selection?.ModelId : null,
-                    enabled ? selection?.SpaceFingerprint : null);
-                lock (_pendingLock)
-                {
-                    _embeddingRebuildRequested = enabled && !_manuallyCleared;
-                }
+                var configuration = _projection.ChangeConfiguration(false, null, null, null, null);
                 _semanticFence.Activate(configuration.Revision);
                 _state.PublishProjectionChanged(status => status with
                 {
@@ -176,7 +151,6 @@ internal sealed partial class HistorySearchIndexingService :
                     ProgressCompleted = 0,
                     ProgressTotal = null,
                 });
-                return configuration;
             }
             catch
             {
@@ -215,7 +189,6 @@ internal sealed partial class HistorySearchIndexingService :
                     _pendingTurns.Clear();
                     _pendingSessions.Clear();
                     _rebuildRequested = false;
-                    _embeddingRebuildRequested = false;
                     _reconcileRequested = false;
                     _fullReconciliationRequested = false;
                     _startupReconciliationRequired = false;
@@ -290,7 +263,6 @@ internal sealed partial class HistorySearchIndexingService :
                 lock (_pendingLock)
                 {
                     _rebuildRequested = true;
-                    _embeddingRebuildRequested = false;
                     _startupReconciliationRequired = false;
                     _manuallyCleared = false;
                 }
@@ -478,16 +450,6 @@ internal sealed partial class HistorySearchIndexingService :
         }
     }
 
-    private bool TakeEmbeddingRebuildRequest()
-    {
-        lock (_pendingLock)
-        {
-            var value = _embeddingRebuildRequested;
-            _embeddingRebuildRequested = false;
-            return value;
-        }
-    }
-
     private bool TakeReconciliationRequest()
     {
         lock (_pendingLock)
@@ -516,16 +478,6 @@ internal sealed partial class HistorySearchIndexingService :
             _fullReconciliationRequested = true;
         }
         Signal();
-    }
-
-    private bool TakeProviderRefreshRequest()
-    {
-        lock (_pendingLock)
-        {
-            var value = _providerRefreshRequested;
-            _providerRefreshRequested = false;
-            return value;
-        }
     }
 
     private void Signal() => _signal.Writer.TryWrite(true);
@@ -639,30 +591,6 @@ internal sealed partial class HistorySearchIndexingService :
             SingleWriter = false,
             FullMode = BoundedChannelFullMode.DropOldest,
         });
-
-    private void PublishSemanticUnavailable(
-        HistoryProjectionConfiguration configuration,
-        string failureCode,
-        string message)
-    {
-        _ = configuration;
-        _projection.MarkSemanticUnavailable();
-        _state.Publish(status => status with
-        {
-            Availability = HistorySearchAvailability.Ready,
-            FailureCode = failureCode,
-            FailureMessage = message,
-        });
-    }
-
-    private static bool GenerationMatches(
-        HistoryProjectionGeneration generation,
-        HistoryProjectionConfiguration configuration)
-        => generation.ConfigurationRevision == configuration.Revision
-           && string.Equals(generation.ProviderPackageId, configuration.EmbeddingProviderPackageId, StringComparison.OrdinalIgnoreCase)
-           && string.Equals(generation.ProviderId, configuration.EmbeddingProviderId, StringComparison.OrdinalIgnoreCase)
-           && string.Equals(generation.ModelId, configuration.EmbeddingModelId, StringComparison.Ordinal)
-           && string.Equals(generation.EmbeddingSpaceFingerprint, configuration.EmbeddingSpaceFingerprint, StringComparison.Ordinal);
 
     private DateTimeOffset UtcNow => _timeProvider.GetUtcNow();
 }

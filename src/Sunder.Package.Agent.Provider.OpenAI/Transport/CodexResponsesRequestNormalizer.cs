@@ -141,10 +141,4 @@ internal static class CodexResponsesRequestNormalizer
     private static string? GetServiceTier(ChatOptions? options)
         => AgentChatModelOptions.SpeedId(options) switch { "fast" => "priority", "normal" => "default", _ => null };
 
-    private static string? GetModelOption(ChatOptions? options, string key)
-        => options?.AdditionalProperties is { } properties
-           && properties.TryGetValue(key, out var value)
-            ? value as string
-            : null;
-
 }

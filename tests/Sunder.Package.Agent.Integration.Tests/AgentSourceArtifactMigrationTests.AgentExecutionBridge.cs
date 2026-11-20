@@ -5,9 +5,10 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static Assembly LoadExecutionOwner(string worker, AssemblyLoadContext load)
+    private static Assembly LoadExecutionOwner(string worker, AssemblyLoadContext load, string? ownerRoot = null)
     {
-        using var bytes = File.OpenRead(Path.Combine(SingleProjectRoleOutput(Path.Combine(Path.GetDirectoryName(worker)!, "Worker"), "worker"), "Sunder.Package.Agent.dll"));
+        ownerRoot ??= Path.Combine(Path.GetDirectoryName(worker)!, "Worker");
+        using var bytes = File.OpenRead(Path.Combine(SingleProjectRoleOutput(ownerRoot, "worker"), "Sunder.Package.Agent.dll"));
         return load.LoadFromStream(bytes);
     }
 

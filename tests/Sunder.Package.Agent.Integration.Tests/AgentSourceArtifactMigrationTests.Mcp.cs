@@ -27,14 +27,13 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Mcp/Rpc/RuntimeWorkspaceCatalog.cs",
     ];
 
-    private static async Task VerifyMcpArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyMcpArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Mcp", "McpWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Mcp", "McpWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         await VerifyGeneratedAppView(worker, "Mcp");
         await VerifyMcpRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

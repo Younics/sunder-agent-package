@@ -1,6 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderTestOwner>younics.ai.agent.memory.semantic</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;SQLite;Worker</SunderTestCapabilities>
@@ -12,6 +14,9 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentApp" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport.Avalonia/Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent\Sunder.Package.Agent.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Memory.Semantic\Sunder.Package.Agent.Memory.Semantic.csproj"
@@ -22,12 +27,14 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="../Shared/Repository/*.cs;../Shared/Consumers/RegressionTestFamilyConsumers.Memory.cs"
+    <Compile Include="../Shared/Repository/*.cs;../Shared/Consumers/RegressionTestFamilyConsumers.Memory.cs;../Shared/Presentation/*.cs"
+             Exclude="../Shared/Presentation/WorkerBackedSubagentManagementGateway.cs"
              Link="TestSupport/%(Filename)%(Extension)" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.Sqlite" />
+    <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio">

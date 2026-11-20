@@ -76,11 +76,11 @@ public sealed class BuilderTemplateCacheTests
         var prefix = BuilderTemplateCache.ValidateBasePath(fixture.Options);
         var paddingBytes = BuilderTemplateCache.MaximumHomeUtf8Bytes - Encoding.UTF8.GetByteCount(prefix) - 34;
         Assert.True(paddingBytes > 0);
-        var boundary = prefix + "/" + new string('a', paddingBytes);
-        Assert.Equal(BuilderTemplateCache.MaximumHomeUtf8Bytes, Encoding.UTF8.GetByteCount(boundary + "/" + new string('0', 32)));
+        var boundary = Path.Combine(prefix, new string('a', paddingBytes));
+        Assert.Equal(BuilderTemplateCache.MaximumHomeUtf8Bytes, Encoding.UTF8.GetByteCount(Path.Combine(boundary, new string('0', 32))));
         var exact = fixture.Options with { DotnetTemplateCacheRootPath = boundary };
         Assert.Equal(boundary, BuilderTemplateCache.ValidateBasePath(exact));
-        var tooLong = unicode ? prefix + "/" + new string('界', paddingBytes / 3 + 1) : boundary + "a";
+        var tooLong = unicode ? Path.Combine(prefix, new string('界', paddingBytes / 3 + 1)) : boundary + "a";
         var options = fixture.Options with { DotnetTemplateCacheRootPath = tooLong };
         if (unicode) Assert.True(tooLong.Length + 33 <= BuilderTemplateCache.MaximumHomeUtf8Bytes);
         var error = await Assert.ThrowsAsync<IOException>(() => fixture.ExecuteAsync(options));
@@ -322,12 +322,12 @@ public sealed class BuilderTemplateCacheTests
     private sealed class Fixture : IDisposable
     {
         // An explicitly injected short base in every test protects the user's real template home.
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-bt-" + Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-bt-" + Guid.NewGuid().ToString("N"));
         internal BuilderProjectDriverOptions Options => new(PathOf("tools")) { DotnetTemplateVersion = "1.1.0", DotnetTemplateCacheRootPath = PathOf("bt") };
         internal FakeProcess Process { get; } = new();
         internal FakeTools Tools { get; } = new();
         internal Fixture() => PrivateDirectory(Root);
-        internal string PathOf(string path) => Path.Combine(Root, path);
+        internal string PathOf(string path) => Path.GetFullPath(Path.Combine(Root, path));
         internal Task ExecuteAsync(BuilderProjectDriverOptions options, CancellationToken token = default) => new BuilderProjectDriver(Tools, Process, options)
             .ExecuteAsync(new() { Operation = "create", Kind = BuilderProjectKind.Dotnet, ProjectFolder = PathOf("project-" + Guid.NewGuid().ToString("N")),
                 PackageId = "sample.template", DisplayName = "Template" }, new Reporter(), token);

@@ -13,11 +13,14 @@ public sealed partial class AgentProfilesViewModel
 
         _disposed = true;
         Interlocked.Increment(ref _runtimeAvailabilityCallbackVersion);
+        // Stop presentation callers before retiring the shared initialization
+        // they await. Its cancellation can complete inline; otherwise the task
+        // scope can observe that private token before its own owner has stopped.
+        _tasks.Dispose();
         _lifetimeCancellation.Cancel();
         _initialization.Dispose();
         _statusClear.Dispose();
         _runtimeNoticeDelay.Dispose();
-        _tasks.Dispose();
         _operation.PropertyChanged -= OnOperationPropertyChanged;
         _operation.Dispose();
         _profileNotifications.ProfileChanged -= OnProfileChanged;

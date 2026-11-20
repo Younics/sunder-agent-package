@@ -11,6 +11,10 @@ from unittest.mock import patch
 import xml.etree.ElementTree as ET
 
 SCRIPT = Path(__file__).with_name("generate-test-duration-report.py")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
+import bash_runtime
+import agent_ci
+import test_lanes
 SPEC = importlib.util.spec_from_file_location("evidence", SCRIPT)
 evidence = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(evidence)
@@ -79,7 +83,7 @@ public sealed class EvidenceTests
 
     def report(self, platform="linux", success=True):
         environment = {key: value for key, value in os.environ.items()
-                       if key not in {"SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_REQUIRE_TEST_PREREQUISITES"}}
+                       if key not in {"SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_REQUIRE_TEST_PREREQUISITES", "SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES"}}
         process = subprocess.run([sys.executable, "-B", str(SCRIPT), str(self.root / "results"),
                                   "--inventory", str(self.inventory), "--repository-root", str(self.root),
                                   "--mode", "source", "--platform", platform, "--verify"],
@@ -93,6 +97,46 @@ public sealed class EvidenceTests
         report = self.report()
         self.assertEqual(5, report["summary"]["total"])
         self.assertEqual([], report["evidenceViolations"])
+
+    def test_discovery_accepts_only_equivalent_utf16_surrogate_pair_display_escaping(self):
+        self.rows = [
+            ("UnicodeTheory", '(value: "文-😀")', "Passed", ""),
+            ("UnicodeTheory", r'(value: "\\ud83d\\ude00")', "Passed", ""),
+        ]
+        self.write_reports()
+        path = self.results / "Fixture.Tests.trx"
+        tree = ET.parse(path)
+        result = tree.find("Results/UnitTestResult")
+        original = result.get("testName")
+        discovery_path = self.results / "Fixture.Tests.discovery.json"
+        discovery = json.loads(discovery_path.read_text())
+        for spelling, equivalent in (
+                (r"\ud83d\ude00", True), (r"\uD83D\uDE00", True), (r"\\ud83d\\ude00", False),
+                (r"\ud83d", False), (r"\ude00\ud83d", False), (r"\ud83d\ude01", False)):
+            with self.subTest(spelling=spelling):
+                result.set("testName", original.replace("😀", spelling))
+                tree.write(path)
+                observed, _ = evidence.read_trx(self.results, path)
+                violations = evidence.discovery_violations(self.results, observed, [(discovery_path, discovery)])
+                self.assertEqual(not equivalent, bool(violations), violations)
+                if equivalent:
+                    # Canonical matching must retain both exact rows and multiplicity.
+                    self.assertTrue(evidence.discovery_violations(self.results, observed[:-1], [(discovery_path, discovery)]))
+                    self.assertTrue(evidence.discovery_violations(self.results, observed + [observed[0]], [(discovery_path, discovery)]))
+                    self.assertIn(spelling, observed[0]["test"], "Original report spelling must be preserved")
+
+    def test_docker_skip_policy_matches_explicit_opt_in_on_every_host(self):
+        policy = dict(attribute="DockerIntegrationFact", platform=None, capability=None,
+                      project="fixture.tests", owner="fixture", fullyQualifiedName="Fixture.Docker",
+                      reason="Set SUNDER_DOCKER_INTEGRATION=1 and provide a reachable Docker daemon.")
+        for platform in ("linux", "macos", "windows"):
+            for environment in ({}, {"SUNDER_DOCKER_INTEGRATION": "1"}, {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}):
+                with self.subTest(platform=platform, environment=environment):
+                    observed = evidence.expected_skip(policy, platform, environment)
+                    if environment:
+                        self.assertIsNone(observed, "An opted-in/required Docker case must execute")
+                    else:
+                        self.assertEqual(policy["reason"], observed["reason"])
 
     def test_discovered_theory_rows_and_whole_methods_cannot_disappear(self):
         for omitted in (1, 3):
@@ -154,6 +198,64 @@ public class Outer {
         with patch.object(evidence.os, "geteuid", return_value=1000, create=True):
             self.assertIsNone(evidence.expected_skip(policy, "linux", {}))
 
+    def test_windows_security_fixtures_skip_only_off_windows_even_when_prerequisites_are_required(self):
+        for attribute in ("WindowsFact", "WindowsTheory"):
+            with self.subTest(attribute=attribute):
+                policy = {"project": "fixture", "owner": "fixture", "fullyQualifiedName": "Fixture.WindowsSecurity",
+                          "attribute": attribute, "platform": None, "capability": None, "reason": "Requires real Windows ACLs."}
+                self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}))
+                for platform in ("linux", "macos"):
+                    self.assertEqual(policy["reason"], evidence.expected_skip(policy, platform, {})["reason"])
+
+    def test_case_sensitive_directory_capability_is_probed_and_bound_to_the_exact_case(self):
+        source = self.root / "tests/Fixture.Tests/EvidenceTests.cs"
+        reason = "Case-distinct containment requires a case-sensitive directory."
+        source.write_text(source.read_text().replace('[Fact]\n    public void OrdinaryTest()',
+            f'[FileSystemFact(TestFileSystemCapability.CaseSensitiveDirectories, "{reason}")]\n    public void OrdinaryTest()'))
+        available = evidence.filesystem_capability_available("CaseSensitiveDirectories")
+        if not available:
+            self.rows[1] = ("OrdinaryTest", None, "NotExecuted",
+                            reason + " Required filesystem capability 'CaseSensitiveDirectories' is unavailable.")
+        self.write_reports()
+        report = self.report()
+        self.assertEqual([], report["evidenceViolations"])
+        self.assertEqual(1 if available else 2, report["summary"]["skipped"])
+        self.assertEqual("CaseSensitiveDirectories", next(row["capability"] for row in report["skipPolicyEvidence"]
+            if row["fullyQualifiedName"] == "Fixture.Tests.EvidenceTests.OrdinaryTest"))
+
+    def test_multiple_filesystem_prerequisites_are_checked_in_declared_order_and_required_lanes_cannot_skip(self):
+        source = self.root / "tests/Fixture.Tests/EvidenceTests.cs"
+        reason = "Case-only redirection requires case-sensitive names and symbolic links."
+        source.write_text(source.read_text().replace('[Fact]\n    public void OrdinaryTest()',
+            f'[FileSystemFact(TestFileSystemCapability.CaseSensitiveDirectories, "{reason}", '
+            'TestFileSystemCapability.FileSymbolicLinks, TestFileSystemCapability.DirectorySymbolicLinks)]\n    public void OrdinaryTest()'))
+        policies = evidence.skip_policy(self.root, json.loads(self.inventory.read_text()), "source", None, None)
+        policy = next(row for row in policies
+                      if row["fullyQualifiedName"] == "Fixture.Tests.EvidenceTests.OrdinaryTest")
+        self.assertEqual(["FileSymbolicLinks", "DirectorySymbolicLinks"], policy["additionalCapabilities"])
+        with patch.object(evidence, "filesystem_capability_available", side_effect=lambda name: name == "CaseSensitiveDirectories") as probe:
+            skipped = evidence.expected_skip(policy, "windows", {})
+            self.assertEqual(reason + " Required filesystem capability 'FileSymbolicLinks' is unavailable.", skipped["reason"])
+            self.assertEqual(["CaseSensitiveDirectories", "FileSymbolicLinks"], [call.args[0] for call in probe.call_args_list])
+        with patch.object(evidence, "filesystem_capability_available", return_value=False):
+            self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_TEST_PREREQUISITES": "1"}))
+            self.assertIsNone(evidence.expected_skip(policy, "windows", {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}))
+        # Requiring local security fixtures does not implicitly select an external
+        # archive or Docker lane. Unsupported OS cases remain explicit exclusions.
+        artifact = {**policy, "attribute": "PackageArtifactsFact", "capability": None}
+        self.assertIsNotNone(evidence.expected_skip(artifact, "windows", {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}))
+
+    def test_matching_os_filesystem_constraints_cannot_be_approved_as_skips_in_required_lanes(self):
+        required = {"SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1"}
+        policy = {"project": "fixture", "owner": "fixture", "fullyQualifiedName": "Fixture.Security",
+                  "attribute": "PlatformFact", "platform": "MacCaseInsensitive", "capability": None,
+                  "additionalCapabilities": [], "reason": "Requires macOS aliases."}
+        with patch.object(evidence, "temp_volume_is_case_insensitive", return_value=False):
+            self.assertIsNone(evidence.expected_skip(policy, "macos", required))
+            self.assertIsNotNone(evidence.expected_skip(policy, "windows", required))
+        with patch.object(evidence.getpass, "getuser", return_value="root"):
+            self.assertIsNone(evidence.expected_skip({**policy, "platform": "NonRootUnix"}, "linux", required))
+
     def test_skips_cannot_trade_identity_or_change_reason(self):
         self.rows[:2] = [("ExpectedArtifactSkip", None, "Passed", ""),
                          ("OrdinaryTest", None, "NotExecuted", self.artifact_reason)]
@@ -177,6 +279,78 @@ public class Outer {
         self.assertEqual("unique failure", report["failures"][0]["message"])
         self.assertEqual("at Fixture.Tests.EvidenceTests", report["failures"][0]["stackTrace"])
         self.assertEqual("full/Fixture.Tests.trx", report["failures"][0]["trx"])
+
+    def test_assertion_notifications_are_bound_and_do_not_hide_platform_errors(self):
+        self.rows[1] = ("OrdinaryTest", None, "Failed", "assertion failure")
+        self.write_reports(outcome="Failed")
+        path = self.results / "Fixture.Tests.trx"
+        tree = ET.parse(path)
+        infos = ET.SubElement(tree.find("ResultSummary"), "RunInfos")
+        notification = "[xUnit.net 00:00:08.39]     Fixture.Tests.EvidenceTests.OrdinaryTest [FAIL]"
+        ET.SubElement(ET.SubElement(infos, "RunInfo", outcome="Error"), "Text").text = notification
+        tree.write(path)
+        self.assertEqual([], evidence.read_trx(self.results, path)[1]["violations"])
+        discovery = json.loads((self.results / "Fixture.Tests.discovery.json").read_text())
+        self.assertTrue(test_lanes.completed_test_failure(self.results, "Fixture.Tests", discovery))
+        for message in ("test platform failed", notification, notification.replace("OrdinaryTest", "UnknownCase"),
+                        notification.replace("OrdinaryTest", "LinuxTheory(value: 1)"), notification + "\nTest host crashed"):
+            with self.subTest(message=message):
+                info = ET.SubElement(infos, "RunInfo", outcome="Error")
+                ET.SubElement(info, "Text").text = message
+                tree.write(path)
+                self.assertFalse(test_lanes.completed_test_failure(self.results, "Fixture.Tests", discovery))
+                report = self.report(success=False)
+                self.assertTrue(any("test-platform errors" in error for error in report["evidenceViolations"]))
+                infos.remove(info)
+
+    def test_only_complete_assertion_runs_are_classified_as_project_failures(self):
+        self.rows[1] = ("OrdinaryTest", None, "Failed", "assertion failure")
+        path = self.results / "Fixture.Tests.trx"
+        common = ["dotnet", "test", "solution", "--no-restore", "--no-build"]
+        def execute(state, command, log):
+            if "--list-tests" in command:
+                log.write_text("The following Tests are available:\n" + "".join("    " + case + "\n" for case in discovery["tests"]))
+                return 0
+            return status
+        for defect in ("none", "missing", "malformed", "incomplete", "aborted", "counters", "platform", "unexpected-exit"):
+            with self.subTest(defect=defect):
+                self.write_reports(outcome="Failed")
+                discovery = json.loads((self.results / "Fixture.Tests.discovery.json").read_text())
+                status = 2 if defect == "unexpected-exit" else 1
+                tree = ET.parse(path)
+                if defect == "incomplete": tree.find("Results").remove(tree.find("Results")[0])
+                if defect == "aborted": tree.find("ResultSummary").set("outcome", "Aborted")
+                if defect == "counters": tree.find("ResultSummary/Counters").set("aborted", "1")
+                if defect == "platform": ET.SubElement(tree.find("ResultSummary"), "RunInfo", outcome="Error")
+                tree.write(path)
+                if defect == "malformed": path.write_text("<TestRun")
+                if defect == "missing": path.unlink()
+                with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+                    with self.assertRaises(subprocess.CalledProcessError) as caught:
+                        test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                self.assertEqual(defect == "none", isinstance(caught.exception, test_lanes.TestProjectFailure))
+                # Even exit zero must stop on absent, incomplete or inconsistent TRX.
+                status = 0
+                with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+                    with self.assertRaises((ValueError, OSError, ET.ParseError)):
+                        test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+        self.rows[1] = ("OrdinaryTest", None, "Passed", "")
+        self.write_reports()
+        with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
+            self.assertEqual(len(self.rows), test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results))
+        for error in (OSError("capture failure"), ValueError("input integrity"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__), patch.object(agent_ci, "execute", side_effect=error):
+                with self.assertRaises(type(error)) as caught:
+                    test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                self.assertIs(error, caught.exception)
+
+    def test_successful_child_cannot_hide_capture_or_integrity_failure(self):
+        for stage in ("console", "log", "verification"):
+            with self.subTest(stage=stage):
+                (self.results / "Fixture.Tests.run.command.json").write_text(json.dumps({
+                    "exitCode": 0, "command": ["dotnet", "test"], "errors": {stage: "fixture failure"}}))
+                report = self.report(success=False)
+                self.assertTrue(any("command diagnostics failed" in error and stage in error for error in report["evidenceViolations"]))
 
     def test_malformed_missing_and_counter_only_reports_fail(self):
         path = self.results / "Fixture.Tests.trx"
@@ -202,12 +376,53 @@ public class Outer {
             path.write_text(saved)
 
     def test_inventory_propagates_solution_discovery_failure(self):
-        process = subprocess.run([
-            "bash", "-c", 'dotnet() { return 23; }; export -f dotnet; bash "$1"',
+        process = subprocess.run(bash_runtime.command(
+            "-c", 'dotnet() { return 23; }; export -f dotnet; "$BASH" "$1"',
             "inventory-fixture", str(SCRIPT.with_name("generate-test-inventory.sh")),
-        ], text=True, capture_output=True)
+        ), text=True, capture_output=True)
         self.assertEqual(23, process.returncode, process.stdout + process.stderr)
         self.assertEqual("", process.stdout)
+
+    def test_inventory_streams_large_source_lists_and_complete_project_inventory(self):
+        repository = SCRIPT.resolve().parents[2]
+        projects = [f"tests/{name}.Tests/{name}.Tests.csproj" for name in ("First", "Second")]
+        expected = []
+        for index, project in enumerate(projects):
+            directory = repository / Path(project).parent
+            sources = [directory / ("LongSourceFileName" * 4 + str(number) + ".cs") for number in range(600)]
+            value = dict(Properties=dict(MSBuildProjectDirectory=str(directory), IsTestProject="true",
+                SunderTestOwner="agent-family", SunderTestCategory="Unit", SunderTestCapabilities="None",
+                SunderTestOS="Any", SunderTestSize="Small", SunderTestSourceMode="true", SunderTestPackageMode="false",
+                SunderTestLanes="", SunderTestSourceOnlyTests=""), Items=dict(Compile=[dict(FullPath=str(path)) for path in sources]))
+            (self.root / f"metadata-{index}.json").write_bytes(json.dumps(value).encode("utf-8"))
+            expected.append(sorted(path.relative_to(repository).as_posix() for path in sources))
+        # Model Windows' native command-line bound even on Unix, before invoking jq.
+        script = '''
+          jq() {
+            local bytes=0 value
+            for value; do bytes=$((bytes + ${#value} + 1)); done
+            if (( bytes > 30000 )); then printf 'fixture: native argv limit exceeded\\n' >&2; return 126; fi
+            command jq "$@"
+          }
+          dotnet() {
+            if [[ "$1" == sln ]]; then
+              printf '%s\\n' tests/First.Tests/First.Tests.csproj tests/Second.Tests/Second.Tests.csproj
+            elif [[ "$2" == tests/First.Tests/First.Tests.csproj ]]; then
+              cat "$INVENTORY_FIXTURE_METADATA/metadata-0.json"
+            else
+              cat "$INVENTORY_FIXTURE_METADATA/metadata-1.json"
+            fi
+          }
+          export -f jq dotnet
+          "$BASH" "$1"
+        '''
+        result = subprocess.run(bash_runtime.command("-c", script, "inventory-fixture", SCRIPT.with_name("generate-test-inventory.sh")),
+                                env={**os.environ, "INVENTORY_FIXTURE_METADATA": str(self.root)}, capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        inventory = json.loads(result.stdout)
+        self.assertEqual(projects, [row["path"] for row in inventory["projects"]])
+        self.assertEqual(expected, [row["sources"] for row in inventory["projects"]])
+        self.assertGreater(len(result.stdout), 100000)
 
     def test_result_definition_and_execution_completeness(self):
         path = self.results / "Fixture.Tests.trx"

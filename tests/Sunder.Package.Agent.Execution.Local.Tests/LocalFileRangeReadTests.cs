@@ -67,6 +67,7 @@ public sealed partial class LocalFileRangeReadTests : IDisposable
     {
         Directory.CreateDirectory(_root);
         var config = new LocalExecutionRuntimeConfig([_root], _root);
+        using var root = HostSecurePathEngine.OpenRoot(_root);
 
         for (var index = 0; index < 100; index++)
         {
@@ -76,9 +77,9 @@ public sealed partial class LocalFileRangeReadTests : IDisposable
                 false,
                 CancellationToken.None);
             Assert.False(result.IsError, result.Summary);
+            Assert.Equal("content", await File.ReadAllTextAsync(Path.Combine(_root, $"file-{index}.txt")));
+            Assert.False(HostMutationCoordinator.IsEntered(root.Handle.Identity));
         }
-
-        Assert.Equal(0, LocalFileSystemExecutor.MutationGateCount);
     }
 
     [Fact]

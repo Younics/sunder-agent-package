@@ -134,6 +134,7 @@ internal readonly record struct TranscriptScrollDiagnosticSnapshot(
     long InteractionRevision,
     long AuthorityRevision,
     long ProgrammaticOffsetWrites,
+    long PresentationRevision,
     int AnchoringSuspensionDepth,
     bool RenderedContentPending,
     bool BottomPlacementLockActive,

@@ -50,8 +50,9 @@ public sealed partial class BuilderProjectDriver
             var requirements = BuilderToolchainRequirements.Read(request.Kind, payload);
             if (!requirements.Allows(request.Kind, selection.Installation.Version, selection.Installation.NpmVersion))
                 throw new InvalidOperationException("The prepared SDK does not satisfy the generated project's engines or inherited version pins. No destination was replaced.");
+            var physicalPayload = BuilderPhysicalPath.ReadExisting(payload);
             var candidates = await discovery.DiscoverAsync(payload, token).ConfigureAwait(false);
-            var generated = candidates.Where(item => item.Kind == request.Kind && BuilderJobValidation.Same(item.ProjectFolder, payload)
+            var generated = candidates.Where(item => item.Kind == request.Kind && string.Equals(item.ProjectFolder, physicalPayload, StringComparison.Ordinal)
                 && item.PackageId == request.PackageId && item.DisplayName == request.DisplayName).ToArray();
             if (generated.Length != 1) throw new InvalidDataException("The template did not produce exactly one matching canonical project.");
             var relativeEntry = Path.GetRelativePath(payload, generated[0].EntryPoint);

@@ -14,10 +14,10 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Tools.Web/Runtime/WebWorkerBindings.Legacy.cs",
         "src/Sunder.Package.Agent.Tools.Web/PackageDependency.Legacy.cs"];
 
-    private static async Task VerifyWebArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyWebArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
         var repository = BuilderSourceMigrationTests.FindRepository();
-        var canonical = await BuildCanonicalFamily(root, "Tools.Web", "WebWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Tools.Web", "WebWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         var owned = CanonicalPackageRoles.ReadOwnedBaseline(worker);
@@ -39,7 +39,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 fetch.GetProperty("arguments").EnumerateArray().Select(argument => argument.GetProperty("serviceType").GetString()));
         }
         await VerifyWebBehavior(root, worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         Assert.Equal(owned, CanonicalPackageRoles.ReadOwnedBaseline(worker));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));

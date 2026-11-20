@@ -1,6 +1,5 @@
 using System.Buffers;
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -715,36 +714,7 @@ internal static partial class BoundedImportIO
 
     private static OpenedImportNode OpenRootNoFollow(string rootPath)
     {
-        SafeFileHandle handle;
-        if (OperatingSystem.IsWindows())
-        {
-            handle = CreateFile(
-                rootPath,
-                WindowsGenericRead,
-                WindowsShareAll,
-                IntPtr.Zero,
-                WindowsOpenExisting,
-                WindowsBackupSemantics | WindowsOpenReparsePoint,
-                IntPtr.Zero);
-            if (handle.IsInvalid)
-            {
-                var error = Marshal.GetLastPInvokeError();
-                handle.Dispose();
-                ThrowOpenError(rootPath, error);
-            }
-        }
-        else
-        {
-            var descriptor = Open(
-                rootPath,
-                UnixReadOnly | UnixDirectoryFlag | UnixNoFollowFlag | UnixCloseOnExecFlag);
-            if (descriptor < 0)
-            {
-                ThrowOpenError(rootPath, Marshal.GetLastPInvokeError());
-            }
-            handle = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
-        }
-
+        var handle = OperatingSystem.IsWindows() ? OpenWindowsRoot(rootPath) : OpenUnixRoot(rootPath);
         return CreateOpenedNode(handle, rootPath, ImportNodeKind.Directory);
     }
 
@@ -755,32 +725,16 @@ internal static partial class BoundedImportIO
         string displayPath)
     {
         ValidatePathComponent(name);
-        SafeFileHandle handle;
-        if (OperatingSystem.IsWindows())
-        {
-            handle = OpenWindowsRelative(
+        var handle = OperatingSystem.IsWindows()
+            ? OpenWindowsRelative(
                 parent,
                 name,
                 WindowsGenericRead,
                 requireDirectory ? ImportNodeKind.Directory : null,
                 WindowsFileOpen,
                 WindowsShareAll,
-                displayPath);
-        }
-        else
-        {
-            var flags = UnixReadOnly
-                        | UnixNoFollowFlag
-                        | UnixCloseOnExecFlag
-                        | UnixNonBlockingFlag
-                        | (requireDirectory ? UnixDirectoryFlag : 0);
-            var descriptor = OpenAt(parent.DangerousGetHandle().ToInt32(), name, flags, 0);
-            if (descriptor < 0)
-            {
-                ThrowOpenError(displayPath, Marshal.GetLastPInvokeError());
-            }
-            handle = new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
-        }
+                displayPath)
+            : OpenUnixRelative(parent, name, requireDirectory, displayPath);
 
         return CreateOpenedNode(
             handle,
@@ -807,17 +761,7 @@ internal static partial class BoundedImportIO
             return CreateOpenedNode(handle, displayPath, ImportNodeKind.Directory);
         }
 
-        var parentDescriptor = parent.DangerousGetHandle().ToInt32();
-        if (MakeDirectoryAt(parentDescriptor, name, Convert.ToUInt32("700", 8)) != 0)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            if (error != 17)
-            {
-                throw new IOException(
-                    $"Could not create import staging directory '{displayPath}'.",
-                    new Win32Exception(error));
-            }
-        }
+        CreateUnixDirectory(parent, name, displayPath);
         return OpenRelativeNoFollow(parent, name, requireDirectory: true, displayPath);
     }
 
@@ -832,34 +776,15 @@ internal static partial class BoundedImportIO
             return OpenWindowsRelative(
                 parent,
                 name,
-                WindowsGenericWrite,
+                // Identity validation queries attributes on this same exclusive handle.
+                WindowsGenericWrite | WindowsReadAttributes,
                 ImportNodeKind.RegularFile,
                 WindowsFileCreate,
                 shareMode: 0,
                 displayPath);
         }
 
-        var descriptor = OpenAt(
-            parent.DangerousGetHandle().ToInt32(),
-            name,
-            UnixWriteOnly
-            | UnixCreateFlag
-            | UnixExclusiveFlag
-            | UnixNoFollowFlag
-            | UnixCloseOnExecFlag,
-            Convert.ToUInt32("600", 8));
-        if (descriptor < 0)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            if (error == 17)
-            {
-                throw new IOException($"Import staging target already exists: '{displayPath}'.");
-            }
-            throw new IOException(
-                $"Could not create import staging file '{displayPath}'.",
-                new Win32Exception(error));
-        }
-        return new SafeFileHandle(new IntPtr(descriptor), ownsHandle: true);
+        return CreateUnixRegularFile(parent, name, displayPath);
     }
 
     private static OpenedImportNode CreateOpenedNode(
@@ -889,76 +814,6 @@ internal static partial class BoundedImportIO
         }
     }
 
-    private static SafeFileHandle OpenWindowsRelative(
-        SafeFileHandle parent,
-        string name,
-        uint desiredAccess,
-        ImportNodeKind? requiredKind,
-        uint creationDisposition,
-        uint shareMode,
-        string displayPath)
-    {
-        var nameBuffer = Marshal.StringToHGlobalUni(name);
-        var unicodeStringBuffer = Marshal.AllocHGlobal(Marshal.SizeOf<UnicodeString>());
-        try
-        {
-            var nameBytes = checked(name.Length * sizeof(char));
-            if (nameBytes > ushort.MaxValue - sizeof(char))
-            {
-                throw new InvalidDataException(
-                    $"Import path component is too long: '{displayPath}'.");
-            }
-            Marshal.StructureToPtr(
-                new UnicodeString
-                {
-                    Length = checked((ushort)nameBytes),
-                    MaximumLength = checked((ushort)(nameBytes + sizeof(char))),
-                    Buffer = nameBuffer,
-                },
-                unicodeStringBuffer,
-                fDeleteOld: false);
-            var attributes = new ObjectAttributes
-            {
-                Length = Marshal.SizeOf<ObjectAttributes>(),
-                RootDirectory = parent.DangerousGetHandle(),
-                ObjectName = unicodeStringBuffer,
-                Attributes = WindowsObjectCaseInsensitive,
-            };
-            var options = WindowsFileOpenReparsePoint
-                          | WindowsFileSynchronousIoNonAlert
-                          | WindowsFileOpenForBackupIntent
-                          | (requiredKind == ImportNodeKind.Directory ? WindowsFileDirectoryFile : 0U)
-                          | (requiredKind == ImportNodeKind.RegularFile ? WindowsFileNonDirectoryFile : 0U);
-            var status = NtCreateFile(
-                out var nativeHandle,
-                desiredAccess | WindowsSynchronize,
-                ref attributes,
-                out _,
-                IntPtr.Zero,
-                WindowsFileAttributeNormal,
-                shareMode,
-                creationDisposition,
-                options,
-                IntPtr.Zero,
-                0);
-            if (status < 0)
-            {
-                var error = checked((int)RtlNtStatusToDosError(status));
-                if (creationDisposition == WindowsFileCreate && error is 80 or 183)
-                {
-                    throw new IOException($"Import staging target already exists: '{displayPath}'.");
-                }
-                ThrowOpenError(displayPath, error);
-            }
-            return new SafeFileHandle(nativeHandle, ownsHandle: true);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(unicodeStringBuffer);
-            Marshal.FreeHGlobal(nameBuffer);
-        }
-    }
-
     private static IEnumerable<string> EnumerateDirectoryNames(
         SafeFileHandle directory,
         string directoryPath)
@@ -970,185 +825,6 @@ internal static partial class BoundedImportIO
         {
             ValidatePathComponent(name);
             yield return name;
-        }
-    }
-
-    private static IEnumerable<string> EnumerateUnixDirectoryNames(
-        SafeFileHandle directory,
-        string directoryPath)
-    {
-        var duplicate = OpenAt(
-            directory.DangerousGetHandle().ToInt32(),
-            ".",
-            UnixReadOnly | UnixDirectoryFlag | UnixNoFollowFlag | UnixCloseOnExecFlag,
-            0);
-        if (duplicate < 0)
-        {
-            throw new IOException(
-                $"Could not enumerate import directory '{directoryPath}'.",
-                new Win32Exception(Marshal.GetLastPInvokeError()));
-        }
-
-        var nativeDirectory = FileDescriptorOpenDirectory(duplicate);
-        if (nativeDirectory == IntPtr.Zero)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            _ = Close(duplicate);
-            throw new IOException(
-                $"Could not enumerate import directory '{directoryPath}'.",
-                new Win32Exception(error));
-        }
-
-        try
-        {
-            while (true)
-            {
-                Marshal.SetLastPInvokeError(0);
-                var entry = ReadDirectory(nativeDirectory);
-                if (entry == IntPtr.Zero)
-                {
-                    var error = Marshal.GetLastPInvokeError();
-                    if (error != 0)
-                    {
-                        throw new IOException(
-                            $"Could not enumerate import directory '{directoryPath}'.",
-                            new Win32Exception(error));
-                    }
-                    yield break;
-                }
-
-                var nameOffset = OperatingSystem.IsMacOS() ? 21 : 19;
-                var recordLength = unchecked((ushort)Marshal.ReadInt16(entry, 16));
-                if (recordLength <= nameOffset)
-                {
-                    throw new InvalidDataException(
-                        $"Import directory '{directoryPath}' returned an invalid native entry.");
-                }
-                var maximumNameBytes = recordLength - nameOffset;
-                if (OperatingSystem.IsMacOS())
-                {
-                    var declaredNameBytes = unchecked((ushort)Marshal.ReadInt16(entry, 18));
-                    if (declaredNameBytes >= maximumNameBytes)
-                    {
-                        throw new InvalidDataException(
-                            $"Import directory '{directoryPath}' returned an invalid native name.");
-                    }
-                    maximumNameBytes = declaredNameBytes + 1;
-                }
-                var name = ReadNullTerminatedUtf8(entry + nameOffset, maximumNameBytes, directoryPath);
-                if (name is not "." and not "..")
-                {
-                    yield return name;
-                }
-            }
-        }
-        finally
-        {
-            _ = CloseDirectory(nativeDirectory);
-        }
-    }
-
-    private static IEnumerable<string> EnumerateWindowsDirectoryNames(
-        SafeFileHandle directory,
-        string directoryPath)
-    {
-        const int bufferSize = 64 * 1024;
-        const int fileNameOffset = 104;
-        const int fileIdBothDirectoryInfo = 10;
-        const int fileIdBothDirectoryRestartInfo = 11;
-        var buffer = Marshal.AllocHGlobal(bufferSize);
-        try
-        {
-            var restart = true;
-            while (true)
-            {
-                if (!GetFileInformationByHandleExBuffer(
-                        directory,
-                        restart ? fileIdBothDirectoryRestartInfo : fileIdBothDirectoryInfo,
-                        buffer,
-                        bufferSize))
-                {
-                    var error = Marshal.GetLastPInvokeError();
-                    if (error == 18)
-                    {
-                        yield break;
-                    }
-                    throw new IOException(
-                        $"Could not enumerate import directory '{directoryPath}'.",
-                        new Win32Exception(error));
-                }
-                restart = false;
-                var offset = 0;
-                while (true)
-                {
-                    if (offset < 0 || offset + fileNameOffset > bufferSize)
-                    {
-                        throw new InvalidDataException(
-                            $"Import directory '{directoryPath}' returned invalid native data.");
-                    }
-                    var entry = buffer + offset;
-                    var nextOffset = Marshal.ReadInt32(entry, 0);
-                    var nameLength = Marshal.ReadInt32(entry, 60);
-                    if (nameLength < 0
-                        || (nameLength & 1) != 0
-                        || nameLength > bufferSize - offset - fileNameOffset)
-                    {
-                        throw new InvalidDataException(
-                            $"Import directory '{directoryPath}' returned an invalid native name.");
-                    }
-                    var name = Marshal.PtrToStringUni(entry + fileNameOffset, nameLength / sizeof(char))
-                               ?? throw new InvalidDataException(
-                                   $"Import directory '{directoryPath}' returned an invalid native name.");
-                    if (name is not "." and not "..")
-                    {
-                        yield return name;
-                    }
-                    if (nextOffset == 0)
-                    {
-                        break;
-                    }
-                    if (nextOffset < fileNameOffset || nextOffset > bufferSize - offset)
-                    {
-                        throw new InvalidDataException(
-                            $"Import directory '{directoryPath}' returned an invalid native offset.");
-                    }
-                    offset += nextOffset;
-                }
-            }
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
-
-    private static string ReadNullTerminatedUtf8(
-        IntPtr pointer,
-        int maximumBytes,
-        string directoryPath)
-    {
-        var length = 0;
-        while (length < maximumBytes && Marshal.ReadByte(pointer, length) != 0)
-        {
-            length++;
-        }
-        if (length == maximumBytes)
-        {
-            throw new InvalidDataException(
-                $"Import directory '{directoryPath}' returned an unterminated native name.");
-        }
-
-        var bytes = new byte[length];
-        Marshal.Copy(pointer, bytes, 0, length);
-        try
-        {
-            return StrictUtf8.GetString(bytes);
-        }
-        catch (DecoderFallbackException exception)
-        {
-            throw new InvalidDataException(
-                $"Import directory '{directoryPath}' contains a name that is not valid UTF-8.",
-                exception);
         }
     }
 
@@ -1164,109 +840,7 @@ internal static partial class BoundedImportIO
     }
 
     private static ImportNodeIdentity ReadIdentity(SafeFileHandle handle, string path)
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            if (!GetFileInformationByHandle(handle, out var information))
-            {
-                throw new IOException(
-                    $"Could not inspect import source '{path}'.",
-                    new Win32Exception(Marshal.GetLastPInvokeError()));
-            }
-            if ((information.FileAttributes & 0x00000400) != 0)
-            {
-                throw new InvalidDataException(
-                    $"Import source contains a symbolic link or reparse point: '{path}'.");
-            }
-            if (GetFileType(handle) != 0x0001)
-            {
-                throw new InvalidDataException(
-                    $"Import source is not a disk file or directory: '{path}'.");
-            }
-            var kind = (information.FileAttributes & 0x00000010) != 0
-                ? ImportNodeKind.Directory
-                : ImportNodeKind.RegularFile;
-            return new ImportNodeIdentity(
-                information.VolumeSerialNumber,
-                information.FileIndexLow,
-                information.FileIndexHigh,
-                kind,
-                checked((long)(((ulong)information.FileSizeHigh << 32) | information.FileSizeLow)),
-                information.NumberOfLinks,
-                FileTimeToLong(information.LastWriteTime),
-                0,
-                FileTimeToLong(information.CreationTime),
-                0);
-        }
-
-        const int statBufferSize = 256;
-        var buffer = Marshal.AllocHGlobal(statBufferSize);
-        try
-        {
-            if (FStat(handle.DangerousGetHandle().ToInt32(), buffer) != 0)
-            {
-                throw new IOException(
-                    $"Could not inspect import source '{path}'.",
-                    new Win32Exception(Marshal.GetLastPInvokeError()));
-            }
-            return OperatingSystem.IsMacOS()
-                ? ReadMacIdentity(buffer, path)
-                : ReadLinuxIdentity(buffer, path);
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-    }
-
-    private static ImportNodeIdentity ReadMacIdentity(IntPtr buffer, string path)
-    {
-        EnsureSupportedArchitecture();
-        var mode = unchecked((ushort)Marshal.ReadInt16(buffer, 4));
-        return new ImportNodeIdentity(
-            unchecked((ulong)(uint)Marshal.ReadInt32(buffer, 0)),
-            unchecked((ulong)Marshal.ReadInt64(buffer, 8)),
-            0,
-            ReadKind(mode, path),
-            Marshal.ReadInt64(buffer, 96),
-            unchecked((ushort)Marshal.ReadInt16(buffer, 6)),
-            Marshal.ReadInt64(buffer, 48),
-            Marshal.ReadInt64(buffer, 56),
-            Marshal.ReadInt64(buffer, 64),
-            Marshal.ReadInt64(buffer, 72));
-    }
-
-    private static ImportNodeIdentity ReadLinuxIdentity(IntPtr buffer, string path)
-    {
-        EnsureSupportedArchitecture();
-        var architecture = RuntimeInformation.ProcessArchitecture;
-        var mode = architecture == Architecture.X64
-            ? unchecked((uint)Marshal.ReadInt32(buffer, 24))
-            : unchecked((uint)Marshal.ReadInt32(buffer, 16));
-        var linkCount = architecture == Architecture.X64
-            ? unchecked((ulong)Marshal.ReadInt64(buffer, 16))
-            : unchecked((uint)Marshal.ReadInt32(buffer, 20));
-        return new ImportNodeIdentity(
-            unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
-            unchecked((ulong)Marshal.ReadInt64(buffer, 8)),
-            0,
-            ReadKind(mode, path),
-            Marshal.ReadInt64(buffer, 48),
-            linkCount,
-            Marshal.ReadInt64(buffer, 88),
-            Marshal.ReadInt64(buffer, 96),
-            Marshal.ReadInt64(buffer, 104),
-            Marshal.ReadInt64(buffer, 112));
-    }
-
-    private static ImportNodeKind ReadKind(uint mode, string path)
-        => (mode & 0xf000) switch
-        {
-            0x4000 => ImportNodeKind.Directory,
-            0x8000 => ImportNodeKind.RegularFile,
-            _ => throw new InvalidDataException(
-                $"Import source contains a device, socket, FIFO, or unsupported entry: '{path}'."),
-        };
+        => OperatingSystem.IsWindows() ? ReadWindowsIdentity(handle, path) : ReadUnixIdentity(handle, path);
 
     private static void ThrowOpenError(string path, int error)
     {
@@ -1284,9 +858,6 @@ internal static partial class BoundedImportIO
             inner);
     }
 
-    private static long FileTimeToLong(System.Runtime.InteropServices.ComTypes.FILETIME value)
-        => ((long)value.dwHighDateTime << 32) | (uint)value.dwLowDateTime;
-
     private static string CanonicalizePlatformPath(string path)
     {
         var fullPath = Path.GetFullPath(path);
@@ -1302,63 +873,5 @@ internal static partial class BoundedImportIO
         }
         return fullPath;
     }
-
-    private const int UnixReadOnly = 0;
-    private const int UnixWriteOnly = 1;
-
-    private const uint WindowsGenericRead = 0x80000000;
-    private const uint WindowsGenericWrite = 0x40000000;
-    private const uint WindowsShareRead = 0x00000001;
-    private const uint WindowsShareWrite = 0x00000002;
-    private const uint WindowsShareDelete = 0x00000004;
-    private const uint WindowsShareAll = WindowsShareRead | WindowsShareWrite | WindowsShareDelete;
-    private const uint WindowsOpenExisting = 3;
-    private const uint WindowsBackupSemantics = 0x02000000;
-    private const uint WindowsOpenReparsePoint = 0x00200000;
-    private const uint WindowsSynchronize = 0x00100000;
-    private const uint WindowsFileOpen = 1;
-    private const uint WindowsFileCreate = 2;
-    private const uint WindowsFileOpenIf = 3;
-    private const uint WindowsFileOpenReparsePoint = 0x00200000;
-    private const uint WindowsFileSynchronousIoNonAlert = 0x00000020;
-    private const uint WindowsFileOpenForBackupIntent = 0x00004000;
-    private const uint WindowsFileDirectoryFile = 0x00000001;
-    private const uint WindowsFileNonDirectoryFile = 0x00000040;
-    private const uint WindowsObjectCaseInsensitive = 0x00000040;
-    private const uint WindowsFileAttributeNormal = 0x00000080;
-
-    private static int UnixDirectoryFlag => OperatingSystem.IsMacOS()
-        ? 0x00100000
-        : RuntimeInformation.ProcessArchitecture switch
-        {
-            Architecture.X64 => 1 << 16,
-            Architecture.Arm64 => 1 << 14,
-            _ => throw UnsupportedArchitecture(),
-        };
-
-    private static int UnixNoFollowFlag => OperatingSystem.IsMacOS()
-        ? 0x00000100
-        : RuntimeInformation.ProcessArchitecture switch
-        {
-            Architecture.X64 => 1 << 17,
-            Architecture.Arm64 => 1 << 15,
-            _ => throw UnsupportedArchitecture(),
-        };
-
-    private static int UnixCreateFlag => OperatingSystem.IsMacOS() ? 0x00000200 : 0x00000040;
-    private static int UnixExclusiveFlag => OperatingSystem.IsMacOS() ? 0x00000800 : 0x00000080;
-    private static int UnixCloseOnExecFlag => OperatingSystem.IsMacOS() ? 0x01000000 : 0x00080000;
-    private static int UnixNonBlockingFlag => OperatingSystem.IsMacOS() ? 0x00000004 : 0x00000800;
-
-    private static void EnsureSupportedArchitecture()
-    {
-        if (RuntimeInformation.ProcessArchitecture is not (Architecture.X64 or Architecture.Arm64))
-        {
-            throw UnsupportedArchitecture();
-        }
-    }
-
-    private static PlatformNotSupportedException UnsupportedArchitecture()
-        => new($"Secure imports do not support architecture '{RuntimeInformation.ProcessArchitecture}'.");
 
 }

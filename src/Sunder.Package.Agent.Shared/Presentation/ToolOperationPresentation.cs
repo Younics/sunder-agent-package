@@ -15,7 +15,7 @@ internal static class ToolOperationPresentation
         {
             using var json = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 2 });
             return json.RootElement.TryGetProperty("operationStatus", out var value) && value.ValueKind == JsonValueKind.String
-                ? value.GetString() switch { "running" => "Running", "applied" => "Applied", "opened" => "Opened", "dispatched" => "Input dispatched", "unknown" => "Unconfirmed", "failed" or "rejected" => "Failed", "cancelled" => "Cancelled", _ => null } : null;
+                ? value.GetString() switch { "running" => "Running", "applied" => "Applied", "unchanged" => "Unchanged", "opened" => "Opened", "dispatched" => "Input dispatched", "unknown" => "Unconfirmed", "failed" or "rejected" => "Failed", "cancelled" => "Cancelled", _ => null } : null;
         }
         catch (Exception error) when (error is JsonException or InvalidOperationException) { return null; }
     }
@@ -40,7 +40,7 @@ internal static class ToolOperationPresentation
     }
 
     internal static bool IsTerminal(string? payload)
-        => Read(payload) is "Applied" or "Opened" or "Input dispatched" or "Failed" or "Cancelled";
+        => Read(payload) is "Applied" or "Unchanged" or "Opened" or "Input dispatched" or "Failed" or "Cancelled";
 
     internal static string Correlate(string? original, string observed)
     {

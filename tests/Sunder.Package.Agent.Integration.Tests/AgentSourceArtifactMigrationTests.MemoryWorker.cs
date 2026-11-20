@@ -16,9 +16,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
         "src/Sunder.Package.Agent.Memory.Semantic/Rpc/ProviderComposition.cs",
     ];
 
-    private static async Task VerifyMemoryWorkerArtifact(string root, string core, string driver, string cache)
+    private async Task VerifyMemoryWorkerArtifact(string root, string core, string driver, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Memory.Semantic", "MemoryWorker", cache, Path.Combine(root, "Worker/bin/agent-source.sunderpkg"));
+        var canonical = await BuildAndPackCanonicalFamily(root, "Memory.Semantic", "MemoryWorker", cache, Path.Combine(root, "Worker/bin/agent-source.sunderpkg"));
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         var baseline = CanonicalPackageRoles.ReadOwnedBaseline(worker);
@@ -39,7 +39,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         await VerifyGeneratedAppView(worker, "Memory.Semantic");
         await VerifyFullMemoryApp(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(worker));
         var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");

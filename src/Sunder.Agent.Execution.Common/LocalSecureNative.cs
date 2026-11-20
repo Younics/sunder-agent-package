@@ -2,7 +2,8 @@ namespace Sunder.Agent.Execution.Common;
 
 internal static class LocalSecureNative
 {
-    public static bool StrictMutationsAvailable => !OperatingSystem.IsWindows();
+    public static bool StrictMutationsAvailable
+        => OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsMacOS();
 
     public static ILocalSecureFileSystemPlatform CreatePlatform()
     {

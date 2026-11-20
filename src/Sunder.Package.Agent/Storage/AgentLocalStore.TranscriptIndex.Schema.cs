@@ -2,7 +2,7 @@ namespace Sunder.Package.Agent.Storage;
 
 public sealed partial class AgentLocalStore
 {
-    private const string TranscriptIndexSql = """
+    private static readonly string TranscriptIndexSql = """
         CREATE TABLE AgentTranscriptEntries (
             EntryId TEXT PRIMARY KEY,
             SessionId TEXT NOT NULL,
@@ -48,5 +48,5 @@ public sealed partial class AgentLocalStore
             WHERE RunRevision = 0 AND CallItemId IS NOT NULL AND ResultItemId IS NULL;
         CREATE UNIQUE INDEX IX_TurnItems_ExecutionKind ON AgentTurnItems(ToolExecutionId, Kind)
             WHERE Kind IN ('ToolCall', 'ToolResult');
-        """;
+        """.Replace("\r\n", "\n", StringComparison.Ordinal);
 }

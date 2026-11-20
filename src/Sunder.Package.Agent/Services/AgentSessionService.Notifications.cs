@@ -109,13 +109,6 @@ public sealed partial class AgentSessionService
             result.Turn.UpdatedAtUtc,
             result.MutationKind is AgentTurnMutationKind.Replace ? result.Turn : null);
 
-    private void NotifyCompletedStreamingTurns(
-        Guid sessionId,
-        IReadOnlyList<AgentCompletedStreamingTurn> completedTurns)
-        => QueueSessionNotification(
-            sessionId,
-            () => DispatchCompletedStreamingTurns(sessionId, completedTurns));
-
     private void DispatchCompletedStreamingTurns(
         Guid sessionId,
         IReadOnlyList<AgentCompletedStreamingTurn> completedTurns)
@@ -293,9 +286,6 @@ public sealed partial class AgentSessionService
             }
         }
     }
-
-    private void NotifyTranscriptReset(Guid sessionId)
-        => QueueSessionNotification(sessionId, () => DispatchTranscriptReset(sessionId));
 
     private void DispatchTranscriptReset(Guid sessionId)
     {

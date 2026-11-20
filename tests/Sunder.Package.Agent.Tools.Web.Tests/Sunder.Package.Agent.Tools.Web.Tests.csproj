@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderTestOwner>younics.ai.agent.tools.web</SunderTestOwner>
+    <SunderTestCategory>Conformance</SunderTestCategory>
+    <SunderTestCapabilities>HTTP;Worker</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
+    <ProjectReference Include="../../src/Sunder.Package.Agent.Tools.Web/Sunder.Package.Agent.Tools.Web.csproj"
+                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="WebWorker" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <Compile Include="../Shared/Repository/*.cs;../Shared/Composition/GeneratedPackageCompositionFixture.cs;../Shared/Composition/Tools/*.cs"
+             Link="TestSupport/%(Filename)%(Extension)" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
+</Project>

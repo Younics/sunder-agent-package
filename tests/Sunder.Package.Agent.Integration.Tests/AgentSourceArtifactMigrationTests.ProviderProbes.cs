@@ -54,8 +54,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
             </Project>
             """);
         await Run(directory, "restore", "Probe.csproj", "--disable-parallel");
-        await Run(directory, "build", "Probe.csproj", "--no-restore");
-        using var bytes = File.OpenRead(Path.Combine(directory, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0", assemblyName + ".dll"));
+        var diagnostics = await Run(directory, "build", "Probe.csproj", "--no-restore");
+        using var bytes = File.OpenRead(BuilderSourceMigrationTests.RequireProbeOutput(directory, assemblyName, diagnostics));
         var probes = AssemblyLoadContext.GetLoadContext(runtime)!.LoadFromStream(bytes);
         Assert.DoesNotContain(probes.GetReferencedAssemblies(), reference => reference.Name == "Sunder.Package.Agent.Protocol");
         return probes;

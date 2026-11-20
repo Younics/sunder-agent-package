@@ -42,6 +42,8 @@ public sealed partial class AgentOwnerSourceMigrationTests
         // Use one physical identity for the cloned project and its resource
         // inputs; macOS exposes the temporary directory through /var as well.
         if (OperatingSystem.IsMacOS() && sandbox.StartsWith("/var/", StringComparison.Ordinal)) sandbox = "/private" + sandbox;
+        Exception? failure = null;
+        string? lastCommandDiagnostic = null;
         try
         {
             // An unchanged copy of the authored repository topology, not a test
@@ -59,9 +61,10 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var locked = File.ReadAllBytes(lockPath);
             var baseline = File.ReadAllBytes(baselinePath);
             var taskAssembly = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
+            var configuration = CanonicalPackageRoles.Configuration;
             var common = new[]
             {
-                "-p:Configuration=" + CanonicalPackageRoles.Configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
+                "-p:Configuration=" + configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
                 "-p:SunderContractCacheRoot=" + cache, "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
                 "-p:SunderSdkProject=" + Sdk("Sunder.Sdk"), "-p:SunderSdkWorkerProject=" + Sdk("Sunder.Sdk.Worker"),
                 "-p:SunderSdkAvaloniaProject=" + Sdk("Sunder.Sdk.Avalonia"), "-p:SunderSdkStacksProject=" + Sdk("Sunder.Sdk.Stacks"),
@@ -70,13 +73,23 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 "-p:SunderPackageBuildTaskSourceIsImmutable=true",
                 "-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(sandbox, "artifacts/task-shadows"),
                 "-p:SunderPackageBuildTaskShadowStamp=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(taskAssembly))),
+                // A persistent compiler can retain this temporary working directory on Windows.
+                "--disable-build-servers", "-p:UseSharedCompilation=false",
                 "-nodeReuse:false", "-nologo",
             };
-            await Command("restore", ["--disable-parallel", "--no-dependencies"]);
-            await Command("msbuild", ["-t:RestoreSunderContracts", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
-            await Command("build", ["--no-restore"]);
+            await Command("restore", ["--disable-parallel", "--no-dependencies", "-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!)]);
             var generatedRoot = CanonicalPackageRoles.Analysis(projectRoot);
+            // The byte baseline needs the ordinary exact-RID build's role plan,
+            // not a second compilation and package composition. Both rejection
+            // probes and recovery still run the full Build entry point below.
+            await Command("build", ["--no-restore", "-t:_PlanSunderPackageRoles",
+                "-p:TargetFramework=net10.0", "-p:SunderPackageRidBuild=true", "-p:AppendRuntimeIdentifierToOutputPath=false",
+                "-p:SunderPackageAuthoringIntermediateRoot=" + Path.Combine(projectRoot, "obj", configuration, "net10.0"),
+                "-p:IntermediateOutputPath=" + Path.GetDirectoryName(generatedRoot) + Path.DirectorySeparatorChar,
+                "-p:SunderPackageAuthoringOutputRoot=" + Path.Combine(projectRoot, "bin", configuration, "net10.0"),
+                "-p:OutputPath=" + Path.Combine(projectRoot, "bin", configuration, "net10.0") + Path.DirectorySeparatorChar]);
             var generated = Snapshot();
+            Assert.NotEmpty(generated);
             var cachedCatalog = Path.Combine(cache, "platform-catalogs", platform.GetProperty("selectedAuthorityContentIdentity").GetString() + ".json");
             var original = File.ReadAllBytes(cachedCatalog);
             var corrupt = original.ToArray(); corrupt[0] ^= 1;
@@ -85,7 +98,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             finally { File.WriteAllBytes(cachedCatalog, original); }
             var missing = JsonNode.Parse(locked)!;
             missing["platformImports"] = new JsonObject();
-            File.WriteAllText(lockPath, missing.ToJsonString(new JsonSerializerOptions { WriteIndented = true }) + "\n");
+            File.WriteAllText(lockPath, missing.ToJsonString(new JsonSerializerOptions { WriteIndented = true, NewLine = "\n" }) + "\n");
             try { await Reject("platform-api.import-not-found"); }
             finally { File.WriteAllBytes(lockPath, locked); }
             await Command("build", ["--no-restore"]);
@@ -106,6 +119,11 @@ public sealed partial class AgentOwnerSourceMigrationTests
             {
                 TraceOwnerPhase("stack-evidence:start:" + command + " " + string.Join(" ", arguments));
                 var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
+                start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+                start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+                // Avalonia's detached telemetry collector inherits this temporary
+                // directory and can hold it open after a successful Windows build.
+                start.Environment["AVALONIA_TELEMETRY_OPTOUT"] = "1";
                 foreach (var argument in new[] { command, project }.Concat(arguments).Concat(common)) start.ArgumentList.Add(argument);
                 if (command == "msbuild")
                 {
@@ -120,14 +138,35 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
                 var text = await output + await error;
                 TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
+                var diagnostic = $"{start.FileName} {string.Join(" ", start.ArgumentList)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n{text}";
+                lastCommandDiagnostic = diagnostic;
                 foreach (var (path, bytes) in producerLocks)
                     Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)),
                         "Consumer command changed a Core producer lock: " + Path.GetRelativePath(core, path));
-                if (expectedError is null) Assert.True(process.ExitCode == 0, text);
-                else { Assert.NotEqual(0, process.ExitCode); Assert.Contains(expectedError, text, StringComparison.OrdinalIgnoreCase); }
+                if (expectedError is null) Assert.True(process.ExitCode == 0, diagnostic);
+                else
+                {
+                    Assert.True(process.ExitCode != 0, diagnostic);
+                    Assert.True(text.Contains(expectedError, StringComparison.OrdinalIgnoreCase),
+                        $"Expected diagnostic '{expectedError}'.\n{diagnostic}");
+                }
             }
         }
-        finally { Directory.Delete(sandbox, recursive: true); }
+        catch (Exception exception)
+        {
+            failure = exception;
+            throw;
+        }
+        finally
+        {
+            try { Directory.Delete(sandbox, recursive: true); }
+            catch (Exception exception)
+            {
+                var cleanup = new IOException($"Owner input probe cleanup failed for '{sandbox}'.\nLast completed command:\n{lastCommandDiagnostic}", exception);
+                if (failure is not null) throw new AggregateException("Owner input probe and cleanup both failed.", failure, cleanup);
+                throw cleanup;
+            }
+        }
     }
 
     private static void CopySources(string source, string destination)

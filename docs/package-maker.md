@@ -169,12 +169,19 @@ an old reload/input approval does not silently approve those broader operations.
 
 | Tool | Input and result |
 | --- | --- |
-| `maker_package` | `package`: absolute `.csproj` / `sunder.package.json` path or a returned project reference. `query`: `status` (default), `runtime`, `views`, or `outputs`. Returns only that selection. |
+| `maker_package` | `package`: absolute `.csproj` / `sunder.package.json` path or a returned project reference. `query`: `status` (default), `build`, `runtime`, `views`, or `outputs`. `build` returns the installed current development toolchain executable, finite build arguments, working directory and command-local PATH entry; it never installs or builds. |
 | `maker_apply` | `package`, optional built `output` reference. Validates already-built output, loads it initially or reloads through its existing Maker owner, and awaits that operation's outcome. Never builds/restores. Multiple unloaded output candidates require explicit selection. |
 | `maker_logs` | `package` plus severity/source/time/literal `contains` filters, or `entry` alone to expand a returned diagnostic. |
 | `maker_view` | `target` view/element reference; literal `role`, `name`, `text`, optional `within`, `limit`, and `cursor`. Ordinary editable `value` is opt-in; protected values are excluded. |
 | `maker_screenshot` | `target` view/element; optional `detail` (`normal` / `high`). Returns an actual image, not base64 text in model context. |
 | `maker_interact` | `target` and advertised `action`; `text` only for `set-text`. `open` explicitly opens a registered package view. Optional `verify` checks literal displayed text separately from dispatch. |
+
+For Shell builds, query `maker_package` with `query: "build"` first. Use its
+executable/arguments from the returned working directory and prepend `pathEntry`
+to that command's PATH. Do not select a running Worker's Node executable: execution
+runtimes and development Node/npm installations are separate. For Node projects,
+`npm run sunder:dev:once` produces `dist/sunder-dev`; `npm run build` produces release
+targets instead, and the `sunder:dev` watch script is not a finite build.
 
 Build and test through Shell, apply the result, query the needed view/log portion,
 interact, then verify. Paths work directly: an initial status call is not required.
@@ -185,7 +192,7 @@ each model response. Null optional arguments mean omitted; required arguments,
 unknown fields, duplicate keys and invalid types still reject before authority.
 
 `maker_apply` is explicitly permission-gated for **load and reload**. It reuses the
-loaded output/owner and returns `unchanged` when that exact output is already
+loaded output/owner and reports `status: "unchanged"` when that exact output is already
 applied. Status is not a build freshness claim: the source inspection fingerprint
 is not proof that edits were compiled. A pending or uncertain operation excludes
 another project mutation. Observation can confirm its matching applied revision

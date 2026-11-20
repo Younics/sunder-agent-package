@@ -3,5 +3,8 @@
     "version": "10.0.403",
     "rollForward": "disable",
     "allowPrerelease": false
+  },
+  "msbuild-sdks": {
+    "Sunder.Package.Build": "1.1.0"
   }
 }

@@ -6,9 +6,9 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static async Task VerifyBuilderArtifact(string root, string core, string driver, string ownerArchive, string cache)
+    private async Task VerifyBuilderArtifact(string root, string core, string driver, string ownerArchive, string cache)
     {
-        var canonical = await BuildCanonicalFamily(root, "Builder", "BuilderWorker", cache, ownerArchive);
+        var canonical = await BuildAndPackCanonicalFamily(root, "Builder", "BuilderWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
         using (var locked = JsonDocument.Parse(selected))
@@ -26,7 +26,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         await VerifyGeneratedAppView(worker, "Builder");
         await VerifyBuilderRoles(worker);
-        await canonical.Pack();
         Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
         using var archive = ZipFile.OpenRead(Path.Combine(worker, "bin/agent-source.sunderpkg"));
         await AssertArchiveHasNoCentralExecutionAssemblies(archive);

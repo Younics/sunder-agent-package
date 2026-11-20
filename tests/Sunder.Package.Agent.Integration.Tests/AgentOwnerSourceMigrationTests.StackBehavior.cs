@@ -98,7 +98,11 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.Equal("younics.ai.agent", requirement.GetProperty("packageId").GetString());
             Assert.Equal("1.1.0", requirement.GetProperty("minimumVersion").GetString());
             var fragment = Assert.Single(exported.GetProperty("fragments").EnumerateArray());
-            Assert.Contains(isProfile ? "Preserved instructions" : source.RootPath, fragment.GetProperty("jsonPayload").GetString()!, StringComparison.Ordinal);
+            using var payload = JsonDocument.Parse(fragment.GetProperty("jsonPayload").GetString()!);
+            if (isProfile)
+                Assert.Equal("Preserved instructions", payload.RootElement.GetProperty("instructions").GetString());
+            else
+                Assert.Equal(source.RootPath, Assert.Single(payload.RootElement.GetProperty("paths").EnumerateArray()).GetProperty("hostPath").GetString());
             var imported = new StackRpcFragmentImport(fragment.GetProperty("fragmentId").GetString()!, "forged.owner", "forged.contributor",
                 fragment.GetProperty("schemaId").GetString()!, fragment.GetProperty("schemaVersion").GetInt32(), fragment.GetProperty("displayName").GetString()!,
                 fragment.GetProperty("jsonPayload").GetString()!);

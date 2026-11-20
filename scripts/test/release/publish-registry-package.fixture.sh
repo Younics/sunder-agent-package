@@ -255,7 +255,10 @@ export MOCK_EXPECTED_ARCHIVE="$archive"
 export MOCK_EXPECTED_PACKAGE_ID=fixture.package
 export MOCK_EXPECTED_VERSION=1.2.3
 export MOCK_EXPECTED_PUBLISH_TOKEN=sunder_pub_v1_0123456789012345678901234567890123456789012
-export SUNDER_REGISTRY_PUBLISH_TOKEN="$MOCK_EXPECTED_PUBLISH_TOKEN"
+export SUNDER_REGISTRY_API_KEY="$MOCK_EXPECTED_PUBLISH_TOKEN"
+# A valid legacy credential must never replace the canonical API key.
+export SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+export SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
 expected_publication="$fixture_dir/expected-publication.json"
 jq -n '{
@@ -324,6 +327,10 @@ write_details() {
 cat > "$mock_bin/curl" <<'MOCK_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
+
+for credential in SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_PUBLISH_TOKEN SUNDER_REGISTRY_CLI_TOKEN; do
+  [[ -z "${!credential+x}" ]] || { printf 'Credential leaked into HTTP child environment: %s\n' "$credential" >&2; exit 2; }
+done
 
 method=GET
 output=''
@@ -477,7 +484,7 @@ run_publisher() {
 }
 
 run_verifier() {
-  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only \
+  env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
@@ -494,7 +501,7 @@ run_yanked_publisher() {
 }
 
 run_yanked_verifier() {
-  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+  env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
     --verify-only --initial-yanked "$expected_publication" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
@@ -645,14 +652,14 @@ fi
 grep -Fq 'content identity does not match its descriptor' "$fixture_dir/wrong-projection-identity.log"
 
 reset_fixture absent
-if env -u SUNDER_REGISTRY_PUBLISH_TOKEN \
+if env -u SUNDER_REGISTRY_API_KEY \
   PATH="$mock_bin:$PATH" bash "$publisher" \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
   > "$fixture_dir/missing-token.log" 2>&1; then
-  printf 'Registry publication accepted a missing publish token.\n' >&2
+  printf 'Registry publication accepted a legacy credential instead of the missing API key.\n' >&2
   exit 1
 fi
-grep -Fq 'SUNDER_REGISTRY_PUBLISH_TOKEN is not configured' "$fixture_dir/missing-token.log"
+grep -Fq 'SUNDER_REGISTRY_API_KEY is not configured' "$fixture_dir/missing-token.log"
 
 if PATH="$mock_bin:$PATH" bash "$publisher" \
   http://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
@@ -662,11 +669,11 @@ if PATH="$mock_bin:$PATH" bash "$publisher" \
 fi
 grep -Fq 'absolute HTTPS origin' "$fixture_dir/insecure-origin.log"
 
-if SUNDER_REGISTRY_PUBLISH_TOKEN=sunder_pub_v1_invalid \
+if SUNDER_REGISTRY_API_KEY=sunder_pub_v1_invalid \
   PATH="$mock_bin:$PATH" bash "$publisher" \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
   > "$fixture_dir/invalid-token.log" 2>&1; then
-  printf 'Registry publication accepted a malformed publish token.\n' >&2
+  printf 'Registry publication accepted a malformed API key.\n' >&2
   exit 1
 fi
 grep -Fq 'valid scoped sunder_pub_v1' "$fixture_dir/invalid-token.log"
@@ -759,7 +766,7 @@ reset_fixture published
 write_yanked_details
 jq '.isYanked = false' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
 mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
-PATH="$mock_bin:$PATH" env -u SUNDER_REGISTRY_PUBLISH_TOKEN \
+PATH="$mock_bin:$PATH" env -u SUNDER_REGISTRY_API_KEY \
   bash "$publisher" --verify-only --initial-yanked "$expected_publication" --current-availability Listed \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/listed-readback.log"
 assert_no_publication
@@ -782,10 +789,10 @@ reset_fixture published
 write_yanked_details
 jq '.publishedAtUtc = "2026-10-05T00:00:00.1230000+00:00"' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
 mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
-env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
   --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.123Z \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-readback.log"
-if env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" \
+if env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
     --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.124Z \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-mismatch.log" 2>&1; then
   printf 'Publication readback accepted a forged evidence-commit timestamp.\n' >&2
@@ -807,7 +814,7 @@ for outcome in success fail-after-commit; do
   jq -e --slurpfile expected "$expected_publication" '. == $expected[0]' "$observed" >/dev/null
   [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
   : > "$MOCK_REGISTRY_CALLS"
-  env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+  env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/observed-$outcome-retry.log"
   assert_no_publication
 done
@@ -825,7 +832,7 @@ assert_no_publication
 
 write_yanked_details
 before="$(hash_file "$observed")"
-if env -u SUNDER_REGISTRY_PUBLISH_TOKEN PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+if env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
   --publication-output "$fixture_dir/changed-owner.json" https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
   > "$fixture_dir/changed-owner.log" 2>&1; then
   printf 'Readback accepted a different owner after retaining Registry publication evidence.\n' >&2

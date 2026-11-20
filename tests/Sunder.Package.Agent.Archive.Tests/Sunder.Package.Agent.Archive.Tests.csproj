@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestCategory>Contract</SunderTestCategory>
+    <SunderTestCapabilities>Filesystem;PackageArchive</SunderTestCapabilities>
+    <SunderTestOS>Any</SunderTestOS>
+    <SunderTestSize>Medium</SunderTestSize>
+    <SunderTestSourceMode>true</SunderTestSourceMode>
+    <SunderTestPackageMode>true</SunderTestPackageMode>
+    <SunderTestLanes>PackageCompatibility</SunderTestLanes>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../Shared/Repository/*.cs" Link="TestSupport/%(Filename)%(Extension)" />
+    <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+  </ItemGroup>
+  <Import Project="../CurrentContractFixtures.props" />
+</Project>

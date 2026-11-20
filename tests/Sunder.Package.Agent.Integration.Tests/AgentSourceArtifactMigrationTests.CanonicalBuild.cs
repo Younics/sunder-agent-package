@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace Sunder.Package.Agent.Tests;
 
@@ -11,7 +12,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
 {
     // Exercise the actual authored root. The fixture receives copies of its role
     // outputs for collectible probes, never a reconstructed project/owned baseline.
-    private static async Task<CanonicalFamilyBuild> BuildCanonicalFamily(
+    private async Task<CanonicalFamilyBuild> BuildAndPackCanonicalFamily(
         string root, string family, string fixtureDirectory, string cache, string? ownerArchive = null)
     {
         var repository = BuilderSourceMigrationTests.FindRepository();
@@ -40,7 +41,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             hasImports = selection.RootElement.GetProperty("packageArtifacts").EnumerateObject().Any()
                 || selection.RootElement.GetProperty("platformImports").EnumerateObject().Any();
         }
-        var build = new CanonicalFamilyBuild(project, source, fixture, cache, evidence);
+        var build = new CanonicalFamilyBuild(project, source, fixture, cache, evidence, _output);
         // Imported props participate in the authored configuration. Raw XML is
         // not authoritative for whether the canonical root is a package project.
         using (var evaluation = JsonDocument.Parse(await build.Run("msbuild", denyNetwork: false, arguments:
@@ -56,17 +57,21 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
         // Core's producer closure is a required parent input. Restoring this
         // exact-RID consumer must not rewrite its referenced Core lock files.
-        await build.Run("restore", "--disable-parallel", "--no-dependencies");
+        // API selection below is deliberate fixture authoring, not a developer
+        // prerequisite. Restore its compiler references without acquiring the old
+        // production selection; then exercise ordinary restore for the selected inputs.
+        await build.Run("restore", "--disable-parallel", "--no-dependencies", "-p:SunderRestoreContracts=false");
         if (ownerArchive is not null) await build.SelectFixtureOwner(ownerArchive, catalog!);
-        var restore = new List<string> { "-t:RestoreSunderContracts" };
+        var restore = new List<string> { "--disable-parallel", "--no-dependencies" };
         // An independent local family still exercises restore, but has no platform
         // constraints for an offline catalog to satisfy. Core rejects such an override.
         if (hasImports) restore.Add("-p:SunderPlatformCatalogPath=" + Path.GetFullPath(catalog!));
         if (ownerArchive is not null) restore.Add("-p:SunderPackageCandidatePath=" + ownerArchive);
-        await build.Run("msbuild", denyNetwork: true, arguments: restore.ToArray());
-        await build.Run("build", "--no-restore");
-        build.AssertEvidenceUnchanged();
-        build.CopyOutputs();
+        await build.Run("restore", denyNetwork: true, arguments: restore.ToArray());
+        // Core's source pack builds the exact-RID roles, checks the contracts,
+        // and composes sunder-dev before writing the archive. Probe those same
+        // generated outputs instead of doing a separate build and copying twice.
+        await build.Pack();
         return build;
     }
 
@@ -83,7 +88,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private sealed class CanonicalFamilyBuild(
-        string project, string source, string fixture, string cache, IReadOnlyDictionary<string, byte[]?> evidence)
+        string project, string source, string fixture, string cache, IReadOnlyDictionary<string, byte[]?> evidence,
+        ITestOutputHelper output)
     {
         private string? _fixtureLockPath;
         private byte[]? _fixtureLock;
@@ -150,20 +156,26 @@ public sealed partial class AgentSourceArtifactMigrationTests
             }
             var commandEvidence = BeginCanonicalCommandEvidence(source, command, start.ArgumentList, _fixtureLockPath);
             if (commandEvidence is not null) start.ArgumentList.Add("-bl:" + commandEvidence + ".binlog");
+            var family = Path.GetFileName(source);
+            var phase = arguments.FirstOrDefault(argument => argument.StartsWith("-t:", StringComparison.Ordinal))?[3..] ?? command;
+            var timer = Stopwatch.StartNew();
+            output.WriteLine($"Source artifact {family}: {phase} started");
             using var process = Process.Start(start)!;
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(900));
-            var output = process.StandardOutput.ReadToEndAsync();
+            var standardOutput = process.StandardOutput.ReadToEndAsync();
             var error = process.StandardError.ReadToEndAsync();
             try { await process.WaitForExitAsync(timeout.Token); }
             catch
             {
                 if (!process.HasExited) process.Kill(entireProcessTree: true);
                 await process.WaitForExitAsync();
-                EndCanonicalCommandEvidence(commandEvidence, source, _fixtureLockPath, process.ExitCode, await output, await error);
+                output.WriteLine($"Source artifact {family}: {phase} interrupted after {timer.Elapsed:c}");
+                EndCanonicalCommandEvidence(commandEvidence, source, _fixtureLockPath, process.ExitCode, await standardOutput, await error);
                 throw;
             }
-            var stdout = await output;
+            var stdout = await standardOutput;
             var stderr = await error;
+            output.WriteLine($"Source artifact {family}: {phase} exited {process.ExitCode} after {timer.Elapsed:c}");
             EndCanonicalCommandEvidence(commandEvidence, source, _fixtureLockPath, process.ExitCode, stdout, stderr);
             Assert.True(process.ExitCode == 0, $"Canonical command failed: {string.Join(' ', start.ArgumentList)}\n{stdout}\n{stderr}");
             AssertEvidenceUnchanged();
@@ -177,14 +189,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
             CopyOutputs();
         }
 
-        internal void AssertEvidenceUnchanged()
+        private void AssertEvidenceUnchanged()
         {
             foreach (var (file, bytes) in evidence)
                 Assert.Equal(bytes, file == "sunder-contracts.owned.json" ? CanonicalPackageRoles.ReadOwnedBaseline(source) : File.ReadAllBytes(Path.Combine(source, file)));
             if (_fixtureLock is not null) Assert.Equal(_fixtureLock, File.ReadAllBytes(_fixtureLockPath!));
         }
 
-        internal void CopyOutputs()
+        private void CopyOutputs()
         {
             CopyDirectory(Path.Combine(source, "bin", CanonicalPackageRoles.Configuration, "net10.0"),
                 Path.Combine(fixture, "bin", CanonicalPackageRoles.Configuration, "net10.0"));

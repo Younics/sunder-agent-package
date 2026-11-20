@@ -49,6 +49,7 @@ internal sealed record PlannedFilePatchOperation(
     public AgentResolvedResource? PostMutationResource { get; set; }
     public FilePatchMove? Move { get; init; }
     public bool RejectedWithoutMutation { get; set; }
+    public bool MutationIncomplete { get; set; }
 }
 
 internal sealed record FileDiffPresentationPayload(string Schema, IReadOnlyList<FileDiffPayloadFile> Files);
@@ -73,4 +74,4 @@ internal sealed record FilePatchCompensationResult(
 
 internal sealed record FilePatchCompensationFailure(string Path, string Failure);
 
-internal sealed record FilePatchCompensationProbeFailure(string Path, string Failure);
+internal sealed record FilePatchCompensationProbeFailure(string Path, string Failure, bool StateUncertain = false);

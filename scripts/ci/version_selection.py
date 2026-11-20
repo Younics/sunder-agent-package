@@ -49,29 +49,23 @@ def against_base(source, base):
 
 
 def projects(inventory, selected):
-    """Family boundary checks accompany every nonempty component selection."""
-    if selected is None or "younics.ai.agent" in selected:
+    """Component ownership is exact; family checks run once in their shared lane."""
+    if selected is None:
         return inventory["projects"]
-    return [row for row in inventory["projects"] if selected and row["owner"] in {*selected, "agent-family"}]
+    return [row for row in inventory["projects"] if row["owner"] in selected]
 
 
 def scope_inventory(inventory, selected, mode, platform):
-    rows = projects(inventory, selected)
-    if selected and mode == "source" and platform == "linux":
-        # This independent Linux filesystem security boundary stays mandatory
-        # even when only another family member advances. Run its required cases,
-        # not its unrelated component suite.
-        rows += [dict(row, requiredOnly=True, sourceOnlyTests=[]) for row in inventory["projects"]
-                 if row not in rows and row["owner"] == "younics.ai.agent.execution.local"]
-    return {**inventory, "projects": rows}
+    return {**inventory, "projects": projects(inventory, selected)}
 
 
 def write_outputs(selected):
-    value = dict(packages=selected, selected_count=len(selected))
+    value = dict(packages=selected, selected_count=len(selected), full=len(selected) == len(r.FAMILY_PACKAGE_IDS))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             stream.write("packages=" + json.dumps(selected, separators=(",", ":")) + "\n")
             stream.write(f"selected_count={len(selected)}\n")
+            stream.write("full=" + str(value["full"]).lower() + "\n")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             stream.write("## Version selection\n\n" + ("\n".join("- `" + item + "`" for item in selected)
@@ -86,12 +80,15 @@ def main():
     choice.add_argument("--base")
     choice.add_argument("--all", action="store_true")
     choice.add_argument("--packages", help="JSON package IDs from the release planner")
+    choice.add_argument("--manual", help="Comma-separated package IDs, or all")
     parser.add_argument("--verify-versions", action="store_true", help="Evaluate selected versions after SDK setup")
     args = parser.parse_args()
     if args.base:
         selected = against_base(args.source, args.base)
-    elif args.all:
+    elif args.all or args.manual == "all":
         selected = [row["packageId"] for row in r.inventory(args.source)["packages"]]
+    elif args.manual is not None:
+        selected = [value.strip() for value in args.manual.split(",")]
     else:
         selected = json.loads(args.packages)
     selected = package_ids(args.source, selected)

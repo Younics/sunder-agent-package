@@ -1,4 +1,5 @@
 extern alias SkillsApp;
+extern alias SkillsWorker;
 
 using SkillAppRuntimeGateway = SkillsApp::Sunder.Package.Agent.Skills.Runtime.SkillAppRuntimeGateway;
 using Microsoft.Extensions.Logging;
@@ -6,8 +7,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Sunder.Package.Agent.Skills.Runtime;
-using Sunder.Package.Agent.Skills.Services;
+using SkillsWorker::Sunder.Package.Agent.Skills.Runtime;
+using SkillsWorker::Sunder.Package.Agent.Skills.Services;
 using Sunder.Sdk.Abstractions;
 using Sunder.Sdk.Logging;
 using Sunder.Sdk.Rpc;

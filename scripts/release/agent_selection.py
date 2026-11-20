@@ -23,7 +23,8 @@ def evaluated_packages(source, package_ids=None):
         r.require(set(package_ids) <= {row["packageId"] for row in rows}, "Unknown version validation selection")
         rows = [row for row in rows if row["packageId"] in package_ids]
     env = {key: value for key, value in os.environ.items() if key not in
-        ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_PUBLISH_TOKEN")}
+        ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
+         "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
     for row in rows:
         project = r.source_file(source, row["projectPath"])
         result = subprocess.check_output(["dotnet", "msbuild", str(project), "-p:Configuration=Release",
@@ -287,7 +288,9 @@ def main():
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 package_ids = [row["packageId"] for row in selected(value)]
                 output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n"
-                             + "packages=" + r.canonical(package_ids).decode() + "\n")
+                             + "packages=" + r.canonical(package_ids).decode() + "\n"
+                             + "owner_selected=" + str("younics.ai.agent" in package_ids).lower() + "\n"
+                             + "consumers=" + r.canonical([package_id for package_id in package_ids if package_id != "younics.ai.agent"]).decode() + "\n")
         print(f"Selected {count} version-bumped packages." if count else "No package version is newer; nothing to release.")
     else:
         value = load(args.plan, source)

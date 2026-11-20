@@ -362,7 +362,7 @@ public sealed partial class BuilderLocalBackendTests
         await using var jobs = fixture.Jobs();
         var destination = fixture.PathOf("new project");
         var prepared = fixture.Tools.For(kind);
-        var request = Request("create", kind: kind) with { ProjectFolder = destination, DisplayName = "Hello package", PackageId = "sample.hello", Installation = prepared };
+        var request = Request("create", kind: kind) with { ProjectFolder = SystemTemporaryAlias(destination), DisplayName = "Hello package", PackageId = "sample.hello", Installation = prepared };
         var result = await TerminalAsync(jobs, jobs.Start(request));
         Assert.Equal("failed", result.State);
         Assert.True(result.Project is not null, result.Error); Assert.NotNull(result.DevelopmentFolder);
@@ -414,7 +414,9 @@ public sealed partial class BuilderLocalBackendTests
         using var fixture = new Fixture();
         var entry = fixture.WriteDotnet("project with spaces", "Arbitrary.App.csproj");
         await using var jobs = fixture.Jobs();
-        var valid = await TerminalAsync(jobs, jobs.Start(Request("build", entry, BuilderProjectKind.Dotnet)));
+        var alias = SystemTemporaryAlias(entry);
+        var expected = await new BuilderProjectDiscovery().InspectAsync(alias);
+        var valid = await TerminalAsync(jobs, jobs.Start(Request("build", alias, BuilderProjectKind.Dotnet) with { Expected = expected }));
         Assert.Equal("succeeded", valid.State);
         Assert.Equal(BuilderJobPhase.BuildReady, valid.Phase);
         Assert.NotNull(valid.LastSuccessfulBuildAtUtc);
@@ -888,6 +890,11 @@ public sealed partial class BuilderLocalBackendTests
     }
 
     private static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Keep real direct-job alias coverage while fixture expectations use physical
+    // paths. This is only the OS-owned alias, never a test-created source link.
+    private static string SystemTemporaryAlias(string path)
+        => OperatingSystem.IsMacOS() && (path.StartsWith("/private/var/", StringComparison.Ordinal)
+            || path.StartsWith("/private/tmp/", StringComparison.Ordinal)) ? path[8..] : path;
     private static BuilderJobRequest Request(string operation, string? entry = null, BuilderProjectKind kind = BuilderProjectKind.Node)
         => new() { Id = Guid.NewGuid().ToString("N"), Operation = operation, Kind = kind, EntryPoint = entry };
     private static async Task<BuilderJobSnapshot> TerminalAsync(BuilderJobManager jobs, string id)
@@ -962,7 +969,7 @@ public sealed partial class BuilderLocalBackendTests
 
     private sealed class Fixture : IDisposable
     {
-        internal string Root { get; } = Path.Combine(Path.GetTempPath(), "sunder-builder-local-backend", Guid.NewGuid().ToString("N"));
+        internal string Root { get; } = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-builder-local-backend", Guid.NewGuid().ToString("N"));
         internal FakeTools Tools { get; }
         internal FakeProcess Process { get; }
         internal Fixture() { Directory.CreateDirectory(Root); Tools = new(PathOf("tools")); Process = new(this); }

@@ -3,7 +3,7 @@
     <SunderPackageFamilyId>younics.ai.agent</SunderPackageFamilyId>
     <SunderPackageRole>test</SunderPackageRole>
     <OutputType>Exe</OutputType>
-    <SunderTestOwner>agent-family</SunderTestOwner>
+    <SunderTestOwner>younics.ai.agent</SunderTestOwner>
     <SunderTestCategory>Unit</SunderTestCategory>
     <SunderTestCapabilities>None</SunderTestCapabilities>
     <SunderTestOS>Any</SunderTestOS>

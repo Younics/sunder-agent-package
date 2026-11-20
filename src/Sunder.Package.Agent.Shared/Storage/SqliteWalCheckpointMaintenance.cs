@@ -11,6 +11,7 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
     private static readonly TimeSpan DefaultFailureLogInterval = TimeSpan.FromMinutes(1);
 
     private readonly object _syncRoot = new();
+    private readonly object _databaseGate;
     private readonly string _databasePath;
     private readonly string _storeName;
     private readonly ILogger _logger;
@@ -36,7 +37,8 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
         int maximumAttempts = DefaultMaximumAttempts,
         TimeSpan? retryDelay = null,
         TimeSpan? maximumRetryDelay = null,
-        TimeSpan? failureLogInterval = null)
+        TimeSpan? failureLogInterval = null,
+        object? databaseGate = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(databasePath);
         ArgumentException.ThrowIfNullOrWhiteSpace(storeName);
@@ -47,6 +49,7 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
         }
 
         _databasePath = Path.GetFullPath(databasePath);
+        _databaseGate = databaseGate ?? new object();
         _storeName = storeName;
         _logger = logger;
         _maximumAttempts = maximumAttempts;
@@ -77,6 +80,8 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
             }
         }
     }
+
+    internal Action? BeforeCheckpoint { get; set; }
 
     public void ScheduleCheckpoint()
     {
@@ -290,6 +295,16 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
 
     private bool TryCheckpoint()
     {
+        // Replacement of a disposable store must exclude the entire connection
+        // lifetime, including its final close, rather than only the checkpoint SQL.
+        lock (_databaseGate)
+        {
+            return TryCheckpointCore();
+        }
+    }
+
+    private bool TryCheckpointCore()
+    {
         if (!File.Exists(_databasePath + "-wal"))
         {
             return true;
@@ -303,6 +318,7 @@ internal sealed class SqliteWalCheckpointMaintenance : IDisposable, IAsyncDispos
             DefaultTimeout = 1,
         }.ToString());
         connection.Open();
+        BeforeCheckpoint?.Invoke();
         using (var timeout = connection.CreateCommand())
         {
             timeout.CommandText = "PRAGMA busy_timeout = 0;";

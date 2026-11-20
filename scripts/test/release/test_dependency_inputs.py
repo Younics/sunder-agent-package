@@ -26,12 +26,12 @@ class DependencyInputTests(unittest.TestCase):
         return dict(id=identifier, draft=False, tag_name=f"fixture/v{identifier}.0.0", assets=[dict(
             id=identifier + 100, name=path.name, size=path.stat().st_size, digest="sha256:" + d.r.file_sha(path), state="uploaded")])
 
-    def resolve(self):
+    def resolve(self, *, allow_missing=False):
         def download(asset, destination, maximum=None):
             shutil.copyfile(self.bundle / asset["name"], destination)
         with patch.object(d, "releases", side_effect=lambda repo: self.publications[repo]), \
              patch.object(d.inputs, "download", side_effect=download), patch.object(d.r, "git", return_value=self.core_sha.encode()):
-            return d.resolve(self.source, self.core, self.output)
+            return d.resolve(self.source, self.core, self.output, allow_missing=allow_missing)
 
     def test_published_dependencies_and_identical_coordinator_copies_need_no_seeds(self):
         duplicate = self.publication(self.archive, 3)
@@ -39,7 +39,7 @@ class DependencyInputTests(unittest.TestCase):
         found = d.locate(d.AGENT, list(reversed(self.publications[d.AGENT])), self.archive.name)
         self.assertEqual(2, found[1]["releaseId"])
         before = d.inputs.source_snapshot(self.source)
-        with patch.object(d, "seed") as seed:
+        with patch.object(d, "run") as seed:
             value = self.resolve()
         seed.assert_not_called()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
@@ -48,22 +48,17 @@ class DependencyInputTests(unittest.TestCase):
         self.assertEqual(d.record(self.catalog_path), value["platformCatalog"])
         self.assertEqual(value, d.r.load(self.output / "ci-inputs.json"))
 
-    def test_never_published_same_version_seed_is_built_once_and_full_identity_is_checked(self):
+    def test_unpublished_owner_waits_for_six_native_candidate_before_consumer_admission(self):
         self.publications[d.AGENT] = []
         before = d.inputs.source_snapshot(self.source)
-        def run(command, source, home):
-            self.assertEqual(self.source.resolve(), source)
-            # Source-SDK seeds cannot reproduce the payload selected by the
-            # production NuGet-mode build, even with the same package version.
-            for required in ("-p:SunderUseSourceSdk=false", "-p:RestoreLockedMode=true",
-                             "-p:Configuration=Release", "-p:ContinuousIntegrationBuild=true"):
-                self.assertIn(required, command)
-            if "-t:PackSunderPackage" in command:
-                output = next(value.split("=", 1)[1] for value in command if value.startswith("-p:SunderPackageOutputPath="))
-                shutil.copyfile(self.archive, output)
-        with patch.object(d, "run", side_effect=run) as build:
-            self.resolve()
-        self.assertEqual(1, sum("-t:PackSunderPackage" in call.args[0] for call in build.call_args_list))
+        with patch.object(d, "run", side_effect=AssertionError("Dependency discovery must not build")) as build:
+            pending = self.resolve(allow_missing=True)
+            self.assertEqual(["younics.ai.agent"], pending["pending"])
+            self.assertFalse((self.output / "ci-inputs.json").exists())
+            with patch.object(d.r, "git", return_value=self.core_sha.encode()):
+                d.complete(self.source, self.core, self.output, self.bundle)
+        build.assert_not_called()
+        self.assertFalse((self.output / "preparation.json").exists())
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         d.inputs.verify_selected_files(self.source, [self.output / self.archive.name], self.output / self.catalog_path.name)
 
@@ -87,7 +82,7 @@ class DependencyInputTests(unittest.TestCase):
             for name, data in entries.items(): archive.writestr(name, data)
         self.publications[d.AGENT] = [self.publication(self.archive, 2)]
         before = d.inputs.source_snapshot(self.source)
-        with patch.object(d, "seed") as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection"):
+        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection"):
             self.resolve()
         build.assert_not_called()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
@@ -95,30 +90,19 @@ class DependencyInputTests(unittest.TestCase):
 
     def test_mismatched_seed_never_reaches_a_downstream_seed_or_emits_prepared_inputs(self):
         self.publications[d.AGENT] = []
-        maker = self.rows[1]["packageId"]
-        archive_path = self.bundle / f"{maker}.2.0.0.sunderpkg"
-        with zipfile.ZipFile(archive_path, "w") as archive:
-            archive.writestr("manifest/sunder-package.json", d.r.canonical(dict(id=maker, version="2.0.0", contractBundles=[])))
-            archive.writestr("manifest/content-index.json", b'{"schemaVersion":1,"files":[]}')
-        _, public, public_sha = d.r.archive_metadata(archive_path)
-        path = self.source / Path(self.rows[2]["projectPath"]).parent / "sunder-contracts.lock.json"
-        lock = d.r.load(path)
-        lock["packageArtifacts"][maker] = dict(requestedVersionRange="2.0.0", includePrerelease=False, selectedPackageVersion="2.0.0",
-            selectedPackageContentIdentity=public["packageContentIdentity"], publicInventorySha256=public_sha, publicContractCount=0, contracts={})
-        path.write_bytes(d.r.canonical(lock))
+        self.resolve(allow_missing=True)
         before = d.inputs.source_snapshot(self.source)
-        def seed(source, core, row, catalog, candidates, destination):
-            self.assertEqual("younics.ai.agent", row["packageId"], "A mismatched seed was used downstream")
-            with zipfile.ZipFile(self.archive) as archive:
-                entries = {name: archive.read(name) for name in archive.namelist()}
-            entries["manifest/sunder-package.json"] += b"\n"
-            with zipfile.ZipFile(destination, "w") as archive:
-                for name, data in entries.items(): archive.writestr(name, data)
-        with patch.object(d, "seed", side_effect=seed) as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection") as failure:
-            self.resolve()
+        with zipfile.ZipFile(self.archive) as archive:
+            entries = {name: archive.read(name) for name in archive.namelist()}
+        entries["manifest/sunder-package.json"] += b"\n"
+        with zipfile.ZipFile(self.archive, "w") as archive:
+            for name, data in entries.items(): archive.writestr(name, data)
+        with patch.object(d, "run") as build, patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+             self.assertRaisesRegex(d.r.Invalid, "exact committed package selection") as failure:
+            d.complete(self.source, self.core, self.output, self.bundle)
         self.assertIn("expected (version, content identity, public inventory)=", str(failure.exception))
         self.assertIn("; actual=", str(failure.exception))
-        self.assertEqual(1, build.call_count)
+        build.assert_not_called()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         self.assertFalse((self.output / "ci-inputs.json").exists())
 
@@ -131,7 +115,7 @@ class DependencyInputTests(unittest.TestCase):
         lock = d.r.load(path)
         lock["packageArtifacts"]["younics.ai.agent"]["selectedPackageContentIdentity"] = "0" * 64
         path.write_bytes(d.r.canonical(lock))
-        with patch.object(d, "seed") as build, self.assertRaisesRegex(d.r.Invalid, "Conflicting exact dependency selections"):
+        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "Conflicting exact dependency selections"):
             self.resolve()
         build.assert_not_called()
         self.assertFalse(self.output.exists())
@@ -140,7 +124,7 @@ class DependencyInputTests(unittest.TestCase):
         self.publications[d.AGENT] = []
         project = self.source / self.rows[0]["projectPath"]
         project.write_text('<Project><PropertyGroup><Version>3.0.0</Version></PropertyGroup></Project>')
-        with patch.object(d, "seed") as build, self.assertRaisesRegex(d.r.Invalid, "source cannot substitute another version"):
+        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "source cannot substitute another version"):
             self.resolve()
         build.assert_not_called()
 

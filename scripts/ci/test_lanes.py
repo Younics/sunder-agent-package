@@ -1,14 +1,47 @@
 """Agent CI test selection and evidence, shared by workflows and local commands."""
+import functools
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
+import tempfile
+from argparse import Namespace
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
 POLICY = json.loads((ROOT / "scripts/test/ci-scenarios.json").read_text())
+BUILDER_PROJECT = "tests/Sunder.Package.Agent.Builder.Tests/Sunder.Package.Agent.Builder.Tests.csproj"
+ARCHIVE_PROJECT = "tests/Sunder.Package.Agent.Archive.Tests/Sunder.Package.Agent.Archive.Tests.csproj"
+BUILDER_FOCUS = ("BuilderLocalNuGetTests", "BuilderTemplateCacheTests", "BuilderProjectMetadataTests", "BuilderToolSourceTests", "BuilderToolchainTests")
+
+
+class TestProjectFailure(subprocess.CalledProcessError):
+    """A completed test run with assertion failures and complete discovery/TRX."""
+
+
+@functools.cache
+def evidence_reader():
+    return runpy.run_path(str(ROOT / "scripts/test/generate-test-duration-report.py"))
+
+
+def project_results(output, name, discovery):
+    reader = evidence_reader()
+    results, run = reader["read_trx"](output, output / (name + ".trx"))
+    violations = run["violations"] + reader["discovery_violations"](output, results, [(output / (name + ".discovery.json"), discovery)])
+    if any(row["outcome"] not in ("passed", "failed", "skipped") for row in results):
+        violations.append("Unexpected test result outcome")
+    if violations: raise ValueError(f"Incomplete test evidence for {name}: " + "; ".join(violations))
+    return results
+
+
+def completed_test_failure(output, name, discovery):
+    try:
+        return any(row["outcome"] == "failed" for row in project_results(output, name, discovery))
+    except (OSError, ValueError, ET.ParseError):
+        return False
 
 
 def run(*args, cwd=ROOT, env=None):
@@ -25,30 +58,80 @@ def discovered_tests(output):
 def run_project(state_path, source, project, common, filter_value, output):
     import agent_ci
     name = Path(project).stem
-    base = [*common[:2], project, *common[3:], "--filter", filter_value]
+    base = [*common[:2], project, *common[3:]]
+    if filter_value: base += ["--filter", filter_value]
     log = output / (name + ".discovery.log")
     command = [*base, "--list-tests", "--verbosity", "quiet"]
     status = agent_ci.execute(state_path, command, log=log)
     if status: raise subprocess.CalledProcessError(status, command)
     cases = discovered_tests(log.read_text(encoding="utf-8"))
     _, environment = agent_ci.context(state_path)
-    (output / (name + ".discovery.json")).write_text(json.dumps({
+    discovery = {
         "schemaVersion": 1, "project": name, "filter": filter_value,
         "report": name + ".trx", "tests": cases,
         "prerequisites": {key: environment.get(key, "") for key in (
-            "SUNDER_REQUIRE_TEST_PREREQUISITES", "SUNDER_DOCKER_INTEGRATION",
+            "SUNDER_REQUIRE_TEST_PREREQUISITES", "SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES", "SUNDER_DOCKER_INTEGRATION",
             "SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "SUNDER_AGENT_NATIVE_ARCHIVE_DIR")},
-    }, indent=2) + "\n", encoding="utf-8")
+    }
+    (output / (name + ".discovery.json")).write_text(json.dumps(discovery, indent=2) + "\n", encoding="utf-8")
     if not cases:
         return 0
     # The all-family case owns bounded child builds and the existing CI job budget;
     # one ordinary-case watchdog must not truncate its fifteen-family production.
-    diagnostics = ["--blame"] if any(POLICY["artifactProducer"] in case for case in cases) else ["--blame-hang", "--blame-hang-timeout", "15m"]
+    diagnostics = (["--blame", "--logger", "console;verbosity=normal"]
+                   if any(POLICY["artifactProducer"] in case for case in cases)
+                   else ["--blame-hang", "--blame-hang-timeout", "15m"])
     command = [*base, "--logger", f"trx;LogFileName={name}.trx", "--results-directory", str(output),
                "--diag", str(output / (name + ".vstest.log")), *diagnostics]
     status = agent_ci.execute(state_path, command, log=output / (name + ".run.log"))
-    if status: raise subprocess.CalledProcessError(status, command)
+    if status:
+        error = TestProjectFailure if status == 1 and completed_test_failure(output, name, discovery) else subprocess.CalledProcessError
+        raise error(status, command)
+    if any(row["outcome"] == "failed" for row in project_results(output, name, discovery)):
+        raise ValueError(f"{name}: successful command has failed test results")
     return len(cases)
+
+
+def run_project_with_filesystems(state_path, source, project, common, filter_value, output, inventory, mode):
+    rows = [row for row in inventory["projects"] if row["path"] == project and row.get("sources")]
+    policies = evidence_reader()["skip_policy"](source, dict(projects=rows), mode, None, None) if sys.platform == "darwin" else []
+    methods = sorted({row["fullyQualifiedName"] for row in policies
+                      if "CaseSensitiveDirectories" in [row["capability"], *row["additionalCapabilities"]]})
+    if not methods:
+        return run_project(state_path, source, project, common, filter_value, output)
+    # Keep alias/security cases on the ordinary volume. Only cases declaring the
+    # distinct-name prerequisite move to the provisioned volume, exactly once.
+    base = f"({filter_value})&" if filter_value else ""
+    ordinary = base + "&".join("FullyQualifiedName!=" + method for method in methods)
+    sensitive = base + "(" + "|".join("FullyQualifiedName=" + method for method in methods) + ")"
+    count, failure = 0, None
+    try:
+        count += run_project(state_path, source, project, common, ordinary, output)
+    except TestProjectFailure as error:
+        failure = error
+    import agent_ci
+    from test_filesystems import case_sensitive_volume
+    state, _ = agent_ci.context(state_path)
+    scoped = output / "case-sensitive"
+    scoped.mkdir(exist_ok=True)
+    previous = os.environ.get("TMPDIR")
+    try:
+        with case_sensitive_volume(state["home"], scoped / "filesystem.log") as temporary:
+            try:
+                os.environ["TMPDIR"] = str(temporary)
+                count += run_project(state_path, source, project, common, sensitive, scoped)
+            except TestProjectFailure as error:
+                if failure is None: failure = error
+                else: agent_ci.note_error(failure, str(error))
+            finally:
+                if previous is None: os.environ.pop("TMPDIR", None)
+                else: os.environ["TMPDIR"] = previous
+    except BaseException as error:
+        if failure is None: raise
+        agent_ci.note_error(failure, "Case-sensitive prerequisite also failed: " + agent_ci.describe_error(error))
+        raise failure from error
+    if failure is not None: raise failure
+    return count
 
 
 def tests(state_path, lane):
@@ -61,6 +144,9 @@ def tests(state_path, lane):
     projects = [row["path"] for row in inventory["projects"] if mode in row["modes"]
                 and (lane != "package" or "PackageCompatibility" in row.get("lanes", []))]
     artifact = POLICY["artifactProducer"]
+    owners = {row["owner"] for row in inventory["projects"]}
+    required_linux = [name for name in POLICY["requiredLinux"] if POLICY["requiredLinuxOwners"][name] in owners
+                      and (state.get("selectedPackages") is None or POLICY["requiredLinuxOwners"][name] in state["selectedPackages"])]
     directory = source / "artifacts/test-results" / ("artifact" if lane == "artifact" else "required" if lane == "required-linux" else "full")
     if lane == "source":
         projects = [row["path"] for row in inventory["projects"] if mode in row["modes"] and not row.get("requiredOnly")]
@@ -71,7 +157,9 @@ def tests(state_path, lane):
         projects = ["tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj"]
         filter_value = "FullyQualifiedName~" + artifact
     elif lane == "package": filter_value = "Lane=PackageCompatibility&Category!=Artifact"
-    elif lane == "required-linux": filter_value = "|".join("FullyQualifiedName~" + name for name in POLICY["requiredLinux"])
+    elif lane == "required-linux":
+        if not required_linux: raise ValueError("No required Linux cases belong to this component")
+        filter_value = "|".join("FullyQualifiedName~" + name for name in required_linux)
     elif lane == "stress": filter_value = POLICY["stress"]["filter"]
     else: raise ValueError("Unknown Agent test lane")
     repetitions = POLICY["stress"]["repetitions"] if lane == "stress" else 1
@@ -80,7 +168,20 @@ def tests(state_path, lane):
         output = source / "artifacts/stress" / str(attempt + 1) if lane == "stress" else directory
         if output.exists(): shutil.rmtree(output)
         output.mkdir(parents=True)
-        count = sum(run_project(state_path, source, project, common, filter_value, output) for project in projects)
+        count, failures = 0, []
+        for project in projects:
+            try:
+                count += run_project_with_filesystems(state_path, source, project, common, filter_value, output, inventory, mode)
+            except TestProjectFailure as error:
+                if lane not in ("source", "package"): raise
+                failures.append((project, error))
+        if failures:
+            error = failures[0][1]
+            agent_ci.note_error(error, "Failed independent projects: " + ", ".join(project for project, _ in failures))
+            raise error
+        if not count and lane == "stress":
+            print("No stress cases belong to the selected component; discovery retained.")
+            return
         if not count: raise ValueError(f"{lane} selected zero tests")
     if lane in ("required-linux", "stress"):
         output = source / "artifacts/stress" if lane == "stress" else directory
@@ -93,22 +194,63 @@ def tests(state_path, lane):
                 for definition in document.findall(".//{*}UnitTest"):
                     if definition.get("id") in passed:
                         observed.add(definition.find("./{*}TestMethod").get("name"))
-            if not set(POLICY["requiredLinux"]) <= observed:
+            if not set(required_linux) <= observed:
                 raise ValueError("Required Linux test identity missing; passing counts alone are insufficient")
+
+
+def source_artifacts(state_path):
+    """Pack selected source outputs and preserve the bytes used by their tests."""
+    import agent_ci
+    import native_release_inputs as native
+    state, _ = agent_ci.context(state_path)
+    source = Path(state["source"])
+    selected = state["selectedPackages"]
+    rows = [row for row in agent_ci.inputs.inventory(source)["packages"] if row["packageId"] in selected]
+    native.require(selected and len(rows) == len(selected), "Empty or unknown source-artifact selection")
+    output = agent_ci.new_directory(source / "artifacts/source-components")
+    evidence = dict(schemaVersion=1, packageIds=selected, packages=[])
+    for row in rows:
+        package_id, project, version = row["packageId"], row["projectPath"], row["version"]
+        log = output / (package_id + ".evaluation.log")
+        command = ["dotnet", "msbuild", project, "-nologo", "-getProperty:NETCoreSdkRuntimeIdentifier,TargetDir"]
+        status = agent_ci.execute(state_path, command, log=log)
+        if status: raise subprocess.CalledProcessError(status, command)
+        properties = json.loads(log.read_text(encoding="utf-8"))["Properties"]
+        rid, target = properties["NETCoreSdkRuntimeIdentifier"], Path(properties["TargetDir"])
+        native.require(rid in native.RIDS and target.is_absolute(), "Invalid evaluated source-artifact output")
+        leaf = target.resolve(strict=True) / "sunder-targets" / rid / "sunder-dev"
+        files = native.tree(leaf)
+        manifest = native.validate_manifest(native.read_bytes(leaf / "manifest/sunder-package.json"), package_id, version, [rid])
+        package = dict(packageId=package_id, leaf=dict(hasApp=any(item["role"] == "app" for item in manifest["targets"]), files=list(files.values())))
+        (output / (package_id + ".source.json")).write_bytes(native.compact(dict(runtimeIdentifier=rid, **package)) + b"\n")
+        archive = output / (package_id + "." + version + ".sunderpkg")
+        command = ["dotnet", "msbuild", project, "-t:PackSunderPackage", "-p:RuntimeIdentifier=" + rid,
+                   "-p:BuildProjectReferences=false", "-p:SunderPackageOutputPath=" + str(archive),
+                   "-bl:" + str(output / (package_id + ".pack.binlog"))]
+        status = agent_ci.execute(state_path, command, log=output / (package_id + ".pack.log"))
+        if status: raise subprocess.CalledProcessError(status, command)
+        native.require(native.tree(leaf) == files, "Source role bytes changed after component tests")
+        native.verify_archive(archive, [(rid, package)], version)
+        evidence["packages"].append(dict(packageId=package_id, version=version, runtimeIdentifier=rid, archive=native.file_record(archive)))
+    (output / "source-artifact-evidence.json").write_bytes(native.compact(evidence) + b"\n")
 
 
 def validate(state_path, mode, stress=False):
     import agent_ci
-    state, _ = agent_ci.context(state_path)
+    state, environment = agent_ci.context(state_path)
     source = Path(state["source"])
     previous = dict(os.environ)
-    platform = "windows" if os.name == "nt" else "macos" if sys.platform == "darwin" else "linux"
+    # Match inventory scoping and required-case filters, which use sys.platform.
+    platform = "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux"
     try:
+        # Filesystem security is required for every selected native source/package
+        # lane. Unselected external archive/daemon lanes keep their own opt-ins.
+        os.environ["SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES"] = "1"
         if mode == "source":
             os.environ.update(SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION="1",
                 SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE=str(source / "artifacts/source-family"),
                 SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE=str(source / "artifacts/source-commands"))
-            for directory in ("test-results", "stress", "source-family", "source-commands"):
+            for directory in ("test-results", "stress", "source-family", "source-commands", "source-components"):
                 path = source / "artifacts" / directory
                 if path.exists(): shutil.rmtree(path)
         else:
@@ -117,49 +259,165 @@ def validate(state_path, mode, stress=False):
         try:
             tests(state_path, mode)
             if mode == "source":
-                tests(state_path, "artifact")
+                if state.get("selectedPackages") is None:
+                    tests(state_path, "artifact")
                 if platform == "linux":
                     os.environ.update(SUNDER_DOCKER_INTEGRATION="1", SUNDER_REQUIRE_TEST_PREREQUISITES="1")
-                    tests(state_path, "required-linux")
+                    owners = {row["owner"] for row in json.loads((source / "artifacts/reports/test-inventory.json").read_text())["projects"]}
+                    required_owners = owners & set(POLICY["requiredLinuxOwners"].values())
+                    if state.get("selectedPackages") is not None:
+                        required_owners &= set(state["selectedPackages"])
+                    if required_owners:
+                        if "younics.ai.agent.execution.docker" in required_owners:
+                            # The test deliberately inspects an already-provisioned
+                            # image. Acquisition belongs to the owning CI lane.
+                            run("docker", "pull", "--", os.environ.get("SUNDER_DOCKER_INTEGRATION_IMAGE", "node:22-alpine"),
+                                cwd=source, env=environment)
+                        tests(state_path, "required-linux")
                     if stress: tests(state_path, "stress")
-        finally:
+                if state.get("selectedPackages") is not None:
+                    source_artifacts(state_path)
+        except BaseException as error:
+            try:
+                report(mode, platform)
+            except Exception as reporting:
+                agent_ci.note_error(error, "Report verification also failed: " + agent_ci.describe_error(reporting))
+            raise
+        else:
             report(mode, platform)
     finally:
         os.environ.clear()
         os.environ.update(previous)
 
 
-def report(mode, platform):
-    command = [sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", "artifacts/test-results",
-               "--inventory", "artifacts/reports/test-inventory.json", "--mode", mode, "--platform", platform,
+def builder_diagnostics(state_path, inventory_path):
+    import agent_ci
+    state, _ = agent_ci.context(state_path)
+    source = Path(state["source"])
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    inventory["projects"] = [row for row in inventory["projects"] if row["path"] == BUILDER_PROJECT]
+    if len(inventory["projects"]) != 1: raise ValueError("Builder project missing from diagnostic selection")
+    root = source / "artifacts/builder-diagnostics"
+    if root.exists(): shutil.rmtree(root)
+    root.mkdir(parents=True)
+    inventory_path = root / "test-inventory.json"
+    inventory_path.write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
+    command = ["dotnet", "build", BUILDER_PROJECT, "-c", "Release", "--no-restore"]
+    status = agent_ci.execute(state_path, command, log=root / "build.log")
+    if status: raise subprocess.CalledProcessError(status, command)
+    common = ["dotnet", "test", BUILDER_PROJECT, "-c", "Release", "--no-build", "--no-restore"]
+    platform = "windows" if sys.platform == "win32" else "macos" if sys.platform == "darwin" else "linux"
+    for stage, selection in (("focused", "|".join("FullyQualifiedName~" + name for name in BUILDER_FOCUS)), ("full", "")):
+        output = root / stage
+        output.mkdir()
+        report_args = dict(results=output, inventory=inventory_path, output=root / (stage + ".json"))
+        try:
+            if not run_project_with_filesystems(state_path, source, BUILDER_PROJECT, common, selection, output, inventory, "source"):
+                raise ValueError("Builder diagnostics selected zero tests")
+        except BaseException as error:
+            try:
+                report("source", platform, **report_args)
+            except Exception as reporting:
+                agent_ci.note_error(error, "Report verification also failed: " + agent_ci.describe_error(reporting))
+            raise
+        else:
+            report("source", platform, **report_args)
+
+
+def report(mode, platform, *, results="artifacts/test-results", inventory="artifacts/reports/test-inventory.json", output=None):
+    import agent_ci
+    command = [sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", results,
+               "--inventory", inventory, "--mode", mode, "--platform", platform,
                 "--verify"]
     if mode == "package": command += ["--lane", "PackageCompatibility", "--exclude-category", "Artifact"]
-    with (ROOT / "artifacts/reports/results.json").open("w", encoding="utf-8") as stream:
-        subprocess.run([str(arg) for arg in command], cwd=ROOT, stdout=stream, check=True)
+    path = Path(output) if output is not None else ROOT / "artifacts/reports/results.json"
+    with path.open("w", encoding="utf-8") as stream:
+        result = subprocess.run([str(arg) for arg in command], cwd=ROOT, stdout=stream)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        summary = value["summary"]
+        lines = [f"{mode} / {platform}: {summary['passed']} passed, {summary['failed']} failed, {summary['skipped']} skipped. Evidence: {path}"]
+        for row in value["failures"][:20]:
+            message = (row.get("message") or "Test failed").splitlines()[0]
+            lines.append(f"  FAIL {row['test']}: {message} ({row['trx']})")
+        if len(value["failures"]) > 20: lines.append(f"  See results.json for {len(value['failures']) - 20} further failures.")
+        lines.extend("  EVIDENCE " + message for message in value["evidenceViolations"][:20])
+        if len(value["evidenceViolations"]) > 20:
+            lines.append(f"  See results.json for {len(value['evidenceViolations']) - 20} further evidence violations.")
+        agent_ci.console_write("\n".join(lines) + "\n", sys.stderr)
+    except Exception as error:
+        if result.returncode:
+            failure = subprocess.CalledProcessError(result.returncode, result.args)
+            agent_ci.note_error(failure, "Report summary could not be rendered: " + agent_ci.describe_error(error))
+            raise failure from error
+        raise
+    result.check_returncode()
 
 
-def retain_verifier():
+def prepare_verifier(core, tools):
+    """Build the archive-only verifier once, without any package implementation."""
     import agent_ci
-    project = ROOT / "tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj"
-    output = agent_ci.output_directory(project, os.environ)
+    output = ROOT / "artifacts/verifier-results"
+    output.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="sunder-archive-verifier-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+        args = Namespace(source=ROOT, core=core, work=Path(temporary) / "prepared", mode="package",
+                         packages="[]", project=[ARCHIVE_PROJECT], tools=tools, inputs=None, candidate=None, catalog=None)
+        agent_ci.prepare(args)
+        state = args.work / "ci-state.json"
+        command = ["dotnet", "build", ARCHIVE_PROJECT, "-c", "Release", "--no-restore"]
+        status = agent_ci.execute(state, command, log=output / "build.log")
+        if status: raise subprocess.CalledProcessError(status, command)
+        common = ["dotnet", "test", ARCHIVE_PROJECT, "-c", "Release", "--no-build", "--no-restore"]
+        if not run_project(state, ROOT, ARCHIVE_PROJECT, common, "Category!=Artifact", output):
+            raise ValueError("Archive verifier selected no dependency-independent assertions")
+        run(sys.executable, "-B", ROOT / "scripts/test/generate-test-duration-report.py", output, "--expected-skips", "0")
+        _, env = agent_ci.context(state)
+        retain_verifier(env)
+
+
+def retain_verifier(env=None):
+    import agent_ci
+    project = ROOT / ARCHIVE_PROJECT
+    output = agent_ci.output_directory(project, os.environ if env is None else env)
     destination = ROOT / "artifacts/package-test-binaries"
     if destination.exists(): shutil.rmtree(destination)
     shutil.copytree(output, destination)
 
 
-def family(core, directory):
+def family(core, directory, results_directory=None):
+    import release_inputs
     core, directory = Path(core).resolve(strict=True), Path(directory).resolve(strict=True)
-    env = {**os.environ, "SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE": "1", "SUNDER_REQUIRE_AGENT_UI_SNAPSHOT": "1",
-           "SUNDER_AGENT_PACKAGE_ARCHIVE_DIR": str(directory), "SUNDER_AGENT_UI_SNAPSHOT_DIR": str(ROOT / "artifacts/agent-ui-snapshot")}
+    output = Path(results_directory).resolve() if results_directory is not None else ROOT / "artifacts/family-results"
+    inputs = output / "inputs"
+    inputs.mkdir(parents=True, exist_ok=False)
+    env = {key: value for key, value in os.environ.items() if key not in {
+        "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
+        "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY"}}
+    env.update({"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE": "1", "SUNDER_REQUIRE_AGENT_UI_SNAPSHOT": "1"},
+               SUNDER_AGENT_CURRENT_BASELINE_ROOT=str(ROOT), SUNDER_AGENT_PACKAGE_ARCHIVE_DIR=str(directory),
+               SUNDER_AGENT_UI_SNAPSHOT_DIR=str(output / "app-snapshot"))
     cli = core / "languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj"
-    target = subprocess.check_output(["dotnet", "msbuild", str(cli), "-p:Configuration=Release", "-getProperty:TargetPath"], cwd=core, text=True).strip()
+    target = subprocess.check_output(["dotnet", "msbuild", str(cli), "-p:Configuration=Release", "-getProperty:TargetPath"], cwd=core, text=True, env=env).strip()
     archives = list(directory.glob("*.sunderpkg"))
     if not archives: raise ValueError("No family archives")
     for archive in archives: run("dotnet", target, "dev", "package", "validate", archive, env=env)
-    results = ROOT / "artifacts/family-results/core"
+    by_id = {release_inputs.archive_metadata(archive)[0]["id"]: archive for archive in archives}
+    if len(by_id) != len(archives): raise ValueError("Duplicate family package identities")
+    catalog = inputs / "sunder-platform-contracts.v1.json"
+    baseline = json.loads((core / "eng/platform-contracts/sunder-contracts.owned.json").read_text())
+    releases = {row["current"]["catalogRelease"]["releaseVersion"] for row in baseline["contracts"].values()}
+    if len(releases) != 1: raise ValueError("Ambiguous selected Core catalog release")
+    tool_project = core / "languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj"
+    tool = subprocess.check_output(["dotnet", "msbuild", str(tool_project), "-p:Configuration=Release", "-getProperty:TargetPath"], cwd=core, text=True, env=env).strip()
+    run("dotnet", tool, "platform-contracts", "check", "--core-root", core, env=env)
+    run("dotnet", tool, "platform-contracts", "export", "--core-root", core, "--catalog-release", releases.pop(), "--output", catalog, env=env)
+    env.update(SUNDER_AGENT_PLATFORM_CATALOG=str(catalog),
+               SUNDER_REQUIRE_MAKER_STANDALONE="1", SUNDER_MAKER_PACKAGE_ARCHIVE=str(by_id["younics.sunder.package.maker"]),
+               SUNDER_MAKER_IMPORT_CANDIDATE=str(by_id["younics.ai.agent"]), SUNDER_MAKER_PLATFORM_CATALOG=str(catalog))
+    results = output / "core"
     for project, required in POLICY["coreFamily"].items():
         path = core / f"languages/csharp/dotnet/tests/{project}/{project}.csproj"
         run("dotnet", "test", path, "-c", "Release", "--no-build", "--no-restore", "--filter", "|".join("FullyQualifiedName=" + name for name in required),
             "--logger", f"trx;LogFileName={project}.trx", "--results-directory", results, env=env)
     required = [arg for names in POLICY["coreFamily"].values() for name in names for arg in ("--require-test", name)]
-    run("node", core / "scripts/test-oracles/summarize-core-test-results.mjs", results, "--allow-partial", *required)
+    run("node", core / "scripts/test-oracles/summarize-core-test-results.mjs", results, "--allow-partial", *required, env=env)

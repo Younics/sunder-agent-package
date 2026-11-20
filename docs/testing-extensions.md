@@ -41,6 +41,16 @@ Source, artifact and required-input selections contribute to the same completene
 check. Each run retains its command, filter, elapsed time, output, VSTest diagnostics,
 TRX failure message/stack and hang diagnostics under `artifacts/test-results`.
 
+Selected CI source/package lanes require filesystem prerequisites before ordinary
+test discovery (`SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES=1`). Missing symlink,
+hard-link, case-sensitive-directory or applicable platform-fixture capabilities fail;
+they cannot be approved as successful capability skips. Wrong-OS exclusions remain
+explicit. This does not implicitly select external archive or Docker tests: their
+owning required/final lanes still use `SUNDER_REQUIRE_TEST_PREREQUISITES=1` and exact
+inputs. Both settings are retained with adapter discovery. Native runners must
+provide the declared filesystem capabilities, including appropriate macOS volume
+semantics; the six-RID matrix alone is not qualification evidence.
+
 | Changed behavior | Owning selection |
 | --- | --- |
 | Agent persistence, run control, permissions, workspaces, history | Relevant class in `Sunder.Package.Agent.Tests` |
@@ -162,6 +172,24 @@ Keep full source-SDK behavior, NuGet compatibility, actual Host installation,
 native six-RID/security and release gates. The local artifact case is not a substitute
 for those scopes. See [native inputs](native-release-inputs.md),
 [cold inputs](cold-release-inputs.md) and [release requirements](RELEASES.md).
+
+## Real Docker Files acceptance
+
+Opt in with `SUNDER_DOCKER_INTEGRATION=1` and a reachable local Linux-container
+daemon. Provision an approved image separately before running these tests; they do
+not pull images. `SUNDER_DOCKER_INTEGRATION_IMAGE` selects an already-local tagged
+or digest-pinned image with `/bin/sh`, `cat`, `mkdir`, `printf`, `rm`, and `rmdir`.
+The existing default is `node:22-alpine`; a suitable pre-provisioned Alpine image
+also supports the Files acceptance case. Windows uses Docker Desktop's local pipe;
+no elevation, host policy change, remote endpoint or new public target flag is needed.
+
+After the normal dependencies and test project have built, select
+`DockerFilesAcceptanceTests.RealDaemon_FilesReadWriteEditPatchAndDeleteUseTheVerifiedHostObject`
+in `Sunder.Package.Agent.Tests`. It exercises generated Files permission/claim
+dispatch, real mount challenges, in-place object identity, container-visible content
+and deletion. Its cleanup removes only the exact ID returned by its successful
+container create. This consumer check does not replace the native or final-archive
+release gates.
 
 ## Non-Chat presentation checks
 

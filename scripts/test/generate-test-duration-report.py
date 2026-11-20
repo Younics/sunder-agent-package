@@ -28,6 +28,8 @@ SKIP_ATTRIBUTE_NAMES = {
     "UnixFact",
     "UnixTheory",
     "UnprivilegedUnixTheory",
+    "WindowsFact",
+    "WindowsTheory",
 }
 
 
@@ -156,8 +158,21 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
                 value = counters.get(name)
                 if (value is None and name in {"total", "executed", "passed", "failed"}) or (value is not None and value != str(count)):
                     violations.append(f"TRX counter {name}={value}, observed {count}")
-        run_errors = any(info.get("outcome") == "Error" for info in summary.findall(".//{*}RunInfo"))
-        if (summary.get("outcome") == "Failed" or run_errors) and not expected["failed"]:
+        # xUnit's adapter also emits one Error notification for each failed case.
+        # Accept only exact, multiplicity-bound failed-result notifications;
+        # an unrelated adapter/host error must still invalidate a complete TRX.
+        failed_notifications = Counter(row["test"] for row in results if row["outcome"] == "failed")
+        run_errors = False
+        for info in summary.findall(".//{*}RunInfo"):
+            if info.get("outcome") != "Error": continue
+            notification = re.fullmatch(r"\[xUnit\.net \d+:\d{2}:\d{2}\.\d+\]\s+(.+) \[FAIL\]", info.findtext("./{*}Text", ""))
+            if notification and failed_notifications[notification[1]]:
+                failed_notifications[notification[1]] -= 1
+            else:
+                run_errors = True
+        if run_errors:
+            violations.append("TRX contains test-platform errors")
+        if summary.get("outcome") == "Failed" and not expected["failed"]:
             violations.append("TRX run failed or aborted despite its completed cases having no failures")
 
     times = document.find("./{*}Times")
@@ -207,6 +222,16 @@ def read_records(root: Path, suffix: str, violations: list[str]):
             violations.append(f"{path.relative_to(root)}: invalid evidence: {error}")
 
 
+def canonical_test_display_name(name: str) -> str:
+    # xUnit discovery can emit a Unicode scalar while its TRX display formatter
+    # emits the equivalent UTF-16 surrogate escapes. Do not decode literal escaped
+    # backslashes, lone surrogates, other string escapes or different test data.
+    return re.sub(
+        r"(?<!\\)((?:\\\\)*)\\u(d[89ab][0-9a-f]{2})\\u(d[cdef][0-9a-f]{2})",
+        lambda match: match[1] + chr(0x10000 + ((int(match[2], 16) - 0xd800) << 10) + int(match[3], 16) - 0xdc00),
+        name, flags=re.IGNORECASE)
+
+
 def discovery_violations(root: Path, results: list[dict[str, object]], discoveries) -> list[str]:
     """Each selection is checked against its own adapter discovery on this runner.
 
@@ -220,16 +245,17 @@ def discovery_violations(root: Path, results: list[dict[str, object]], discoveri
         expected = discovery["tests"]
         observed = [row for row in results if row["trx"] == report and row["project"] == project]
         covered.add((project, report))
-        names = Counter(row["test"] for row in observed)
-        selected = Counter(expected)
+        names = Counter(canonical_test_display_name(row["test"]) for row in observed)
+        selected = Counter(canonical_test_display_name(name) for name in expected)
         methods = {row["fullyQualifiedName"] for row in observed}
         for name, count in selected.items():
             if names[name] < count and name not in methods:
                 violations.append(f"{report}: discovery omitted result '{name}'")
         for row in observed:
-            if row["test"] not in expected and row["fullyQualifiedName"] not in expected:
+            name = canonical_test_display_name(row["test"])
+            if name not in selected and row["fullyQualifiedName"] not in expected:
                 violations.append(f"{report}: result was not discovered: '{row['test']}'")
-            elif names[row["test"]] > selected[row["test"]] and row["fullyQualifiedName"] not in expected:
+            elif names[name] > selected[name] and row["fullyQualifiedName"] not in expected:
                 violations.append(f"{report}: result repeated beyond discovery: '{row['test']}'")
         if expected and not observed:
             violations.append(f"{report}: selected project produced no results")
@@ -430,7 +456,7 @@ def skip_policy(
                     strings = attribute_strings(attribute)
                     reason = strings[-1] if strings else ""
                     platform_match = re.search(r"TestPlatform\.([A-Za-z_]\w*)", attribute)
-                    capability_match = re.search(r"TestFileSystemCapability\.([A-Za-z_]\w*)", attribute)
+                    capabilities = re.findall(r"TestFileSystemCapability\.([A-Za-z_]\w*)", attribute)
                     if name == "DockerIntegrationFact":
                         reason = "Set SUNDER_DOCKER_INTEGRATION=1 and provide a reachable Docker daemon."
                     elif name == "PackageArtifactsFact":
@@ -444,7 +470,8 @@ def skip_policy(
                             "fullyQualifiedName": f"{class_name}.{method_name}",
                             "attribute": name,
                             "platform": platform_match.group(1) if platform_match else None,
-                            "capability": capability_match.group(1) if capability_match else None,
+                            "capability": capabilities[0] if capabilities else None,
+                            "additionalCapabilities": capabilities[1:],
                             "reason": reason,
                         }
                     )
@@ -488,6 +515,33 @@ def filesystem_capability_available(capability: str) -> bool:
                 target = root / "target.txt"
                 target.write_text("target", encoding="utf-8")
                 os.link(target, root / "link.txt")
+            elif capability == "CaseSensitiveDirectories":
+                if sys.platform == "win32":
+                    import ctypes
+                    from ctypes import wintypes
+                    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+                    create = kernel.CreateFileW
+                    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                                       wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+                    create.restype = wintypes.HANDLE
+                    set_information = kernel.SetFileInformationByHandle
+                    set_information.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+                    set_information.restype = wintypes.BOOL
+                    close = kernel.CloseHandle
+                    close.argtypes = [wintypes.HANDLE]
+                    close.restype = wintypes.BOOL
+                    handle = create(str(root), 0x100, 7, None, 3, 0x02000000, None)
+                    if handle == ctypes.c_void_p(-1).value:
+                        raise ctypes.WinError(ctypes.get_last_error())
+                    try:
+                        flags = wintypes.DWORD(1)
+                        if not set_information(handle, 23, ctypes.byref(flags), ctypes.sizeof(flags)):
+                            raise ctypes.WinError(ctypes.get_last_error())
+                    finally:
+                        close(handle)
+                target = root / "case-sensitive-probe"
+                target.write_text("probe", encoding="utf-8")
+                return not (root / "CASE-SENSITIVE-PROBE").exists()
             else:
                 return False
         return True
@@ -500,28 +554,28 @@ def expected_skip(
 ) -> dict[str, object] | None:
     platform = platform or current_platform()
     environment = os.environ if environment is None else environment
+    filesystem_required = (environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") == "1"
+                           or environment.get("SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES") == "1")
     attribute = str(policy["attribute"])
     target = policy["platform"]
     reason = str(policy["reason"])
     should_skip = False
     if attribute in {"UnixFact", "UnixTheory"}:
         should_skip = platform == "windows"
+    elif attribute in {"WindowsFact", "WindowsTheory"}:
+        should_skip = platform != "windows"
     elif attribute == "UnprivilegedUnixTheory":
         if platform == "windows":
             should_skip = True
             reason = "This permission-denied fixture requires Unix."
-        elif os.geteuid() == 0 and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1":
+        elif os.geteuid() == 0 and not filesystem_required:
             should_skip = True
             reason = "A real permission-denied fixture requires a non-root Unix user."
     elif attribute == "DockerIntegrationFact":
-        if platform == "windows":
-            should_skip = True
-            reason = "The Docker bind-mount integration test requires a Unix host."
-        else:
-            should_skip = (
-                environment.get("SUNDER_DOCKER_INTEGRATION") != "1"
-                and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
-            )
+        should_skip = (
+            environment.get("SUNDER_DOCKER_INTEGRATION") != "1"
+            and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
+        )
     elif attribute == "PackageArtifactsFact":
         should_skip = (
             not environment.get("SUNDER_AGENT_PACKAGE_ARCHIVE_DIR", "").strip()
@@ -542,13 +596,13 @@ def expected_skip(
             "NonRootUnix": platform == "windows",
             "UnixWithDistinctDevice": platform == "windows",
         }.get(str(target), False)
-        if target == "NonRootUnix" and platform != "windows" and getpass.getuser() == "root":
+        if target == "NonRootUnix" and platform != "windows" and getpass.getuser() == "root" and not filesystem_required:
             should_skip = True
             reason = "POSIX permission-boundary behavior cannot be observed while running as root."
-        if target == "MacCaseInsensitive" and platform == "macos" and not temp_volume_is_case_insensitive():
+        if target == "MacCaseInsensitive" and platform == "macos" and not temp_volume_is_case_insensitive() and not filesystem_required:
             should_skip = True
             reason = "The temporary volume is case-sensitive."
-        if target == "UnixWithDistinctDevice" and platform != "windows":
+        if target == "UnixWithDistinctDevice" and platform != "windows" and not filesystem_required:
             try:
                 distinct_device = os.stat("/").st_dev != os.stat("/dev").st_dev
             except OSError:
@@ -556,15 +610,12 @@ def expected_skip(
             if not distinct_device:
                 should_skip = True
                 reason = "/dev does not expose a distinct device on this host."
-    capability = policy["capability"]
-    if (
-        not should_skip
-        and capability is not None
-        and not filesystem_capability_available(str(capability))
-        and environment.get("SUNDER_REQUIRE_TEST_PREREQUISITES") != "1"
-    ):
-        should_skip = True
-        reason = f"{reason} Required filesystem capability '{capability}' is unavailable."
+    if not should_skip and not filesystem_required:
+        for capability in [policy["capability"], *policy.get("additionalCapabilities", [])]:
+            if capability is not None and not filesystem_capability_available(str(capability)):
+                should_skip = True
+                reason = f"{reason} Required filesystem capability '{capability}' is unavailable."
+                break
     if not should_skip:
         return None
     return {
@@ -612,6 +663,8 @@ def main() -> int:
         commands.append(record)
         if record.get("exitCode") != 0:
             evidence_violations.append(f"{path.relative_to(root)}: command did not succeed (exitCode={record.get('exitCode')})")
+        if record.get("errors"):
+            evidence_violations.append(f"{path.relative_to(root)}: command diagnostics failed: {record['errors']}")
     discoveries = []
     if arguments.verify:
         for path, record in read_records(root, "*.discovery.json", evidence_violations):

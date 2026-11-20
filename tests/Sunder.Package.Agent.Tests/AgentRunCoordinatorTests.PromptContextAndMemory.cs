@@ -343,6 +343,7 @@ public sealed partial class AgentRunCoordinatorTests
 
         Assert.True(checkpoint.Status == AgentRunStatus.Completed, checkpoint.Summary);
         Assert.All(await packageContext.Storage.State.ListKeysAsync(), TestPackageStorageGuards.Key);
+        Assert.True(mutation.RequiresPromptContextRefresh);
         Assert.False(mutation.IsError, mutation.Summary);
         Assert.Equal("acknowledged", await File.ReadAllTextAsync(Path.Combine(root, "receipt.txt")));
     }

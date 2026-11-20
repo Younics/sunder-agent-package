@@ -2,8 +2,10 @@ extern alias LocalWorker;
 
 using System.Runtime.Versioning;
 using LocalWorker::Sunder.Package.Agent.Execution.Local;
+using Sunder.Package.Agent.TestSupport;
 using Xunit;
 using AgentFileDeleteRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileDeleteRequest;
+using AgentFileMutationResult = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileMutationResult;
 using AgentFileReadRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileReadRequest;
 using AgentFileSearchKind = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchKind;
 using AgentFileSearchRequest = LocalWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models.AgentFileSearchRequest;
@@ -122,7 +124,7 @@ public sealed class StrictMutationReauditTests : IDisposable
     }
 
     [Fact]
-    public async Task MissingFinalOutsideApproval_RejectsReplacedParentIdentity()
+    public async Task MissingFinalOutsideApproval_CannotBeRedirectedThroughReparenting()
     {
         var workspace = Path.Combine(_root, "workspace");
         var outside = Path.Combine(_root, "outside");
@@ -133,8 +135,17 @@ public sealed class StrictMutationReauditTests : IDisposable
         var approvedPath = Path.Combine(approvedParent, "target.txt");
         using var approved = LocalResourceAuthorityTestContext.Approve(config, approvedPath, "files.mutate");
 
-        Directory.Move(approvedParent, Path.Combine(outside, "original-parent"));
-        Directory.CreateDirectory(approvedParent);
+        var originalParent = Path.Combine(outside, "original-parent");
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Throws<IOException>(() => Directory.Move(approvedParent, originalParent));
+            Assert.False(Directory.Exists(originalParent));
+        }
+        else
+        {
+            Directory.Move(approvedParent, originalParent);
+            Directory.CreateDirectory(approvedParent);
+        }
         var rejected = await LocalFileSystemExecutor.WriteFileAsync(
             config,
             new AgentFileWriteRequest { Path = approvedPath, Content = "must-not-write", Overwrite = false },
@@ -144,9 +155,17 @@ public sealed class StrictMutationReauditTests : IDisposable
             authorizationContext: approved.Context,
             resourceReferences: approved.ResourceReferences);
 
-        Assert.True(rejected.IsError);
-        Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
-        Assert.False(File.Exists(approvedPath));
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.False(rejected.IsError, rejected.Summary);
+            Assert.Equal("must-not-write", await File.ReadAllTextAsync(approvedPath));
+        }
+        else
+        {
+            Assert.Equal(LocalResourceReference.ReapprovalRequiredErrorCode, rejected.ErrorCode);
+            Assert.False(File.Exists(approvedPath));
+        }
+        Assert.False(File.Exists(Path.Combine(originalParent, "target.txt")));
     }
 
     [Fact]
@@ -224,7 +243,7 @@ public sealed class StrictMutationReauditTests : IDisposable
     }
 
     [Fact]
-    public async Task QuarantineCapacity_IsReservedBeforeTemporaryCreation()
+    public async Task ContentWrites_DoNotRequireDeletionQuarantineCapacity()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
@@ -238,21 +257,25 @@ public sealed class StrictMutationReauditTests : IDisposable
         await File.WriteAllTextAsync(target, "old");
         var config = new LocalExecutionRuntimeConfig([workspace], workspace);
 
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
+        using var before = HostSecurePathEngine.Capture([workspace], target);
+        var result = await WriteContentAsync(
             config,
             new AgentFileWriteRequest { Path = "target.txt", Content = "new", Overwrite = true },
-            false,
             CancellationToken.None);
-
-        Assert.True(result.IsError);
-        Assert.Equal("old", await File.ReadAllTextAsync(target));
-        Assert.DoesNotContain(
-            Directory.EnumerateFileSystemEntries(workspace),
-            path => HostSecurePathEngine.IsTemporaryName(Path.GetFileName(path)));
+        var created = await WriteContentAsync(config,
+            new AgentFileWriteRequest { Path = "created.txt", Content = "created", Overwrite = false }, CancellationToken.None);
+        Assert.False(result.IsError, result.Summary);
+        Assert.False(created.IsError, created.Summary);
+        Assert.Equal("new", await File.ReadAllTextAsync(target));
+        Assert.Equal("created", await File.ReadAllTextAsync(Path.Combine(workspace, "created.txt")));
+        using var after = HostSecurePathEngine.Capture([workspace], target);
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
+        Assert.Equal(HostSecurePathEngine.MaxQuarantineEntriesPerDirectory,
+            Directory.EnumerateFileSystemEntries(workspace).Count(path => HostSecurePathEngine.IsReservedName(Path.GetFileName(path))));
     }
 
     [Fact]
-    public void QuarantineAccounting_IsCancellableAndBounded()
+    public void QuarantineAccounting_CancelsAndRejectsCapacityBeforeMutation()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
@@ -262,9 +285,14 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         Assert.ThrowsAny<OperationCanceledException>(() =>
             root.Platform.ReserveMutationSlots(root.Handle, 1, cancellation.Token));
+        Assert.False(HostMutationCoordinator.IsEntered(root.Handle.Identity));
+        for (var index = 0; index < HostSecurePathEngine.MaxQuarantineEntriesPerDirectory; index++)
+            File.WriteAllText(Path.Combine(workspace, $".sunder-secure-quarantine-{index:x8}"), string.Empty);
+        Assert.Throws<LocalSecurePathException>(() => root.Platform.ReserveMutationSlots(root.Handle, 1, CancellationToken.None));
+        Assert.False(HostMutationCoordinator.IsEntered(root.Handle.Identity));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Bounded quarantine accounting requires Unix directory handles.")]
+    [Fact]
     public void QuarantineAccounting_RejectsDirectoryBeyondScanBound()
     {
         var workspace = Path.Combine(_root, "workspace");
@@ -284,13 +312,12 @@ public sealed class StrictMutationReauditTests : IDisposable
             StringComparison.Ordinal);
     }
 
-    [PlatformFact(TestPlatform.Unix, "Atomic quarantine reservation requires Unix directory handles.")]
-    public async Task QuarantineCapacity_IsAtomicAcrossConcurrentMutations()
+    [Fact]
+    public async Task QuarantineCapacity_IsAtomicAcrossConcurrentDeletions()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
-        const int requiredSlots = 4;
-        for (var index = 0; index < HostSecurePathEngine.MaxQuarantineEntriesPerDirectory - requiredSlots; index++)
+        for (var index = 0; index < HostSecurePathEngine.MaxQuarantineEntriesPerDirectory - 1; index++)
         {
             File.WriteAllText(
                 Path.Combine(workspace, $".sunder-secure-quarantine-{index:x8}"),
@@ -298,27 +325,66 @@ public sealed class StrictMutationReauditTests : IDisposable
         }
         await File.WriteAllTextAsync(Path.Combine(workspace, "first.txt"), "first");
         await File.WriteAllTextAsync(Path.Combine(workspace, "second.txt"), "second");
-        var config = new LocalExecutionRuntimeConfig([workspace], workspace);
         using var root = HostSecurePathEngine.OpenRoot(workspace);
-
-        var results = await Task.WhenAll(
-            LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest { Path = "first.txt", Content = "changed-first", Overwrite = true },
-                false,
-                CancellationToken.None).AsTask(),
-            LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest { Path = "second.txt", Content = "changed-second", Overwrite = true },
-                false,
-                CancellationToken.None).AsTask());
-
-        Assert.Single(results, result => !result.IsError);
+        var results = await Task.WhenAll(Task.Run(() => Delete("first.txt")), Task.Run(() => Delete("second.txt")));
+        Assert.Single(results, success => success);
+        var remaining = Assert.Single(Directory.EnumerateFiles(workspace),
+            path => !HostSecurePathEngine.IsReservedName(Path.GetFileName(path)));
+        Assert.Contains(await File.ReadAllTextAsync(remaining), new[] { "first", "second" });
         Assert.True(
             Directory.EnumerateFileSystemEntries(workspace)
                 .Count(path => HostSecurePathEngine.IsReservedName(Path.GetFileName(path)))
             <= HostSecurePathEngine.MaxQuarantineEntriesPerDirectory);
         Assert.False(HostMutationCoordinator.IsEntered(root.Handle.Identity));
+
+        bool Delete(string name)
+        {
+            try
+            {
+                using var reservation = root.Platform.ReserveMutationSlots(root.Handle, 1, CancellationToken.None);
+                using var expected = root.Platform.OpenChild(root.Handle, name, root.Volume, false);
+                root.Platform.DeleteEntry(root.Handle, name, false, expected, null, reservation,
+                    static () => { }, static () => { }, CancellationToken.None);
+                return true;
+            }
+            catch (LocalSecurePathException exception)
+            {
+                Assert.Contains("quarantine exceeds", exception.Message, StringComparison.Ordinal);
+                return false;
+            }
+        }
+    }
+
+    [Fact]
+    public void DeleteRecoveryConflict_LeavesReplacementAtItsNameAndRetainsTheOriginal()
+    {
+        Directory.CreateDirectory(_root);
+        var path = Path.Combine(_root, "target.txt");
+        File.WriteAllText(path, "original");
+        using var root = HostSecurePathEngine.OpenRoot(_root);
+        using var expected = root.Platform.OpenChild(root.Handle, "target.txt", root.Volume, false);
+        using var reservation = root.Platform.ReserveMutationSlots(root.Handle, 2, CancellationToken.None);
+        LocalSecureApprovalLease? replacement = null;
+        try
+        {
+            Assert.Throws<LocalSecureMutationRecoveryException>(() => root.Platform.DeleteEntry(root.Handle, "target.txt", false,
+                expected, null, reservation, static () => { }, () =>
+                {
+                    File.WriteAllText(path, "unrelated replacement");
+                    replacement = HostSecurePathEngine.Capture([_root], path);
+                    throw new IOException("Injected deletion failure after a replacement arrived.");
+                }, CancellationToken.None));
+            Assert.NotNull(replacement);
+            using var current = HostSecurePathEngine.Capture([_root], path);
+            Assert.Equal(replacement.Binding.TargetIdentity, current.Binding.TargetIdentity);
+            Assert.Equal("unrelated replacement", File.ReadAllText(path));
+            var retainedPath = Assert.Single(Directory.EnumerateFiles(_root), entry => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(entry)));
+            using var retained = HostSecurePathEngine.OpenRoot(_root);
+            using var original = retained.Platform.OpenChild(retained.Handle, Path.GetFileName(retainedPath), retained.Volume, false);
+            Assert.Equal(expected.Identity, original.Identity);
+            Assert.Equal("original", File.ReadAllText(retainedPath));
+        }
+        finally { replacement?.Dispose(); }
     }
 
     [Fact]
@@ -365,10 +431,10 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Contains("aggregate", result.ErrorMessage, StringComparison.OrdinalIgnoreCase);
     }
 
-    [PlatformFact(TestPlatform.Unix, "Metadata transfer requires Unix file modes.")]
+    [PlatformFact(TestPlatform.Unix, "Content editing retains the current file mode without replacing or copying the inode.")]
     [SupportedOSPlatform("linux")]
     [SupportedOSPlatform("macos")]
-    public async Task Overwrite_CopiesMetadataFromFreshlyQuarantinedHandle()
+    public async Task ContentUpdate_RetainsTheCurrentModeOnTheSameInode()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
@@ -377,6 +443,7 @@ public sealed class StrictMutationReauditTests : IDisposable
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var expectedMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
         var hook = new UnixModeHook(path, expectedMode);
+        using var before = HostSecurePathEngine.Capture([workspace], path);
 
         var result = await LocalFileSystemExecutor.WriteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
@@ -387,39 +454,27 @@ public sealed class StrictMutationReauditTests : IDisposable
 
         Assert.False(result.IsError, result.Summary);
         Assert.Equal(expectedMode, File.GetUnixFileMode(path) & (UnixFileMode)0x0fff);
+        using var after = HostSecurePathEngine.Capture([workspace], path);
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Quarantine rollback fault injection requires Unix file descriptors.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task QuarantineRollbackFailure_ReturnsStableRecoveryRequiredError(bool delete)
+    [PlatformFact(TestPlatform.Unix, "This rollback fixture adds a POSIX hard link to the retained quarantine object.")]
+    public async Task DeleteQuarantineRollbackFailure_ReturnsStableRecoveryRequiredError()
     {
         var workspace = Path.Combine(_root, "rollback-failure-workspace");
         Directory.CreateDirectory(workspace);
-        var path = Path.Combine(workspace, delete ? "delete.txt" : "write.txt");
-        var alias = Path.Combine(workspace, delete ? "delete-alias.txt" : "write-alias.txt");
+        var path = Path.Combine(workspace, "delete.txt");
+        var alias = Path.Combine(workspace, "delete-alias.txt");
         await File.WriteAllTextAsync(path, "recoverable-original");
         var hook = new RollbackHardLinkHook(
-            delete
-                ? LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete
-                : LocalSecureFileSystemCheckpoint.AfterQuarantineBeforeMetadata,
+            LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete,
             workspace,
             alias);
         var config = new LocalExecutionRuntimeConfig([workspace], workspace);
 
-        var result = delete
-            ? await LocalFileSystemExecutor.DeleteFileAsync(
-                config,
-                new AgentFileDeleteRequest { Path = Path.GetFileName(path), Recursive = false },
-                false,
-                CancellationToken.None,
-                hooks: hook)
-            : await LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest { Path = Path.GetFileName(path), Content = "new-content", Overwrite = true },
-                false,
-                CancellationToken.None,
-                hooks: hook);
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(config,
+            new AgentFileDeleteRequest { Path = Path.GetFileName(path), Recursive = false },
+            false, CancellationToken.None, hooks: hook);
 
         Assert.True(hook.Invoked);
         Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
@@ -428,10 +483,10 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.Equal("recoverable-original", await File.ReadAllTextAsync(alias));
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Post-quarantine rollback fault injection requires Unix file descriptors.")]
-    [InlineData((int)LocalSecureFileSystemCheckpoint.AfterQuarantineBeforeMetadata)]
-    [InlineData((int)LocalSecureFileSystemCheckpoint.BeforePostQuarantineSync)]
-    public async Task PostQuarantineMetadataOrSyncFailure_RestoresExactTarget(
+    [Theory]
+    [InlineData((int)LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen)]
+    [InlineData((int)LocalSecureFileSystemCheckpoint.BeforeContentWrite)]
+    public async Task PrecommitFailure_LeavesExactTargetUnchanged(
         int checkpointValue)
     {
         var workspace = Path.Combine(_root, "workspace");
@@ -441,7 +496,8 @@ public sealed class StrictMutationReauditTests : IDisposable
         var checkpoint = (LocalSecureFileSystemCheckpoint)checkpointValue;
         var hook = new ThrowingHook(checkpoint);
 
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
+        using var before = HostSecurePathEngine.Capture([workspace], path);
+        var result = await WriteContentAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
             new AgentFileWriteRequest
             {
@@ -450,13 +506,15 @@ public sealed class StrictMutationReauditTests : IDisposable
                 Overwrite = true,
                 ExpectedContentHash = FileOperation.ComputeContentHash("old"),
             },
-            false,
             CancellationToken.None,
             hooks: hook);
 
         Assert.True(hook.Invoked);
         Assert.True(result.IsError);
+        Assert.NotEqual(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
         Assert.Equal("old", await File.ReadAllTextAsync(path));
+        using var after = HostSecurePathEngine.Capture([workspace], path);
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
         Assert.DoesNotContain(
             Directory.EnumerateFiles(workspace)
                 .Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
@@ -464,35 +522,32 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "old");
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Post-publication rollback fault injection requires Unix file descriptors.")]
-    [InlineData((int)LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)]
-    [InlineData((int)LocalSecureFileSystemCheckpoint.AfterPublishedParentSync)]
-    [SupportedOSPlatform("linux")]
-    [SupportedOSPlatform("macos")]
-    public async Task PostPublicationSyncFailure_DurablyRestoresOriginalAndAllowsCleanRetry(
+    [Theory]
+    [InlineData((int)LocalSecureFileSystemCheckpoint.AfterContentLength)]
+    [InlineData((int)LocalSecureFileSystemCheckpoint.AfterContentFileSync)]
+    public async Task CompletionFailure_ReportsVisibleModifiedStateAndRequiresAnExplicitRetry(
         int checkpointValue)
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "published-rollback.txt");
         await File.WriteAllTextAsync(path, "old-bytes");
-        var oldMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
-        File.SetUnixFileMode(path, oldMode);
+        using var before = HostSecurePathEngine.Capture([workspace], path);
         var config = new LocalExecutionRuntimeConfig([workspace], workspace);
         var hook = new ThrowingHook((LocalSecureFileSystemCheckpoint)checkpointValue);
 
-        var failed = await LocalFileSystemExecutor.WriteFileAsync(
+        var failed = await WriteContentAsync(
             config,
             new AgentFileWriteRequest { Path = "published-rollback.txt", Content = "NEW-SECRET", Overwrite = true },
-            false,
             CancellationToken.None,
             hooks: hook);
 
         Assert.True(hook.Invoked);
         Assert.True(failed.IsError);
-        Assert.NotEqual(FileOperation.StrictMutationRecoveryRequiredErrorCode, failed.ErrorCode);
-        Assert.Equal("old-bytes", await File.ReadAllTextAsync(path));
-        Assert.Equal(oldMode, File.GetUnixFileMode(path) & (UnixFileMode)0x0fff);
+        Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, failed.ErrorCode);
+        Assert.Equal("NEW-SECRET", await File.ReadAllTextAsync(path));
+        using var after = HostSecurePathEngine.Capture([workspace], path);
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
         var listing = await LocalFileSystemExecutor.ReadFileAsync(
             config,
             new AgentFileReadRequest { Path = "." },
@@ -505,70 +560,20 @@ public sealed class StrictMutationReauditTests : IDisposable
             approvedResourceReferences: null,
             CancellationToken.None);
         Assert.DoesNotContain("sunder-secure", listing.Content, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(search.Matches);
-        Assert.DoesNotContain(
-            Directory.EnumerateFiles(workspace)
-                .Where(file => HostSecurePathEngine.IsReservedName(Path.GetFileName(file)))
-                .Select(File.ReadAllText),
-            content => content.Contains("NEW-SECRET", StringComparison.Ordinal));
+        Assert.Equal(path, Assert.Single(search.Matches).Path);
+        Assert.Equal([path], Directory.EnumerateFiles(workspace));
 
-        var retry = await LocalFileSystemExecutor.WriteFileAsync(
+        var retry = await WriteContentAsync(
             config,
-            new AgentFileWriteRequest { Path = "published-rollback.txt", Content = "retry", Overwrite = true },
-            false,
+            new AgentFileWriteRequest { Path = "published-rollback.txt", Content = "retry", Overwrite = true,
+                ExpectedContentHash = FileOperation.ComputeContentHash("NEW-SECRET") },
             CancellationToken.None);
         Assert.False(retry.IsError, retry.Summary);
         Assert.Equal("retry", await File.ReadAllTextAsync(path));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Rollback recovery fault injection requires Unix file descriptors.")]
-    public async Task PostPublicationRollbackFailure_ReturnsStableFatalErrorAndHidesSensitiveState()
-    {
-        var workspace = Path.Combine(_root, "workspace");
-        Directory.CreateDirectory(workspace);
-        var path = Path.Combine(workspace, "fatal-rollback.txt");
-        await File.WriteAllTextAsync(path, "old-recoverable");
-        var config = new LocalExecutionRuntimeConfig([workspace], workspace);
-        var hook = new ThrowingRecoveryHook();
-
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
-            config,
-            new AgentFileWriteRequest { Path = "fatal-rollback.txt", Content = "FATAL-NEW-SECRET", Overwrite = true },
-            false,
-            CancellationToken.None,
-            hooks: hook);
-
-        Assert.Equal(FileOperation.StrictMutationRecoveryRequiredErrorCode, result.ErrorCode);
-        Assert.Equal(FileOperation.StrictMutationRecoveryRequiredMessage, result.Summary);
-        Assert.True(hook.PublishFailureInvoked);
-        Assert.True(hook.RecoveryFailureInvoked);
-        var listing = await LocalFileSystemExecutor.ReadFileAsync(
-            config,
-            new AgentFileReadRequest { Path = "." },
-            false,
-            CancellationToken.None);
-        var search = await LocalSecureFileSearch.ExecuteAsync(
-            config,
-            new AgentFileSearchRequest { Path = ".", Kind = AgentFileSearchKind.Grep, Pattern = "FATAL-NEW-SECRET|old-recoverable", Literal = false, Hidden = true },
-            false,
-            approvedResourceReferences: null,
-            CancellationToken.None);
-        Assert.DoesNotContain("sunder-secure", listing.Content, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(search.Matches);
-        Assert.DoesNotContain(
-            Directory.EnumerateFiles(workspace)
-                .Where(file => HostSecurePathEngine.IsReservedName(Path.GetFileName(file)))
-                .Select(File.ReadAllText),
-            content => content.Contains("FATAL-NEW-SECRET", StringComparison.Ordinal));
-        Assert.Contains(
-            Directory.EnumerateFiles(workspace)
-                .Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
-                .Select(File.ReadAllText),
-            content => content == "old-recoverable");
-    }
-
-    [PlatformFact(TestPlatform.Unix, "Post-quarantine validation fault injection requires Unix file descriptors.")]
-    public async Task PostQuarantineValidatorFailure_RestoresFreshlyValidatedTarget()
+    [PlatformFact(TestPlatform.Unix, "This fixture modifies the quarantined object; Windows denies independent writable opens through handle sharing.")]
+    public async Task DeletePostQuarantineValidatorFailure_RestoresFreshlyValidatedTarget()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
@@ -576,13 +581,12 @@ public sealed class StrictMutationReauditTests : IDisposable
         await File.WriteAllTextAsync(path, "old");
         var hook = new QuarantineContentMutationHook(workspace, "changed-after-quarantine");
 
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(
             new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest
+            new AgentFileDeleteRequest
             {
                 Path = "validator.txt",
-                Content = "new",
-                Overwrite = true,
+                Recursive = false,
                 ExpectedContentHash = FileOperation.ComputeContentHash("old"),
             },
             false,
@@ -599,33 +603,23 @@ public sealed class StrictMutationReauditTests : IDisposable
             content => content == "changed-after-quarantine");
     }
 
-    [PlatformTheory(TestPlatform.Unix, "Post-quarantine cancellation checkpoints require Unix file descriptors.")]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task CancellationAfterQuarantine_CompletesExactMutationWithoutStranding(bool delete)
+    [Fact]
+    public async Task DeleteCancellationAfterQuarantine_CompletesExactMutationWithoutStranding()
     {
         var workspace = Path.Combine(_root, "workspace");
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "cancel.txt");
         await File.WriteAllTextAsync(path, "old");
+        using var before = HostSecurePathEngine.Capture([workspace], path);
         using var cancellation = new CancellationTokenSource();
         var hook = new CancellationHook(
-            delete
-                ? LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete
-                : LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish,
+            LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete,
             cancellation);
         var config = new LocalExecutionRuntimeConfig([workspace], workspace);
 
-        var result = delete
-            ? await LocalFileSystemExecutor.DeleteFileAsync(
+        var result = await LocalFileSystemExecutor.DeleteFileAsync(
                 config,
                 new AgentFileDeleteRequest { Path = "cancel.txt", Recursive = false, ExpectedContentHash = FileOperation.ComputeContentHash("old") },
-                false,
-                cancellation.Token,
-                hooks: hook)
-            : await LocalFileSystemExecutor.WriteFileAsync(
-                config,
-                new AgentFileWriteRequest { Path = "cancel.txt", Content = "new", Overwrite = true, ExpectedContentHash = FileOperation.ComputeContentHash("old") },
                 false,
                 cancellation.Token,
                 hooks: hook);
@@ -633,69 +627,56 @@ public sealed class StrictMutationReauditTests : IDisposable
         Assert.True(hook.Invoked);
         Assert.False(result.IsError, result.Summary);
         Assert.True(cancellation.IsCancellationRequested);
-        Assert.Equal(delete, !File.Exists(path));
-        if (!delete)
-        {
-            Assert.Equal("new", await File.ReadAllTextAsync(path));
-        }
+        Assert.False(File.Exists(path));
+        var retainedPath = Assert.Single(Directory.EnumerateFiles(workspace));
+        Assert.True(HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retainedPath)));
+        using var root = HostSecurePathEngine.OpenRoot(workspace);
+        using var retained = root.Platform.OpenChild(root.Handle, Path.GetFileName(retainedPath), root.Volume, false);
+        Assert.Equal(before.Binding.TargetIdentity, retained.Identity);
+        Assert.Equal("old", await File.ReadAllTextAsync(retainedPath));
     }
 
-    [PlatformFact(TestPlatform.Unix, "Pre-publish replacement races require Unix file descriptors.")]
-    public async Task PostValidationPrePublishReplacement_IsNeverOverwritten()
+    [PlatformFact(TestPlatform.Windows, "Public Windows content mutation preserves identity and deletion retains the exact recovery object.")]
+    public async Task WindowsStructuredMutations_PreserveTheObjectAndOutsideSentinel()
     {
-        var workspace = Path.Combine(_root, "workspace");
-        Directory.CreateDirectory(workspace);
-        var path = Path.Combine(workspace, "publish-race.txt");
-        await File.WriteAllTextAsync(path, "approved");
-        var hook = new PublishReplacementHook(path);
-
-        var result = await LocalFileSystemExecutor.WriteFileAsync(
-            new LocalExecutionRuntimeConfig([workspace], workspace),
-            new AgentFileWriteRequest { Path = "publish-race.txt", Content = "new", Overwrite = true },
-            false,
-            CancellationToken.None,
-            hooks: hook);
-
-        Assert.True(hook.Invoked);
-        Assert.True(result.IsError);
-        Assert.Equal("approved", await File.ReadAllTextAsync(path));
-        Assert.Contains(
-            Directory.EnumerateFiles(workspace)
-                .Where(file => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(file)))
-                .Select(File.ReadAllText),
-            content => content == "ATTACKER");
-    }
-
-    [PlatformFact(TestPlatform.Windows, "This verifies the Windows fail-closed structured-mutation path.")]
-    public async Task WindowsStructuredMutations_FailClosedWithoutTemporaryOrOutsideChanges()
-    {
-        Assert.False(LocalSecureNative.StrictMutationsAvailable);
+        Assert.True(LocalSecureNative.StrictMutationsAvailable);
         var workspace = Path.Combine(_root, "workspace");
         var outside = Path.Combine(_root, "outside.txt");
         Directory.CreateDirectory(workspace);
         await File.WriteAllTextAsync(Path.Combine(workspace, "target.txt"), "old");
         await File.WriteAllTextAsync(outside, "OUTSIDE");
         var config = new LocalExecutionRuntimeConfig([workspace], workspace);
+        using var before = HostSecurePathEngine.Capture([workspace], Path.Combine(workspace, "target.txt"));
 
         var write = await LocalFileSystemExecutor.WriteFileAsync(
             config,
             new AgentFileWriteRequest { Path = "target.txt", Content = "new", Overwrite = true },
             false,
             CancellationToken.None);
+        Assert.False(write.IsError, write.Summary);
+        using var after = HostSecurePathEngine.Capture([workspace], Path.Combine(workspace, "target.txt"));
+        Assert.Equal(before.Binding.TargetIdentity, after.Binding.TargetIdentity);
+        Assert.Equal("new", await File.ReadAllTextAsync(Path.Combine(workspace, "target.txt")));
         var delete = await LocalFileSystemExecutor.DeleteFileAsync(
             config,
             new AgentFileDeleteRequest { Path = "target.txt", Recursive = false },
             false,
             CancellationToken.None);
 
-        Assert.Equal(FileOperation.StrictPlatformMutationUnavailableErrorCode, write.ErrorCode);
-        Assert.Equal(FileOperation.StrictPlatformMutationUnavailableErrorCode, delete.ErrorCode);
-        Assert.Equal("old", await File.ReadAllTextAsync(Path.Combine(workspace, "target.txt")));
+        Assert.False(delete.IsError, delete.Summary);
+        Assert.False(File.Exists(Path.Combine(workspace, "target.txt")));
         Assert.Equal("OUTSIDE", await File.ReadAllTextAsync(outside));
-        Assert.DoesNotContain(
-            Directory.EnumerateFileSystemEntries(workspace),
-            path => HostSecurePathEngine.IsReservedName(Path.GetFileName(path)));
+        var retainedPath = Assert.Single(Directory.EnumerateFiles(workspace));
+        Assert.True(HostSecurePathEngine.IsQuarantineName(Path.GetFileName(retainedPath)));
+        using var root = HostSecurePathEngine.OpenRoot(workspace);
+        using var retained = root.Platform.OpenChild(root.Handle, Path.GetFileName(retainedPath), root.Volume, false);
+        Assert.Equal(before.Binding.TargetIdentity, retained.Identity);
+        Assert.Equal("new", await File.ReadAllTextAsync(retainedPath));
     }
+
+    private static ValueTask<AgentFileMutationResult> WriteContentAsync(LocalExecutionRuntimeConfig config,
+        AgentFileWriteRequest request, CancellationToken cancellationToken, ILocalSecureFileSystemHooks? hooks = null)
+        => LocalFileSystemExecutor.WriteFileAsync(config, request, false, cancellationToken, hooks: hooks);
 
     public void Dispose()
     {
@@ -724,7 +705,7 @@ public sealed class StrictMutationReauditTests : IDisposable
     {
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
         {
-            if (checkpoint == LocalSecureFileSystemCheckpoint.BeforePublish)
+            if (checkpoint == LocalSecureFileSystemCheckpoint.BeforeContentUpdateOpen)
             {
                 File.SetUnixFileMode(path, mode);
             }
@@ -747,20 +728,6 @@ public sealed class StrictMutationReauditTests : IDisposable
         }
     }
 
-    private sealed class PublishReplacementHook(string path) : ILocalSecureFileSystemHooks
-    {
-        public bool Invoked { get; private set; }
-
-        public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
-        {
-            if (!Invoked && checkpoint == LocalSecureFileSystemCheckpoint.AfterValidationBeforePublish)
-            {
-                Invoked = true;
-                File.WriteAllText(path, "ATTACKER");
-            }
-        }
-    }
-
     private sealed class ThrowingHook(LocalSecureFileSystemCheckpoint checkpoint) : ILocalSecureFileSystemHooks
     {
         public bool Invoked { get; private set; }
@@ -775,34 +742,13 @@ public sealed class StrictMutationReauditTests : IDisposable
         }
     }
 
-    private sealed class ThrowingRecoveryHook : ILocalSecureFileSystemHooks
-    {
-        public bool PublishFailureInvoked { get; private set; }
-
-        public bool RecoveryFailureInvoked { get; private set; }
-
-        public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string parentPath, string? entryName)
-        {
-            if (!PublishFailureInvoked && checkpoint == LocalSecureFileSystemCheckpoint.AfterPublishedFileSync)
-            {
-                PublishFailureInvoked = true;
-                throw new LocalSecurePathException("Injected post-publication failure.");
-            }
-            if (!RecoveryFailureInvoked && checkpoint == LocalSecureFileSystemCheckpoint.BeforePostPublicationRestore)
-            {
-                RecoveryFailureInvoked = true;
-                throw new LocalSecurePathException("Injected recovery failure.");
-            }
-        }
-    }
-
     private sealed class QuarantineContentMutationHook(string parentPath, string content) : ILocalSecureFileSystemHooks
     {
         public bool Invoked { get; private set; }
 
         public void OnCheckpoint(LocalSecureFileSystemCheckpoint checkpoint, string currentParentPath, string? entryName)
         {
-            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.BeforePostQuarantineSync)
+            if (Invoked || checkpoint != LocalSecureFileSystemCheckpoint.AfterValidationBeforeDelete)
             {
                 return;
             }
@@ -836,11 +782,7 @@ public sealed class StrictMutationReauditTests : IDisposable
                 Directory.EnumerateFiles(parentPath),
                 path => HostSecurePathEngine.IsQuarantineName(Path.GetFileName(path))
                         && File.ReadAllText(path) == "recoverable-original");
-            using var root = HostSecurePathEngine.OpenRoot(parentPath);
-            LocalUnixNative.Link(
-                root.Handle.Handle.DangerousGetHandle().ToInt32(),
-                Path.GetFileName(quarantine),
-                Path.GetFileName(aliasPath));
+            TestFileSystemCapabilities.CreateHardLink(aliasPath, quarantine);
             throw new LocalSecurePathException("Injected failure requiring quarantine rollback.");
         }
     }

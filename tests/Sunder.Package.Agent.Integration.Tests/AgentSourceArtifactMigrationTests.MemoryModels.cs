@@ -108,16 +108,43 @@ public sealed partial class AgentSourceArtifactMigrationTests
         persisted = storeType.GetMethod("GetMemory")!.Invoke(store, [memoryId])!;
         Assert.True((bool)persisted.GetType().GetProperty("IsPinned")!.GetValue(persisted)!);
 
+        var catalogResetRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var catalog = AddMemoryInspectorRuntime(state, catalogResetRelease.Task);
         var reset = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        Action onReset = () => reset.TrySetResult();
-        gatewayType.GetEvent("ResetRequired")!.AddEventHandler(gateway, onReset);
+        var catalogReset = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Action onReset = () => { if (!reset.TrySetResult()) catalogReset.TrySetResult(); };
+        var resetEvent = gatewayType.GetEvent("ResetRequired")!;
+        resetEvent.AddEventHandler(gateway, onReset);
+        try
+        {
+            // The inspector bootstrap and Runtime catalog bootstrap are separate.
+            // Consume both within the original readiness budget: a pending reset
+            // is allowed to supersede worker detail.
+            using var readiness = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await Call("InitializeAsync", readiness.Token);
+            await reset.Task.WaitAsync(readiness.Token);
+            await catalog.WatchStarted.Task.WaitAsync(readiness.Token);
+            Assert.False(catalogReset.Task.IsCompleted);
+            catalogResetRelease.SetResult();
+            await catalogReset.Task.WaitAsync(readiness.Token);
+        }
+        finally
+        {
+            resetEvent.RemoveEventHandler(gateway, onReset);
+        }
         var changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         Action onChanged = () => changed.TrySetResult();
-        gatewayType.GetEvent("SemanticWorkerStatusChanged")!.AddEventHandler(gateway, onChanged);
-        await Call("InitializeAsync", CancellationToken.None);
-        await reset.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True((bool)indexingType.GetMethod("QueueMemoryIndex")!.Invoke(indexing, [memoryId, "profile.role-local"])!);
-        await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var changedEvent = gatewayType.GetEvent("SemanticWorkerStatusChanged")!;
+        changedEvent.AddEventHandler(gateway, onChanged);
+        try
+        {
+            Assert.True((bool)indexingType.GetMethod("QueueMemoryIndex")!.Invoke(indexing, [memoryId, "profile.role-local"])!);
+            await changed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            changedEvent.RemoveEventHandler(gateway, onChanged);
+        }
         var metrics = (await Call("GetMetricsSnapshotAsync", CancellationToken.None))!;
         Assert.Same(app, metrics.GetType().Assembly);
         var inspector = options.Providers.Single(value => value.ProviderId == "semantic.memory.inspector");

@@ -23,6 +23,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
     private bool _restoreAnchorOnActivation;
     private bool _initialPlacementPending = true;
     private bool _initialPlacementQueued;
+    private bool _initialPlacementCanceled;
     private bool _hideDuringInitialPlacement = true;
     private object? _initialAnchorKey;
     private int _initialPlacementVersion;
@@ -46,6 +47,8 @@ internal sealed class TranscriptViewBehavior : IDisposable
             _initialPlacementCompletionCallbacks,
             _initialPlacementCancellationCallbacks,
             _initialPlacementStaleCallbacks);
+
+    internal bool IsInitialPlacementCanceled => _initialPlacementCanceled;
 
     public TranscriptViewBehavior(
         Control owner,
@@ -120,7 +123,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
     public void OnTranscriptChanging(bool isPaging)
     {
-        if (_disposed || _initialPlacementPending)
+        if (_disposed || _initialPlacementPending || _initialPlacementCanceled)
         {
             return;
         }
@@ -176,6 +179,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
 
         _initialPlacementVersion++;
+        _initialPlacementCanceled = false;
 
         _initialPlacementCancellationRegistration?.Dispose();
         _initialPlacementCancellationRegistration = null;
@@ -208,6 +212,16 @@ internal sealed class TranscriptViewBehavior : IDisposable
         });
     }
 
+    public void OnTranscriptSelectionChanging(CancellationToken cancellationToken = default)
+    {
+        // Initialization can finish after its navigation waiter was cancelled.
+        // Only an explicit placement request may reopen that cancelled cycle.
+        if (!_initialPlacementCanceled && !cancellationToken.IsCancellationRequested)
+        {
+            MarkInitialPlacementPending(cancellationToken);
+        }
+    }
+
     public async Task WaitForInitialPresentationAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -236,6 +250,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
             return;
         }
 
+        _initialPlacementCanceled = false;
         if (!_jumpToLatestButton.IsVisible)
         {
             _scrollCoordinator.QueueScrollToBottom(force: true);
@@ -255,6 +270,12 @@ internal sealed class TranscriptViewBehavior : IDisposable
     {
         if (_disposed)
         {
+            return;
+        }
+
+        if (_initialPlacementCanceled)
+        {
+            mutation();
             return;
         }
 
@@ -298,14 +319,17 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
     }
 
-    public void ScrollToBottom() => _scrollCoordinator.QueueScrollToBottom(force: true);
+    public void ScrollToBottom() => FollowLatestFromExplicitIntent();
 
     public void FollowLatestFromExplicitIntent()
-        => _scrollCoordinator.QueueScrollToBottom(force: true);
+    {
+        _initialPlacementCanceled = false;
+        _scrollCoordinator.QueueScrollToBottom(force: true);
+    }
 
     public void OnRenderedContentChanged(ITranscriptGeometrySource? source = null)
     {
-        if (!_disposed && _loaded && _presentationActive && !_initialPlacementPending)
+        if (!_disposed && _loaded && _presentationActive && !_initialPlacementPending && !_initialPlacementCanceled)
         {
             _scrollCoordinator.OnRenderedContentChanged(source);
         }
@@ -407,6 +431,7 @@ internal sealed class TranscriptViewBehavior : IDisposable
             }
             _presentationStateChanged?.Invoke(isPresentationActive);
             if (isPresentationActive
+                && !_initialPlacementCanceled
                 && (_changedBeforeScrollReady || _restoreAnchorOnActivation)
                 && !_isFollowingLatest())
             {
@@ -445,6 +470,11 @@ internal sealed class TranscriptViewBehavior : IDisposable
 
     private bool TryPlaceInitialTranscript()
     {
+        if (_initialPlacementCanceled)
+        {
+            return true;
+        }
+
         if (_isInitialLoading())
         {
             if (!_isFollowingLatest())
@@ -542,6 +572,9 @@ internal sealed class TranscriptViewBehavior : IDisposable
         }
 
         _initialPlacementVersion++;
+        _initialPlacementCanceled = true;
+        _changedBeforeScrollReady = false;
+        _restoreAnchorOnActivation = false;
         _scrollCoordinator.CancelInitialPlacement();
         _initialPlacementPending = false;
         _initialPlacementQueued = false;

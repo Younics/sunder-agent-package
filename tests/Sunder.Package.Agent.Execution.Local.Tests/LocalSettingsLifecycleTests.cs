@@ -55,7 +55,8 @@ public sealed class LocalSettingsLifecycleTests
         viewModel.AddShellCommand.Execute(null);
         var added = Assert.IsType<LocalShellRowViewModel>(viewModel.SelectedShell);
         added.DisplayName = "Sent name";
-        Assert.True(added.ApplySelectedExecutablePath("/tmp/new-shell"));
+        var executablePath = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "new-shell"));
+        Assert.True(added.ApplySelectedExecutablePath(executablePath));
         var save = viewModel.SaveShellsCommand.ExecuteAsync(null);
         await runtime.Requests[1].Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(7, runtime.Requests[1].ExpectedShellCatalogRevision);
@@ -66,7 +67,7 @@ public sealed class LocalSettingsLifecycleTests
             custom:
             [
                 Shell("existing", "Existing", "/tmp/existing"),
-                Shell(added.ShellId, "Sent name", "/tmp/new-shell"),
+                Shell(added.ShellId, "Sent name", executablePath),
             ],
             message: "Shell settings saved."));
         await save;

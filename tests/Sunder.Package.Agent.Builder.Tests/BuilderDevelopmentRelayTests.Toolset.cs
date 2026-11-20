@@ -10,6 +10,53 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class BuilderDevelopmentRelayTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BuildQueryReturnsInstalledNodeAndFiniteScriptWithoutStartingAJob(bool installed)
+    {
+        await using var fixture = new RelayFixture(MakerApp.BuilderProjectKind.Node);
+        var tools = await fixture.ConnectToolsAsync();
+        var node = Path.Combine(fixture.Project.ProjectFolder, "tools", "node.exe");
+        var npm = Path.Combine(fixture.Project.ProjectFolder, "tools", "node_modules", "npm", "bin", "npm-cli.js");
+        await File.WriteAllTextAsync(Path.Combine(fixture.Project.ProjectFolder, "package.json"), """{"scripts":{"sunder:dev:once":"sunder-package dev"}}""");
+        fixture.Backend.BeforeToolchainCheck = (_, checkUpdates, _) => { Assert.False(checkUpdates); return Task.CompletedTask; };
+        fixture.Backend.Toolchains = kind => new(kind, installed ? [new() { Kind = kind, Version = "24.22.1",
+            ExecutablePath = node, RootPath = Path.GetDirectoryName(node)!, NpmCliPath = npm, NpmVersion = "11.19.1", IsHealthy = true }] : [],
+            "24.22.1", null, null, null);
+        var reply = await tools.ExecuteAsync(fixture.Context, new("maker_package", JsonSerializer.Serialize(new { package = fixture.Project.EntryPoint, query = "build" })));
+        Assert.Equal(!installed, reply.IsError);
+        if (installed)
+        {
+            using var json = JsonDocument.Parse(reply.Content!);
+            Assert.Equal(node, json.RootElement.GetProperty("executable").GetString());
+            Assert.Equal(new[] { npm, "run", "sunder:dev:once" }, json.RootElement.GetProperty("arguments").EnumerateArray().Select(item => item.GetString()));
+            Assert.Equal(Path.GetDirectoryName(node), json.RootElement.GetProperty("pathEntry").GetString());
+            Assert.Equal(fixture.Project.ProjectFolder, json.RootElement.GetProperty("workingDirectory").GetString());
+        }
+        else Assert.Contains("Package Maker settings", reply.Content);
+        Assert.Empty(fixture.Backend.Starts);
+        Assert.Empty(fixture.Development.Loads);
+    }
+
+    [Fact]
+    public async Task ApplyingAlreadyLoadedBytesReportsUnchangedRatherThanClaimingAReload()
+    {
+        await using var fixture = new RelayFixture();
+        var tools = await fixture.ConnectToolsAsync();
+        await fixture.LoadOutputAsync();
+        var handle = Assert.Single(fixture.Development.Sessions);
+        handle.Status = handle.Status with { AppliedRevision = new(Guid.NewGuid(), 1, fixture.BuiltIdentity!) };
+        var reply = await tools.ExecuteAsync(fixture.Context, fixture.Reload);
+        Assert.False(reply.IsError, reply.Content);
+        Assert.StartsWith("Already loaded; output unchanged.", reply.Summary);
+        using var json = JsonDocument.Parse(reply.Content!);
+        Assert.Equal("unchanged", json.RootElement.GetProperty("status").GetString());
+        Assert.Equal("unchanged", json.RootElement.GetProperty("effect").GetString());
+        Assert.Empty(handle.Reloads);
+        Assert.Empty(fixture.Backend.Starts);
+    }
+
     [Fact]
     public async Task CompactToolsetLoadsBuiltOutputOnceAndReusesItsOwnerWithoutBuilding()
     {

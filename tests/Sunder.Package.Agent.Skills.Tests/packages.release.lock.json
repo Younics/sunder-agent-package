@@ -2,6 +2,29 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "CommunityToolkit.Mvvm": {
+        "type": "Direct",
+        "requested": "[8.4.2, )",
+        "resolved": "8.4.2",
+        "contentHash": "WadCzGEc2U+3e20avRLng4qNtt4zoOGWrdUISqJWrHe3/FSnrYjuM5Sb4yQb09LhkBXrrI4Zt3dLKgRMbItsrg=="
+      },
+      "Microsoft.Data.Sqlite": {
+        "type": "Direct",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "w37nz3WFmDtRfXxWEwIXX2OgqDRiwhD1JGbFwfpFCF8GkCrV/yO6Y2JF5058J2RGoI2sCcdn02wrk0yEcekWcw==",
+        "dependencies": {
+          "Microsoft.Data.Sqlite.Core": "10.0.13",
+          "SQLitePCLRaw.bundle_e_sqlite3": "2.1.13",
+          "SQLitePCLRaw.core": "2.1.13"
+        }
+      },
+      "Microsoft.Extensions.AI.Abstractions": {
+        "type": "Direct",
+        "requested": "[10.11.0, )",
+        "resolved": "10.11.0",
+        "contentHash": "h4DX/TdJU4fk1GGaf19n6Kujkj6VXbGeL4UEOsQ8+ZJC5fVApPauokCtvBP684BYbczUYZQNfo1mbmyHG4WVSg=="
+      },
       "Microsoft.NET.Test.Sdk": {
         "type": "Direct",
         "requested": "[18.11.0, )",
@@ -10,6 +33,46 @@
         "dependencies": {
           "Microsoft.CodeCoverage": "18.11.0",
           "Microsoft.TestPlatform.TestHost": "18.11.0"
+        }
+      },
+      "Sunder.Sdk": {
+        "type": "Direct",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
+        }
+      },
+      "Sunder.Sdk.Avalonia": {
+        "type": "Direct",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "Y0jUvbmvoZpRyHy2butYmriOfAfaP+VzFzP9LHw//J0V5lcTNKFcVccW4RrgRW9T3DKjc/dv3pdo/F54M+nI4A==",
+        "dependencies": {
+          "Avalonia": "12.1.4",
+          "Microsoft.Extensions.DependencyInjection": "10.0.13",
+          "Sunder.Sdk": "[1.0.2]"
+        }
+      },
+      "Sunder.Sdk.Stacks": {
+        "type": "Direct",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "teilTkfcpkUrriQxdxJHnOMcO54aciL9TtY3QyWsq9pI4rtdFbV3/5ntKcASg6pJRaWb5c9z+Fgsg/4GJdA++A==",
+        "dependencies": {
+          "Sunder.Sdk": "[1.0.2]"
+        }
+      },
+      "Sunder.Sdk.Worker": {
+        "type": "Direct",
+        "requested": "[1.0.2, )",
+        "resolved": "1.0.2",
+        "contentHash": "02rKtv/iF7JeYtOgawkUf/9YVsinDAg+Z2NgqG1+eLPNOFixjynXSXaT4kpNm9yElhNAKG8sd1uccw3VNCs/CA==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "10.0.13",
+          "Sunder.Sdk": "[1.0.2]"
         }
       },
       "xunit": {
@@ -29,10 +92,33 @@
         "resolved": "4.0.1",
         "contentHash": "8CoAaZkniVekR1ycJyxn+hOz+6ZQCDPcoIsIs6ujd4WyFcBMlxGNU15Qb8Uxd4iO4UmOuETb0M6vzBbwX/mfLA=="
       },
+      "Avalonia.BuildServices": {
+        "type": "Transitive",
+        "resolved": "11.3.2",
+        "contentHash": "qHDToxto1e3hci5YqbG9n0Ty8mlp3zBUN5wT66wKqaDVzXyQ0do3EnRILd4Ke9jpvsktaPpgE0YjEk7hornryQ=="
+      },
+      "Avalonia.Remote.Protocol": {
+        "type": "Transitive",
+        "resolved": "12.1.4",
+        "contentHash": "9ajC+Ff+U9S21JJKGbJgnwp9fY+zwJG+bSEC//o/vJU2M6IEMRGp+D1+AUoqTR79FAA/iDYgf4f4EF4PZKhZsg=="
+      },
+      "MicroCom.Runtime": {
+        "type": "Transitive",
+        "resolved": "0.11.6",
+        "contentHash": "NdNWGDiZ6eS/Mf/9+QHR91cj1K7Hy+PX9yrHI/zM7xFYuj9IWT2uxtB6sCHjrnxAeLV9fut1R6zHDUGKX6f9lQ=="
+      },
       "Microsoft.CodeCoverage": {
         "type": "Transitive",
         "resolved": "18.11.0",
         "contentHash": "MhN9wpvL1Es4hfIYslrsVgIsUdDFxuOBTbAl9mGIMvFo8PP5CLf4DrGdNrfwWSyn0lqi6sssm+I/qkkLL3MU+g=="
+      },
+      "Microsoft.Data.Sqlite.Core": {
+        "type": "Transitive",
+        "resolved": "10.0.13",
+        "contentHash": "Gge8XsSCOwcbkbdmt2UDAe6kIv9Q0vA6yb3wsTStjjexaMFLTWfc/1gH4kbhJ+zWiXRTRA4lG2sOQNVfir204w==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "2.1.13"
+        }
       },
       "Microsoft.Extensions.DependencyInjection.Abstractions": {
         "type": "Transitive",
@@ -50,6 +136,27 @@
         "contentHash": "AKjwKpyRBwoQFQmpcchtoYlfJEBlaY/40uxBRi+qXP4NR7xT8t+XTJtOyEyumfvfJcH5pASs75LwNdXYRr4XNA==",
         "dependencies": {
           "Microsoft.TestPlatform.ObjectModel": "18.11.0"
+        }
+      },
+      "SourceGear.sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.50.4.5",
+        "contentHash": "UtnipXhJYZKQOQIfpws/msLK7IRhMplE1CZCaZLIQXRnGD474QVpO/J9nMlQQY8NZueGz1aidjoxDRnrC1NT3Q=="
+      },
+      "SQLitePCLRaw.config.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.3",
+        "contentHash": "caP/ap0X2fyVmstCXu5ueOmcr2XWAxA2XyKghV7H4bOAFmq3nWcsGl9q44iY1HYG+i8Qr4G9XEqdfti0rV6/ZQ==",
+        "dependencies": {
+          "SQLitePCLRaw.provider.e_sqlite3": "3.0.3"
+        }
+      },
+      "SQLitePCLRaw.provider.e_sqlite3": {
+        "type": "Transitive",
+        "resolved": "3.0.3",
+        "contentHash": "wd+fGvZTrr3BJNe48opSczmC176Okd61ZgoZNQcdvZwkek6to978ccdpcFmNo5GHxCnk29KwT+f+lAZYgfLVZg==",
+        "dependencies": {
+          "SQLitePCLRaw.core": "3.0.3"
         }
       },
       "xunit.abstractions": {
@@ -92,10 +199,46 @@
           "xunit.extensibility.core": "[2.9.3]"
         }
       },
+      "RegressionTestGeneratedProviders": {
+        "type": "Project",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection": "[10.0.13, )",
+          "Sunder.Sdk": "[1.0.2, )",
+          "Sunder.Sdk.Worker": "[1.0.2, )"
+        }
+      },
       "sunder.package.agent.testsupport": {
         "type": "Project",
         "dependencies": {
           "Sunder.Sdk": "[1.0.2, )"
+        }
+      },
+      "sunder.package.agent.testsupport.avalonia": {
+        "type": "Project",
+        "dependencies": {
+          "Avalonia": "[12.1.4, )",
+          "Sunder.Package.Agent.TestSupport": "[2.0.0, )",
+          "Sunder.Sdk.Avalonia": "[1.0.2, )"
+        }
+      },
+      "Avalonia": {
+        "type": "CentralTransitive",
+        "requested": "[12.1.4, )",
+        "resolved": "12.1.4",
+        "contentHash": "Vlz+ebY0PBVsTFXAPIpM+7ySgezMtyJ3GMMGmccHwxXXjgLF2x5+NMwO4AqrdM/lrUPZremnYNO6MSg1r1vuxw==",
+        "dependencies": {
+          "Avalonia.BuildServices": "11.3.2",
+          "Avalonia.Remote.Protocol": "12.1.4",
+          "MicroCom.Runtime": "0.11.6"
+        }
+      },
+      "Microsoft.Extensions.DependencyInjection": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.13, )",
+        "resolved": "10.0.13",
+        "contentHash": "4tnWU9vrU/A8NwYe9Z6wvieZ0EBb/uM82LAT+edNhdepOBWREZ7M7mzb941EIDPJaeOFdbVrDd5+7s9e89U6bQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
         }
       },
       "Microsoft.Extensions.Logging.Abstractions": {
@@ -107,15 +250,21 @@
           "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13"
         }
       },
-      "Sunder.Sdk": {
+      "SQLitePCLRaw.bundle_e_sqlite3": {
         "type": "CentralTransitive",
-        "requested": "[1.0.2, )",
-        "resolved": "1.0.2",
-        "contentHash": "K4Kho9vp/JuuF3SKjdMn8UZGwhuT9co6b5MO2fa6vz35nzVvXIMTPAp1TdezqCzHKSBk+lzn0tPRI2ns3yUgPw==",
+        "requested": "[3.0.3, )",
+        "resolved": "3.0.3",
+        "contentHash": "Zt8jmSL5zcDWGk8rmzhWBJ6IRyLWh1yWS04Pg72+GIvo3Ba4E/rG4Y/4l7AWlSEogEbzyKRTCXUAs1v/O7Pkkg==",
         "dependencies": {
-          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.13",
-          "Microsoft.Extensions.Logging.Abstractions": "10.0.13"
+          "SQLitePCLRaw.config.e_sqlite3": "3.0.3",
+          "SourceGear.sqlite3": "3.50.4.5"
         }
+      },
+      "SQLitePCLRaw.core": {
+        "type": "CentralTransitive",
+        "requested": "[3.0.3, )",
+        "resolved": "3.0.3",
+        "contentHash": "bjm6FY4lZyP+t7GmiuvSM0QXpFihAvyE0Y9O2yibm3g95AAWJPNnHOKVNJGyPTGIKuK7Pr4Wh8Rd8/aOtAclQw=="
       }
     }
   }

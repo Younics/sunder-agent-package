@@ -1,0 +1,46 @@
+name: Qualify
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Comma-separated canonical package IDs, or all for full qualification
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sunder-package-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  selection:
+    name: Select explicit qualification inputs
+    runs-on: ubuntu-24.04
+    outputs:
+      packages: ${{ steps.selection.outputs.packages }}
+      core_commit: ${{ steps.core.outputs.core_commit }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: selection
+        env:
+          PACKAGES: ${{ inputs.packages }}
+        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
+      - name: Resolve the declared Build release provenance
+        id: core
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/agent_ci.py coordinates
+
+  baseline:
+    name: Component and shared validation
+    needs: selection
+    uses: ./.github/workflows/sunder-package-smoke.yml
+    with:
+      packages: ${{ needs.selection.outputs.packages }}
+      core_commit: ${{ needs.selection.outputs.core_commit }}
+      package-tests: true

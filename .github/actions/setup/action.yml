@@ -7,6 +7,16 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Bind Bash for nested script processes
+      shell: bash
+      run: |
+        bash_executable="$BASH"
+        if [[ "$RUNNER_OS" == Windows ]]; then
+          bash_executable="$(cygpath -am "$bash_executable")"
+        fi
+        export SUNDER_BASH_EXECUTABLE="$bash_executable"
+        python3 -B "$GITHUB_WORKSPACE/sunder-agent-package/scripts/ci/bash_runtime.py"
+        printf 'SUNDER_BASH_EXECUTABLE=%s\n' "$SUNDER_BASH_EXECUTABLE" >> "$GITHUB_ENV"
     - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
       with:
         global-json-file: sunder-agent-package/global.json

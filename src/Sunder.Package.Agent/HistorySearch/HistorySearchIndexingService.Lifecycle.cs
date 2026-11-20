@@ -91,6 +91,27 @@ internal sealed partial class HistorySearchIndexingService
         }
     }
 
+    private async Task<bool> EnforceLocalOnlyAtStartupAsync()
+    {
+        var suspended = false;
+        try
+        {
+            await _semanticFence.SuspendAndDrainAsync().ConfigureAwait(false);
+            suspended = true;
+            var maintenance = _projection.EnforceLocalOnlyAutomaticMaintenance();
+            _semanticFence.Activate(maintenance.Configuration.Revision);
+            suspended = false;
+            return maintenance.StaleTextGenerationInvalidated;
+        }
+        finally
+        {
+            if (suspended)
+            {
+                _semanticFence.Activate(_projection.GetConfiguration().Revision);
+            }
+        }
+    }
+
     private async Task PrepareStartupAsync()
     {
         if (!_projection.IsAvailable)
@@ -118,8 +139,6 @@ internal sealed partial class HistorySearchIndexingService
                             || activeText.RedactionVersion != HistorySearchVersions.Redaction
                             || _projection.WasRecovered;
         _startupReconciliationRequired = !_rebuildRequested && activeText is not null;
-        _embeddingRebuildRequested = false;
-        _providerRefreshRequested = false;
         if (_rebuildRequested)
         {
             _state.Publish(status => status with

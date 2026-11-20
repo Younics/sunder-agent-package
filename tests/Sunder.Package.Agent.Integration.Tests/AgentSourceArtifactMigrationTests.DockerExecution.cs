@@ -19,12 +19,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(SunderRpcErrorKind.Domain, unavailable.Error.Kind);
         Assert.Equal("agent.execution.facet-unavailable", unavailable.Error.Code);
         var ready = await Call("readiness", () => client.ReadinessAsync(context));
-        if (OperatingSystem.IsWindows())
-        {
-            Assert.Equal(AgentExecutionTargetReadinessStatus.Failed, ready.Status);
-            return;
-        }
-        Assert.Equal(AgentExecutionTargetReadinessStatus.Ready, ready.Status);
+        Assert.True(ready.Status == AgentExecutionTargetReadinessStatus.Ready, ready.Message);
         Assert.True(backend.Challenges >= 2);
         var generation = await Call("configuration-generation", () => client.ConfigurationGenerationAsync(context));
         Assert.False(string.IsNullOrWhiteSpace(generation));

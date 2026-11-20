@@ -4,7 +4,7 @@
 | --- | --- |
 | `ci/` | Ordinary exact-input hydration, parallel builds and test execution. |
 | `release/` | Automatic dependencies; explicit cold acceptance; native capture/no-rebuild fan-in; immutable publication, atomic cohort visibility and reviewed reverse. |
-| `dev/` | Explicit local contract-cache preparation/checks and deliberate source-lock preparation from an exact Core feed. Never part of immutable publication/promotion. |
+| `dev/` | Optional contract-cache diagnostics/orchestration and deliberate source-lock preparation from an exact Core feed. Never a normal authoring prerequisite or part of immutable publication/promotion. |
 | `test/` | Test inventory, duration/evidence report and analyzer/report fixtures. |
 | `test/release/` | Release tooling mocks, bounded native transport fixtures, and explicit real-input qualification commands. |
 | `compatibility/` | Current dependency/artifact boundary checks; protected history is outside product discovery. |
@@ -13,13 +13,38 @@
 
 ### Local contract preparation
 
-NuGet restore and Sunder contract restore are separate steps. After NuGet restore,
-prepare a fresh or cleared authoring cache with the exact Main `.sunderpkg` candidate
-and Core platform catalog selected by the current `sunder-contracts.lock.json` files.
-Obtain those retained inputs from the matching local qualification or release handoff.
-Core validates their pinned content and projections against each existing lock.
+Ordinary SDK restore now owns contract-cache hydration. Obtain the exact local
+inputs selected by the current `sunder-contracts.lock.json` files from their
+matching qualification or release handoff and retain them at:
 
-Run this from the Agent repository root with Python 3.9+, supplying both input paths:
+```text
+.sunder/contract-inputs/younics.ai.agent.2.0.0.sunderpkg
+.sunder/contract-inputs/sunder-platform-contracts.v1.json
+```
+
+These are source archives/catalogs, not copied cache receipts. The directory is
+ignored local data. `Directory.Build.targets` declares these paths only during
+restore; they do not become defaults for API Add/Update/Implement commands.
+`SunderContractInputsRoot` selects another retained directory. Per-request
+`SunderPackageCandidatePath` and `SunderPlatformCatalogPath` still override their
+respective sources. Core verifies exact content, inventory and projections against
+each existing lock; a hash cannot locate missing bytes.
+
+```sh
+dotnet build Sunder.AgentPackage.slnx
+# Or restore separately, then build offline:
+dotnet restore Sunder.AgentPackage.slnx
+dotnet build Sunder.AgentPackage.slnx --no-restore
+```
+
+No script, cache override, Registry selection, lock refresh or API acceptance is
+required. Source mode imports Core directly. NuGet mode resolves the same Build
+SDK version pinned in `global.json`/`Directory.Packages.props` on cold restore;
+ordinary PackageReference build imports are unavailable during that phase.
+
+The Python wrapper remains an **optional** all-project diagnostic/recovery tool.
+It requires Python 3.9+ and restored NuGet compiler references, and can use retained
+inputs from any location:
 
 ```sh
 python3 -B scripts/dev/prepare-contracts.py \
@@ -39,13 +64,14 @@ With `SunderContractCacheRoot` unset, it hydrates the normal user-profile
 `--cache-root` or an explicit `SunderContractCacheRoot` selects a different
 cache; `SUNDER_HOME` and the Host-managed execution runtime are independent of this
 authoring cache. Restoring these existing selections preserves the contract locks
-and owned baselines. Repeat preparation when selected inputs change or the cache
-is cleared, then use the ordinary solution build.
+and owned baselines. Ordinary restore repeats missing-input hydration when the
+cache is cleared; no repeated manual preparation is needed.
 The same package version or filename is not enough: the archive's exact content
 identity, inventory and model projection must match the current locks. An older
 qualification or a fresh rebuild may select different bytes. No default Registry,
 lock refresh, baseline acceptance or cache-file copying is part of preparation.
-Ordinary builds never perform implicit contract restore. Core also exposes the
+Compilation, no-restore, design-time and Pack never acquire contract inputs or
+repair corruption. Core also exposes the
 read-only `dotnet msbuild <canonical-project> -t:CheckSunderContractCache` target;
 its diagnostics report the effective cache root and missing selected input kinds.
 
@@ -57,12 +83,20 @@ The same discovered script-check groups used by GitHub can be listed or executed
 python3 -B scripts/test/run-ci-checks.py source --list
 python3 -B scripts/test/run-ci-checks.py release
 python3 -B scripts/ci/agent_ci.py matrices --package-tests
+python3 -B scripts/ci/agent_ci.py preflight
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
 python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package
+python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --builder-diagnostics
 ```
 
-`validate` is the workflow entry point: discover scripts/tests, resolve and hydrate
-exact inputs, build the projects and their provider dependency, execute the selected suites and
+`preflight` generates and validates the test inventory and runs dependency-independent
+script checks (source checks on each behavior platform, release checks on Linux).
+Actions gates dependency production on its Linux/Windows results after version
+selection. Both `preflight` and `validate` accept `--packages '[]'` to stop before
+tool execution when no versions are selected.
+
+`validate` discovers tests, resolves and hydrates
+exact inputs, builds the selected projects and their provider dependencies, executes the selected suites and
 verify combined evidence. Its temporary tools/cache are cleaned on success or
 failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
 local inputs. Source readers precede the required all-family artifact producer;
@@ -70,6 +104,49 @@ required Linux/Docker cases run once in their owning lane. `--stress` adds the
 scheduled Linux repetitions. Report directories replace prior CI runs; hosted
 reports expire after fourteen days, while immutable release handoffs keep their
 release-specific retention.
+
+Restore and build each use one ordinary MSBuild graph. Multiple selected roots
+produce a temporary `.slnf` over the authored solution; a single project or the
+full solution stays unchanged. Dependencies and generated providers are still
+built normally, with locked restore and the same source/package properties.
+The prepared graph and solution bytes are integrity-bound. Build selection,
+UTF-8 output, elapsed time and exit status are retained under `artifacts/reports/`.
+This does not replace the fresh all-family artifact test with prebuilt packing.
+
+Completed assertion failures retain discovery/TRX evidence and allow the remaining
+independent source/package test projects to run. Capture, integrity, discovery,
+incomplete-run and cancellation errors stop execution. UTF-8 logs and command
+records retain child status and diagnostic failures; the console prints a bounded
+failure summary, and reporting failures remain attached to the original error.
+
+`--builder-diagnostics` prepares verified source-mode Release inputs, builds Builder,
+then runs its portability fixtures followed by the complete Builder project. Each
+stage verifies fresh discovery, TRX and declared skips, retaining reports under
+`artifacts/builder-diagnostics/`. This is a local, owning-suite diagnostic command,
+not a feature switch in **Validate**, **Qualify** or **Release**. Those workflows
+always use the normal package/inventory-selected validation lanes.
+
+**Qualify** (`sunder-package-qualify.yml`) is manual-only, defaults to `all`, and
+accepts the same package IDs as **Validate**. It includes locked-package checks,
+does not publish, and does not cancel an active qualification on a later push.
+The old branch-specific parity wrapper is retired.
+
+Required platform execution inventories live in
+`scripts/test/required-platform-cases.json`, not workflow Python or feature
+branches. The reusable validation summary downloads only matching owner/mode/RID
+reports and runs `scripts/ci/required_test_evidence.py`. Exact identities/counts,
+missing scopes, duplicates, failures and skips remain strict. Changes to that
+test-owned policy require review; generic orchestration must not regenerate or
+silently relax it. Scenario selectors in `scripts/test/ci-scenarios.json` likewise
+belong to test policy, not version-selected build/deploy decisions.
+
+Nested Python-to-Bash calls use `scripts/ci/bash_runtime.py`. Actions binds the
+running shell's absolute executable in `SUNDER_BASH_EXECUTABLE`; local Windows
+commands locate and validate Git Bash. A custom binding must be an existing
+absolute executable path. Inventory generation retains separate stdout/stderr and
+command diagnostics in `artifacts/reports/test-inventory.*`; the JSON inventory is
+installed atomically only after successful generation and validation. Failures
+remove stale inventories and retain the original subprocess exit code.
 
 Individual checks remain useful for focused iteration:
 
@@ -166,7 +243,7 @@ The old 516-line publisher / 325-line fixture responsibilities map to existing
 | Stable and numeric-preview downgrade refusal | `test_forward_downgrade_stable_and_numeric_preview_stops_before_mutation` |
 | Concurrent newer tag during the guard | `test_concurrent_policy_change_during_guard_keeps_original_fence_and_never_compensates`; the atomic policy fence replaces sequential snapshot/compensation. |
 | Failed, credential-free just-in-time guard | `test_guard_failure_stops_before_post_and_guard_receives_no_registry_credentials` and existing request-tamper test |
-| Missing/malformed owner token, no publish-token fallback | `test_missing_or_malformed_owner_credential_never_falls_back_to_publish_token` |
+| Missing/malformed human owner token, no API-key fallback | `test_missing_or_malformed_owner_credential_never_falls_back_to_api_key` |
 | Ambiguous write and idempotent rerun | Existing `test_lost_response_retries_byte_identical_request_and_retains_result` |
 | Unavailable/stale/conflicting response | `test_unavailable_stale_and_conflicting_success_never_fallback`; server failures retry the same retained request and never create a compensation request. |
 | Verification failure/concurrent replacement | `test_post_commit_verification_failure_retains_result_without_compensation` |

@@ -1,4 +1,4 @@
-name: AI Agent Cohort Rollback
+name: AI Agent Cohort Rollback Plan
 
 on:
   workflow_dispatch:
@@ -59,19 +59,18 @@ jobs:
           path: release-source
           persist-credentials: false
 
-      - name: Apply one new reviewed reverse transition
+      - name: Validate one reviewed reverse plan without Registry mutation
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          SUNDER_REGISTRY_CLI_TOKEN: ${{ secrets.SUNDER_REGISTRY_CLI_TOKEN }}
           TAG: ${{ steps.forward.outputs.tag }}
           SOURCE_SHA: ${{ steps.forward.outputs.source_sha }}
         run: |
-          python3 -B rollback-policy/scripts/release/reverse_agent_cohort.py apply \
+          python3 -B rollback-policy/scripts/release/reverse_agent_cohort.py plan \
             "$GITHUB_REPOSITORY" "$RELEASE_ID" "$TAG" "$GITHUB_WORKSPACE/release-source" "$SOURCE_SHA" \
             "$RUNNER_TEMP/forward-cohort.json" "$IDEMPOTENCY_KEY" "$EXPECTED_REVISION" "$RUNNER_TEMP/reverse-cohort"
 
-      - name: Retain exact reverse request and any committed result
+      - name: Retain exact reverse request for human recovery outside CI
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

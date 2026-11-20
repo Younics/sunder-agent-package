@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
+unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_PUBLISH_TOKEN SUNDER_REGISTRY_CLI_TOKEN \
+  SUNDER_REGISTRY_NATIVE_READ_TOKEN SUNDER_AGENT_NATIVE_REGISTRY_TOKEN
 
 [[ $# -eq 3 ]] || {
   printf 'Usage: import-agent-publication-evidence.sh <clean-detached-artifact-source> <retained-release-assets> <registry-origin>\n' >&2
@@ -37,7 +39,7 @@ while IFS=$'\t' read -r package_id project; do
   python3 -B "$script_dir/agent_release.py" expected-publication "$provenance" "$package_id" > "$work/expected.json"
   availability=()
   if [[ "$selective" == true ]]; then availability=(--current-availability Listed); fi
-  env -u SUNDER_REGISTRY_PUBLISH_TOKEN -u SUNDER_REGISTRY_CLI_TOKEN \
+  env -u SUNDER_REGISTRY_API_KEY -u SUNDER_REGISTRY_PUBLISH_TOKEN -u SUNDER_REGISTRY_CLI_TOKEN \
     bash "$script_dir/publish-registry-package.sh" --verify-only "${availability[@]}" --initial-yanked "$work/expected.json" \
       "$registry" "$archive" "$package_id" "$version"
   dotnet msbuild "$source_directory/$project" -t:ImportSunderContractPublication \

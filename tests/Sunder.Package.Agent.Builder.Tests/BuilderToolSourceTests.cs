@@ -1,9 +1,12 @@
 extern alias BuilderWorker;
+extern alias AgentWorker;
 
 using BuilderWorker::Sunder.Package.Agent.Builder;
 using BuilderModels = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Models;
 using PermissionSurface = BuilderWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Permission_Surface.IPermissionSurfaceService;
+using AgentOperations = AgentWorker::Sunder.Package.Agent.Shared.Presentation.ToolOperationPresentation;
 using Xunit;
+using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace Sunder.Package.Agent.Tests;
@@ -11,37 +14,44 @@ namespace Sunder.Package.Agent.Tests;
 public sealed class BuilderToolSourceTests
 {
     [Theory]
-    [InlineData("{\"status\":\"unknown\"}", true, "tool-outcome-ambiguous")]
-    [InlineData("{\"status\":\"failed\"}", true, "maker.operation-failed")]
-    [InlineData("{\"status\":\"applied\"}", false, null)]
-    public void OperationResultsPreserveAgentAmbiguitySemantics(string json, bool error, string? errorCode)
+    [InlineData("{\"status\":\"unknown\"}", true, "tool-outcome-ambiguous", "Unconfirmed", false)]
+    [InlineData("{\"status\":\"failed\"}", true, "maker.operation-failed", "Failed", true)]
+    [InlineData("{\"status\":\"applied\"}", false, null, "Applied", true)]
+    [InlineData("{\"status\":\"unchanged\"}", false, null, "Unchanged", true)]
+    public void OperationResultsPreserveAgentAmbiguitySemantics(string json, bool error, string? errorCode, string label, bool terminal)
     {
         var rendered = BuilderToolSource.CompactResult("maker_apply", JsonNode.Parse(json)!, "Observed operation.",
             failed: error, unknown: errorCode == "tool-outcome-ambiguous");
         Assert.Equal(error, rendered.IsError);
         Assert.Equal(errorCode, rendered.ErrorCode);
+        Assert.Equal(label, AgentOperations.Read(rendered.PresentationPayloadJson));
+        Assert.Equal(terminal, AgentOperations.IsTerminal(rendered.PresentationPayloadJson));
     }
 
     [Theory]
-    [InlineData("maker_package", "{\"package\":\"/project/sunder.package.json\",\"query\":null}", true)]
+    [InlineData("maker_package", "{\"package\":$node,\"query\":null}", true)]
     [InlineData("maker_view", "{\"target\":\"v1\",\"role\":null,\"name\":null,\"text\":null,\"within\":null,\"value\":null,\"limit\":null,\"cursor\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":null,\"verify\":null}", true)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"invoke\",\"text\":\"unexpected\"}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":\"10\"}", false)]
-    [InlineData("maker_logs", "{\"package\":\"/project/sunder.package.json\",\"limit\":20,\"level\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
-    [InlineData("maker_apply", "{\"package\":\"/project/Package.csproj\"}", true)]
-    [InlineData("maker_apply", "{\"package\":\"/project/package.json\"}", false)]
-    [InlineData("maker_package", "{\"package\":\"/project/Package.csproj\",\"package\":\"/other/Package.csproj\"}", false)]
+    [InlineData("maker_logs", "{\"package\":$node,\"limit\":20,\"level\":\"error\",\"source\":\"runtime\",\"since\":\"2026-10-24T03:35:00+08:00\"}", true)]
+    [InlineData("maker_apply", "{\"package\":$dotnet}", true)]
+    [InlineData("maker_apply", "{\"package\":$npm}", false)]
+    [InlineData("maker_package", "{\"package\":$dotnet,\"package\":$other}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"limit\":51}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T03:35:00\"}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"since\":\"2026-10-24T04:00:00Z\",\"until\":\"2026-10-24T03:00:00Z\"}", false)]
     [InlineData("maker_view", "{\"target\":\"v1\",\"selector\":\"body\"}", false)]
     [InlineData("maker_interact", "{\"target\":\"e1\",\"action\":\"evaluate-script\"}", false)]
     [InlineData("maker_apply", "{\"package\":\"relative.csproj\"}", false)]
-    [InlineData("maker_apply", "{\"path\":\"/project/Package.csproj\"}", false)]
+    [InlineData("maker_apply", "{\"path\":$dotnet}", false)]
     [InlineData("maker_logs", "{\"package\":\"p1\",\"operationId\":\"untrusted\"}", false)]
     public async Task ArgumentValidationIsPureAndRejectsMalformedIntentBeforeAnyAuthority(string tool, string json, bool valid)
     {
+        // Substitute JSON string values, preserving duplicate fields and malformed intent.
+        foreach (var (token, folder, entry) in new[] { ("$node", "project", "sunder.package.json"),
+            ("$dotnet", "project", "Package.csproj"), ("$npm", "project", "package.json"), ("$other", "other", "Package.csproj") })
+            json = json.Replace(token, JsonSerializer.Serialize(Path.Combine(Path.GetTempPath(), "maker 项目", folder, entry)), StringComparison.Ordinal);
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
         var result = await source.ValidateArgumentsAsync(new BuilderModels.AgentToolRequest { ToolId = tool, ArgumentsJson = json });
@@ -61,7 +71,8 @@ public sealed class BuilderToolSourceTests
     {
         await using var runtime = new BuilderRuntimeService(null!);
         var source = new BuilderToolSource(runtime);
-        var request = new BuilderModels.AgentToolRequest { ToolId = tool, ArgumentsJson = "{\"entryPoint\":\"/project/Package.csproj\"}" };
+        var request = new BuilderModels.AgentToolRequest { ToolId = tool,
+            ArgumentsJson = JsonSerializer.Serialize(new { entryPoint = Path.Combine(Path.GetTempPath(), "project", "Package.csproj") }) };
         Assert.NotNull(await source.ValidateArgumentsAsync(request));
         Assert.Null(await source.GetReadinessAsync(new() { ToolId = tool, Context = null! }));
         Assert.Null(await source.PermissionAsync(new() { Request = request, Context = null! }));
@@ -90,6 +101,10 @@ public sealed class BuilderToolSourceTests
         var tools = await source.ListToolsAsync(null!);
         Assert.Equal(new[] { "maker_package", "maker_apply", "maker_logs", "maker_view", "maker_screenshot", "maker_interact" }, tools.Select(tool => tool.ToolId));
         Assert.Single(tools, tool => !string.IsNullOrWhiteSpace(tool.RuntimeInstructions));
+        var instructions = Assert.Single(tools, tool => tool.ToolId == "maker_package").RuntimeInstructions!;
+        Assert.Contains("query=build", instructions);
+        Assert.Contains("sunder:dev:once", instructions);
+        Assert.Contains("do not find Node by inspecting running Workers", instructions);
         Assert.DoesNotContain(tools, tool => tool.ToolId == "maker_build_package");
         Assert.All(tools, tool => Assert.DoesNotContain("watch", tool.ToolId, StringComparison.OrdinalIgnoreCase));
         Assert.All(tools, tool => Assert.Empty(tool.Aliases ?? []));

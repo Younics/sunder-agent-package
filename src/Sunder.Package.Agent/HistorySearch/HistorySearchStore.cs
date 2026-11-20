@@ -20,7 +20,8 @@ internal sealed partial class HistorySearchStore : IDisposable, IAsyncDisposable
         _walCheckpointMaintenance = new SqliteWalCheckpointMaintenance(
             DatabasePath,
             "History projection store",
-            packageContext.Logging.LoggerFactory.CreateLogger<HistorySearchStore>());
+            packageContext.Logging.LoggerFactory.CreateLogger<HistorySearchStore>(),
+            databaseGate: _writeLock);
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(DatabasePath)!);

@@ -93,17 +93,19 @@ internal static partial class BuilderLocalNuGet
                     System.Text.RegularExpressions.RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1)))
                 throw new InvalidDataException("Sunder template must declare one canonical .NET Worker target framework.");
             RequireReference(project, "Sunder.Sdk.Worker", versions, legacyRange);
-            RequireReference(project, "Sunder.Package.Build", versions, legacyRange);
+            RequireBuildSdk(project, versions, legacyRange);
             foreach (var (folder, package) in new[] { ("Views/Avalonia", "Sunder.Sdk.Avalonia"), ("Stacks/Stacks", "Sunder.Sdk.Stacks") })
                 RequireReference(ParseXml(await ReadEntryAsync(Require(TemplateProject + folder + ".PackageReferences.props"), token).ConfigureAwait(false)), package, versions, legacyRange);
         }
     }
 
-    // Exact or bounded NuGet constraints only; actual selected dependency versions
-    // are independent of the archive's own version. No public Sunder fallback.
+    // NuGet bare versions are inclusive minimums, not exact pins. Resolution is
+    // still confined to one explicitly selected archive per Sunder identity.
     private static bool MatchesCoordinate(string? constraint, string version)
     {
         if (constraint == version || constraint == "[" + version + "]") return true;
+        if (SemanticVersion.TryParse(constraint, out var minimum) && SemanticVersion.TryParse(version, out var candidate))
+            return candidate.ComparePrecedenceTo(minimum) >= 0;
         if (constraint is null || constraint.Length > 1024 || constraint.Length < 5 ||
             constraint[0] is not ('[' or '(') || constraint[^1] is not (']' or ')') || !SemanticVersion.TryParse(version, out var selected)) return false;
         var bounds = constraint[1..^1].Split(',', StringSplitOptions.TrimEntries);
@@ -125,6 +127,19 @@ internal static partial class BuilderLocalNuGet
         var range = references.Length == 1 ? (string?)references[0].Attribute("Version") : null;
         if (range == "SUNDER_TEMPLATE_PACKAGE_VERSION_RANGE") range = legacyRange;
         if (!MatchesCoordinate(range, versions[id])) throw new InvalidDataException($"Sunder template dependency {id} does not admit its selected local version.");
+    }
+
+    private static void RequireBuildSdk(XDocument project, IReadOnlyDictionary<string, string> versions, string? legacyRange)
+    {
+        const string id = "Sunder.Package.Build";
+        var sdks = ((string?)project.Root?.Attribute("Sdk") ?? "").Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(value => value == id || value.StartsWith(id + "/", StringComparison.Ordinal)).ToArray();
+        if (sdks.Length == 0) { RequireReference(project, id, versions, legacyRange); return; }
+        // MSBuild's project SDK coordinate is exact, unlike PackageReference's
+        // minimum-version syntax. Never retarget the selected template/toolset.
+        if (sdks.Length != 1 || sdks[0] != id + "/" + versions[id]
+            || project.Descendants("PackageReference").Any(element => (string?)element.Attribute("Include") == id))
+            throw new InvalidDataException("Sunder template must select exactly the local Sunder.Package.Build SDK version.");
     }
 
     private static XDocument ParseXml(byte[] bytes)

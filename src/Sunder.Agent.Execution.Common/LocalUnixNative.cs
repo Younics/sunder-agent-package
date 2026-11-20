@@ -1,10 +1,9 @@
 using System.ComponentModel;
-using System.Globalization;
 using System.Runtime.InteropServices;
 
 namespace Sunder.Agent.Execution.Common;
 
-internal static class LocalUnixNative
+internal static partial class LocalUnixNative
 {
     private const string LibC = "libc";
     private const int StatBufferSize = 256;
@@ -32,18 +31,8 @@ internal static class LocalUnixNative
 
     public static int ExclusiveFlag => OperatingSystem.IsMacOS() ? 0x00000800 : 0x00000080;
 
-    public static int RemoveDirectoryFlag => OperatingSystem.IsMacOS() ? 0x00000080 : 0x00000200;
-
-    public static int TemporaryFileFlag => (1 << 22) | DirectoryFlag;
-
-    private const int AtCurrentWorkingDirectory = -100;
-    private const int AtEmptyPath = 0x1000;
-    private const int AtSymlinkFollow = 0x400;
-    private const uint DarwinRenameExclusive = 0x00000004;
-    private const uint DarwinCloneNoFollow = 0x0001;
-    private const uint LinuxRenameNoReplace = 0x00000001;
-    private static readonly AsyncLocal<Func<LocalUnixAnonymousPublishMethod, int?>?> AnonymousPublishErrorOverride = new();
-    private static readonly AsyncLocal<int?> AnonymousTemporaryFileOpenErrorOverride = new();
+    private static bool UseDarwinInode64
+        => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
 
     public static int Open(string path, int flags, uint mode = 0)
         => OperatingSystem.IsMacOS() && RuntimeInformation.ProcessArchitecture == Architecture.Arm64
@@ -59,12 +48,6 @@ internal static class LocalUnixNative
     {
         if (OperatingSystem.IsLinux())
         {
-            if ((flags & TemporaryFileFlag) == TemporaryFileFlag
-                && AnonymousTemporaryFileOpenErrorOverride.Value is { } forcedError)
-            {
-                Marshal.SetLastPInvokeError(forcedError);
-                return -1;
-            }
             return OpenAt2(
                 directoryFileDescriptor,
                 name,
@@ -83,7 +66,8 @@ internal static class LocalUnixNative
         var buffer = Marshal.AllocHGlobal(StatBufferSize);
         try
         {
-            if (FStat(fileDescriptor, buffer) != 0)
+            var result = UseDarwinInode64 ? FStatDarwinInode64(fileDescriptor, buffer) : FStat(fileDescriptor, buffer);
+            if (result != 0)
             {
                 throw Error("fstat");
             }
@@ -109,44 +93,6 @@ internal static class LocalUnixNative
         }
     }
 
-    internal static int GetLinuxDirectoryFlag(Architecture architecture)
-        => architecture switch
-        {
-            Architecture.X64 => 1 << 16,
-            Architecture.Arm64 => 1 << 14,
-            _ => throw UnsupportedArchitecture(),
-        };
-
-    internal static int GetLinuxNoFollowFlag(Architecture architecture)
-        => architecture switch
-        {
-            Architecture.X64 => 1 << 17,
-            Architecture.Arm64 => 1 << 15,
-            _ => throw UnsupportedArchitecture(),
-        };
-
-    internal static UnixMetadata ReadLinuxMetadata(IntPtr buffer, Architecture architecture)
-        => architecture switch
-        {
-            Architecture.X64 => new UnixMetadata(
-                unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
-                unchecked((ulong)Marshal.ReadInt64(buffer, 8)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 24)),
-                Marshal.ReadInt64(buffer, 48),
-                unchecked((ulong)Marshal.ReadInt64(buffer, 16)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 28)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 32))),
-            Architecture.Arm64 => new UnixMetadata(
-                unchecked((ulong)Marshal.ReadInt64(buffer, 0)),
-                unchecked((ulong)Marshal.ReadInt64(buffer, 8)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 16)),
-                Marshal.ReadInt64(buffer, 48),
-                unchecked((uint)Marshal.ReadInt32(buffer, 20)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 24)),
-                unchecked((uint)Marshal.ReadInt32(buffer, 28))),
-            _ => throw UnsupportedArchitecture(),
-        };
-
     public static LocalSecureNodeKind GetNodeKind(UnixMetadata metadata, string path)
         => (metadata.Mode & FileTypeMask) switch
         {
@@ -166,7 +112,7 @@ internal static class LocalUnixNative
             throw Error("openat directory duplicate");
         }
 
-        var directory = FdOpenDir(duplicate);
+        var directory = UseDarwinInode64 ? FdOpenDirDarwinInode64(duplicate) : FdOpenDir(duplicate);
         if (directory == IntPtr.Zero)
         {
             var error = Marshal.GetLastPInvokeError();
@@ -179,7 +125,7 @@ internal static class LocalUnixNative
             while (true)
             {
                 Marshal.SetLastPInvokeError(0);
-                var entry = ReadDir(directory);
+                var entry = UseDarwinInode64 ? ReadDirDarwinInode64(directory) : ReadDir(directory);
                 if (entry == IntPtr.Zero)
                 {
                     var error = Marshal.GetLastPInvokeError();
@@ -227,14 +173,6 @@ internal static class LocalUnixNative
         }
     }
 
-    public static void Rename(int parentFileDescriptor, string oldName, string newName)
-    {
-        if (RenameAt(parentFileDescriptor, oldName, parentFileDescriptor, newName) != 0)
-        {
-            throw Error("renameat");
-        }
-    }
-
     public static void RenameNoReplace(
         int oldParentFileDescriptor,
         string oldName,
@@ -265,49 +203,6 @@ internal static class LocalUnixNative
         }
     }
 
-    public static void PublishHandleNoReplace(int sourceFileDescriptor, int parentFileDescriptor, string targetName)
-    {
-        if (OperatingSystem.IsLinux())
-        {
-            PublishLinuxAnonymousHandleNoReplace(sourceFileDescriptor, parentFileDescriptor, targetName);
-            return;
-        }
-
-        var result = FCloneFileAt(sourceFileDescriptor, parentFileDescriptor, targetName, DarwinCloneNoFollow);
-        if (result != 0)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            if (error == 17)
-            {
-                throw new LocalSecureFileAlreadyExistsException(targetName);
-            }
-            if (error is 22 or 38 or 45 or 95)
-            {
-                throw new PlatformNotSupportedException(
-                    "The filesystem does not support exact-handle no-replace publication required by strict structured writes.",
-                    new Win32Exception(error));
-            }
-            throw Error("exact-handle publication", error);
-        }
-    }
-
-    internal static IDisposable OverrideAnonymousPublishErrors(
-        Func<LocalUnixAnonymousPublishMethod, int?> errorOverride)
-    {
-        ArgumentNullException.ThrowIfNull(errorOverride);
-        var previous = AnonymousPublishErrorOverride.Value;
-        AnonymousPublishErrorOverride.Value = errorOverride;
-        return new AnonymousPublishErrorOverrideScope(previous);
-    }
-
-    internal static IDisposable OverrideAnonymousTemporaryFileOpenError(int error)
-    {
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(error);
-        var previous = AnonymousTemporaryFileOpenErrorOverride.Value;
-        AnonymousTemporaryFileOpenErrorOverride.Value = error;
-        return new AnonymousTemporaryFileOpenErrorOverrideScope(previous);
-    }
-
     public static int Duplicate(int fileDescriptor)
     {
         var duplicate = Dup(fileDescriptor);
@@ -324,48 +219,11 @@ internal static class LocalUnixNative
         return duplicate;
     }
 
-    public static void Link(int parentFileDescriptor, string oldName, string newName)
-    {
-        if (LinkAt(parentFileDescriptor, oldName, parentFileDescriptor, newName, 0) != 0)
-        {
-            var error = Marshal.GetLastPInvokeError();
-            if (error == 17)
-            {
-                throw new LocalSecureFileAlreadyExistsException(newName);
-            }
-            throw Error("linkat", error);
-        }
-    }
-
-    public static void Unlink(int parentFileDescriptor, string name, bool directory)
-    {
-        if (UnlinkAt(parentFileDescriptor, name, directory ? RemoveDirectoryFlag : 0) != 0)
-        {
-            throw Error("unlinkat");
-        }
-    }
-
     public static void Sync(int fileDescriptor)
     {
         if (FSync(fileDescriptor) != 0)
         {
             throw Error("fsync");
-        }
-    }
-
-    public static void SetMode(int fileDescriptor, uint mode)
-    {
-        if (FChmod(fileDescriptor, mode) != 0)
-        {
-            throw Error("fchmod");
-        }
-    }
-
-    public static void SetOwner(int fileDescriptor, uint userId, uint groupId)
-    {
-        if (FChown(fileDescriptor, userId, groupId) != 0)
-        {
-            throw Error("fchown");
         }
     }
 
@@ -384,118 +242,6 @@ internal static class LocalUnixNative
 
     public static Exception Error(string operation, int error)
         => new LocalSecurePathException($"Secure filesystem {operation} failed: {new Win32Exception(error).Message}");
-
-    private static int OpenAt2(
-        int directoryFileDescriptor,
-        string name,
-        int flags,
-        uint mode,
-        bool invalidArgumentIsOperationError)
-    {
-        EnsureSupportedArchitecture();
-        var namePointer = Marshal.StringToCoTaskMemUTF8(name);
-        try
-        {
-            var how = new OpenHow
-            {
-                Flags = unchecked((ulong)flags),
-                Mode = mode,
-                Resolve = 0x01 | 0x02 | 0x04 | 0x08,
-            };
-            var result = SyscallOpenAt2(437, directoryFileDescriptor, namePointer, ref how, (nuint)24);
-            if (result >= 0)
-            {
-                return checked((int)result);
-            }
-
-            var error = Marshal.GetLastPInvokeError();
-            if (error == 38 || (error == 22 && !invalidArgumentIsOperationError))
-            {
-                throw new PlatformNotSupportedException(
-                    "The Linux kernel does not provide the openat2 no-link/no-mount guarantees required by strict Local filesystem operations.",
-                    new Win32Exception(error));
-            }
-            return -1;
-        }
-        finally
-        {
-            Marshal.FreeCoTaskMem(namePointer);
-        }
-    }
-
-    private static void PublishLinuxAnonymousHandleNoReplace(
-        int sourceFileDescriptor,
-        int parentFileDescriptor,
-        string targetName)
-    {
-        var (result, emptyPathError) = LinkAtForAnonymousPublish(
-            LocalUnixAnonymousPublishMethod.EmptyPath,
-            sourceFileDescriptor,
-            string.Empty,
-            parentFileDescriptor,
-            targetName,
-            AtEmptyPath);
-        if (result == 0)
-        {
-            return;
-        }
-        if (emptyPathError == 17)
-        {
-            throw new LocalSecureFileAlreadyExistsException(targetName);
-        }
-        if (!CanRetryAnonymousPublish(emptyPathError))
-        {
-            throw Error("exact-handle publication", emptyPathError);
-        }
-
-        var descriptorPath = "/proc/self/fd/"
-                             + sourceFileDescriptor.ToString(CultureInfo.InvariantCulture);
-        var (procResult, procError) = LinkAtForAnonymousPublish(
-            LocalUnixAnonymousPublishMethod.ProcSelfFd,
-            AtCurrentWorkingDirectory,
-            descriptorPath,
-            parentFileDescriptor,
-            targetName,
-            AtSymlinkFollow);
-        if (procResult == 0)
-        {
-            return;
-        }
-        if (procError == 17)
-        {
-            throw new LocalSecureFileAlreadyExistsException(targetName);
-        }
-        if (CanRetryAnonymousPublish(procError))
-        {
-            throw new LocalUnixAnonymousPublishUnavailableException(emptyPathError, procError);
-        }
-        throw Error("/proc/self/fd exact-handle publication", procError);
-    }
-
-    private static (int Result, int Error) LinkAtForAnonymousPublish(
-        LocalUnixAnonymousPublishMethod method,
-        int oldDirectoryFileDescriptor,
-        string oldPath,
-        int newDirectoryFileDescriptor,
-        string newPath,
-        int flags)
-    {
-        if (AnonymousPublishErrorOverride.Value?.Invoke(method) is { } forcedError)
-        {
-            return (-1, forcedError);
-        }
-
-        var result = LinkAt(
-            oldDirectoryFileDescriptor,
-            oldPath,
-            newDirectoryFileDescriptor,
-            newPath,
-            flags);
-        return (result, result == 0 ? 0 : Marshal.GetLastPInvokeError());
-    }
-
-    private static bool CanRetryAnonymousPublish(int error)
-        => error is 1 or 2 or 13 or 18 or 20 or 22 or 38 or 40 or 95;
 
     private static string ReadNullTerminatedUtf8(IntPtr pointer, int maximumBytes)
     {
@@ -532,41 +278,6 @@ internal static class LocalUnixNative
     private static PlatformNotSupportedException UnsupportedArchitecture()
         => new($"Strict Local Unix filesystem operations do not support {RuntimeInformation.ProcessArchitecture} ABI layouts.");
 
-    private sealed class AnonymousPublishErrorOverrideScope(
-        Func<LocalUnixAnonymousPublishMethod, int?>? previous) : IDisposable
-    {
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            {
-                AnonymousPublishErrorOverride.Value = previous;
-            }
-        }
-    }
-
-    private sealed class AnonymousTemporaryFileOpenErrorOverrideScope(int? previous) : IDisposable
-    {
-        private int _disposed;
-
-        public void Dispose()
-        {
-            if (Interlocked.Exchange(ref _disposed, 1) == 0)
-            {
-                AnonymousTemporaryFileOpenErrorOverride.Value = previous;
-            }
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct OpenHow
-    {
-        public ulong Flags;
-        public ulong Mode;
-        public ulong Resolve;
-    }
-
     [DllImport(LibC, EntryPoint = "open", SetLastError = true)]
     private static extern int OpenNative(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
@@ -580,33 +291,6 @@ internal static class LocalUnixNative
         int flags,
         uint mode);
 
-    // Apple ARM64 variadic arguments start on the stack. These unused register
-    // arguments place mode in its first stack slot, rather than in x2/x3.
-    // Keep the ordinary signatures above for Linux and macOS x64.
-    // https://developer.apple.com/documentation/xcode/writing-arm64-code-for-apple-platforms
-    [DllImport(LibC, EntryPoint = "open", SetLastError = true)]
-    private static extern int OpenAppleArm64(
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-        int flags,
-        nint unused2, nint unused3, nint unused4, nint unused5, nint unused6, nint unused7,
-        uint mode);
-
-    [DllImport(LibC, EntryPoint = "openat", SetLastError = true)]
-    private static extern int OpenAtAppleArm64(
-        int directoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-        int flags,
-        nint unused3, nint unused4, nint unused5, nint unused6, nint unused7,
-        uint mode);
-
-    [DllImport(LibC, EntryPoint = "syscall", SetLastError = true)]
-    private static extern long SyscallOpenAt2(
-        long number,
-        int directoryFileDescriptor,
-        IntPtr path,
-        ref OpenHow how,
-        nuint size);
-
     [DllImport(LibC, EntryPoint = "fstat", SetLastError = true)]
     private static extern int FStat(int fileDescriptor, IntPtr buffer);
 
@@ -615,50 +299,6 @@ internal static class LocalUnixNative
         int directoryFileDescriptor,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
         uint mode);
-
-    [DllImport(LibC, EntryPoint = "renameat", SetLastError = true)]
-    private static extern int RenameAt(
-        int oldDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath,
-        int newDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath);
-
-    [DllImport(LibC, EntryPoint = "renameat2", SetLastError = true)]
-    private static extern int RenameAt2(
-        int oldDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath,
-        int newDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath,
-        uint flags);
-
-    [DllImport(LibC, EntryPoint = "renameatx_np", SetLastError = true)]
-    private static extern int RenameAtExclusive(
-        int oldDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath,
-        int newDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath,
-        uint flags = DarwinRenameExclusive);
-
-    [DllImport(LibC, EntryPoint = "fclonefileat", SetLastError = true)]
-    private static extern int FCloneFileAt(
-        int sourceFileDescriptor,
-        int destinationDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string destinationPath,
-        uint flags);
-
-    [DllImport(LibC, EntryPoint = "linkat", SetLastError = true)]
-    private static extern int LinkAt(
-        int oldDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string oldPath,
-        int newDirectoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string newPath,
-        int flags);
-
-    [DllImport(LibC, EntryPoint = "unlinkat", SetLastError = true)]
-    private static extern int UnlinkAt(
-        int directoryFileDescriptor,
-        [MarshalAs(UnmanagedType.LPUTF8Str)] string path,
-        int flags);
 
     [DllImport(LibC, EntryPoint = "fdopendir", SetLastError = true)]
     private static extern IntPtr FdOpenDir(int fileDescriptor);
@@ -678,12 +318,6 @@ internal static class LocalUnixNative
     [DllImport(LibC, EntryPoint = "fsync", SetLastError = true)]
     private static extern int FSync(int fileDescriptor);
 
-    [DllImport(LibC, EntryPoint = "fchmod", SetLastError = true)]
-    private static extern int FChmod(int fileDescriptor, uint mode);
-
-    [DllImport(LibC, EntryPoint = "fchown", SetLastError = true)]
-    private static extern int FChown(int fileDescriptor, uint owner, uint group);
-
     [DllImport(LibC, EntryPoint = "fcntl", SetLastError = true)]
     private static extern int Fcntl(int fileDescriptor, int command, int argument);
 
@@ -702,19 +336,3 @@ internal readonly record struct UnixMetadata(
     ulong LinkCount,
     uint UserId,
     uint GroupId);
-
-internal enum LocalUnixAnonymousPublishMethod
-{
-    EmptyPath,
-    ProcSelfFd,
-}
-
-internal sealed class LocalUnixAnonymousPublishUnavailableException(
-    int emptyPathError,
-    int procError)
-    : LocalSecurePathException(
-        "Anonymous temporary-file publication is unavailable through both linkat(AT_EMPTY_PATH) "
-        + $"({new Win32Exception(emptyPathError).Message}) and /proc/self/fd "
-        + $"({new Win32Exception(procError).Message}).")
-{
-}

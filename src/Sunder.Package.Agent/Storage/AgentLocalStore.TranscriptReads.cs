@@ -233,22 +233,6 @@ public sealed partial class AgentLocalStore
         return turns;
     }
 
-    private static IReadOnlyList<AgentTurnRecord> ListRecentTurnHeaders(SqliteConnection connection, int limit)
-    {
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT TurnId, SessionId, Role, Kind, CreatedAtUtc, UpdatedAtUtc, ContentRevision, IsStreaming, RunId, RunRevision, TurnSequence FROM AgentTurns ORDER BY CreatedAtUtc COLLATE BINARY DESC, TurnId COLLATE BINARY DESC LIMIT $limit;";
-        command.Parameters.AddWithValue("$limit", limit);
-
-        using var reader = command.ExecuteReader();
-        var turns = new List<AgentTurnRecord>();
-        while (reader.Read())
-        {
-            turns.Add(ReadTurnHeader(reader));
-        }
-
-        return turns;
-    }
-
     private static IReadOnlyList<AgentTurnItemRecord> ListTurnItemsForSession(
         SqliteConnection connection,
         Guid sessionId,

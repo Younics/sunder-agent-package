@@ -146,6 +146,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             var host = new FullRunControlProbe { Block = !retireControl };
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var ownerRetired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var ownerCallCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             using var ownerRetirement = fixture.ControlReference.RetirementToken.Register(() => ownerRetired.TrySetResult());
             loop.Execute = async (context, runtime, token) =>
             {
@@ -159,6 +160,9 @@ public sealed partial class AgentPublicSourceMigrationTests
                         // This branch tests caller-owned reference retirement, not
                         // provider cancellation arriving before that owner signal.
                         await ownerRetired.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                        // A binding's retired flag precedes propagation to its live
+                        // operation. Fence that operation, not just the reference.
+                        await ownerCallCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
                         throw;
                     }
                 }
@@ -167,6 +171,7 @@ public sealed partial class AgentPublicSourceMigrationTests
             };
             var pending = fixture.Bridge.RunAsync(host.Context, host).AsTask();
             await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            using var ownerCallCancellation = fixture.Owner.LastRunCancellationToken.Register(() => ownerCallCancelled.TrySetResult());
             if (!retireControl) await host.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await fixture.State.RetireAsync(retireControl ? fixture.Control : fixture.Implementation).WaitAsync(TimeSpan.FromSeconds(5));
             if (retireControl)

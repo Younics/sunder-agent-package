@@ -54,8 +54,7 @@ public sealed class ScopedInstructionClaimTests
         var written = await restarted.ExecuteAsync(
             fixture.ToolContext(epoch: 1),
             Request("write", new { path = "src/feature/output.txt", content = "first" }));
-        Assert.False(written.IsError, written.Summary);
-        Assert.Equal("first", await File.ReadAllTextAsync(Path.Combine(nested, "output.txt")));
+        await AssertMutationOutcomeAsync(written, Path.Combine(nested, "output.txt"), "first");
 
         await File.WriteAllTextAsync(Path.Combine(nested, "AGENTS.md"), "nested policy v2");
         var changed = await restarted.ExecuteAsync(
@@ -92,11 +91,10 @@ public sealed class ScopedInstructionClaimTests
             fixture.ToolContext(firstSession, epoch: 1, binding: alternateBinding),
             Request("write", new { path = "binding.txt", content = "binding" }));
 
-        Assert.False(first.IsError, first.Summary);
+        await AssertMutationOutcomeAsync(first, Path.Combine(fixture.Root, "first.txt"), "first");
         AssertDeferred(isolated);
         AssertDeferred(rolledBack);
         AssertDeferred(rebound);
-        Assert.True(File.Exists(Path.Combine(fixture.Root, "first.txt")));
         Assert.False(File.Exists(Path.Combine(fixture.Root, "isolated.txt")));
         Assert.False(File.Exists(Path.Combine(fixture.Root, "epoch.txt")));
         Assert.False(File.Exists(Path.Combine(fixture.Root, "binding.txt")));
@@ -129,8 +127,7 @@ public sealed class ScopedInstructionClaimTests
         var result = await source.ExecuteAsync(
             fixture.ToolContext(sessionId, epoch: 1),
             Request("write", new { path = "blocked.txt", content = "blocked" }));
-        Assert.False(result.IsError, result.Summary);
-        Assert.True(File.Exists(Path.Combine(fixture.Root, "blocked.txt")));
+        await AssertMutationOutcomeAsync(result, Path.Combine(fixture.Root, "blocked.txt"), "blocked");
         Assert.NotEqual(invalid, await File.ReadAllTextAsync(claimPath));
         Assert.True(File.Exists(claimPath + ".corrupt"));
     }
@@ -215,14 +212,12 @@ public sealed class ScopedInstructionClaimTests
 
         Assert.Equal(2, initial.Count);
         Assert.DoesNotContain(initial, block => block.Content.Contains("first nested", StringComparison.Ordinal));
-        Assert.False(secondWrite.IsError, secondWrite.Summary);
+        await AssertMutationOutcomeAsync(secondWrite, Path.Combine(secondRoot, "allowed.txt"), "allowed");
         AssertDeferred(nestedWrite);
-        Assert.False(externalWrite.IsError, externalWrite.Summary);
+        await AssertMutationOutcomeAsync(externalWrite, Path.Combine(outside, "allowed.txt"), "external");
         Assert.False(externalSearch.IsError, externalSearch.Content);
         Assert.Contains("external-match.txt", externalSearch.Content, StringComparison.Ordinal);
-        Assert.True(File.Exists(Path.Combine(secondRoot, "allowed.txt")));
         Assert.False(File.Exists(Path.Combine(firstNested, "deferred.txt")));
-        Assert.True(File.Exists(Path.Combine(outside, "allowed.txt")));
         Assert.DoesNotContain("outside", await File.ReadAllTextAsync(fixture.ClaimPath(sessionId)), StringComparison.Ordinal);
     }
 
@@ -317,7 +312,7 @@ public sealed class ScopedInstructionClaimTests
 
         AssertDeferred(blocked);
         Assert.False(File.Exists(Path.Combine(fixture.Root, "blocked.txt")));
-        Assert.False(allowed.IsError, allowed.Summary);
+        await AssertMutationOutcomeAsync(allowed, Path.Combine(fixture.Root, "allowed.txt"), "allowed");
     }
 
     [Fact]
@@ -658,6 +653,7 @@ public sealed class ScopedInstructionClaimTests
         Assert.DoesNotContain("RETARGETED_TOOL_SECRET", result.Content, StringComparison.Ordinal);
         Assert.True(File.Exists(second));
         Assert.Equal("RETARGETED_TOOL_SECRET", await File.ReadAllTextAsync(second));
+        Assert.NotNull(File.ResolveLinkTarget(link, returnFinalTarget: false));
     }
 
     [Fact]
@@ -680,7 +676,7 @@ public sealed class ScopedInstructionClaimTests
         var shell = await fixture.CreateShellSourceAsync();
         var shellResult = await shell.ExecuteAsync(
             fixture.ToolContext(epoch: 1),
-            Request("shell", new { command = "true" }));
+            Request("shell", new { command = "echo scoped-instruction-refresh" }));
         var refreshed = await PresentAsync(files, fixture.PromptRequest(epoch: 1));
 
         Assert.False(shellResult.IsError, shellResult.Summary);
@@ -792,6 +788,13 @@ public sealed class ScopedInstructionClaimTests
             request.Run.RunId,
             request.TranscriptEpoch,
             receiptBlocks));
+    }
+
+    private static async Task AssertMutationOutcomeAsync(AgentToolResult result, string path, string content)
+    {
+        Assert.True(result.RequiresPromptContextRefresh);
+        Assert.False(result.IsError, result.Summary);
+        Assert.Equal(content, await File.ReadAllTextAsync(path));
     }
 
     private static void AssertDeferred(AgentToolResult result)

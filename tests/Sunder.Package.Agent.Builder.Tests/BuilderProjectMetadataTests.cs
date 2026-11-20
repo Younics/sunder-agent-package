@@ -1,9 +1,5 @@
-#if !BUILDER_METADATA_STANDALONE
 extern alias BuilderWorker;
 using BuilderWorker::Sunder.Package.Agent.Builder;
-#else
-using Sunder.Package.Agent.Builder;
-#endif
 using System.Text.Json;
 using Xunit;
 
@@ -11,7 +7,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed class BuilderProjectMetadataTests : IDisposable
 {
-    private readonly string _root = Path.Combine(Path.GetTempPath(), "sunder-builder-metadata-tests", Guid.NewGuid().ToString("N"));
+    private readonly string _root = Path.Combine(TemporaryDirectory.GetPhysicalTemporaryRoot(), "sunder-builder-metadata-tests", Guid.NewGuid().ToString("N"));
     private readonly BuilderProjectDiscovery _discovery = new();
     private readonly BuilderProjectMetadataService _metadata = new();
 
@@ -30,7 +26,8 @@ public sealed class BuilderProjectMetadataTests : IDisposable
         Assert.All(result, item => Assert.Equal("Old display", item.DisplayName));
     }
 
-    [Fact]
+    [FileSystemFact(TestFileSystemCapability.DirectorySymbolicLinks,
+        "Linked project and metadata rejection requires symbolic links.", TestFileSystemCapability.FileSymbolicLinks)]
     public async Task Discovery_DoesNotFollowLinkedProjectsOrMetadata()
     {
         await DotnetAsync("actual"); Directory.CreateSymbolicLink(Path.Combine(_root, "linked"), Path.Combine(_root, "actual"));
@@ -282,7 +279,7 @@ public sealed class BuilderProjectMetadataTests : IDisposable
         await WriteAsync(folder + "/Views/DefaultPackageView.axaml.cs", "using Sunder.Sdk.Packaging;\nnamespace Original.Clr.Views;\n[SunderPackageView(\"example.old.default\", \"Old display\")] public partial class DefaultPackageView { }\n");
         await WriteAsync(folder + "/Views/DefaultPackageViewModel.cs", "using Sunder.Generated.Packages.Example_Old_Services;\nusing Sunder.Generated.Packages.Foreign_Package_Services;\nnamespace Original.Clr.Views;\npublic sealed class DefaultPackageViewModel;\n");
         await WriteAsync(folder + "/Views/DefaultPackageView.axaml", "<UserControl xmlns=\"https://github.com/avaloniaui\"><TextBlock Text=\"Old display\" FontSize=\"24\" FontWeight=\"SemiBold\" /></UserControl>\n");
-        return Path.Combine(_root, folder, entry);
+        return Path.GetFullPath(Path.Combine(_root, folder, entry));
     }
     private async Task<string> NodeAsync(string folder)
     {
@@ -298,7 +295,7 @@ public sealed class BuilderProjectMetadataTests : IDisposable
             """);
         await WriteAsync(folder + "/app/src/App.tsx", "const packageId = \"example.old\";\nconst packageName = \"Old display\";\nexport function App() { return <><h1>{packageName}</h1><p>Check this package's permissions.</p></>; }\n");
         await WriteAsync(folder + "/app/index.html", "<!doctype html><html><head><title>Old display</title></head><body></body></html>\n");
-        return Path.Combine(_root, folder, "sunder.package.json");
+        return Path.GetFullPath(Path.Combine(_root, folder, "sunder.package.json"));
     }
     private async Task WriteAsync(string path, string content)
     {

@@ -25,7 +25,26 @@ using DockerWorker::Sunder.Package.Agent.Execution.Docker;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static async Task VerifyDockerRoles(string root, string worker)
+    // Exercise this generated/native fixture boundary without rebuilding fifteen
+    // families when its controlled endpoint or challenge interpreter changes.
+    // The required complete artifact case still consumes its own exact snapshots.
+    [AgentPublicSourceMigrationFact]
+    public async Task DockerGeneratedRoles_ExerciseControlledNativeExecutionFromCurrentOutputs()
+    {
+        var source = CanonicalPackageRoles.Source("Execution.Docker");
+        var selected = File.ReadAllBytes(Path.Combine(source, "sunder-contracts.lock.json"));
+        var baseline = CanonicalPackageRoles.ReadOwnedBaseline(source);
+        var root = Directory.CreateTempSubdirectory("sunder-docker-role-probe-").FullName;
+        try { await VerifyDockerRoles(root, source, CanonicalPackageRoles.Source("Agent")); }
+        finally
+        {
+            Assert.Equal(selected, File.ReadAllBytes(Path.Combine(source, "sunder-contracts.lock.json")));
+            Assert.Equal(baseline, CanonicalPackageRoles.ReadOwnedBaseline(source));
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static async Task VerifyDockerRoles(string root, string worker, string? ownerRoot = null)
     {
         var load = new AssemblyLoadContext("docker-role-local", isCollectible: true);
         try
@@ -33,7 +52,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             using var workerStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "worker"), "Sunder.Package.Agent.Execution.Docker.dll"));
             var runtime = load.LoadFromStream(workerStream);
             await VerifyGeneratedDockerComposition(runtime);
-            var owner = LoadExecutionOwner(worker, load);
+            var owner = LoadExecutionOwner(worker, load, ownerRoot);
             using var appStream = File.OpenRead(Path.Combine(SingleProjectRoleOutput(worker, "app"), "Sunder.Package.Agent.Execution.Docker.App.dll"));
             var presentation = load.LoadFromStream(appStream);
             AssertExecutionBackendOwnership(runtime, app: false);
@@ -149,7 +168,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await state.RetireAsync(management);
             Assert.Equal("rpc.provider-not-found", (await Assert.ThrowsAsync<SunderRpcException>(() => Present(new { kind = "get-settings" }))).Error.Code);
             await composition.DisposeAsync();
-            if (!OperatingSystem.IsWindows()) Assert.True(backend.Stops > 0);
+            Assert.True(backend.Stops > 0);
 
             async Task<JsonElement> Present(object request, CancellationToken token = default)
             {
