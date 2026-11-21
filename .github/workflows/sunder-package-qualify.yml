@@ -101,6 +101,35 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-final-smoke-diagnostic-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/rehearsal/${{ matrix.rid }}
+          path: |
+            sunder-agent-package/artifacts/rehearsal/${{ matrix.rid }}/
+            !sunder-agent-package/artifacts/rehearsal/${{ matrix.rid }}/maker-inputs/host-artifacts/**
+            !sunder-agent-package/artifacts/rehearsal/${{ matrix.rid }}/maker-inputs/nuget-artifacts/**
+          if-no-files-found: error
+          retention-days: 14
+      - uses: ./sunder-agent-package/.github/actions/setup
+        if: matrix.rid == 'linux-x64'
+      - name: Build the production fan-in's Core validation paths
+        if: matrix.rid == 'linux-x64'
+        working-directory: sunder-core
+        run: |
+          set -euo pipefail
+          for project in host/Sunder.Cli tools/Sunder.ExecutionRuntime.Build tests/Sunder.Runtime.Host.Tests tests/Sunder.App.Integration.Tests; do
+            path="languages/csharp/dotnet/$project/${project##*/}.csproj"
+            dotnet restore "$path" --locked-mode
+            dotnet build "$path" -c Release --no-restore -p:GeneratePackageOnBuild=false
+          done
+      - name: Exercise the production fan-in's Runtime and App cases
+        id: fanin
+        if: matrix.rid == 'linux-x64'
+        run: >-
+          python3 -B scripts/ci/agent_ci.py test-family --core ../sunder-core
+          --directory artifacts/retained-attempt-2/family --results-directory artifacts/rehearsal-fanin
+      - name: Retain fan-in rehearsal diagnostics
+        if: always() && steps.fanin.outcome != 'skipped' && steps.fanin.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-final-smoke-fanin-diagnostic-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/rehearsal-fanin/
           if-no-files-found: error
           retention-days: 14
