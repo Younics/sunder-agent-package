@@ -29,7 +29,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var owner = services.GetRequiredService<RuntimeSessionOwner>();
         var sessions = services.GetRequiredService<PackageSessionLifecycleService>();
         var installed = services.GetRequiredService<InstalledPackageLifecycleService>();
-        var observed = new HashSet<int>();
+        var observed = new HashSet<ExecutionRuntimeProcessObservation>();
         var temporary = new HashSet<string>(StringComparer.Ordinal);
         var initialized = false;
         try
@@ -91,7 +91,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             CaptureWorkers(owner, observed, temporary);
             Assert.True(recovered.Success, string.Join(Environment.NewLine, recovered.Errors));
             Assert.Equal(15, GetWorkers(owner).Count);
-            Assert.NotEqual(crashed, WorkerReleaseMetrics.GetProcess(GetWorkers(owner)[ShellPackageId]).Id);
+            AssertReplacementProcess(crashed, GetWorkers(owner)[ShellPackageId]);
             Assert.Empty(await installed.GetInstalledAsync());
             VerifyDatabases();
             await installed.ShutdownAsync(sessions);
@@ -114,7 +114,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 finally
                 {
                     await DisposeRuntimeHostAsync(runtimeHost, appConnection);
-                    await AssertProcessIdsStoppedAsync(observed);
+                    await AssertProcessesStoppedAsync(observed);
                     Assert.All(temporary, path => Assert.False(Directory.Exists(path), "Native Worker temporary directory survived cleanup: " + path));
                     MakeTreeWritable(root);
                     if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
