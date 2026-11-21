@@ -1,46 +1,58 @@
-name: Qualify
+name: Diagnose Agent Windows preflight
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
   contents: read
 
-concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  preflight:
+    name: Check scripts · ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: win-x64, runner: windows-2022 }
+          - { rid: win-arm64, runner: windows-11-arm }
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: sunder-agent-package
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_COMMIT }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Check inventory and dependency-independent scripts
+        id: scripts
+        run: |
+          set -euo pipefail
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
+          test "$(dotnet --version)" = 10.0.403
+          mkdir -p artifacts/reports
+          packages="$(python3 -B -c 'import json; from pathlib import Path; rows=json.loads(Path("packages.json").read_text())["packages"]; ids=sorted(row["packageId"] for row in rows); assert len(ids)==len(set(ids))==15; print(json.dumps(ids))')"
+          printf '%s\n' "$packages" > artifacts/reports/preflight-packages.json
+          python3 -B scripts/ci/agent_ci.py preflight --packages "$packages" 2>&1 | tee artifacts/reports/preflight.log
+          test -z "$(git status --porcelain)"
+          test -z "$(git -C ../sunder-core status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.scripts.outcome != 'skipped' && steps.scripts.outcome != ''
+        with:
+          name: agent-preflight-json-paths-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/reports/
+          if-no-files-found: error
+          retention-days: 14
