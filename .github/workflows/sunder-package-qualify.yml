@@ -1,46 +1,89 @@
-name: Qualify
+name: Diagnose Intel macOS Agent validation cleanup
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
-concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  intel:
+    name: ${{ matrix.package }} · source · osx-x64 diagnostic
+    runs-on: macos-15-intel
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [younics.ai.agent.memory.semantic, younics.sunder.package.maker]
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: sunder-agent-package
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_COMMIT }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Fetch and verify exact diagnostic inputs from Release 44902385413
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14706704226/zip" > "$RUNNER_TEMP/inputs.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/14707370281/zip" > "$RUNNER_TEMP/tools.zip"
+          python3 -B - "$RUNNER_TEMP" <<'PY'
+          import hashlib, sys, zipfile
+          from pathlib import Path
+          root = Path(sys.argv[1])
+          for name, digest in (
+              ("inputs", "9b464fa8dcde376d735f417485ec31335e853537ccb89a1a0e780f00ac640152"),
+              ("tools", "f5a030e0150e34db1f4f0299c4345e2ed1e2564764bcaa9700ef349998a517d1"),
+          ):
+              archive = root / (name + ".zip")
+              with archive.open("rb") as stream:
+                  assert hashlib.file_digest(stream, "sha256").hexdigest() == digest
+              with zipfile.ZipFile(archive) as zipped:
+                  assert all(not Path(member).is_absolute() and ".." not in Path(member).parts
+                             for member in zipped.namelist())
+                  zipped.extractall(root / name)
+          PY
+      - name: Exercise non-forced APFS cleanup with known transient and persistent holders
+        if: matrix.package == 'younics.sunder.package.maker'
+        run: python3 -B scripts/ci/diagnose_busy_image.py
+      - name: Build and run the unchanged owning component scope on Intel
+        env:
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+          packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode source --packages "$packages" \
+            --candidate "$RUNNER_TEMP/inputs/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$RUNNER_TEMP/inputs/sunder-platform-contracts.v1.json" --tools "$RUNNER_TEMP/tools"
+          test -z "$(git status --porcelain)"
+          test -z "$(git -C ../sunder-core status --porcelain)"
+      - name: Retain diagnostic outputs, never release evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: intel-cleanup-diagnostic-${{ matrix.package }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/filesystem-probe
+          if-no-files-found: warn
+          retention-days: 14
