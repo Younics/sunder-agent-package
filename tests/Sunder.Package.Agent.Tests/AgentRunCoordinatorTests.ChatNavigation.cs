@@ -543,23 +543,45 @@ public sealed partial class AgentRunCoordinatorTests
             "Fallback Session",
             workspaceId: runtime.CurrentWorkspaceId
         );
+        using var dispatcher = new QueuedAgentPresentationDispatcher();
         using var viewModel = RegressionTestAppViews.Chat(
             runtime.ProfileService,
             runtime.WorkspaceService,
             runtime.SessionService,
             runtime.PermissionService,
-            runtime.RunCoordinator
+            runtime.RunCoordinator,
+            dispatcher
         );
         await viewModel.InitializeAsync();
-        viewModel.SelectedSession = viewModel.Sessions.Single(session =>
-            session.SessionId == deletedSessionId
-        );
+        await dispatcher.InvokeAsync(() => viewModel.SelectedSession =
+            viewModel.Sessions.Single(session => session.SessionId == deletedSessionId));
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(2));
+
+        var fallbackDisplayed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(deletedSessionId, viewModel.SelectedSession?.SessionId);
+            Assert.Equal(deletedSessionId, viewModel.DisplayedSession?.SessionId);
+            viewModel.PropertyChanged += (_, change) =>
+            {
+                if (change.PropertyName == nameof(viewModel.DisplayedSession)
+                    && viewModel.DisplayedSession?.SessionId == fallbackSession.SessionId)
+                {
+                    fallbackDisplayed.TrySetResult();
+                }
+            };
+        });
 
         await runtime.SessionService.DeleteSessionAsync(deletedSessionId);
+        // Worker deletion can finish before the App publishes the fallback transcript.
+        await fallbackDisplayed.Task.WaitAsync(TimeSpan.FromSeconds(2));
 
-        Assert.Equal(fallbackSession.SessionId, viewModel.SelectedSession?.SessionId);
-        Assert.Equal(fallbackSession.SessionId, viewModel.DisplayedSession?.SessionId);
-        Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == deletedSessionId);
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.Equal(fallbackSession.SessionId, viewModel.SelectedSession?.SessionId);
+            Assert.Equal(fallbackSession.SessionId, viewModel.DisplayedSession?.SessionId);
+            Assert.DoesNotContain(viewModel.Sessions, session => session.SessionId == deletedSessionId);
+        });
     }
 
     [Fact]
