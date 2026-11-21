@@ -7,6 +7,7 @@ permissions:
   contents: read
 
 env:
+  AGENT_COMMIT: c13150da8def16767b9a3046d023859a850f54ef
   CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
   MSBUILDDISABLENODEREUSE: "1"
 
@@ -28,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ env.AGENT_COMMIT }}
           path: sunder-agent-package
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -41,11 +43,13 @@ jobs:
         id: scripts
         run: |
           set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AGENT_COMMIT"
           test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
           test "$(dotnet --version)" = 10.0.403
           mkdir -p artifacts/reports
           packages="$(python3 -B -c 'import json; from pathlib import Path; rows=json.loads(Path("packages.json").read_text())["packages"]; ids=sorted(row["packageId"] for row in rows); assert len(ids)==len(set(ids))==15; print(json.dumps(ids))')"
           printf '%s\n' "$packages" > artifacts/reports/preflight-packages.json
+          git rev-parse HEAD > artifacts/reports/checked-out-commit.txt
           python3 -B scripts/ci/agent_ci.py preflight --packages "$packages" 2>&1 | tee artifacts/reports/preflight.log
           test -z "$(git status --porcelain)"
           test -z "$(git -C ../sunder-core status --porcelain)"
