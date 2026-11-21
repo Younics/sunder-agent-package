@@ -1,46 +1,106 @@
-name: Qualify
+name: Diagnose final archive smoke (retained inputs only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
   contents: read
+  actions: read
 
-concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  ARCHIVE_SOURCE: 07a519c8ff6fdcfd8b708b3d22a689cffe301aad
+  CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
+  CORE_TAG: nuget-sunder-package-build/v1.1.0
+  CORE_BUILD_VERSION: "1.1.0"
+  PLAN_SHA256: f83eb0213261930d3e92088bfe367677b731d222ff7c949d97c1a0c04db9bd34
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
+  prepare:
+    name: Select the exact native runners
     runs-on: ubuntu-24.04
     outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+      native: ${{ steps.matrix.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - id: selection
+      - id: matrix
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
+          RUNNER_VARIABLES: ${{ toJSON(vars) }}
+        run: python3 -B scripts/ci/agent_ci.py matrices
 
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+  smoke:
+    name: Diagnose final archive smoke · ${{ matrix.rid }}
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.native) }}
+    env:
+      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-attempt-2/release-plan.json
+      RID: ${{ matrix.rid }}
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.ARCHIVE_SOURCE }}
+          path: archive-source
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_COMMIT }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - name: Exercise workflow and launcher regressions
+        run: >-
+          python3 -B scripts/test/release/test_agent_ci.py
+          AgentCiTests.test_release_plan_path_is_not_exported_as_an_msbuild_version
+          AgentCiTests.test_native_smoke_passes_exact_preparation_arguments_under_bash_nounset
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: sunder-agent-package/artifacts/retained-attempt-2
+          github-token: ${{ github.token }}
+          run-id: "44794675957"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-candidate-*
+          merge-multiple: true
+          path: sunder-agent-package/artifacts/retained-attempt-2/candidates
+          github-token: ${{ github.token }}
+          run-id: "44794675957"
+      - name: Gather under the original release SHA, never the diagnostic SHA
+        run: |
+          set -euo pipefail
+          bash scripts/release/verify-release-locks.sh
+          test "$(git -C ../archive-source rev-parse HEAD)" = "$ARCHIVE_SOURCE"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "$PLAN_SHA256"
+          python3 -B scripts/release/native-family.py gather \
+            artifacts/retained-attempt-2/candidates artifacts/retained-attempt-2/family \
+            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$ARCHIVE_SOURCE" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" ../archive-source
+          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/retained-attempt-2/family/younics.ai.agent.2.0.0.sunderpkg)" \
+            = 6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb
+      - name: Exercise the real development smoke without producing release evidence
+        id: native_smoke
+        run: |
+          bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/retained-attempt-2/family "artifacts/rehearsal/$RID" "$CORE_COMMIT"
+      - name: Retain diagnostic reports only
+        if: always() && steps.native_smoke.outcome != 'skipped' && steps.native_smoke.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-final-smoke-diagnostic-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/rehearsal/${{ matrix.rid }}
+          if-no-files-found: error
+          retention-days: 14
