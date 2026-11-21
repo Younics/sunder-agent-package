@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Pack the six exact Core developer packages for native Maker acceptance, without publication."""
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -10,6 +11,20 @@ import subprocess
 import sys
 
 from release_inputs import isolated_env
+
+
+@contextmanager
+def command_log(path, *, append=False):
+    with path.open("a+b" if append else "w+b") as log:
+        try:
+            yield log
+        except subprocess.CalledProcessError as error:
+            end = log.seek(0, 2)
+            log.seek(max(0, end - 8192))
+            print(f"Maker input command failed (exit {error.returncode}); full log: {path}", file=sys.stderr)
+            for line in log.read().decode("utf-8", errors="replace").splitlines():
+                print("  " + line, file=sys.stderr)
+            raise
 
 
 def prepare(core, output, expected_commit, *, host_only=False):
@@ -38,7 +53,7 @@ def prepare(core, output, expected_commit, *, host_only=False):
         project = core / row["project"]
         properties = ["-p:ContinuousIntegrationBuild=true", "-p:GeneratePackageOnBuild=false",
                       "-p:ArtifactsPath=" + str(output / "nuget-artifacts")]
-        with (output / (row["packageId"] + ".pack.log")).open("wb") as log:
+        with command_log(output / (row["packageId"] + ".pack.log")) as log:
             subprocess.run(["dotnet", "restore", str(project), "--locked-mode", *properties], cwd=core,
                            env=environment, stdout=log, stderr=subprocess.STDOUT, check=True)
             subprocess.run(["dotnet", "pack", str(project), "-c", "Release", "--no-restore", *properties, "-o", str(feed)],
@@ -70,7 +85,7 @@ def file_record(path, root):
 def build_host_project(core, output, environment, relative, log_name):
     project = core / "languages/csharp/dotnet" / relative
     properties = ["-p:ArtifactsPath=" + str(output / "host-artifacts"), "-p:GeneratePackageOnBuild=false"]
-    with (output / log_name).open("wb") as log:
+    with command_log(output / log_name) as log:
         subprocess.run(["dotnet", "restore", str(project), "--locked-mode", *properties], cwd=core, env=environment,
                        stdout=log, stderr=subprocess.STDOUT, check=True)
         subprocess.run(["dotnet", "build", str(project), "-c", "Release", "--no-restore", *properties], cwd=core, env=environment,
@@ -88,7 +103,7 @@ def prepare_catalog(core, output, environment):
         raise ValueError("Ambiguous source Core catalog release")
     tool = build_host_project(core, output, environment, Path("tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj"), "catalog.log")
     catalog = output / "sunder-platform-contracts.v1.json"
-    with (output / "catalog.log").open("ab") as log:
+    with command_log(output / "catalog.log", append=True) as log:
         for arguments in (("check", "--core-root", core), ("export", "--core-root", core, "--catalog-release", releases.pop(), "--output", catalog)):
             subprocess.run(["dotnet", str(tool), "platform-contracts", *map(str, arguments)], cwd=core, env=environment,
                            stdout=log, stderr=subprocess.STDOUT, check=True)

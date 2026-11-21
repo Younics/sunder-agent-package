@@ -35,7 +35,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var provider = runtimeHost.Services;
         var owner = provider.GetRequiredService<RuntimeSessionOwner>();
         var lifecycle = provider.GetRequiredService<InstalledPackageLifecycleService>();
-        var observed = new HashSet<int>();
+        var observed = new HashSet<ExecutionRuntimeProcessObservation>();
         var temporary = new HashSet<string>(StringComparer.Ordinal);
         var initialized = false;
         try
@@ -69,7 +69,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 finally
                 {
                     await DisposeRuntimeHostAsync(runtimeHost, appConnection);
-                    await AssertProcessIdsStoppedAsync(observed);
+                    await AssertProcessesStoppedAsync(observed);
                     Assert.All(temporary, path => Assert.False(Directory.Exists(path), "Maker Worker temporary directory survived cleanup: " + path));
                     MakeTreeWritable(root);
                     if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
@@ -80,7 +80,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
 
     private static async Task VerifyBuilderProjectLifecycleAsync(IServiceProvider services, RuntimeSessionOwner owner,
         string rid, string testRoot, string workerRuntimeRoot, string metricsDirectory,
-        HashSet<int> observedProcessIds, HashSet<string> observedTemporaryPaths, RuntimeConnectionInfo appConnection)
+        HashSet<ExecutionRuntimeProcessObservation> observedProcesses, HashSet<string> observedTemporaryPaths, RuntimeConnectionInfo appConnection)
     {
         var sdk = Environment.GetEnvironmentVariable("SUNDER_AGENT_BUILDER_SDK_VERSION");
         Assert.Matches("^[0-9]+\\.[0-9]+\\.[0-9]+$", sdk ?? "");
@@ -202,9 +202,9 @@ public sealed partial class AgentNativeReleaseSmokeTests
         await PrepareNativeDevelopmentPackageAsync(services, archive, output, []);
         var load = await lifecycle.LoadDevPackageAsync(output, watch: false);
         Assert.True(load.Success, string.Join(Environment.NewLine, load.Errors));
-        CaptureWorkers(owner, observedProcessIds, observedTemporaryPaths);
+        CaptureWorkers(owner, observedProcesses, observedTemporaryPaths);
         var worker = GetWorkers(owner)[packageId];
-        var childProcessId = WorkerReleaseMetrics.GetProcess(worker).Id;
+        var childProcess = ProcessIdentity.Observe(WorkerReleaseMetrics.GetProcess(worker));
         await using (var child = await NativeAppRpcProxy.CreateAsync(services, packageId, rid, appConnection, Path.Combine(testRoot, "created-app")))
         {
             var result = await child.InvokeAsync(packageId + ".sample", "sample", "greet",
@@ -213,7 +213,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         }
         var remove = await lifecycle.UnloadDevPackageAsync(packageId);
         Assert.True(remove.Success, string.Join(Environment.NewLine, remove.Errors));
-        await AssertProcessIdsStoppedAsync([childProcessId]);
+        await AssertProcessesStoppedAsync([childProcess]);
         Assert.Empty(await services.GetRequiredService<InstalledPackageLifecycleService>().GetInstalledAsync());
         Assert.Equal(BuilderPackageId, Assert.Single(GetWorkers(owner)).Key);
         foreach (var (name, hash) in feedHashes)

@@ -67,7 +67,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync("10.0.12");
         var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var launchResolver, out var appConnection);
         var provider = runtimeHost.Services;
-        var observedProcessIds = new HashSet<int>();
+        var observedProcesses = new HashSet<ExecutionRuntimeProcessObservation>();
         var observedTemporaryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var initialized = false;
 
@@ -178,7 +178,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                 rid,
                 activationMeasurements,
                 metricsDirectory,
-                observedProcessIds,
+                observedProcesses,
                 observedTemporaryPaths);
 
             VerifySqliteDatabase(
@@ -192,12 +192,12 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             sessionOwner.MarkReady();
             await VerifyOwnerUnaryAndStreamAsync(provider, sessionOwner, rid, appConnection, root);
             await VerifyCallbackAndAuthAsync(provider, sessionOwner);
-            var crashedShellProcessId = await VerifyCrashIsolationAsync(
+            var crashedShellProcess = await VerifyCrashIsolationAsync(
                 sessionOwner,
-                observedProcessIds,
+                observedProcesses,
                 observedTemporaryPaths);
 
-            var beforeDisable = CaptureWorkers(sessionOwner, observedProcessIds, observedTemporaryPaths);
+            var beforeDisable = CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
             var disable = await installedLifecycle.ExecutePreparedMutationsAsync(installed
                 .OrderByDescending(static package => package.PackageId, StringComparer.Ordinal)
                 .Select(package => new PackageStoreMutation(PackageStoreMutationKind.Disable, package.PackageId))
@@ -221,10 +221,8 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             Assert.True(enable.Success, string.Join(Environment.NewLine, enable.Errors));
             var recoveredWorkers = GetWorkers(sessionOwner);
             Assert.Equal(15, recoveredWorkers.Count);
-            Assert.NotEqual(
-                crashedShellProcessId,
-                WorkerReleaseMetrics.GetProcess(recoveredWorkers[ShellPackageId]).Id);
-            CaptureWorkers(sessionOwner, observedProcessIds, observedTemporaryPaths);
+            AssertReplacementProcess(crashedShellProcess, recoveredWorkers[ShellPackageId]);
+            CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
             VerifySqliteDatabase(
                 Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"),
                 "SchemaMigrations",
@@ -262,7 +260,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                 await runtimeHost.StopAsync(CancellationToken.None);
             }
             finally { await DisposeRuntimeHostAsync(runtimeHost, appConnection); }
-            await AssertProcessIdsStoppedAsync(observedProcessIds);
+            await AssertProcessesStoppedAsync(observedProcesses);
             Assert.All(observedTemporaryPaths, path => Assert.False(
                 Directory.Exists(path),
                 $"Worker temporary directory survived Runtime Host lifecycle: {path}"));
@@ -425,26 +423,36 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         string rid,
         IReadOnlyDictionary<string, WorkerActivationMeasurement> activationMeasurements,
         string metricsDirectory,
-        ISet<int> observedProcessIds,
+        ISet<ExecutionRuntimeProcessObservation> observedProcesses,
         ISet<string> observedTemporaryPaths)
     {
         Directory.CreateDirectory(metricsDirectory);
         var processParents = await CaptureProcessParentsAsync();
-        foreach (var (packageId, worker) in workers.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        // Observe all sampled trees before the per-Worker metric writes, which
+        // settle each RSS sample separately. Don't count an already exited PID
+        // just because it was present in the parent map.
+        var census = workers.OrderBy(static pair => pair.Key, StringComparer.Ordinal).Select(pair =>
         {
-            var process = WorkerReleaseMetrics.GetProcess(worker);
+            var process = WorkerReleaseMetrics.GetProcess(pair.Value);
+            var tree = GetWorkerProcessTree(process.Id, processParents)
+                .Select(id => DescribeObservedProcess(id, processParents[id])).ToArray();
+            return (pair.Key, pair.Value, Process: process, Tree: tree);
+        }).ToArray();
+        foreach (var (packageId, worker, process, processTree) in census)
+        {
             var activation = activationMeasurements[packageId];
             Assert.Same(activation.Worker, worker);
             var processStartedAtUtc = new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
             var activatedAtUtc = await activation.ActivatedAtUtc;
             var startup = activatedAtUtc - processStartedAtUtc;
             Assert.True(startup > TimeSpan.Zero, $"Worker '{packageId}' did not record a positive start-to-active interval.");
-            observedProcessIds.Add(process.Id);
+            observedProcesses.Add(ProcessIdentity.Observe(process));
             observedTemporaryPaths.Add(worker.WorkerTemporaryPath);
-            var processTree = GetWorkerProcessTree(process.Id, processParents);
-            Console.WriteLine("Native Worker process tree for " + packageId + ": " + JsonSerializer.Serialize(
-                processTree.Select(id => DescribeObservedProcess(id, processParents[id]))));
-            var workerProcessCount = processTree.Count;
+            Console.WriteLine("Native Worker process tree for " + packageId + ": " + JsonSerializer.Serialize(processTree));
+            Assert.Contains(processTree, row => row.ProcessId == process.Id && row.IsAlive is true
+                && row.StartedAtUtcTicks == processStartedAtUtc.Ticks);
+            // An unreadable child might still be alive. Count it conservatively.
+            var workerProcessCount = processTree.Count(row => row.IsAlive is not false);
             await WorkerReleaseMetrics.RecordAsync(
                 "dotnetWorker",
                 rid,
@@ -725,18 +733,32 @@ public sealed partial class AgentNativeReleaseSmokeTests(
 
     private static NativeProcessDiagnostic DescribeObservedProcess(int id, int parent)
     {
+        Process process;
         try
         {
-            using var process = Process.GetProcessById(id);
-            return new(id, parent, process.ProcessName, process.StartTime.ToUniversalTime().Ticks, null);
+            process = Process.GetProcessById(id);
         }
-        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (ArgumentException error)
         {
-            return new(id, parent, null, null, error.GetType().Name);
+            // A sampled local PID no longer exists.
+            return new(id, parent, false, null, null, error.GetType().Name);
+        }
+        using (process)
+        {
+            try
+            {
+                if (process.HasExited) return new(id, parent, false, null, null, null);
+                return new(id, parent, true, process.ProcessName, process.StartTime.ToUniversalTime().Ticks, null);
+            }
+            catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return new(id, parent, null, null, null, error.GetType().Name);
+            }
         }
     }
 
-    private sealed record NativeProcessDiagnostic(int ProcessId, int ParentProcessId, string? Name, long? StartedAtUtcTicks, string? ObservationError);
+    private sealed record NativeProcessDiagnostic(int ProcessId, int ParentProcessId, bool? IsAlive, string? Name,
+        long? StartedAtUtcTicks, string? ObservationError);
 
     private static string GetInstalledPackagePath(
         RuntimePackagePaths paths,
@@ -871,80 +893,83 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         Assert.Equal(PackageAuthSessionState.Cancelled, auth.GetSessionStatus(OpenAiPackageId, started.AuthSessionId)!.State);
     }
 
-    private static async Task<int> VerifyCrashIsolationAsync(
+    private static readonly SystemExecutionRuntimeProcessController ProcessIdentity = new();
+
+    private static async Task<ExecutionRuntimeProcessObservation> VerifyCrashIsolationAsync(
         RuntimeSessionOwner owner,
-        ISet<int> observedProcessIds,
+        ISet<ExecutionRuntimeProcessObservation> observedProcesses,
         ISet<string> observedTemporaryPaths)
     {
         var worker = GetWorkers(owner)[ShellPackageId];
         var process = WorkerReleaseMetrics.GetProcess(worker);
-        var oldProcessId = process.Id;
+        var oldProcess = ProcessIdentity.Observe(process);
         var oldTemporaryPath = worker.WorkerTemporaryPath;
-        observedProcessIds.Add(oldProcessId);
+        observedProcesses.Add(oldProcess);
         observedTemporaryPaths.Add(oldTemporaryPath);
         process.Kill();
         await Assert.ThrowsAnyAsync<Exception>(async () =>
             await worker.GenerationCompletion.WaitAsync(TimeSpan.FromSeconds(15)));
-        await AssertProcessIdsStoppedAsync([oldProcessId]);
+        await AssertProcessesStoppedAsync([oldProcess]);
         await WaitUntilAsync(() => !Directory.Exists(oldTemporaryPath));
         await WaitUntilAsync(() => !owner.State.ActiveSession.LoadedPackageMap.ContainsKey(ShellPackageId));
         Assert.Equal(14, GetWorkers(owner).Count);
-        return oldProcessId;
+        return oldProcess;
     }
 
-    private static IReadOnlyList<(int ProcessId, string TemporaryPath)> CaptureWorkers(
+    private static void AssertReplacementProcess(ExecutionRuntimeProcessObservation retired, ProcessRuntimeWorker replacement)
+    {
+        var current = ProcessIdentity.Observe(WorkerReleaseMetrics.GetProcess(replacement));
+        Assert.NotEqual((retired.ProcessId, retired.BirthIdentity), (current.ProcessId, current.BirthIdentity));
+    }
+
+    private static IReadOnlyList<(ExecutionRuntimeProcessObservation Process, string TemporaryPath)> CaptureWorkers(
         RuntimeSessionOwner owner,
-        ISet<int> observedProcessIds,
+        ISet<ExecutionRuntimeProcessObservation> observedProcesses,
         ISet<string> observedTemporaryPaths)
     {
         var result = GetWorkers(owner).Values.Select(worker =>
         {
-            var processId = WorkerReleaseMetrics.GetProcess(worker).Id;
-            observedProcessIds.Add(processId);
+            var process = ProcessIdentity.Observe(WorkerReleaseMetrics.GetProcess(worker));
+            observedProcesses.Add(process);
             observedTemporaryPaths.Add(worker.WorkerTemporaryPath);
-            return (processId, worker.WorkerTemporaryPath);
+            return (process, worker.WorkerTemporaryPath);
         }).ToArray();
         return result;
     }
 
     private static async Task AssertWorkersStoppedAsync(
-        IEnumerable<(int ProcessId, string TemporaryPath)> workers)
+        IEnumerable<(ExecutionRuntimeProcessObservation Process, string TemporaryPath)> workers)
     {
         var snapshot = workers.ToArray();
-        await AssertProcessIdsStoppedAsync(snapshot.Select(static worker => worker.ProcessId));
+        await AssertProcessesStoppedAsync(snapshot.Select(static worker => worker.Process));
         foreach (var worker in snapshot)
         {
             await WaitUntilAsync(() => !Directory.Exists(worker.TemporaryPath));
         }
     }
 
-    private static async Task AssertProcessIdsStoppedAsync(IEnumerable<int> processIds)
+    private static async Task AssertProcessesStoppedAsync(IEnumerable<ExecutionRuntimeProcessObservation> processes)
     {
-        foreach (var processId in processIds.Distinct())
+        foreach (var process in processes.Distinct())
         {
-            await WaitUntilAsync(() => !IsProcessAlive(processId));
-            Assert.False(IsProcessAlive(processId), $"Native release worker process {processId} survived retirement.");
+            // A PID can be assigned to an unrelated process before final cleanup.
+            // Missing and a different birth identity prove the original is gone;
+            // attachment/observation errors are not evidence of a successful exit.
+            var probe = ExecutionRuntimeProcessProbe.Unavailable;
+            await WaitUntilAsync(
+                () => (probe = ProcessIdentity.Probe(process.ProcessId, process.BirthIdentity, process.ExecutablePath))
+                    is ExecutionRuntimeProcessProbe.Missing or ExecutionRuntimeProcessProbe.BirthMismatch,
+                () => $"Native Worker PID {process.ProcessId} ({process.BirthIdentity}) did not confirm exit after retirement: {probe}");
+            if (probe == ExecutionRuntimeProcessProbe.BirthMismatch)
+                Console.WriteLine($"Native Worker PID {process.ProcessId} ({process.BirthIdentity}) was reused after retirement.");
         }
     }
 
-    private static async Task WaitUntilAsync(Func<bool> predicate)
+    private static async Task WaitUntilAsync(Func<bool> predicate, Func<string>? failure = null)
     {
         var timeout = Stopwatch.StartNew();
         while (!predicate() && timeout.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(50);
-        Assert.True(predicate(), "Timed out waiting for Runtime Host lifecycle cleanup.");
-    }
-
-    private static bool IsProcessAlive(int processId)
-    {
-        try
-        {
-            using var process = Process.GetProcessById(processId);
-            return !process.HasExited;
-        }
-        catch (ArgumentException)
-        {
-            return false;
-        }
+        Assert.True(predicate(), failure?.Invoke() ?? "Timed out waiting for Runtime Host lifecycle cleanup.");
     }
 
     private sealed record WorkerActivationMeasurement(

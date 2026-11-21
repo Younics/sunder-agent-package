@@ -294,6 +294,37 @@ class AgentCiTests(unittest.TestCase):
         self.assertNotIn("steps.archive_tests.outcome == 'skipped'", upload)
         self.assertIn("if-no-files-found: error", upload)
 
+    def test_release_plan_path_is_not_exported_as_an_msbuild_version(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
+        for job, following in (("smoke", "fan-in"), ("fan-in", "stage")):
+            with self.subTest(job=job):
+                section = workflow.split(f"\n  {job}:\n", 1)[1].split(f"\n  {following}:", 1)[0]
+                self.assertNotRegex(section, r"(?im)^\s+VERSION:|\$(?:VERSION\b|\{VERSION\})")
+                self.assertIn("SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json", section)
+                self.assertIn('file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH"', section)
+
+    def test_native_smoke_passes_exact_preparation_arguments_under_bash_nounset(self):
+        launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()
+        self.assertIn("\nset -euo pipefail\n", launcher)
+        preparation = launcher[launcher.index("# The Maker job driver"):].split("\napp_target=", 1)[0]
+        script = textwrap.dedent("""\
+            set -euo pipefail
+            mode="$1"
+            script_dir="agent source/scripts/release"
+            core_repository="core source"
+            metrics_directory="native metrics"
+            expected_core_commit="$2"
+            python3() { printf '%s\\n' "$@"; }
+            """) + preparation
+        for mode in ("development", "published"):
+            with self.subTest(mode=mode):
+                result = subprocess.run(bash_runtime.command("-c", script, "--", mode, self.core_sha),
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(0, result.returncode, result.stderr)
+                expected = ["-B", "agent source/scripts/release/prepare_maker_inputs.py", "core source",
+                            "native metrics/maker-inputs", self.core_sha]
+                self.assertEqual(expected + (["--host-only"] if mode == "published" else []), result.stdout.splitlines())
+
     def test_prepublication_family_uses_development_and_supervised_app_gates_without_credentials(self):
         import release_inputs
         core = self.root / "family-core"

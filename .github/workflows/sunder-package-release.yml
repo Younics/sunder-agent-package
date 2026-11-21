@@ -135,7 +135,7 @@ jobs:
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
       CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
-      VERSION: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
+      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
       run:
@@ -164,8 +164,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           bash scripts/release/verify-release-locks.sh
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-candidate-*
@@ -174,7 +174,7 @@ jobs:
       - name: Gather immutable selected candidates and exact retained versions
         run: >-
           python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family
-          "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
+          "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
       - name: Exercise all fifteen Workers from the final six-RID archives
         id: native_smoke
         env:
@@ -182,7 +182,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/family "artifacts/native-metrics/$RID" "$CORE_COMMIT"
-          python3 -B scripts/release/native-family.py record-final "$RID" "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" \
+          python3 -B scripts/release/native-family.py record-final "$RID" "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" \
             artifacts/candidates artifacts/family "artifacts/native-metrics/$RID" "artifacts/native/$RID" "$PWD"
       - name: Retain native smoke and Maker diagnostics
         if: always() && steps.native_smoke.outcome != 'skipped' && steps.native_smoke.outcome != ''
@@ -212,7 +212,7 @@ jobs:
       CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
       CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
       CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
-      VERSION: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
+      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
       run:
@@ -244,8 +244,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$VERSION")" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_selection.py retain --plan "$VERSION" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "${{ needs.prepare.outputs.plan_sha256 }}"
+          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-candidate-*
@@ -254,10 +254,10 @@ jobs:
       - name: Verify complete final-archive smoke evidence without repacking
         run: |
           set -euo pipefail
-          python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
-          python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
-          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$VERSION" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION"
-          cp "$VERSION" artifacts/family/release-plan.json
+          python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
+          python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
+          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION"
+          cp "$SUNDER_AGENT_RELEASE_PLAN_PATH" artifacts/family/release-plan.json
           bash scripts/release/generate-package-output-audit.sh artifacts/family artifacts/family/native-test-evidence.json "$PWD" artifacts/family/package-output-audit.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:

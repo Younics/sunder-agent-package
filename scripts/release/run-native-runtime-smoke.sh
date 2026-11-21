@@ -55,9 +55,10 @@ builder_dotnet_path="$(command -v dotnet)"
   || { printf 'The selected Builder dotnet executable was not found.\n' >&2; exit 1; }
 # The Maker job driver consumes these retained exact archives through its real
 # local-feed selection. Do not fall back to a published template/SDK or alter pins.
-preparation_options=()
-if [[ "$mode" == published ]]; then preparation_options+=(--host-only); fi
-python3 -B "$script_dir/prepare_maker_inputs.py" "$core_repository" "$metrics_directory/maker-inputs" "$expected_core_commit" "${preparation_options[@]}"
+# Keep the array nonempty under nounset on macOS system Bash (3.2).
+preparation_args=("$core_repository" "$metrics_directory/maker-inputs" "$expected_core_commit")
+if [[ "$mode" == published ]]; then preparation_args+=(--host-only); fi
+python3 -B "$script_dir/prepare_maker_inputs.py" "${preparation_args[@]}"
 app_target="$(python3 -B - "$metrics_directory/maker-inputs" <<'PY'
 import json, sys
 from pathlib import Path
