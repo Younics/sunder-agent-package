@@ -1,10 +1,12 @@
 """Ordinary CI uses exact inputs without production approval or cache synthesis."""
 import argparse
 from contextlib import nullcontext, redirect_stdout
+import errno
 import io
 import json
 import os
 from pathlib import Path
+import plistlib
 import re
 import runpy
 import shutil
@@ -914,16 +916,68 @@ public class Cases {
             def run(arguments, **kwargs):
                 commands.append(arguments)
                 code = 7 if arguments[1] == fails else 0
-                return subprocess.CompletedProcess(arguments, code, stdout="", stderr="")
-            with self.subTest(fails=fails), patch.object(test_filesystems.subprocess, "run", side_effect=run), \
+                info = plistlib.dumps(dict(images=[])).decode() if arguments[1] == "info" else ""
+                return subprocess.CompletedProcess(arguments, code, stdout=info, stderr="")
+            with self.subTest(fails=fails), patch.dict(os.environ, RUNNER_TEMP=str(self.root)), \
+                 patch.object(test_filesystems.subprocess, "run", side_effect=run), \
                  patch.object(test_filesystems, "require_case_sensitive"), \
                  patch.object(test_filesystems.shutil, "rmtree") as cleanup:
                 with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
-                    with test_filesystems.case_sensitive_volume(self.root, log):
+                    with test_filesystems.case_sensitive_volume(log):
                         raise RuntimeError("test failed")
                 self.assertEqual(fails != "detach", bool(cleanup.call_count))
-                self.assertEqual(["create"] if fails == "create" else ["create", "attach", "detach"],
+                expected = {"create": ["create"], "detach": ["create", "attach", "detach"],
+                            "test": ["create", "attach", "detach", "info"]}
+                self.assertEqual(expected[fails],
                                  [command[1] for command in commands])
+
+    def test_busy_eject_retries_only_the_backing_device_and_requires_verified_detach(self):
+        device = "/dev/disk27"
+        for result in ("detached", "busy", "unknown-device", "still-attached"):
+            with self.subTest(result=result), patch.dict(os.environ, RUNNER_TEMP=str(self.root)):
+                log = self.root / (result + ".log")
+                detaches = []
+                image = None
+                def run(arguments, **kwargs):
+                    nonlocal image
+                    action = arguments[1]
+                    code, output, error = 0, "", ""
+                    if action == "create":
+                        image = Path(arguments[-1])
+                        image.write_bytes(b"fixture disk image")
+                    elif action == "detach":
+                        detaches.append(arguments)
+                        if len(detaches) == 1 or result == "busy":
+                            code, error = errno.EBUSY, "hdiutil: couldn't eject disk - Resource busy\n"
+                    elif action == "info":
+                        def attachment(path, dev):
+                            return {"image-path": str(path), "system-entities": [
+                                {"content-hint": "GUID_partition_scheme", "dev-entry": dev}]}
+                        images = [attachment(self.root / "other.sparseimage", "/dev/disk19")]
+                        if result != "unknown-device" and (len(detaches) == 1 or result == "still-attached"):
+                            images.append(attachment(image, device))
+                        output = plistlib.dumps(dict(images=images)).decode()
+                    return subprocess.CompletedProcess(arguments, code, stdout=output, stderr=error)
+                with tempfile.TemporaryDirectory(dir=self.root) as prepared, \
+                     patch.object(test_filesystems.subprocess, "run", side_effect=run), \
+                     patch.object(test_filesystems, "require_case_sensitive"), \
+                     patch.object(test_filesystems.time, "sleep") as pause:
+                    def exercise():
+                        with test_filesystems.case_sensitive_volume(log) as mount:
+                            self.assertFalse(mount.is_relative_to(Path(prepared)))
+                    if result == "detached": exercise()
+                    elif result == "still-attached":
+                        with self.assertRaisesRegex(ValueError, "still attached"): exercise()
+                    else:
+                        with self.assertRaises(subprocess.CalledProcessError) as caught: exercise()
+                        self.assertEqual(errno.EBUSY, caught.exception.returncode)
+                    pause.assert_called_once()
+                self.assertEqual(("hdiutil", "detach", str(image.parent / "mount")), detaches[0])
+                self.assertEqual([] if result == "unknown-device" else [("hdiutil", "detach", device)], detaches[1:])
+                self.assertEqual(result != "detached", image.is_file())
+                self.assertIn("Resource busy", log.read_text())
+                self.assertIn(str(image), log.read_text())
+                self.assertNotIn("other.sparseimage", log.read_text())
 
     def test_builder_diagnostics_use_release_build_then_independently_verified_focused_and_full_runs(self):
         self.write_test_inventory()
