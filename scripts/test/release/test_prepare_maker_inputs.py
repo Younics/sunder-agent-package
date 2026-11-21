@@ -1,4 +1,6 @@
 """Preparation command/byte-isolation regressions, not native acceptance."""
+from contextlib import redirect_stderr
+import io
 import json
 import os
 from pathlib import Path
@@ -121,10 +123,20 @@ class PrepareMakerInputsTests(unittest.TestCase):
         self.assertFalse(self.calls)
 
     def test_failed_build_keeps_logs_and_partial_inputs_but_never_writes_success_receipt(self):
-        with self.mocks(), patch.object(preparation.subprocess, "run", side_effect=subprocess.CalledProcessError(1, ["dotnet", "pack"])), \
+        stderr = io.StringIO()
+        diagnostic = b"error NU1105: invalid project information\n"
+        def fail(command, **kwargs):
+            kwargs["stdout"].write(b"earlier output\n" + b"x" * 8192 + b"\n" + diagnostic)
+            raise subprocess.CalledProcessError(1, command)
+        with self.mocks(), patch.object(preparation.subprocess, "run", side_effect=fail), redirect_stderr(stderr), \
                 self.assertRaises(subprocess.CalledProcessError):
             preparation.prepare(self.core, self.output, self.commit)
-        self.assertTrue(list(self.output.glob("*.pack.log")))
+        [log] = list(self.output.glob("*.log"))
+        self.assertTrue(log.read_bytes().startswith(b"earlier output\n"))
+        self.assertTrue(log.read_bytes().endswith(diagnostic))
+        self.assertIn(str(log), stderr.getvalue())
+        self.assertIn(diagnostic.decode().strip(), stderr.getvalue())
+        self.assertNotIn("earlier output", stderr.getvalue())
         self.assertFalse((self.output / "inputs.json").exists())
         with self.mocks(), self.assertRaisesRegex(ValueError, "must be new"):
             preparation.prepare(self.core, self.output, self.commit)
