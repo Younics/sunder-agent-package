@@ -2,6 +2,11 @@ name: Diagnose final archive smoke (retained inputs only)
 
 on:
   workflow_dispatch:
+    inputs:
+      fan-in:
+        description: Also run the unchanged coordinator's Runtime and App cases
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -108,9 +113,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - uses: ./sunder-agent-package/.github/actions/setup
-        if: matrix.rid == 'linux-x64'
+        if: matrix.rid == 'linux-x64' && inputs.fan-in
       - name: Build the production fan-in's Core validation paths
-        if: matrix.rid == 'linux-x64'
+        if: matrix.rid == 'linux-x64' && inputs.fan-in
         working-directory: sunder-core
         run: |
           set -euo pipefail
@@ -121,7 +126,7 @@ jobs:
           done
       - name: Exercise the production fan-in's Runtime and App cases
         id: fanin
-        if: matrix.rid == 'linux-x64'
+        if: matrix.rid == 'linux-x64' && inputs.fan-in
         run: >-
           python3 -B scripts/ci/agent_ci.py test-family --core ../sunder-core
           --directory artifacts/retained-attempt-2/family --results-directory artifacts/rehearsal-fanin
