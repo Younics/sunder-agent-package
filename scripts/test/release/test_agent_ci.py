@@ -933,8 +933,11 @@ public class Cases {
 
     def test_busy_eject_retries_only_the_backing_device_and_requires_verified_detach(self):
         device = "/dev/disk27"
+        # Exercise JSON path escaping even on hosts without backslash separators.
+        runner_temp = self.root / "runner-\u00e9"
+        runner_temp.mkdir()
         for result in ("detached", "busy", "unknown-device", "still-attached"):
-            with self.subTest(result=result), patch.dict(os.environ, RUNNER_TEMP=str(self.root)):
+            with self.subTest(result=result), patch.dict(os.environ, RUNNER_TEMP=str(runner_temp)):
                 log = self.root / (result + ".log")
                 detaches = []
                 image = None
@@ -975,9 +978,11 @@ public class Cases {
                 self.assertEqual(("hdiutil", "detach", str(image.parent / "mount")), detaches[0])
                 self.assertEqual([] if result == "unknown-device" else [("hdiutil", "detach", device)], detaches[1:])
                 self.assertEqual(result != "detached", image.is_file())
-                self.assertIn("Resource busy", log.read_text())
-                self.assertIn(str(image), log.read_text())
-                self.assertNotIn("other.sparseimage", log.read_text())
+                text = log.read_text(encoding="utf-8")
+                commands = [json.loads(line)["command"] for line in text.splitlines() if line.startswith("{")]
+                self.assertIn("Resource busy", text)
+                self.assertIn(["/usr/sbin/lsof", "-nP", "--", str(image)], commands)
+                self.assertNotIn("other.sparseimage", text)
 
     def test_builder_diagnostics_use_release_build_then_independently_verified_focused_and_full_runs(self):
         self.write_test_inventory()
