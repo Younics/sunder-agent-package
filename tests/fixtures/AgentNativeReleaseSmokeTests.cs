@@ -428,9 +428,18 @@ public sealed partial class AgentNativeReleaseSmokeTests(
     {
         Directory.CreateDirectory(metricsDirectory);
         var processParents = await CaptureProcessParentsAsync();
-        foreach (var (packageId, worker) in workers.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        // Observe all sampled trees before the per-Worker metric writes, which
+        // settle each RSS sample separately. Don't count an already exited PID
+        // just because it was present in the parent map.
+        var census = workers.OrderBy(static pair => pair.Key, StringComparer.Ordinal).Select(pair =>
         {
-            var process = WorkerReleaseMetrics.GetProcess(worker);
+            var process = WorkerReleaseMetrics.GetProcess(pair.Value);
+            var tree = GetWorkerProcessTree(process.Id, processParents)
+                .Select(id => DescribeObservedProcess(id, processParents[id])).ToArray();
+            return (pair.Key, pair.Value, Process: process, Tree: tree);
+        }).ToArray();
+        foreach (var (packageId, worker, process, processTree) in census)
+        {
             var activation = activationMeasurements[packageId];
             Assert.Same(activation.Worker, worker);
             var processStartedAtUtc = new DateTimeOffset(process.StartTime.ToUniversalTime(), TimeSpan.Zero);
@@ -439,10 +448,11 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             Assert.True(startup > TimeSpan.Zero, $"Worker '{packageId}' did not record a positive start-to-active interval.");
             observedProcesses.Add(ProcessIdentity.Observe(process));
             observedTemporaryPaths.Add(worker.WorkerTemporaryPath);
-            var processTree = GetWorkerProcessTree(process.Id, processParents);
-            Console.WriteLine("Native Worker process tree for " + packageId + ": " + JsonSerializer.Serialize(
-                processTree.Select(id => DescribeObservedProcess(id, processParents[id]))));
-            var workerProcessCount = processTree.Count;
+            Console.WriteLine("Native Worker process tree for " + packageId + ": " + JsonSerializer.Serialize(processTree));
+            Assert.Contains(processTree, row => row.ProcessId == process.Id && row.IsAlive is true
+                && row.StartedAtUtcTicks == processStartedAtUtc.Ticks);
+            // An unreadable child might still be alive. Count it conservatively.
+            var workerProcessCount = processTree.Count(row => row.IsAlive is not false);
             await WorkerReleaseMetrics.RecordAsync(
                 "dotnetWorker",
                 rid,
@@ -723,18 +733,32 @@ public sealed partial class AgentNativeReleaseSmokeTests(
 
     private static NativeProcessDiagnostic DescribeObservedProcess(int id, int parent)
     {
+        Process process;
         try
         {
-            using var process = Process.GetProcessById(id);
-            return new(id, parent, process.ProcessName, process.StartTime.ToUniversalTime().Ticks, null);
+            process = Process.GetProcessById(id);
         }
-        catch (Exception error) when (error is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception)
+        catch (ArgumentException error)
         {
-            return new(id, parent, null, null, error.GetType().Name);
+            // A sampled local PID no longer exists.
+            return new(id, parent, false, null, null, error.GetType().Name);
+        }
+        using (process)
+        {
+            try
+            {
+                if (process.HasExited) return new(id, parent, false, null, null, null);
+                return new(id, parent, true, process.ProcessName, process.StartTime.ToUniversalTime().Ticks, null);
+            }
+            catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                return new(id, parent, null, null, null, error.GetType().Name);
+            }
         }
     }
 
-    private sealed record NativeProcessDiagnostic(int ProcessId, int ParentProcessId, string? Name, long? StartedAtUtcTicks, string? ObservationError);
+    private sealed record NativeProcessDiagnostic(int ProcessId, int ParentProcessId, bool? IsAlive, string? Name,
+        long? StartedAtUtcTicks, string? ObservationError);
 
     private static string GetInstalledPackagePath(
         RuntimePackagePaths paths,
