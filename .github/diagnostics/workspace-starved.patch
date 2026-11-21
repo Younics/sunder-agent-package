@@ -1,0 +1,69 @@
+diff --git a/tests/Sunder.Package.Agent.Runtime.Tests/WorkspacePersistenceTests.cs b/tests/Sunder.Package.Agent.Runtime.Tests/WorkspacePersistenceTests.cs
+index d57eaaa..c6aa266 100644
+--- a/tests/Sunder.Package.Agent.Runtime.Tests/WorkspacePersistenceTests.cs
++++ b/tests/Sunder.Package.Agent.Runtime.Tests/WorkspacePersistenceTests.cs
+@@ -58,9 +58,36 @@ public sealed class WorkspacePersistenceTests
+         var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+         var active = 0;
+         var maximumActive = 0;
++        // Temporary diagnostic: the out-of-pool observer can release the callbacks
++        // even if the testhost cannot schedule the normal WaitAsync timer.
++        var tracePath = Environment.GetEnvironmentVariable("SUNDER_WORKSPACE_READ_DIAGNOSTIC")!;
++        var observation = System.Diagnostics.Stopwatch.StartNew();
++        var traceLock = new object();
++        using var listCancellation = new CancellationTokenSource();
++        using var getCancellation = new CancellationTokenSource();
++        using var observerFinished = new ManualResetEventSlim();
++        void Trace(string label)
++        {
++            ThreadPool.GetMinThreads(out var min, out _);
++            lock (traceLock)
++            {
++                File.AppendAllText(tracePath, $"{observation.Elapsed.TotalMilliseconds:F1}ms {label}; active={Volatile.Read(ref active)} max={Volatile.Read(ref maximumActive)} thread={Environment.CurrentManagedThreadId} pool={Thread.CurrentThread.IsThreadPoolThread} workers={ThreadPool.ThreadCount} min={min} pending={ThreadPool.PendingWorkItemCount}\n");
++            }
++        }
++        var watch = new Thread(() =>
++        {
++            if (!observerFinished.Wait(TimeSpan.FromMilliseconds(2250)))
++            {
++                Trace("external observer deadline");
++                bothStarted.TrySetException(new TimeoutException("The second workspace callback did not enter before the original two-second deadline."));
++                release.Set();
++            }
++        }) { IsBackground = true };
+         store.WorkspaceReadStarting = cancellationToken =>
+         {
+             var current = Interlocked.Increment(ref active);
++            var read = cancellationToken == listCancellation.Token ? "list" : "get";
++            Trace(read + " callback entered");
+             var observed = Volatile.Read(ref maximumActive);
+             while (current > observed)
+             {
+@@ -77,10 +104,15 @@ public sealed class WorkspacePersistenceTests
+             }
+             release.Wait(cancellationToken);
+             Interlocked.Decrement(ref active);
++            Trace(read + " callback left");
+         };
+ 
+-        var list = service.ListWorkspacesAsync();
+-        var get = service.GetWorkspaceAsync(workspace.WorkspaceId);
++        Trace("submit list");
++        var list = service.ListWorkspacesAsync(listCancellation.Token);
++        Trace("submit get");
++        var get = service.GetWorkspaceAsync(workspace.WorkspaceId, getCancellation.Token);
++        Trace("both submitted");
++        watch.Start();
+         try
+         {
+             await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+@@ -89,6 +121,9 @@ public sealed class WorkspacePersistenceTests
+         finally
+         {
+             release.Set();
++            observerFinished.Set();
++            watch.Join();
++            await Task.WhenAll(list, get).WaitAsync(TimeSpan.FromSeconds(2));
+         }
+ 
+         Assert.Contains(workspace.WorkspaceId, (await list).Select(static item => item.WorkspaceId));

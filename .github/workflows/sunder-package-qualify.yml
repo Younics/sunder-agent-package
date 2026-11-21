@@ -1,46 +1,89 @@
-name: Qualify
+name: Agent qualification boundaries (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-boundaries-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  SOURCE_SHA: 670ea57dc4eb4752ae130f7232d5fe91dd802060
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  boundary:
+    name: Diagnostic · ${{ matrix.boundary }} · ${{ matrix.rid }}
+    if: github.ref == 'refs/heads/diagnostic/agent-qualification-boundaries'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { boundary: workspace, rid: linux-arm64, runner: ubuntu-24.04-arm }
+          - { boundary: workspace, rid: osx-arm64, runner: macos-15 }
+          - { boundary: shared-source, rid: osx-x64, runner: macos-15-intel }
+          - { boundary: subagents-retention, rid: osx-x64, runner: macos-15-intel }
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - name: Verify exact pinned input archives and checkout
+        id: inputs
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+          RID: ${{ matrix.rid }}
+        run: python3 -B ../diagnostic-driver/.github/diagnostics/qualification_boundaries.py inputs
+      - name: Execute the failing boundary
+        env:
+          BOUNDARY: ${{ matrix.boundary }}
+          RID: ${{ matrix.rid }}
+        run: python3 -u -B ../diagnostic-driver/.github/diagnostics/qualification_boundaries.py "$BOUNDARY"
+      - name: Retain Intel Subagents component diagnostics
+        if: always() && matrix.boundary == 'subagents-retention' && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-component-younics.ai.agent.subagents-source-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-components
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain the diagnostic command and test evidence
+        if: always() && matrix.boundary != 'subagents-retention' && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-boundary-${{ matrix.boundary }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/source-family
+            sunder-agent-package/artifacts/source-commands
+            sunder-agent-package/artifacts/boundary
+          if-no-files-found: error
+          retention-days: 14

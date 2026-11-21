@@ -1,0 +1,17 @@
+{
+  "younics.ai.agent": "e3ff289a520281149f10166f3aeb0b064c6744880c08eec8126ba83d2f0dded8",
+  "younics.ai.agent.execution.docker": "d5ee49ed9147ba8de345223222004ddbe639c81fe682fb9c87e6fb9793dbc456",
+  "younics.ai.agent.execution.local": "e5799c1ee4978b325bfbbf7f84f3eb52f0c1b40fd11aa731cb818e6b5717cf71",
+  "younics.ai.agent.mcp": "c3fdfed572c3476a59795f8220499abeec5e6b74fc9a73d5fa8c19a970bf7114",
+  "younics.ai.agent.memory.semantic": "b6f511f98edec04946b8c3aaf46ee806c0cbaa3b808e071602aa9281ac807c6f",
+  "younics.ai.agent.provider.anthropic": "b119bc9f641cd2e22b236520cd4341c0573ae93dfff3deb3abca2f23324d456f",
+  "younics.ai.agent.provider.gemini": "62f42e657c4744ed5aaa82058b6d287cceac58957512ddd0789a6f1ae2a60ab0",
+  "younics.ai.agent.provider.lmstudio": "52c183ff8e0831a1bba0a127cf4c567ebabdb2d5ae255937b008fa00f5dbcb43",
+  "younics.ai.agent.provider.openai": "9ba391bfea78f8aac692c5ce176eccb41ebddbb81a26657080b08d0e680d40bc",
+  "younics.ai.agent.skills": "248a3113fff2efcfd46eb011662dc79a92d86160becf8361b45d6b01bf4570db",
+  "younics.ai.agent.subagents": "54b8794a3cafda449c2a70328344e13eab9ccce017ae436e6a7ec5870cec5dba",
+  "younics.ai.agent.tools.files": "8648eada7a76b4a187c53a092632916c5b43985b1c5899d3044dc4175e14c9a5",
+  "younics.ai.agent.tools.shell": "b29300bf8d9121e26f4e2a3b0bcc8bd315748b1aa77e462fb15125a3ab72d151",
+  "younics.ai.agent.tools.web": "b550aafaf548ce3261af694ada970c3069e70a32f041decaac35f53dfe5ccf13",
+  "younics.sunder.package.maker": "d810d3cdfdb64fa20956a89dc64f225f5063dd8ef109c26d6fc4639587c01e07"
+}
