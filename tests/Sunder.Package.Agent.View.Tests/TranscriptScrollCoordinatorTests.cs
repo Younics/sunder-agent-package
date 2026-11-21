@@ -838,7 +838,7 @@ public sealed class TranscriptScrollCoordinatorTests
                 loadNewerRowsAsync: (_, _) => Task.FromResult(false),
                 hasNewerRows: () => false,
                 isFollowingLatest: () => false);
-            presenter.Rendered += (_, _) => coordinator.OnRenderedContentChanged();
+            presenter.Rendered += (_, _) => coordinator.OnRenderedContentChanged(presenter);
             renderer.SelectAll();
 
             coordinator.BeginViewportMutation();
@@ -853,27 +853,49 @@ public sealed class TranscriptScrollCoordinatorTests
 
             using var settlement = new CancellationTokenSource(TimeSpan.FromSeconds(2));
             var cancellation = settlement.Token;
+            var expectedSource = builder.ToString();
+            var requestedRevision = presenter.RequestedRevision;
+            Assert.True(presenter.IsGeometryPending);
+            Assert.NotEqual(expectedSource, renderer.RenderedSource);
+            var documentApplied = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            renderer.RenderStateChanged += (_, _) =>
+            {
+                if (renderer.RenderedSource == expectedSource)
+                {
+                    documentApplied.TrySetResult();
+                }
+            };
             renderer.ClearSelection();
-            // Let selection release queue the render, then wait for the document
-            // before spending the bounded headless layout passes.
-            await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Render, cancellation);
+            // The current render task may still describe the old document when
+            // clearing selection queues the presenter refresh.
+            await documentApplied.Task.WaitAsync(cancellation);
             await renderer.PendingRenderOperations.WaitAsync(cancellation);
             for (var attempt = 0;
-                 attempt < 200 && coordinator.DiagnosticSnapshot.Mutation?.Status
-                     == TranscriptViewportMutationStatus.Active;
+                 attempt < 200 && (presenter.SettledRevision < requestedRevision
+                     || coordinator.DiagnosticSnapshot.Mutation?.Status == TranscriptViewportMutationStatus.Active);
                  attempt++)
             {
-                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render, cancellation);
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (presenter.SettledRevision < requestedRevision)
+                    {
+                        presenter.InvalidateMeasure();
+                    }
+                    window.UpdateLayout();
+                }, DispatcherPriority.Render, cancellation);
                 // The presenter queues its geometry confirmation at Background.
                 await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background, cancellation);
             }
+            Assert.True(coordinator.DiagnosticSnapshot.Mutation?.Status == TranscriptViewportMutationStatus.Completed,
+                $"Deferred Markdown layout did not settle: requested={requestedRevision}, settled={presenter.SettledRevision}, "
+                + $"pending={presenter.IsRenderPending}, mutation={coordinator.DiagnosticSnapshot.Mutation}.");
             await coordinator.PendingPagingOperations.WaitAsync(cancellation);
 
             Assert.Equal(
                 TranscriptViewportMutationStatus.Completed,
                 coordinator.DiagnosticSnapshot.Mutation?.Status);
             Assert.False(presenter.IsRenderPending);
-            Assert.Equal(builder.ToString(), renderer.RenderedSource);
+            Assert.Equal(expectedSource, renderer.RenderedSource);
             await presenter.PendingRenderOperations.WaitAsync(cancellation);
         }
         finally

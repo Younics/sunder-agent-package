@@ -691,6 +691,8 @@ public sealed class AgentChatNavigationTests
         var context = new PackageViewNavigationContext(
             "younics.ai.agent.chat",
             new Dictionary<string, string?>());
+        const string startupErrorTitle = "Unable to load Agent Chat";
+        var startupErrorPresented = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var failureNotificationsOnUi = new List<bool>();
         viewModel.PropertyChanged += (_, eventArgs) =>
         {
@@ -700,26 +702,40 @@ public sealed class AgentChatNavigationTests
             {
                 failureNotificationsOnUi.Add(Dispatcher.UIThread.CheckAccess());
             }
+            if (eventArgs.PropertyName == nameof(AgentChatViewModel.SetupTitle)
+                && viewModel.SetupTitle == startupErrorTitle)
+            {
+                startupErrorPresented.TrySetResult();
+            }
         };
 
-        var firstNavigation = Task.Run(async () => await view.PrepareNavigationAsync(context));
-        await workspaceGateway.FirstInitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
-        Assert.False(firstNavigation.IsCompleted);
-        workspaceGateway.FailFirstInitialization.TrySetResult();
-        Assert.False(await firstNavigation);
+        try
+        {
+            var firstNavigation = Task.Run(async () => await view.PrepareNavigationAsync(context));
+            await workspaceGateway.FirstInitializationStarted.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            Assert.False(firstNavigation.IsCompleted);
+            workspaceGateway.FailFirstInitialization.TrySetResult();
+            Assert.False(await firstNavigation);
+            // Navigation returning false doesn't finish the queued UI notification.
+            await startupErrorPresented.Task.WaitAsync(TimeSpan.FromSeconds(3));
 
-        Assert.Equal("Unable to load Agent Chat", viewModel.SetupTitle);
-        Assert.Contains("return to retry", viewModel.SetupDescription, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("Unable to load Agent Chat", viewModel.StatusText, StringComparison.Ordinal);
-        Assert.NotEmpty(failureNotificationsOnUi);
-        Assert.All(failureNotificationsOnUi, Assert.True);
+            Assert.Equal(startupErrorTitle, viewModel.SetupTitle);
+            Assert.Contains("return to retry", viewModel.SetupDescription, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains(startupErrorTitle, viewModel.StatusText, StringComparison.Ordinal);
+            Assert.NotEmpty(failureNotificationsOnUi);
+            Assert.All(failureNotificationsOnUi, Assert.True);
 
-        Assert.True(await Task.Run(async () => await view.PrepareNavigationAsync(context)));
-        await view.OnNavigationPresentedAsync(context);
+            Assert.True(await Task.Run(async () => await view.PrepareNavigationAsync(context)));
+            await view.OnNavigationPresentedAsync(context);
 
-        Assert.Equal(2, workspaceGateway.InitializeCount);
-        Assert.Equal("Create an agent before chatting", viewModel.SetupTitle);
-        window.Close();
+            Assert.Equal(2, workspaceGateway.InitializeCount);
+            Assert.Equal("Create an agent before chatting", viewModel.SetupTitle);
+        }
+        finally
+        {
+            workspaceGateway.FailFirstInitialization.TrySetResult();
+            window.Close();
+        }
     }
 
     private sealed class BlockingHistoryNavigationRuntimeClient(
