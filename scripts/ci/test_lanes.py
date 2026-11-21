@@ -111,12 +111,11 @@ def run_project_with_filesystems(state_path, source, project, common, filter_val
         failure = error
     import agent_ci
     from test_filesystems import case_sensitive_volume
-    state, _ = agent_ci.context(state_path)
     scoped = output / "case-sensitive"
     scoped.mkdir(exist_ok=True)
     previous = os.environ.get("TMPDIR")
     try:
-        with case_sensitive_volume(state["home"], scoped / "filesystem.log") as temporary:
+        with case_sensitive_volume(scoped / "filesystem.log") as temporary:
             try:
                 os.environ["TMPDIR"] = str(temporary)
                 count += run_project(state_path, source, project, common, sensitive, scoped)

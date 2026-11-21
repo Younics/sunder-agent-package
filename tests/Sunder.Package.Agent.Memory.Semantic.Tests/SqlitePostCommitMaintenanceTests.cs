@@ -75,11 +75,13 @@ public sealed class SqlitePostCommitMaintenanceTests
                 Assert.False(await store.WaitForWalCheckpointAttemptAfterAsync(observed, timeout.Token));
             }
 
-            reader.Dispose();
-            var retryAfter = store.WalCheckpointAttemptCount;
-            Assert.True(await store.WaitForWalCheckpointAttemptAfterAsync(retryAfter, timeout.Token));
-            await store.WaitForWalCheckpointIdleAsync(timeout.Token);
-            AssertWalDrained(store.DatabasePath);
+            await ReleaseReaderAndVerifyWalDrainAsync(
+                store.DatabasePath,
+                store.WalCheckpointAttemptCount,
+                store.WaitForWalCheckpointAttemptAfterAsync,
+                store.WaitForWalCheckpointIdleAsync,
+                reader,
+                timeout.Token);
         }
         finally
         {
@@ -200,11 +202,13 @@ public sealed class SqlitePostCommitMaintenanceTests
                 ? await restarted.WaitForWalCheckpointAttemptAfterAsync(0)
                 : await restarted.WaitForWalCheckpointAttemptAfterAsync(observedAttempts - 1);
             Assert.False(startupSucceeded);
-            reader.Dispose();
-            var retryAfter = restarted.WalCheckpointAttemptCount;
-            Assert.True(await restarted.WaitForWalCheckpointAttemptAfterAsync(retryAfter));
-            await restarted.WaitForWalCheckpointIdleAsync();
-            AssertWalDrained(restarted.DatabasePath);
+            await ReleaseReaderAndVerifyWalDrainAsync(
+                restarted.DatabasePath,
+                restarted.WalCheckpointAttemptCount,
+                restarted.WaitForWalCheckpointAttemptAfterAsync,
+                restarted.WaitForWalCheckpointIdleAsync,
+                reader,
+                CancellationToken.None);
             Assert.Equal(bytes, await new AgentAttachmentService(scope.Context).ReadAttachmentBytesAsync(metadata));
         }
         finally
@@ -561,10 +565,23 @@ public sealed class SqlitePostCommitMaintenanceTests
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Assert.False(await waitForAttempt(initialAttemptCount, timeout.Token));
+        await ReleaseReaderAndVerifyWalDrainAsync(
+            databasePath, getAttemptCount(), waitForAttempt, waitForIdle, reader, timeout.Token);
+    }
+
+    private static async Task ReleaseReaderAndVerifyWalDrainAsync(
+        string databasePath,
+        int lastPinnedAttempt,
+        Func<int, CancellationToken, Task<bool>> waitForAttempt,
+        Func<CancellationToken, Task> waitForIdle,
+        PinnedWalReader reader,
+        CancellationToken cancellationToken)
+    {
+        // Snapshot before closing the reader so a successful retry during disposal
+        // is not missed. A checkpoint already in flight can still report busy.
         reader.Dispose();
-        var retryAfter = getAttemptCount();
-        Assert.True(await waitForAttempt(retryAfter, timeout.Token));
-        await waitForIdle(timeout.Token);
+        await waitForIdle(cancellationToken);
+        Assert.True(await waitForAttempt(lastPinnedAttempt, cancellationToken));
         AssertWalDrained(databasePath);
     }
 
