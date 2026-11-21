@@ -1,46 +1,128 @@
-name: Qualify
+name: Diagnose Agent View fixtures and the MCP package lane
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
-concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  check:
+    name: ${{ matrix.check }} · ${{ matrix.rid }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: linux-arm64, runner: ubuntu-24.04-arm, check: View fixtures, mode: source }
+          - { rid: osx-arm64, runner: macos-15, check: View fixtures, mode: source }
+          - { rid: osx-x64, runner: macos-15-intel, check: MCP package tests, mode: package }
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: sunder-agent-package
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_COMMIT }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: ${{ matrix.mode == 'package' && 'true' || 'false' }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/release-inputs
+          github-token: ${{ github.token }}
+          run-id: "44880477237"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-core-tools-${{ matrix.rid }}
+          path: ${{ runner.temp }}/core-tools
+          github-token: ${{ github.token }}
+          run-id: "44880477237"
+      - name: Verify exact existing dependency bytes for this diagnostic
+        run: |
+          set -euo pipefail
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/release-inputs/cold-inputs.json")" \
+            = 4a6019e77f3988b313a4c05da1d36ff366d8d534dd65c8b3ac93983567e7ee35
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/release-inputs/younics.ai.agent.2.0.0.sunderpkg")" \
+            = 6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/release-inputs/sunder-platform-contracts.v1.json")" \
+            = 7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210
+      - name: Build and exercise both fixtures and the owning View suite
+        if: matrix.mode == 'source'
+        id: view
+        run: |
+          set -euo pipefail
+          project=tests/Sunder.Package.Agent.View.Tests/Sunder.Package.Agent.View.Tests.csproj
+          state="$RUNNER_TEMP/view-state/ci-state.json"
+          report="$PWD/artifacts/view-rehearsal"
+          mkdir -p "$report"
+          catalog="$RUNNER_TEMP/release-inputs/sunder-platform-contracts.v1.json"
+          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core --work "$RUNNER_TEMP/view-state" \
+            --mode source --project "$project" --catalog "$catalog" --tools "$RUNNER_TEMP/core-tools" 2>&1 | tee "$report/prepare.log"
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet build "$project" -c Release --no-restore \
+            "-bl:$report/build.binlog" 2>&1 | tee "$report/build.log"
+          chat='Sunder.Package.Agent.Presentation.Tests.AgentChatNavigationTests.AgentChatView_NavigationPresentsRetryableStartupErrorWithoutHostFault'
+          markdown='Sunder.Package.Agent.Presentation.Tests.TranscriptScrollCoordinatorTests.PendingMarkdownKeepsAnchorUntilDeferredRenderCompletes'
+          for trial in 1 2 3; do
+            python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet test "$project" -c Release --no-build --no-restore \
+              --filter "FullyQualifiedName=$chat|FullyQualifiedName=$markdown" --logger "trx;LogFileName=focus-$trial.trx" --results-directory "$report"
+          done
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet test "$project" -c Release --no-build --no-restore \
+            --logger 'trx;LogFileName=full-view.trx' --results-directory "$report"
+          python3 -B - "$report" "$chat" "$markdown" <<'PY'
+          from collections import Counter
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+          root=Path(sys.argv[1])
+          required=Counter(sys.argv[2:])
+          paths=sorted(root.glob("focus-*.trx"))
+          assert len(paths)==3
+          for path in [*paths, root/"full-view.trx"]:
+              r=ET.parse(path).findall(".//{*}UnitTestResult")
+              observed=Counter(t.get("testName") for t in r)
+              assert all(t.get("outcome")=="Passed" for t in r)
+              assert all(observed[n]==1 for n in required)
+              assert (len(r)==2 if path in paths else len(r)>=180)
+              print(path.name, len(r), "passed, 0 failed, 0 skipped")
+          PY
+      - name: MCP locked SDK compatibility (the tests that never started)
+        id: mcp
+        if: matrix.mode == 'package'
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package \
+            --packages '["younics.ai.agent.mcp"]' --candidate "$RUNNER_TEMP/release-inputs/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$RUNNER_TEMP/release-inputs/sunder-platform-contracts.v1.json" --tools "$RUNNER_TEMP/core-tools"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && (steps.view.outcome == 'success' || steps.view.outcome == 'failure')
+        with:
+          name: view-fixtures-diagnostic-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/view-rehearsal/
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && (steps.mcp.outcome == 'success' || steps.mcp.outcome == 'failure')
+        with:
+          name: mcp-package-diagnostic-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports/
+            sunder-agent-package/artifacts/test-results/
+          if-no-files-found: error
+          retention-days: 14
