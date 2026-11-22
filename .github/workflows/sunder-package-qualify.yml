@@ -1,46 +1,93 @@
-name: Qualify
+name: Semantic Memory canary (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-semantic-canary-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  SOURCE_SHA: 810dfd441bef1c0ebf8d597ae60f6cc34f255695
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  diagnostic:
+    name: Diagnostic · Semantic Memory · linux-arm64
+    if: github.ref == 'refs/heads/diagnostic/agent-semantic-canary'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44986120126
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44986120126
+          name: agent-core-tools-linux-arm64
+          path: ${{ runner.temp }}/core-tools
+      - name: Bind the checkout and exact retained inputs
+        id: inputs
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = b4de7ffc9a650c204843e106bbbc16a333fd71bba20d7430422fd0819555de77
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 13fc5fb006e018118a506cea55202807b1fcd821817a38f216c9e057b5f64668
+      - name: Verify the exact proposed test in its owning component lane
+        run: |
+          set -euo pipefail
+          file=tests/Sunder.Package.Agent.Memory.Semantic.Tests/SemanticMemoryDurableLifecycleTests.cs
+          patch=../diagnostic-driver/.github/diagnostics/semantic-canary.patch
+          git apply --check "$patch"
+          git apply "$patch"
+          test "$(git diff --name-only HEAD)" = "$file"
+          mkdir -p artifacts/canary-diagnostic
+          python3 -B scripts/release/agent_release.py file-sha "$file" > artifacts/canary-diagnostic/fixture-sha256.txt
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
+            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" \
+            --mode source --packages '["younics.ai.agent.memory.semantic"]' --stress
+      - name: Retain component diagnostics
+        if: always() && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-semantic-canary-linux-arm64-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-components
+            sunder-agent-package/artifacts/canary-diagnostic
+          if-no-files-found: error
+          retention-days: 14
