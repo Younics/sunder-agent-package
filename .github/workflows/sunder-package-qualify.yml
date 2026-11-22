@@ -1,46 +1,116 @@
-name: Qualify
+name: Maker boundaries (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-maker-boundaries-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  BASE_SHA: 746090a03a7d6162369afe84173fc8bb4d43deab
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  INPUTS_SHA256: f0edd033e255b4814909eef5c9b653b23ff243fafec10842ba94c91b16e9e0c6
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  diagnostic:
+    name: Diagnostic · Maker lease and APFS · osx-arm64
+    if: github.ref == 'refs/heads/diagnostic/agent-maker-verification'
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
+          fetch-depth: 2
           persist-credentials: false
-      - id: selection
+      - name: Select the proposed revision, not this workflow overlay
+        id: source
+        working-directory: diagnostic-driver
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD^)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45065904231
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45065904231
+          name: agent-core-tools-osx-arm64
+          path: ${{ runner.temp }}/core-tools
+      - name: Verify the clean source and exact failed-release inputs
+        id: inputs
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+          PROPOSED_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD HEAD^)" = "$(printf '%s\n%s' "$PROPOSED_SHA" "$BASE_SHA")"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE_SHA" HEAD)" = "$(printf '%s\n' scripts/ci/test_filesystems.py \
+            scripts/test/release/test_agent_ci.py tests/Sunder.Package.Agent.Builder.Tests/BuilderLocalBackendTests.cs)"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 29cc6045a1fade10c49a4c2b8301943c7b8ae1646141503ec7344b8110ac8177
+          python3 -B - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts/release")
+          import release_inputs as inputs
+          root = Path(os.environ["RUNNER_TEMP"]) / "agent-inputs"
+          value = inputs.verify(Path.cwd(), root, os.environ["INPUTS_SHA256"], os.environ["BASE_SHA"], os.environ["CORE_SHA"])
+          assert value["lockSetSha256"] == "80871aed82e828c552288bfd210fac2558cfa44f50ca93e14e8187dfff9348c3"
+          assert inputs.file_sha(root / "younics.ai.agent.2.0.0.sunderpkg") == "6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb"
+          assert inputs.file_sha(root / "sunder-platform-contracts.v1.json") == "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210"
+          PY
+          mkdir -p artifacts/maker-diagnostic
+          printf '%s\n' "$PROPOSED_SHA" > artifacts/maker-diagnostic/source-sha.txt
+      - name: Run the owning Maker component with real case-sensitive APFS
+        run: |
+          set -euo pipefail
+          python3 -B scripts/test/release/test_agent_ci.py -k busy_eject
+          python3 -B scripts/ci/agent_ci.py validate --mode source --core ../sunder-core \
+            --packages '["younics.sunder.package.maker"]' --tools "$RUNNER_TEMP/core-tools" \
+            --candidate "$RUNNER_TEMP/agent-inputs/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json"
+          test -z "$(git status --porcelain)"
+      - name: Retain diagnostics without publishing
+        if: always() && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-maker-boundaries-osx-arm64-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/maker-diagnostic
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/source-components
+          if-no-files-found: error
+          retention-days: 14
