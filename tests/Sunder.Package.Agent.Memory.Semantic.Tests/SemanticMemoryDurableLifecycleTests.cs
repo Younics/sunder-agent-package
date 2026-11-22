@@ -121,10 +121,16 @@ public sealed class SemanticMemoryDurableLifecycleTests
     }
 
     [Fact]
-    public void SessionDeletion_PhysicallyErasesOrdinaryFullTextAndWalCanaries()
+    public async Task SessionDeletion_PhysicallyErasesOrdinaryFullTextAndWalCanaries()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new MemoryLocalStore(scope.Context);
+        await using var store = new MemoryLocalStore(scope.Context);
+        // Let the store's startup checkpointer finish before placing markers in
+        // specific files; the fixture must be the only checkpointer during seeding.
+        using (var startup = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+        {
+            await store.WaitForWalCheckpointIdleAsync(startup.Token);
+        }
         var sessionId = Guid.NewGuid();
         var ordinarySecret = "ordinary-erasure-sentinel-" + Guid.NewGuid().ToString("N");
         var fullTextSecret = "full-text-erasure-sentinel-" + Guid.NewGuid().ToString("N");
@@ -140,13 +146,19 @@ public sealed class SemanticMemoryDurableLifecycleTests
                 VALUES ('ordinary-canary', 'ordinary-memory', $sessionId, NULL, $ordinarySecret, $now);
                 INSERT INTO SessionMemorySearch (MemoryId, SessionId, Category, Content, EvidenceText, State)
                 VALUES ('fts-canary', $sessionId, 'project-fact', $fullTextSecret, $fullTextSecret, 'Active');
-                PRAGMA wal_checkpoint(TRUNCATE);
                 """;
             seed.Parameters.AddWithValue("$sessionId", sessionId.ToString());
             seed.Parameters.AddWithValue("$ordinarySecret", ordinarySecret);
             seed.Parameters.AddWithValue("$fullTextSecret", fullTextSecret);
             seed.Parameters.AddWithValue("$now", DateTimeOffset.UtcNow.ToString("O"));
             seed.ExecuteNonQuery();
+        }
+        using (var checkpoint = connection.CreateCommand())
+        {
+            checkpoint.CommandText = "PRAGMA main.wal_checkpoint(TRUNCATE);";
+            using var result = checkpoint.ExecuteReader();
+            Assert.True(result.Read());
+            Assert.Equal((0, 0, 0), (result.GetInt32(0), result.GetInt32(1), result.GetInt32(2)));
         }
         Assert.True(FileContains(store.DatabasePath, ordinarySecret));
         Assert.True(DatabaseFilesContain(store.DatabasePath, fullTextSecret));
