@@ -1,46 +1,138 @@
-name: Qualify
+name: Subagents replay (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-subagents-replay-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  BASE_SHA: a1468a975ba2d5ec653e50773080f907184fc188
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  INPUTS_SHA256: d26d9e3b05863cb9167b7d1dc22544ae8593129f5364b092dd421895318ad39d
+  PROJECT: tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  diagnostic:
+    name: Diagnostic · Subagents replay · linux-arm64
+    if: github.ref == 'refs/heads/diagnostic/agent-subagents-replay'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 360
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
+          fetch-depth: 2
           persist-credentials: false
-      - id: selection
+      - name: Select the proposed source without this workflow overlay
+        id: source
+        working-directory: diagnostic-driver
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD^)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          printf 'sha=%s\n' "$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          ref: ${{ steps.source.outputs.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45023022075
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45023022075
+          name: agent-core-tools-linux-arm64
+          path: ${{ runner.temp }}/core-tools
+      - name: Verify the candidate and exact prior dependency bytes
+        id: inputs
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
+          PROPOSED_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD)" = "$PROPOSED_SHA"
+          test "$(git rev-parse HEAD^)" = "$BASE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test "$(git diff --name-only "$BASE_SHA" HEAD)" = tests/Sunder.Package.Agent.Tests/ExtensionOwnerRpcTests.cs
+          test -z "$(git status --porcelain)"
+          sha() { python3 -B scripts/release/agent_release.py file-sha "$1"; }
+          test "$(sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 13fc5fb006e018118a506cea55202807b1fcd821817a38f216c9e057b5f64668
+          python3 -B - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts/release")
+          import release_inputs as inputs
+          root = Path(os.environ["RUNNER_TEMP"]) / "agent-inputs"
+          manifest = inputs.verify(Path.cwd(), root, os.environ["INPUTS_SHA256"], os.environ["BASE_SHA"], os.environ["CORE_SHA"])
+          assert manifest["lockSetSha256"] == "80871aed82e828c552288bfd210fac2558cfa44f50ca93e14e8187dfff9348c3"
+          owner = root / "younics.ai.agent.2.0.0.sunderpkg"
+          assert owner.stat().st_size == 32002626
+          assert inputs.file_sha(owner) == "6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb"
+          assert inputs.file_sha(root / "sunder-platform-contracts.v1.json") == "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210"
+          PY
+          mkdir -p artifacts/replay-diagnostic
+          printf '%s\n' "$PROPOSED_SHA" > artifacts/replay-diagnostic/source-sha.txt
+      - name: Run the complete owning shared Agent suite
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+          SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
+          SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES: "1"
+        run: |
+          set -euo pipefail
+          state="$RUNNER_TEMP/replay-prepared/ci-state.json"
+          python3 -B scripts/ci/agent_ci.py prepare --mode source --core ../sunder-core --work "$(dirname "$state")" --project "$PROJECT" \
+            --candidate "$RUNNER_TEMP/agent-inputs/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json" --tools "$RUNNER_TEMP/core-tools"
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet build "$PROJECT" -c Release --no-restore
+          python3 -B - "$state" <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts/ci")
+          import agent_ci, test_lanes
+          source = Path.cwd()
+          inventory = json.loads(agent_ci.generate_inventory(source).read_text())
+          output = source / "artifacts/test-results/full"
+          output.mkdir(parents=True)
+          cases = [test_lanes.POLICY["artifactProducer"], *test_lanes.POLICY["requiredLinux"]]
+          selection = "&".join("FullyQualifiedName!~" + name for name in cases)
+          common = ["dotnet", "test", "Sunder.AgentPackage.slnx", "-c", "Release", "--no-build", "--no-restore"]
+          count = test_lanes.run_project_with_filesystems(
+              sys.argv[1], source, os.environ["PROJECT"], common, selection, output, inventory, "source")
+          assert count > 0
+          PY
+          test -z "$(git status --porcelain)"
+      - name: Retain exact owning-suite evidence
+        if: always() && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-subagents-replay-linux-arm64-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/replay-diagnostic
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+          if-no-files-found: error
+          retention-days: 14
