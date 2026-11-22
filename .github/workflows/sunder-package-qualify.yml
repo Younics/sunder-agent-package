@@ -1,46 +1,108 @@
-name: Qualify
+name: Skills clock (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-skills-clock-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  BASE_SHA: 1f1b97aedac23ac34d4eea916c155a988d4c3eb4
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  diagnostic:
+    name: Diagnostic · Skills deadline · osx-x64
+    if: github.ref == 'refs/heads/diagnostic/agent-skills-deadline'
+    runs-on: macos-15-intel
+    timeout-minutes: 180
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
+          fetch-depth: 2
           persist-credentials: false
-      - id: selection
+      - id: source
+        name: Bind the proposed source commit, not the workflow overlay
+        working-directory: diagnostic-driver
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD^)"
+          [[ "$sha" =~ ^[a-f0-9]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+          path: sunder-agent-package
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45003074441
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45003074441
+          name: agent-core-tools-osx-x64
+          path: ${{ runner.temp }}/core-tools
+      - name: Verify the exact Skills change and pinned dependency bytes
+        id: inputs
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+          PROPOSED_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD HEAD^)" = "$(printf '%s\n%s' "$PROPOSED_SHA" "$BASE_SHA")"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          service=src/Sunder.Package.Agent.Skills/Services/SkillImportService.cs
+          fixture=tests/Sunder.Package.Agent.Skills.Tests/SkillImportReplacementTests.cs
+          test "$(git diff --name-only "$BASE_SHA" HEAD)" = "$(printf '%s\n%s' "$service" "$fixture")"
+          test -z "$(git status --porcelain)"
+          sha() { python3 -B scripts/release/agent_release.py file-sha "$1"; }
+          test "$(sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = 85d25354d6228bcb322173c317df0a10db7221f4b9907c695ec66d1e2bbc16bb
+          test "$(sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 373acce4605846640284dbd4bb5c38cc197015b6c579a9eff18a007ed1f8b06e
+          test "$(sha "$RUNNER_TEMP/agent-inputs/younics.ai.agent.2.0.0.sunderpkg")" = 6af4a0de4a0ef336d0ae647b2fcd3296233016ee9fba618645bc270e4ef453fb
+          test "$(sha "$RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json")" = 7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210
+          mkdir -p artifacts/clock-diagnostic
+          printf '%s\n' "$PROPOSED_SHA" > artifacts/clock-diagnostic/source-sha.txt
+      - name: Verify the owning Skills component on its failing native platform
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode source \
+            --candidate "$RUNNER_TEMP/agent-inputs/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$RUNNER_TEMP/agent-inputs/sunder-platform-contracts.v1.json" \
+            --tools "$RUNNER_TEMP/core-tools" --packages '["younics.ai.agent.skills"]' --stress
+      - name: Retain exact component evidence
+        if: always() && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-skills-deadline-osx-x64-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+            sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-components
+            sunder-agent-package/artifacts/clock-diagnostic
+          if-no-files-found: error
+          retention-days: 14
