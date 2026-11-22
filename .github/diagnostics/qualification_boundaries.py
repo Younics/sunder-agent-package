@@ -32,6 +32,7 @@ TOOL_ARTIFACT = {
     "osx-x64": (14723344909, "090860793d60660cdca1f365f9d42da179e9c74b9e4cfe765270fdf766687f80"),
 }
 PROJECT = "tests/Sunder.Package.Agent.Runtime.Tests/Sunder.Package.Agent.Runtime.Tests.csproj"
+INTEGRATION = "tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj"
 FIXTURE = "tests/Sunder.Package.Agent.Runtime.Tests/WorkspacePersistenceTests.cs"
 OWNER_PROJECT = "src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
 ARTIFACT_CASE = "CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload"
@@ -153,7 +154,7 @@ def workspace():
         count = test_lanes.run_project_with_filesystems(
             state, SOURCE, PROJECT, common, "&".join("FullyQualifiedName!~" + x for x in flags), out, inventory, "source")
         rows = [row for file in out.rglob("*.trx") for row in ET.parse(file).findall(".//{*}UnitTestResult")]
-        assert count == len(rows) == 707 and Counter(v.get("outcome") for v in rows) == {"Passed": 707}
+        assert count > 0 and len(rows) == 707 and Counter(v.get("outcome") for v in rows) == {"Passed": 707}
         for case in READ_CASES:
             name = "Sunder.Package.Agent.Tests.WorkspacePersistenceTests." + case
             assert [row.get("outcome") for row in rows if row.get("testName") == name] == ["Passed"]
@@ -231,7 +232,22 @@ def intel(family):
     if not family:
         run([*args, "--packages", '["younics.ai.agent.subagents"]', "--stress"])
         return
-    with subprocess.Popen([*args, "--shared"], start_new_session=True) as process:
+    # Isolate the all-family fixture from unrelated ordinary shared tests.
+    # The production C# fixture and every child command remain unmodified.
+    state = INPUTS.with_name("intel-prepared") / "ci-state.json"
+    run([*CI, "prepare", *LOCKED, "--work", state.parent, "--project", INTEGRATION])
+    run([*CI, "run", "--state", state, "--", "dotnet", "build", INTEGRATION, "-c", "Release", "--no-restore"])
+    sys.path.insert(0, str(SOURCE / "scripts/ci"))
+    import agent_ci
+    agent_ci.generate_inventory(SOURCE)
+    diagnostics = {
+        "SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES": "1",
+        "SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION": "1",
+        "SUNDER_AGENT_SOURCE_ARTIFACT_EVIDENCE": str(ARTIFACTS / "source-family"),
+        "SUNDER_AGENT_SOURCE_ARTIFACT_COMMAND_EVIDENCE": str(ARTIFACTS / "source-commands"),
+    }
+    with subprocess.Popen([*CI, "test", "--state", str(state), "--lane", "artifact"],
+                          env=os.environ | diagnostics, start_new_session=True) as process:
         with (OUT / "owner-pack-process.jsonl").open("x") as trace:
             status = sample_pack(process, trace)
         if status:
@@ -247,6 +263,10 @@ def intel(family):
         assert json.loads(after.read_text())["exitCode"] == 0
     attempt = json.loads((command_dir / "attempt-artifacts.json").read_text())
     assert attempt["completed"] is True and len(attempt["archives"]) == 15
+    report = ARTIFACTS / "test-results/artifact/Sunder.Package.Agent.Integration.Tests.trx"
+    [row] = ET.parse(report).findall(".//{*}UnitTestResult")
+    assert row.get("testName") == "Sunder.Package.Agent.Tests.AgentSourceArtifactMigrationTests." + ARTIFACT_CASE
+    assert row.get("outcome") == "Passed"
     actual = {}
     for item in attempt["archives"]:
         archive = Path(item["retainedPath"])

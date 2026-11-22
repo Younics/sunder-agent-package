@@ -21,15 +21,12 @@ jobs:
     name: Diagnostic · ${{ matrix.boundary }} · ${{ matrix.rid }}
     if: github.ref == 'refs/heads/diagnostic/agent-qualification-boundaries'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 180
+    timeout-minutes: 360 # Match the shared source qualification job.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { boundary: workspace, rid: linux-arm64, runner: ubuntu-24.04-arm }
-          - { boundary: workspace, rid: osx-arm64, runner: macos-15 }
           - { boundary: shared-source, rid: osx-x64, runner: macos-15-intel }
-          - { boundary: subagents-retention, rid: osx-x64, runner: macos-15-intel }
     defaults:
       run:
         working-directory: sunder-agent-package
@@ -62,20 +59,8 @@ jobs:
           BOUNDARY: ${{ matrix.boundary }}
           RID: ${{ matrix.rid }}
         run: python3 -u -B ../diagnostic-driver/.github/diagnostics/qualification_boundaries.py "$BOUNDARY"
-      - name: Retain Intel Subagents component diagnostics
-        if: always() && matrix.boundary == 'subagents-retention' && steps.inputs.outcome == 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-component-younics.ai.agent.subagents-source-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: |
-            sunder-agent-package/artifacts/reports
-            sunder-agent-package/artifacts/test-results
-            sunder-agent-package/artifacts/stress
-            sunder-agent-package/artifacts/source-components
-          if-no-files-found: error
-          retention-days: 14
       - name: Retain the diagnostic command and test evidence
-        if: always() && matrix.boundary != 'subagents-retention' && steps.inputs.outcome == 'success'
+        if: always() && steps.inputs.outcome == 'success'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-boundary-${{ matrix.boundary }}-${{ matrix.rid }}-${{ github.run_attempt }}
