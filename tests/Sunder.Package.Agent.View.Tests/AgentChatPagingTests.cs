@@ -208,23 +208,27 @@ public sealed class AgentChatPagingTests
                 var sourceIndex = Array.FindIndex(model.Messages.ToArray(), row => Equals(row.AnchorKey, sourceKey));
                 File.AppendAllText(path, $"{stage}: offset={viewer.Offset.Y},extent={viewer.Extent.Height},viewport={viewer.Viewport.Height},exact={exactKey},index={exactIndex},sourceIndex={sourceIndex},model={model.TranscriptViewportAnchor?.AnchorKey}; {string.Join("; ", rows)}; {coordinator.DiagnosticSnapshot}{Environment.NewLine}");
             }
-            async Task SettleCombinedMarkdownAsync()
+            async Task SettleCombinedMarkdownAsync(
+                Func<bool>? viewportSettled = null,
+                CancellationToken cancellationToken = default)
             {
                 for (var pass = 0; pass < 100; pass++)
                 {
                     var presenters = view.GetVisualDescendants()
                         .OfType<AgentApp::Sunder.Package.Agent.Shared.PackageViews.StreamingMarkdownPresenter>()
                         .Where(presenter => presenter.IsEffectivelyVisible).ToArray();
-                    await Task.WhenAll(presenters.Select(presenter => presenter.PendingRenderOperations)).WaitAsync(TimeSpan.FromSeconds(5));
-                    await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-                    await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
+                    await Task.WhenAll(presenters.Select(presenter => presenter.PendingRenderOperations))
+                        .WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
+                    await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render, cancellationToken);
+                    await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background, cancellationToken);
                     if (view.GetVisualDescendants()
                         .OfType<AgentApp::Sunder.Package.Agent.Shared.PackageViews.StreamingMarkdownPresenter>()
                         .Where(presenter => presenter.IsEffectivelyVisible)
-                        .All(presenter => !presenter.IsRenderPending)) return;
-                    await Task.Delay(10);
+                        .All(presenter => !presenter.IsRenderPending)
+                        && (viewportSettled?.Invoke() ?? true)) return;
+                    await Task.Delay(10, cancellationToken);
                 }
-                Assert.Fail("The combined transcript's Markdown did not settle.");
+                Assert.Fail("The combined transcript's Markdown and viewport did not settle.");
             }
             var frames = new List<string>();
             var blankFrames = new List<string>();
@@ -304,10 +308,17 @@ public sealed class AgentChatPagingTests
                         await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
                         TraceGeometry($"resized {width}");
                     }
-                    await WaitForPendingCoordinatorOperationsAsync(view).WaitAsync(TimeSpan.FromSeconds(10));
-                    TraceGeometry("resize coordinator settled");
-                    await SettleCombinedMarkdownAsync();
-                    TraceGeometry("resize Markdown settled");
+                    using (var resizeSettlement = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+                    {
+                        // Drive headless layout while the resize is active. The coordinator's
+                        // drain includes a watchdog, but cannot measure deferred Markdown itself.
+                        await SettleCombinedMarkdownAsync(
+                            () => coordinator.DiagnosticSnapshot.Mutation?.Status != TranscriptViewportMutationStatus.Active,
+                            resizeSettlement.Token);
+                        TraceGeometry("resize Markdown settled");
+                        await WaitForPendingCoordinatorOperationsAsync(view).WaitAsync(resizeSettlement.Token);
+                        TraceGeometry("resize coordinator settled");
+                    }
                     header = Header();
                     top = header.TranslatePoint(default, viewer)!.Value.Y;
                     TestContext.Current.TestOutputHelper?.WriteLine(

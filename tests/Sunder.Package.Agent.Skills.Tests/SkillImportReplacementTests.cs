@@ -384,18 +384,36 @@ public sealed class SkillImportReplacementTests
         try
         {
             var context = new TestPackageContext(root);
-            var client = new SlowGitHubSkillClient(TimeSpan.FromMilliseconds(70));
+            var clock = new ManualTimeProvider();
+            var client = new SlowGitHubSkillClient(clock, TimeSpan.FromMilliseconds(70));
             var importer = new SkillImportService(
                 new SkillStore(context),
                 client,
                 context,
                 faultInjector: null,
-                gitHubImportTimeout: TimeSpan.FromMilliseconds(100));
+                gitHubImportTimeout: TimeSpan.FromMilliseconds(100),
+                gitHubImportTimeProvider: clock);
+            using var caller = new CancellationTokenSource();
+            var import = importer.ImportGitHubFolderAsync("https://github.com/owner/repo/tree/main/skill", caller.Token);
+            var watchdog = TimeSpan.FromSeconds(2);
+            try
+            {
+                await client.ResolveStarted.Task.WaitAsync(watchdog);
+                clock.Advance(TimeSpan.FromMilliseconds(70));
+                await client.ListStarted.Task.WaitAsync(watchdog);
+                clock.Advance(TimeSpan.FromMilliseconds(29));
+                Assert.False(client.ListToken.IsCancellationRequested);
+                Assert.False(import.IsCompleted);
 
-            await Assert.ThrowsAsync<TimeoutException>(() => importer.ImportGitHubFolderAsync(
-                "https://github.com/owner/repo/tree/main/skill"));
-
-            Assert.True(client.ListStarted);
+                // Listing has had only 30 ms when the original 100 ms expires.
+                clock.Advance(TimeSpan.FromMilliseconds(1));
+                await Assert.ThrowsAsync<TimeoutException>(() => import).WaitAsync(watchdog);
+                Assert.True(client.ListStarted.Task.IsCompletedSuccessfully);
+            }
+            finally
+            {
+                await caller.CancelAsync();
+            }
         }
         finally
         {
@@ -1025,9 +1043,11 @@ public sealed class SkillImportReplacementTests
         }
     }
 
-    private sealed class SlowGitHubSkillClient(TimeSpan delay) : IGitHubSkillClient
+    private sealed class SlowGitHubSkillClient(TimeProvider clock, TimeSpan delay) : IGitHubSkillClient
     {
-        public bool ListStarted { get; private set; }
+        public TaskCompletionSource ResolveStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ListStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public CancellationToken ListToken { get; private set; }
 
         public Task<string?> TryGetDefaultBranchAsync(
             string owner,
@@ -1044,7 +1064,9 @@ public sealed class SkillImportReplacementTests
             GitHubSkillFolderRequest request,
             CancellationToken cancellationToken = default)
         {
-            await Task.Delay(delay, cancellationToken);
+            var pending = Task.Delay(delay, clock, cancellationToken);
+            ResolveStarted.TrySetResult();
+            await pending;
             return new GitHubSkillFolder(
                 request.Owner,
                 request.Repo,
@@ -1058,8 +1080,10 @@ public sealed class SkillImportReplacementTests
             GitHubSkillFolder folder,
             CancellationToken cancellationToken = default)
         {
-            ListStarted = true;
-            await Task.Delay(delay, cancellationToken);
+            ListToken = cancellationToken;
+            var pending = Task.Delay(delay, clock, cancellationToken);
+            ListStarted.TrySetResult();
+            await pending;
             return [new GitHubSkillFile("SKILL.md", "skill/SKILL.md", 1)];
         }
 

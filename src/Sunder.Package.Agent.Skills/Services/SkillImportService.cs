@@ -15,6 +15,7 @@ public sealed partial class SkillImportService
     private readonly Action<SkillImportFaultPoint>? _faultInjector;
     private readonly SkillSourceAcquirer _sourceAcquirer;
     private readonly TimeSpan _gitHubImportTimeout;
+    private readonly TimeProvider _gitHubImportTimeProvider;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public SkillImportService(SkillStore store, IGitHubSkillClient gitHubClient, IPackageContext packageContext)
@@ -36,7 +37,8 @@ public sealed partial class SkillImportService
         IGitHubSkillClient gitHubClient,
         IPackageContext packageContext,
         Action<SkillImportFaultPoint>? faultInjector,
-        TimeSpan? gitHubImportTimeout)
+        TimeSpan? gitHubImportTimeout,
+        TimeProvider? gitHubImportTimeProvider = null)
     {
         if (gitHubImportTimeout is { } timeout && timeout <= TimeSpan.Zero)
         {
@@ -48,6 +50,7 @@ public sealed partial class SkillImportService
         _faultInjector = faultInjector;
         _sourceAcquirer = new SkillSourceAcquirer(gitHubClient, packageContext);
         _gitHubImportTimeout = gitHubImportTimeout ?? DefaultGitHubImportTimeout;
+        _gitHubImportTimeProvider = gitHubImportTimeProvider ?? TimeProvider.System;
     }
 
     public Task<InstalledSkillRecord> ImportLocalFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -253,8 +256,8 @@ public sealed partial class SkillImportService
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(_gitHubImportTimeout);
+        using var timer = new CancellationTokenSource(_gitHubImportTimeout, _gitHubImportTimeProvider);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timer.Token);
         try
         {
             return await operation(deadline.Token).ConfigureAwait(false);

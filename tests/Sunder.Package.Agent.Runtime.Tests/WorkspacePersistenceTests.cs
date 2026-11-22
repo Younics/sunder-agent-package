@@ -54,7 +54,7 @@ public sealed class WorkspacePersistenceTests
         using var store = new AgentLocalStore(scope.Context);
         var service = new AgentWorkspaceService(store);
         var workspace = service.CreateWorkspace("Concurrent");
-        using var release = new ManualResetEventSlim();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var bothStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var active = 0;
         var maximumActive = 0;
@@ -75,8 +75,16 @@ public sealed class WorkspacePersistenceTests
             {
                 bothStarted.TrySetResult();
             }
-            release.Wait(cancellationToken);
-            Interlocked.Decrement(ref active);
+            try
+            {
+                // The probe must hold this synchronous callback open. A Task wait
+                // lets the pool compensate instead of starving the other read.
+                release.Task.Wait(cancellationToken);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref active);
+            }
         };
 
         var list = service.ListWorkspacesAsync();
@@ -85,10 +93,12 @@ public sealed class WorkspacePersistenceTests
         {
             await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
             Assert.Equal(2, maximumActive);
+            Assert.False(list.IsCompleted);
+            Assert.False(get.IsCompleted);
         }
         finally
         {
-            release.Set();
+            release.TrySetResult();
         }
 
         Assert.Contains(workspace.WorkspaceId, (await list).Select(static item => item.WorkspaceId));

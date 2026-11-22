@@ -112,9 +112,14 @@ public sealed class ExtensionOwnerRpcTests
         string errorCode)
     {
         using var boundary = new SubagentOwnerBoundary();
-        await using var subscription = boundary.Client.ChangesAsync(0)
+        // Even an empty capability catalog emits a startup change. Drain it
+        // before arming the registration failure for the live Subagents change.
+        var startup = await ObserveInitialSubagentCatalogAsync(boundary.Client);
+        await using var subscription = boundary.Client.ChangesAsync(startup.Revision)
             .GetAsyncEnumerator();
         var connected = await MoveToSubagentChangeAsync(subscription, AppSubagentChangeKind.Connected);
+        Assert.Equal(startup.Revision, connected.Revision);
+        Assert.Equal(startup.RuntimeInstanceId, connected.RuntimeInstanceId);
         var authorityFailure = new SunderRpcException(
             new SunderRpcError(errorKind, errorCode, "Authenticated Host retirement."),
             hostAuthenticated: true);
@@ -127,6 +132,7 @@ public sealed class ExtensionOwnerRpcTests
             .GetAsyncEnumerator();
         var replayed = await MoveToSubagentChangeAsync(replay, AppSubagentChangeKind.Subagents);
         Assert.Equal(connected.Revision + 1, replayed.Revision);
+        Assert.Equal(connected.RuntimeInstanceId, replayed.RuntimeInstanceId);
         Assert.Empty((await ReadSubagentProjectionAsync(boundary.Client.ManagementAsync())).Subagents ?? []);
     }
 
@@ -189,6 +195,14 @@ public sealed class ExtensionOwnerRpcTests
             new NoOpSessionDataCleaner());
 
         Assert.Equal(revision, boundary.Changes.Revision);
+    }
+
+    private static async Task<AppSubagentChanged> ObserveInitialSubagentCatalogAsync(
+        SubagentManagementServices.ISubagentsManagementService client)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await using var changes = client.ChangesAsync(0).GetAsyncEnumerator(deadline.Token);
+        return await MoveToSubagentChangeAsync(changes, AppSubagentChangeKind.Catalog);
     }
 
     private static async Task<AppSubagentChanged> MoveToSubagentChangeAsync(
