@@ -1,0 +1,50 @@
+diff --git a/tests/Sunder.Package.Agent.Integration.Tests/AgentOwnerSourceMigrationTests.StackImport.cs b/tests/Sunder.Package.Agent.Integration.Tests/AgentOwnerSourceMigrationTests.StackImport.cs
+index fcf8d9e..6006d1a 100644
+--- a/tests/Sunder.Package.Agent.Integration.Tests/AgentOwnerSourceMigrationTests.StackImport.cs
++++ b/tests/Sunder.Package.Agent.Integration.Tests/AgentOwnerSourceMigrationTests.StackImport.cs
+@@ -44,6 +44,9 @@ public sealed partial class AgentOwnerSourceMigrationTests
+         if (OperatingSystem.IsMacOS() && sandbox.StartsWith("/var/", StringComparison.Ordinal)) sandbox = "/private" + sandbox;
+         Exception? failure = null;
+         string? lastCommandDiagnostic = null;
++        var commands = Environment.GetEnvironmentVariable("SUNDER_AGENT_OWNER_TEST_COMMAND_EVIDENCE")!;
++        Directory.CreateDirectory(commands);
++        var sequence = 0;
+         try
+         {
+             // An unchanged copy of the authored repository topology, not a test
+@@ -117,7 +120,9 @@ public sealed partial class AgentOwnerSourceMigrationTests
+             }
+             async Task Command(string command, string[] arguments, string? expectedError = null)
+             {
+-                TraceOwnerPhase("stack-evidence:start:" + command + " " + string.Join(" ", arguments));
++                var phase = expectedError ?? (command == "restore" ? "restore" : arguments.Length == 1 ? "recovery" : "baseline-plan");
++                var stem = Path.Combine(commands, $"{++sequence:D2}-{phase}");
++                TraceOwnerPhase("stack-evidence:start:" + phase);
+                 var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = projectRoot, RedirectStandardOutput = true, RedirectStandardError = true };
+                 start.Environment["DOTNET_CLI_USE_MSBUILD_SERVER"] = "0";
+                 start.Environment["MSBUILDDISABLENODEREUSE"] = "1";
+@@ -125,19 +130,23 @@ public sealed partial class AgentOwnerSourceMigrationTests
+                 // directory and can hold it open after a successful Windows build.
+                 start.Environment["AVALONIA_TELEMETRY_OPTOUT"] = "1";
+                 foreach (var argument in new[] { command, project }.Concat(arguments).Concat(common)) start.ArgumentList.Add(argument);
++                start.ArgumentList.Add("-bl:" + stem + ".binlog");
+                 if (command == "msbuild")
+                 {
+                     foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" }) start.Environment[key] = "http://127.0.0.1:1";
+                     start.Environment["NO_PROXY"] = start.Environment["no_proxy"] = "";
+                 }
++                var elapsed = Stopwatch.StartNew();
+                 using var process = Process.Start(start)!;
++                TraceOwnerPhase($"stack-evidence:child:{phase}:{process.Id}");
+                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(900));
+                 var output = process.StandardOutput.ReadToEndAsync();
+                 var error = process.StandardError.ReadToEndAsync();
+                 try { await process.WaitForExitAsync(timeout.Token); }
+                 catch { if (!process.HasExited) process.Kill(entireProcessTree: true); await process.WaitForExitAsync(); throw; }
+                 var text = await output + await error;
+-                TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
++                TraceOwnerPhase($"stack-evidence:complete:{phase}:{process.ExitCode}:{elapsed.Elapsed:c}");
++                File.WriteAllText(stem + ".log", text);
+                 var diagnostic = $"{start.FileName} {string.Join(" ", start.ArgumentList)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n{text}";
+                 lastCommandDiagnostic = diagnostic;
+                 foreach (var (path, bytes) in producerLocks)

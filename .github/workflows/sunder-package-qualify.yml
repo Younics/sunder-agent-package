@@ -1,46 +1,100 @@
-name: Qualify
+name: Intel owner handoff (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: sunder-agent-intel-owner-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  SOURCE_SHA: 1f1b97aedac23ac34d4eea916c155a988d4c3eb4
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  PROJECT: tests/Sunder.Package.Agent.Integration.Tests/Sunder.Package.Agent.Integration.Tests.csproj
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  diagnostic:
+    name: Diagnostic · owner handoff · osx-x64
+    if: github.ref == 'refs/heads/diagnostic/agent-intel-owner-handoff'
+    runs-on: macos-15-intel
+    timeout-minutes: 360
+    defaults:
+      run:
+        working-directory: sunder-agent-package
+        shell: bash
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic-driver
           persist-credentials: false
-      - id: selection
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45003074441
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45003074441
+          name: agent-core-tools-osx-x64
+          path: ${{ runner.temp }}/core-tools
+      - name: Bind exact native inputs and candidate
+        id: inputs
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = 85d25354d6228bcb322173c317df0a10db7221f4b9907c695ec66d1e2bbc16bb
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 373acce4605846640284dbd4bb5c38cc197015b6c579a9eff18a007ed1f8b06e
+      - name: Run all ordinary Integration cases with the original watchdog
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+          SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
+          SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES: "1"
+          SUNDER_AGENT_OWNER_TEST_TRACE: ${{ github.workspace }}/sunder-agent-package/artifacts/owner-diagnostic/phases.log
+          SUNDER_AGENT_OWNER_TEST_COMMAND_EVIDENCE: ${{ github.workspace }}/sunder-agent-package/artifacts/owner-diagnostic/commands
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/owner-diagnostic artifacts/test-results/full
+          git apply --check ../diagnostic-driver/.github/diagnostics/owner-command-evidence.patch
+          git apply ../diagnostic-driver/.github/diagnostics/owner-command-evidence.patch
+          test "$(git diff --name-only HEAD)" = tests/Sunder.Package.Agent.Integration.Tests/AgentOwnerSourceMigrationTests.StackImport.cs
+          state="$RUNNER_TEMP/owner-prepared/ci-state.json"
+          python3 -B scripts/ci/agent_ci.py prepare --mode source --core ../sunder-core --work "$(dirname "$state")" \
+            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" --project "$PROJECT"
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet build "$PROJECT" -c Release --no-restore
+          args=(--no-build --no-restore -c Release --filter 'FullyQualifiedName!~CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload')
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet test "$PROJECT" "${args[@]}" \
+            --list-tests --verbosity quiet > artifacts/owner-diagnostic/discovery.log
+          python3 -B scripts/ci/agent_ci.py run --state "$state" -- dotnet test "$PROJECT" "${args[@]}" \
+            --logger 'trx;LogFileName=Sunder.Package.Agent.Integration.Tests.trx' --results-directory "$PWD/artifacts/test-results/full" \
+            --diag "$PWD/artifacts/owner-diagnostic/vstest.log" --blame-hang --blame-hang-timeout 15m --blame-hang-dump-type mini
+      - name: Retain phase, nested command and test evidence
+        if: always() && steps.inputs.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-owner-handoff-osx-x64-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/owner-diagnostic
+            sunder-agent-package/artifacts/test-results/full
+          if-no-files-found: error
+          retention-days: 14
