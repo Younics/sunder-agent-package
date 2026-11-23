@@ -1,46 +1,95 @@
-name: Qualify
+name: Owner View readiness (diagnostic only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: agent-owner-view-readiness-${{ github.ref }}
   cancel-in-progress: false
 
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  SOURCE_SHA: 38c1bc04e1d65e0b92db3fe4d46ff2c0a45302fa
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  CATALOG_SHA: 7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210
+  VIEW_PROJECT: tests/Sunder.Package.Agent.View.Tests/Sunder.Package.Agent.View.Tests.csproj
+
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  view:
+    name: Diagnostic · owning View suite · osx-arm64
+    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/diagnostic/agent-owner-readiness-view'
+    runs-on: macos-15
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
+      SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES: "1"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          ref: ${{ env.SOURCE_SHA }}
+          path: sunder-agent-package
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-core-tools-osx-arm64
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-prepared-dependencies
+          path: ${{ runner.temp }}/agent-catalog
+      - name: Run the entire owning View suite with its exact input scope
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 29cc6045a1fade10c49a4c2b8301943c7b8ae1646141503ec7344b8110ac8177
+          catalog="$RUNNER_TEMP/agent-catalog/sunder-platform-contracts.v1.json"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$catalog")" = "$CATALOG_SHA"
+          work="$RUNNER_TEMP/view-prepared"
+          results="$PWD/artifacts/owner-view"
+          mkdir -p "$results"
+          printf '%s\n' "$SOURCE_SHA" > "$results/source-sha.txt"
+          # This view graph references the owner project, but imports no external
+          # package archive. Supplying the old owner is an out-of-scope input.
+          python3 -B scripts/ci/agent_ci.py prepare --mode source --core ../sunder-core --work "$work" --project "$VIEW_PROJECT" \
+            --tools "$RUNNER_TEMP/core-tools" --catalog "$catalog"
+          python3 -B - "$work/ci-state.json" <<'PY'
+          import json, sys
+          from pathlib import Path
+          value = json.loads(Path(sys.argv[1]).read_text())
+          assert value["packages"] == ["younics.ai.agent"] and value["candidates"] == []
+          PY
+          python3 -B scripts/ci/agent_ci.py run --state "$work/ci-state.json" -- dotnet build "$VIEW_PROJECT" -c Release --no-restore
+          SUNDER_TRANSCRIPT_REGRESSION_TRACE="$results/resize-trace.log" \
+            python3 -B scripts/ci/agent_ci.py run --state "$work/ci-state.json" -- dotnet test "$VIEW_PROJECT" -c Release \
+              --no-build --no-restore --logger 'trx;LogFileName=View.trx' --results-directory "$results"
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: agent-authoring-view-osx-arm64-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/owner-view
+          if-no-files-found: error
+          retention-days: 14
