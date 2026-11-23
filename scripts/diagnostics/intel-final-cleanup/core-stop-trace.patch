@@ -1,0 +1,240 @@
+diff --git a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ExecutionRuntimeProcessContainment.cs b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ExecutionRuntimeProcessContainment.cs
+index 796a8e0..210f25b 100644
+--- a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ExecutionRuntimeProcessContainment.cs
++++ b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ExecutionRuntimeProcessContainment.cs
+@@ -804,20 +804,30 @@ internal sealed partial class SystemExecutionRuntimeProcessContainmentController
+                 ExecutablePath: payload?.ExecutablePath,
+                 RuntimeRootPath: payload is null ? null : Path.GetDirectoryName(payload.ExecutablePath),
+                 AttachedAtUtc: payload is null ? null : DateTimeOffset.UtcNow);
++            TraceUnixDrain("group-proof-start");
+             if (!await _controller.TerminateAndDrainAsync(lease, cancellationToken).ConfigureAwait(false))
+             {
++                TraceUnixDrain("group-proof-unavailable");
+                 throw new IOException("The execution-runtime process containment could not be drained.");
+             }
++            TraceUnixDrain("group-proof-complete");
+             if (_payload is { HasExited: false })
+             {
++                TraceUnixDrain("attached-payload-exit-wait");
+                 await _payload.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+             }
++            TraceUnixDrain("attached-payload-exit-confirmed");
+             if (!_guardian.HasExited)
+             {
++                TraceUnixDrain("guardian-exit-wait");
+                 await _guardian.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+             }
++            TraceUnixDrain("guardian-exit-confirmed");
+         }
+
++        private void TraceUnixDrain(string step)
++            => Console.WriteLine($"shutdown-probe {DateTime.UtcNow:O} containment {ContainmentProcess.ProcessId} {step} elapsedTicks={Stopwatch.GetTimestamp()} payload={_payloadObservation?.ProcessId}");
++
+         public ValueTask DisposeAsync()
+         {
+             lock (_terminationGate)
+diff --git a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/PackageStageCleanupService.cs b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/PackageStageCleanupService.cs
+index b7ce3c9..9488810 100644
+--- a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/PackageStageCleanupService.cs
++++ b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/PackageStageCleanupService.cs
+@@ -11,18 +11,27 @@ internal sealed class PackageStageCleanupService(
+ {
+     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+     {
++        if (RuntimeOperationGate.DiagnosticForceStageSweep)
++        {
++            await RuntimeOperationGate.DiagnosticShutdownStarted.Task.WaitAsync(stoppingToken);
++            Console.WriteLine($"shutdown-probe {DateTime.UtcNow:O} forced-stage-sweep");
++            await SweepAsync(timeProvider.GetUtcNow(), stoppingToken);
++            return;
++        }
+         using var timer = new PeriodicTimer(policy.StageSweepInterval, timeProvider);
+         while (await timer.WaitForNextTickAsync(stoppingToken))
+         {
+-            var now = timeProvider.GetUtcNow();
+-            await RunSweepAsync(
+-                () => sessions.SweepStagesAsync(now, stoppingToken),
+-                () => installedPackages.SweepStagesAsync(now, stoppingToken),
+-                stoppingToken,
+-                applicationLifetime?.ApplicationStopping ?? CancellationToken.None);
++            await SweepAsync(timeProvider.GetUtcNow(), stoppingToken);
+         }
+     }
+
++    private Task SweepAsync(DateTimeOffset now, CancellationToken stoppingToken)
++        => RunSweepAsync(
++            () => sessions.SweepStagesAsync(now, stoppingToken),
++            () => installedPackages.SweepStagesAsync(now, stoppingToken),
++            stoppingToken,
++            applicationLifetime?.ApplicationStopping ?? CancellationToken.None);
++
+     internal static async Task RunSweepAsync(
+         Func<Task> sweepPackageStages,
+         Func<Task> sweepInstalledPackageStages,
+diff --git a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.PackageData.cs b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.PackageData.cs
+index a746343..2f61d1f 100644
+--- a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.PackageData.cs
++++ b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.PackageData.cs
+@@ -1697,8 +1697,9 @@ internal sealed partial class ProcessRuntimeWorker
+         {
+             if (Directory.Exists(directoryPath)) Directory.Delete(directoryPath, recursive: true);
+         }
+-        catch
++        catch (Exception error)
+         {
++            Console.WriteLine($"shutdown-probe {DateTime.UtcNow:O} temp-delete-error activation={Path.GetFileName(directoryPath)} type={error.GetType().Name} hresult={error.HResult}");
+         }
+     }
+
+diff --git a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.cs b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.cs
+index 091d28a..2fb1b94 100644
+--- a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.cs
++++ b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/ProcessRuntimeWorker.cs
+@@ -607,11 +607,14 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+         }
+         if (existingStop is not null)
+         {
++            TraceStop("joining-primary", existingStop.Status.ToString());
+             await existingStop.WaitAsync(cancellationToken).ConfigureAwait(false);
+             return;
+         }
++        TraceStop("primary", $"hostStopping={_hostStopping.IsCancellationRequested}, callerCanCancel={cancellationToken.CanBeCanceled}, payload={process?.Id}");
+         CancelWorkerCallsForShutdown();
+         var scopeCleanup = ObserveAsync(CloseAllWorkerCallScopesAsync());
++        TraceStop("host-calls-cancelled", $"scope={scopeCleanup.Status}");
+         if (process is null)
+         {
+             try
+@@ -634,6 +637,7 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+             {
+                 if (!process.HasExited && CanDrainShutdown())
+                 {
++                    TraceStop("enqueue-shutdown");
+                     QueueEnvelope(new
+                     {
+                         type = "host.shutdown",
+@@ -654,8 +658,13 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+                         var terminal = await Task.WhenAny(_shutdownAcknowledged.Task, exit)
+                             .WaitAsync(shutdown.Token).ConfigureAwait(false);
+                         await terminal.ConfigureAwait(false);
++                        TraceStop("first-terminal", ReferenceEquals(terminal, exit) ? "process-exit" : "ack-ready");
+                         if (ReferenceEquals(terminal, exit))
++                        {
++                            TraceStop("terminal-reader-start", _readerTask.Status.ToString());
+                             await _readerTask.WaitAsync(shutdown.Token).ConfigureAwait(false);
++                        }
++                        TraceStop("before-ack-ready", $"ack={_shutdownAcknowledged.Task.Status},reader={_readerTask.Status}");
+                         if (_reportedGenerationFault is null)
+                             await _shutdownAcknowledged.Task.WaitAsync(shutdown.Token).ConfigureAwait(false);
+                     }
+@@ -663,10 +672,12 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+                     {
+                         await process.WaitForExitAsync(shutdown.Token).ConfigureAwait(false);
+                     }
++                    TraceStop("payload-exited-before-scope-drain", scopeCleanup.Status.ToString());
+                     await scopeCleanup.WaitAsync(shutdown.Token).ConfigureAwait(false);
+                 }
+                 catch (OperationCanceledException) when (shutdown.IsCancellationRequested)
+                 {
++                    TraceStop("grace-ended", $"ack={_shutdownAcknowledged.Task.Status},read={_readerTask.Status},exit={_exitTask.Status},scope={scopeCleanup.Status}");
+                     bool shutdownAcknowledged;
+                     lock (_stateGate) shutdownAcknowledged = _shutdownAcknowledgementReceived;
+                     _logger.LogWarning(
+@@ -681,28 +692,42 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+             {
+                 _writes?.Writer.TryComplete();
+                 _ = SignalForceStop();
++                TraceStop("containment-start");
+                 await TerminateContainedProcessAsync().ConfigureAwait(false);
++                TraceStop("containment-complete", $"write={_writerTask.Status},read={_readerTask.Status},stderr={_stderrTask.Status},exit={_exitTask.Status}");
+                 await ObserveAsync(_writerTask).ConfigureAwait(false);
++                TraceStop("writer-complete");
+                 await ObserveAsync(_readerTask).ConfigureAwait(false);
++                TraceStop("reader-complete");
+                 await ObserveAsync(_stderrTask).ConfigureAwait(false);
++                TraceStop("stderr-complete");
+                 await ObserveAsync(_exitTask).ConfigureAwait(false);
++                TraceStop("transport-complete");
+                 if (scopeCleanup.IsCompleted)
+                 {
+                     await scopeCleanup.ConfigureAwait(false);
+                 }
++                TraceStop("payload-files-start");
+                 CleanupAllWorkerPayloads();
+                 TryDeleteDirectory(_workerTemporaryPath);
++                TraceStop("temporary-delete-returned", $"exists={Directory.Exists(_workerTemporaryPath)}");
++                TraceStop("release-roots-start");
+                 await ReleaseExecutionRootsAsync().ConfigureAwait(false);
+                 CompleteExpectedStop();
++                TraceStop("stop-complete");
+             }
+         }
+         catch (Exception exception)
+         {
++            TraceStop("stop-faulted", exception.GetType().Name);
+             ResetFailedStop(exception);
+             throw;
+         }
+     }
+
++    private void TraceStop(string step, string detail = "")
++        => Console.WriteLine($"shutdown-probe {DateTime.UtcNow:O} {_package.PackageId} {_activationId:N} {step} elapsedTicks={Stopwatch.GetTimestamp()} generation={_sessionGeneration} {detail}");
++
+     public async ValueTask DisposeAsync()
+     {
+         await StopAsync(CancellationToken.None).ConfigureAwait(false);
+@@ -1536,6 +1561,7 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+         _generationCommitted.TrySetResult();
+         _storageMigrationsPrepared.TrySetResult();
+         _activated.TrySetResult();
++        TraceStop("wire-ack", $"hostCallsPending={workerCallCompletions.Count(task => !task.IsCompleted)}");
+         _ = CompleteShutdownAcknowledgementAsync(workerCallCompletions);
+     }
+
+@@ -1543,6 +1569,7 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+     {
+         await Task.WhenAll(workerCallCompletions).ConfigureAwait(false);
+         _shutdownAcknowledged.TrySetResult();
++        TraceStop("ack-ready");
+     }
+
+     private void HandleHostCallResponse(string type, JsonElement root)
+@@ -3182,6 +3209,7 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+         try
+         {
+             await process.WaitForExitAsync().ConfigureAwait(false);
++            TraceStop("process-exit-observed");
+             if (!IsStopping())
+             {
+                 int? exitCode = null;
+@@ -3399,6 +3427,7 @@ internal sealed partial class ProcessRuntimeWorker : IRuntimePackageWorker
+     {
+         try
+         {
++            TraceStop("host-stopping-callback");
+             await StopAsync(CancellationToken.None).ConfigureAwait(false);
+         }
+         catch (Exception exception)
+diff --git a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/RuntimeOperationGate.cs b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/RuntimeOperationGate.cs
+index 397d410..ef70bd6 100644
+--- a/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/RuntimeOperationGate.cs
++++ b/languages/csharp/dotnet/host/Sunder.Runtime.Host/Services/RuntimeOperationGate.cs
+@@ -5,6 +5,10 @@ internal sealed class RuntimeOperationRejectedException()
+
+ internal sealed class RuntimeOperationGate : IAsyncDisposable
+ {
++    internal static readonly bool DiagnosticForceStageSweep =
++        Environment.GetEnvironmentVariable("SUNDER_DIAGNOSTIC_FORCE_STAGE_SWEEP") == "1";
++    internal static readonly TaskCompletionSource DiagnosticShutdownStarted =
++        new(TaskCreationOptions.RunContinuationsAsynchronously);
+     private readonly SemaphoreSlim _gate = new(1, 1);
+     private readonly CancellationTokenSource _shutdown = new();
+     private readonly object _syncRoot = new();
+@@ -108,6 +112,7 @@ internal sealed class RuntimeOperationGate : IAsyncDisposable
+             {
+                 _eventStream?.PublishOperationPhase(Sunder.Runtime.Contracts.RuntimeOperationPhase.ShuttingDown);
+             }
++            if (DiagnosticForceStageSweep) DiagnosticShutdownStarted.TrySetResult();
+             try
+             {
+                 await _gate.WaitAsync(deadline.Token);

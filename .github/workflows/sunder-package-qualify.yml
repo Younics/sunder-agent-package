@@ -1,46 +1,71 @@
-name: Qualify
+name: Diagnose Intel final-archive Worker cleanup
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
-concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
-  cancel-in-progress: false
+env:
+  AGENT_COMMIT: 5cb5cc1ed76a52eeb6fb358772bd28b2d93e20cb
+  CORE_COMMIT: 5a51f2040634bfef166516b04342f5115fb1be6a
+  MSBUILDDISABLENODEREUSE: "1"
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+  intel:
+    name: Intel final-archive teardown diagnostic only
+    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/diagnose/agent-intel-final-cleanup-20261123'
+    runs-on: macos-15-intel
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          path: diagnostic
           persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.AGENT_COMMIT }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_COMMIT }}
+          path: sunder-core
+          persist-credentials: false
+      - name: Require native Intel and exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          test "$(sysctl -in sysctl.proc_translated)" != 1
+          test "$(git -C diagnostic rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git -C sunder-agent-package rev-parse HEAD)" = "$AGENT_COMMIT"
+          test "$(git -C sunder-core rev-parse HEAD)" = "$CORE_COMMIT"
+          sw_vers
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - name: Verify protected attempt 3 archive and catalog bytes
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -B diagnostic/scripts/diagnostics/intel-final-cleanup/inputs.py \
+            "$RUNNER_TEMP/intel-final-inputs"
+      - name: Trace the one failing smoke with its original assertions and deadlines
+        shell: bash
+        run: |
+          bash diagnostic/scripts/diagnostics/intel-final-cleanup/run.sh \
+            "$GITHUB_WORKSPACE/sunder-agent-package" "$GITHUB_WORKSPACE/sunder-core" \
+            "$RUNNER_TEMP/intel-final-inputs" "$RUNNER_TEMP/intel-final-diagnostics"
+      - name: Retain diagnostic only, never a release handoff
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: intel-final-cleanup-diagnostic-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/intel-final-diagnostics/
+          if-no-files-found: warn
+          retention-days: 14
