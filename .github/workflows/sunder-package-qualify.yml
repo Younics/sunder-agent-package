@@ -1,46 +1,268 @@
-name: Qualify
+name: Agent owner recovery (authoring only)
 
 on:
   workflow_dispatch:
-    inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
-        type: string
-        default: all
 
 permissions:
+  actions: read
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: agent-owner-readiness-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  MSBUILDDISABLENODEREUSE: "1"
+  REPAIR_BASE: cd4a8520feffc60118e8cbfebdcf98b20b8610ef
+  CORE_SHA: 5a51f2040634bfef166516b04342f5115fb1be6a
+  CORE_TAG: nuget-sunder-package-build/v1.1.0
+  CORE_VERSION: 1.1.0
+  PACKAGE: younics.ai.agent
+  CATALOG_SHA: 7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210
+  VIEW_PROJECT: tests/Sunder.Package.Agent.View.Tests/Sunder.Package.Agent.View.Tests.csproj
 
 jobs:
   selection:
-    name: Select explicit qualification inputs
+    name: Select exact owner authoring source and platforms
+    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/diagnostic/agent-owner-readiness'
     runs-on: ubuntu-24.04
     outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
+      source: ${{ steps.selection.outputs.source }}
+      native: ${{ steps.selection.outputs.native }}
+      apple_silicon: ${{ steps.selection.outputs.apple_silicon }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          fetch-depth: 3
           persist-credentials: false
       - id: selection
         env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
+          RUNNER_VARIABLES: ${{ toJSON(vars) }}
+        run: |
+          set -euo pipefail
+          source="$(git rev-parse HEAD^)"
+          [[ "$source" =~ ^[a-f0-9]{40}$ ]]
+          test "$(git rev-parse HEAD^^)" = "$REPAIR_BASE"
+          test "$(git diff --name-only "$source" HEAD)" = .github/workflows/sunder-package-qualify.yml
+          test "$(git diff --name-only "$REPAIR_BASE" "$source")" = "$(printf '%s\n' \
+            src/Sunder.Package.Agent.Shared/PackageViews/StableMarkdownRenderer.cs \
+            src/Sunder.Package.Agent.Shared/PackageViews/StreamingMarkdownPresenter.cs \
+            tests/Sunder.Package.Agent.View.Tests/StreamingMarkdownPresenterTests.cs)"
+          printf 'source=%s\n' "$source" >> "$GITHUB_OUTPUT"
+          matrix="$(python3 -B scripts/ci/agent_ci.py matrices)"
+          python3 -B -c 'import json, sys; rows = json.loads(sys.argv[1])["native"]["include"]; [arm] = [row["runner"] for row in rows if row["rid"] == "osx-arm64"]; print("apple_silicon=" + json.dumps(arm, separators=(",", ":")))' "$matrix" >> "$GITHUB_OUTPUT"
 
-  baseline:
-    name: Component and shared validation
+  native:
+    name: Authoring · owner leaf · ${{ matrix.rid }}
     needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
-      package-tests: true
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.selection.outputs.native) }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      SOURCE_SHA: ${{ needs.selection.outputs.source }}
+      RID: ${{ matrix.rid }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.selection.outputs.source }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-core-tools-${{ matrix.rid }}
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-prepared-dependencies
+          path: ${{ runner.temp }}/agent-catalog
+      - name: Verify the original tool/catalog coordinates and exact source checkout
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test "$(dotnet --version)" = 10.0.403
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-catalog/sunder-platform-contracts.v1.json")" = "$CATALOG_SHA"
+          test "$(python3 -B scripts/release/native-family.py version "$PWD" "$PACKAGE")" = 2.0.0
+          test -z "$(git status --porcelain)"
+      - name: Produce the package-mode native leaf with the ordinary release builder
+        shell: pwsh
+        run: |
+          ./scripts/release/build-native-family.ps1 -Rid $env:RID -Version '2.0.0' -Package $env:PACKAGE `
+            -OutputDirectory "artifacts/native-build/$env:PACKAGE/$env:RID" -ToolsDirectory "$env:RUNNER_TEMP/core-tools" `
+            -CatalogPath "$env:RUNNER_TEMP/agent-catalog/sunder-platform-contracts.v1.json"
+      - name: Retain exact native inputs with the product source identity
+        run: |
+          set -euo pipefail
+          python3 -B scripts/release/native-family.py collect-component "$PWD" artifacts/native-leaf "$RID" \
+            "$PACKAGE" "$SOURCE_SHA" "$CORE_TAG" "$CORE_SHA" "$CORE_VERSION"
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-authoring-leaf-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/native-leaf
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  compose:
+    name: Authoring · compose owner once
+    needs: [selection, native]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      SOURCE_SHA: ${{ needs.selection.outputs.source }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.selection.outputs.source }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-core-tools-linux-x64
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-prepared-dependencies
+          path: ${{ runner.temp }}/agent-catalog
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-authoring-leaf-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/leaves
+      - name: Compose and verify one universal owner without re-building native inputs
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test "$(dotnet --version)" = 10.0.403
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-catalog/sunder-platform-contracts.v1.json")" = "$CATALOG_SHA"
+          test -z "$(git status --porcelain)"
+          python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core --work "$RUNNER_TEMP/composition" --mode package \
+            --packages '["younics.ai.agent"]' --tools "$RUNNER_TEMP/core-tools" \
+            --catalog "$RUNNER_TEMP/agent-catalog/sunder-platform-contracts.v1.json"
+          python3 -B scripts/ci/agent_ci.py run --state "$RUNNER_TEMP/composition/ci-state.json" -- \
+            python3 -B scripts/release/native-family.py compose-component "$PWD" "$RUNNER_TEMP/leaves" artifacts/authoring-candidate \
+            "$PACKAGE" "$SOURCE_SHA" "$CORE_TAG" "$CORE_SHA" "$CORE_VERSION"
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-authoring-owner-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/authoring-candidate
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  view:
+    name: Diagnostic · owning View suite · osx-arm64
+    needs: selection
+    runs-on: ${{ fromJSON(needs.selection.outputs.apple_silicon) }}
+    timeout-minutes: 180
+    defaults:
+      run:
+        shell: bash
+        working-directory: sunder-agent-package
+    env:
+      SOURCE_SHA: ${{ needs.selection.outputs.source }}
+      SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION: "1"
+      SUNDER_REQUIRE_FILESYSTEM_TEST_PREREQUISITES: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.selection.outputs.source }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.CORE_SHA }}
+          path: sunder-core
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-core-tools-osx-arm64
+          path: ${{ runner.temp }}/core-tools
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45087266999
+          name: agent-dependency-inputs
+          path: ${{ runner.temp }}/agent-inputs
+      - name: Bind pre-lock dependency bytes and exercise the exact product source
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test "$(dotnet --version)" = 10.0.403
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git -C ../sunder-core rev-parse HEAD)" = "$CORE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/core-tools/core-tools.json")" = 29cc6045a1fade10c49a4c2b8301943c7b8ae1646141503ec7344b8110ac8177
+          python3 -B - <<'PY'
+          import os, sys
+          from pathlib import Path
+          sys.path.insert(0, "scripts/release")
+          import release_inputs as inputs
+          root = Path(os.environ["RUNNER_TEMP"]) / "agent-inputs"
+          value = inputs.verify(Path.cwd(), root, "466d753619587b24007bb0fdfeb9f4b75e7875a15ba57d0dc2156a434195d00f",
+                                os.environ["REPAIR_BASE"], os.environ["CORE_SHA"])
+          assert value["lockSetSha256"] == "80871aed82e828c552288bfd210fac2558cfa44f50ca93e14e8187dfff9348c3"
+          PY
+          work="$RUNNER_TEMP/view-prepared"
+          input="$RUNNER_TEMP/agent-inputs"
+          results="$PWD/artifacts/owner-view"
+          mkdir -p "$results"
+          printf '%s\n' "$SOURCE_SHA" > "$results/source-sha.txt"
+          python3 -B scripts/ci/agent_ci.py prepare --mode source --core ../sunder-core --work "$work" --project "$VIEW_PROJECT" \
+            --tools "$RUNNER_TEMP/core-tools" --candidate "$input/younics.ai.agent.2.0.0.sunderpkg" \
+            --catalog "$input/sunder-platform-contracts.v1.json"
+          python3 -B scripts/ci/agent_ci.py run --state "$work/ci-state.json" -- dotnet build "$VIEW_PROJECT" -c Release --no-restore
+          SUNDER_TRANSCRIPT_REGRESSION_TRACE="$results/resize-trace.log" \
+            python3 -B scripts/ci/agent_ci.py run --state "$work/ci-state.json" -- dotnet test "$VIEW_PROJECT" -c Release \
+              --no-build --no-restore --logger 'trx;LogFileName=View.trx' --results-directory "$results"
+          test -z "$(git status --porcelain)"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: agent-authoring-view-osx-arm64-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/owner-view
+          if-no-files-found: error
+          retention-days: 14
