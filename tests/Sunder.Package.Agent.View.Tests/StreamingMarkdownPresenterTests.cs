@@ -1,5 +1,6 @@
 extern alias AgentApp;
 
+using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Templates;
@@ -514,6 +515,7 @@ public sealed class StreamingMarkdownPresenterTests
     {
         var parseStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var releaseParse = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseRenderEpilogue = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
         var builder = new ObservableStringBuilder(
             "## Gated content\n\n" + string.Join("\n\n", Enumerable.Repeat("A wrapping paragraph.", 30)));
@@ -535,40 +537,56 @@ public sealed class StreamingMarkdownPresenterTests
         presenter.GeometryChanged += (_, _) => geometrySignals++;
         var window = new Window { Width = 420, Height = 500, Content = presenter };
         window.Show();
+        try
+        {
+            await parseStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await PumpLayoutUntilAsync(window, () => presenter.GetVisualDescendants()
+                .OfType<SelectableTextBlock>()
+                .Any(block => block.Classes.Contains("markdown-fallback")));
 
-        await parseStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await PumpLayoutUntilAsync(window, () => presenter.GetVisualDescendants()
-            .OfType<SelectableTextBlock>()
-            .Any(block => block.Classes.Contains("markdown-fallback")));
+            Assert.True(presenter.IsGeometryPending);
+            Assert.True(presenter.RequestedRevision > presenter.SettledRevision);
+            Assert.Equal(0, renderedCount);
 
-        Assert.True(presenter.IsGeometryPending);
-        Assert.True(presenter.RequestedRevision > presenter.SettledRevision);
-        Assert.Equal(0, renderedCount);
+            var pendingRenderer = Assert.Single(
+                presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+            var render = pendingRenderer.PendingRenderOperations;
+            Assert.False(render.IsCompleted);
+            // Let parsing, publication and layout run normally, but keep the
+            // worker task observable as unfinished past the last layout signal.
+            typeof(StableMarkdownRenderer).GetField("_renderOperation", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(pendingRenderer, Task.WhenAll(render, releaseRenderEpilogue.Task));
+            releaseParse.TrySetResult();
+            await render.WaitAsync(TimeSpan.FromSeconds(2));
+            await PumpLayoutUntilAsync(window, () =>
+                !presenter.IsGeometryPending
+                && presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()
+                    .Any(renderer => renderer.Opacity == 1));
+            Assert.False(pendingRenderer.PendingRenderOperations.IsCompleted);
+            Assert.False(presenter.IsRenderPending);
 
-        var pendingRenderer = Assert.Single(
-            presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
-        releaseParse.TrySetResult();
-        await pendingRenderer.PendingRenderOperations.WaitAsync(TimeSpan.FromSeconds(2));
-        await PumpLayoutUntilAsync(window, () =>
-            !presenter.IsGeometryPending
-            && presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>()
-                .Any(renderer => renderer.Opacity == 1));
-        var renderer = Assert.Single(
-            presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
-        var settledRevision = presenter.SettledRevision;
-        var geometryRevision = presenter.GeometryRevision;
-        var renderedBeforeLateHeight = renderedCount;
+            var renderer = Assert.Single(
+                presenter.GetVisualDescendants().OfType<StableMarkdownRenderer>());
+            var settledRevision = presenter.SettledRevision;
+            var geometryRevision = presenter.GeometryRevision;
+            var renderedBeforeLateHeight = renderedCount;
 
-        renderer.Height = renderer.Bounds.Height + 60;
-        await PumpLayoutUntilAsync(window, () =>
-            presenter.GeometryRevision > geometryRevision
-            && renderedCount > renderedBeforeLateHeight);
+            renderer.Height = renderer.Bounds.Height + 60;
+            await PumpLayoutUntilAsync(window, () =>
+                presenter.GeometryRevision > geometryRevision
+                && renderedCount > renderedBeforeLateHeight);
 
-        Assert.Equal(presenter.RequestedRevision, settledRevision);
-        Assert.Equal(presenter.RequestedRevision, presenter.SettledRevision);
-        Assert.True(geometrySignals >= 3);
-        await presenter.PendingRenderOperations;
-        await CloseWindowAsync(window);
+            Assert.Equal(presenter.RequestedRevision, settledRevision);
+            Assert.Equal(presenter.RequestedRevision, presenter.SettledRevision);
+            Assert.True(geometrySignals >= 3);
+        }
+        finally
+        {
+            releaseParse.TrySetResult();
+            releaseRenderEpilogue.TrySetResult();
+            await presenter.PendingRenderOperations;
+            await CloseWindowAsync(window);
+        }
     }
 
     [AvaloniaFact]

@@ -7,6 +7,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using BuilderWorker::Sunder.Package.Agent.Builder;
+using Sunder.Package.Agent.TestSupport;
 using Sunder.Sdk.Rpc;
 using Xunit;
 
@@ -191,22 +192,83 @@ public sealed partial class BuilderLocalBackendTests
     [Fact]
     public async Task HeartbeatsRenewFiniteJobLeaseAndOrphansStop()
     {
-        var entered = NewSignal(); var stopped = NewSignal();
+        var entered = new TaskCompletionSource<CancellationToken>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stopped = NewSignal();
         var driver = new DelegateDriver(async (_, _, token) =>
         {
-            entered.SetResult();
+            entered.SetResult(token);
             try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
             finally { stopped.SetResult(); }
         });
         using var fixture = new Fixture();
-        await using var jobs = new BuilderJobManager(driver, new() { OrphanTimeout = TimeSpan.FromMilliseconds(250), HeartbeatInterval = TimeSpan.FromMilliseconds(25) });
+        var watchdog = TimeSpan.FromSeconds(5);
+        var orphanTimeout = TimeSpan.FromMilliseconds(250);
+        var monitorPeriod = TimeSpan.FromMilliseconds(25);
+        var clientPeriod = TimeSpan.FromMilliseconds(50);
+        var clock = new LeaseTestClock(monitorPeriod);
+        await using var jobs = new BuilderJobManager(driver, new() { OrphanTimeout = orphanTimeout, HeartbeatInterval = monitorPeriod }, clock);
         var id = jobs.Start(Request("build", fixture.WriteNode("project")));
-        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        for (var index = 0; index < 8; index++) { Assert.Equal("running", jobs.GetJob(id).State); await Task.Delay(50); }
-        await stopped.Task.WaitAsync(TimeSpan.FromSeconds(5)); // no polling: the lease must expire
+        var cancellation = await entered.Task.WaitAsync(watchdog);
+        await clock.TimerCreated.WaitAsync(watchdog);
+        for (var index = 0; index < 8; index++)
+        {
+            Assert.Equal("running", jobs.GetJob(id).State);
+            for (var elapsed = TimeSpan.Zero; elapsed < clientPeriod; elapsed += monitorPeriod)
+            {
+                await clock.AdvanceTickAsync(watchdog);
+                Assert.False(cancellation.IsCancellationRequested);
+            }
+        }
+
+        // No GetJob calls after the last heartbeat: expire at exactly its lease boundary.
+        for (var elapsed = clientPeriod; elapsed < orphanTimeout; elapsed += monitorPeriod)
+        {
+            Assert.False(cancellation.IsCancellationRequested);
+            await clock.AdvanceTickAsync(watchdog);
+        }
+        await stopped.Task.WaitAsync(watchdog);
         var final = await TerminalAsync(jobs, id);
         Assert.Equal("cancelled", final.State);
         Assert.Contains("heartbeats", final.Error);
+    }
+
+    private sealed class LeaseTestClock(TimeSpan period) : TimeProvider
+    {
+        private readonly ManualTimeProvider time = new();
+        private readonly TaskCompletionSource timerCreated = NewSignal();
+        private TaskCompletionSource<long>? monitorRead;
+
+        internal Task TimerCreated => timerCreated.Task;
+        public override long TimestampFrequency => time.TimestampFrequency;
+        public override DateTimeOffset GetUtcNow() => time.GetUtcNow();
+        public override long GetTimestamp()
+        {
+            var timestamp = time.GetTimestamp();
+            Volatile.Read(ref monitorRead)?.TrySetResult(timestamp);
+            return timestamp;
+        }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            var timer = time.CreateTimer(callback, state, dueTime, period);
+            timerCreated.TrySetResult();
+            return timer;
+        }
+
+        internal async Task AdvanceTickAsync(TimeSpan watchdog)
+        {
+            var observed = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var expected = time.GetTimestamp() + period.Ticks;
+            // Wait for the real monitor to read this tick before another GetJob
+            // or clock advance; advancing multiple periods can coalesce ticks.
+            Volatile.Write(ref monitorRead, observed);
+            try
+            {
+                time.Advance(period);
+                Assert.Equal(expected, await observed.Task.WaitAsync(watchdog));
+            }
+            finally { Volatile.Write(ref monitorRead, null); }
+        }
     }
 
     [Fact]

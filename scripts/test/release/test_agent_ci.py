@@ -936,7 +936,14 @@ public class Cases {
         # Exercise JSON path escaping even on hosts without backslash separators.
         runner_temp = self.root / "runner-\u00e9"
         runner_temp.mkdir()
-        for result in ("detached", "busy", "unknown-device", "still-attached"):
+        cases = {
+            "detached": (2, 2, 2),
+            "busy": (6, 5, 5),
+            "unknown-device": (1, 0, 1),
+            "lost-device": (2, 1, 2),
+            "still-attached": (1, 1, 1),
+        }
+        for result, (busy_attempts, retries, pauses) in cases.items():
             with self.subTest(result=result), patch.dict(os.environ, RUNNER_TEMP=str(runner_temp)):
                 log = self.root / (result + ".log")
                 detaches = []
@@ -950,14 +957,15 @@ public class Cases {
                         image.write_bytes(b"fixture disk image")
                     elif action == "detach":
                         detaches.append(arguments)
-                        if len(detaches) == 1 or result == "busy":
+                        if len(detaches) <= busy_attempts:
                             code, error = errno.EBUSY, "hdiutil: couldn't eject disk - Resource busy\n"
                     elif action == "info":
                         def attachment(path, dev):
                             return {"image-path": str(path), "system-entities": [
                                 {"content-hint": "GUID_partition_scheme", "dev-entry": dev}]}
                         images = [attachment(self.root / "other.sparseimage", "/dev/disk19")]
-                        if result != "unknown-device" and (len(detaches) == 1 or result == "still-attached"):
+                        has_device = result != "unknown-device" and not (result == "lost-device" and len(detaches) > 1)
+                        if has_device and (len(detaches) <= busy_attempts or result == "still-attached"):
                             images.append(attachment(image, device))
                         output = plistlib.dumps(dict(images=images)).decode()
                     return subprocess.CompletedProcess(arguments, code, stdout=output, stderr=error)
@@ -974,9 +982,9 @@ public class Cases {
                     else:
                         with self.assertRaises(subprocess.CalledProcessError) as caught: exercise()
                         self.assertEqual(errno.EBUSY, caught.exception.returncode)
-                    pause.assert_called_once()
+                    self.assertEqual([unittest.mock.call(1)] * pauses, pause.call_args_list)
                 self.assertEqual(("hdiutil", "detach", str(image.parent / "mount")), detaches[0])
-                self.assertEqual([] if result == "unknown-device" else [("hdiutil", "detach", device)], detaches[1:])
+                self.assertEqual([("hdiutil", "detach", device)] * retries, detaches[1:])
                 self.assertEqual(result != "detached", image.is_file())
                 text = log.read_text(encoding="utf-8")
                 commands = [json.loads(line)["command"] for line in text.splitlines() if line.startswith("{")]

@@ -62,15 +62,25 @@ def case_sensitive_volume(log):
                 command("/usr/sbin/lsof", "-nP", *target, timeout=5, check=False)
             except (OSError, subprocess.TimeoutExpired) as diagnostic:
                 record(f"Could not capture image or mount holders: {diagnostic}\n")
-            time.sleep(1)
-            attachment = image_attachment()
-            devices = [row["dev-entry"] for row in attachment["system-entities"]
-                       if row.get("content-hint") == "GUID_partition_scheme"
-                       and re.fullmatch(r"/dev/disk[0-9]+", row.get("dev-entry", ""))] if attachment else []
-            if len(devices) != 1:
-                record(f"Cannot verify the backing device for a non-forced retry: {image}\n")
-                raise
-            command("hdiutil", "detach", devices[0])
+            # Disk Images may still be draining after unmount. Rebind the exact
+            # image on every bounded, non-forced retry; never reuse a disk number.
+            for _ in range(5):
+                time.sleep(1)
+                attachment = image_attachment()
+                devices = [row["dev-entry"] for row in attachment["system-entities"]
+                           if row.get("content-hint") == "GUID_partition_scheme"
+                           and re.fullmatch(r"/dev/disk[0-9]+", row.get("dev-entry", ""))] if attachment else []
+                if len(devices) != 1:
+                    record(f"Cannot verify the backing device for a non-forced retry: {image}\n")
+                    raise error
+                try:
+                    command("hdiutil", "detach", devices[0])
+                    return
+                except subprocess.CalledProcessError as retry:
+                    if retry.returncode != errno.EBUSY:
+                        raise
+                    error = retry
+            raise error
 
     try:
         command("hdiutil", "create", "-size", "512m", "-type", "SPARSE",

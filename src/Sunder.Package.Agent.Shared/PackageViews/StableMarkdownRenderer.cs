@@ -33,6 +33,9 @@ internal sealed class StableMarkdownRenderer : MarkdownRenderer
 
     internal Task PendingRenderOperations => _renderOperation;
 
+    // UI-thread state: publication can finish before the worker task exits.
+    internal bool IsRendering => _renderLoopRunning;
+
     internal string RenderedSource { get; private set; } = string.Empty;
 
     internal bool HasTerminalRenderFailure { get; private set; }
