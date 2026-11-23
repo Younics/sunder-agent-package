@@ -77,7 +77,7 @@ internal sealed class StreamingMarkdownPresenter : Panel, ITranscriptGeometrySou
            || !_refreshOperation.IsCompleted
            || IsGeometryPending
            || _currentRenderer is null
-           || !_currentRenderer.PendingRenderOperations.IsCompleted
+           || _currentRenderer.IsRendering
            || !string.Equals(_requestedSource, _appliedSource, StringComparison.Ordinal)
            || !HasCurrentTerminalRenderFailure
            && (!string.Equals(_currentRenderer.RenderedSource, _appliedSource, StringComparison.Ordinal)
