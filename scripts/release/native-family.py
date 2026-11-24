@@ -741,8 +741,10 @@ def main():
         expected = identity(version, *versions)
         require(expected["schemaVersion"] == 4, "Final candidates require an explicit package selection")
         expected["schemaVersion"] = 6
-        if command == "gather": gather_candidates(repository, Path(source).resolve(), destination, expected)
-        else: finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
+        if command == "gather":
+            print(compact(gather_candidates(repository, Path(source).resolve(), destination, expected)).decode("utf-8"))
+        else:
+            finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
     elif command == "record-final" and len(args) == 11:
         rid, version, agent_commit, core_tag, core_commit, core_version, candidates, archives, metrics, output, repository = args
         expected = identity(version, agent_commit, core_tag, core_commit, core_version)

@@ -36,8 +36,10 @@ The component producer explicitly restores its locked project graph and builds o
 selected canonical project for the exact native RID. `collect-component` retains
 the qualified bytes. After all six leaves finish, `compose-component` uses a compact
 Core V1 selection and prebuilt Pack to compose that package exactly once. `gather`
-adds exact unchanged archives to the selected candidates, and the native lifecycle/
-metric gate tests the same final fifteen archives on every platform.
+adds exact unchanged archives to the selected candidates. The archive job checks
+integrity, roles, and App native dependency closure before the native matrix
+starts. Each native job verifies its inputs match the inspected archive records
+before executing, without downloading a second copy alongside the producer ZIPs.
 It does not call `GetSunderPackageRoleInputs` after Build: that target depends on
 Build. NuGet mode is the default (`SunderUseSourceSdk=false`). `NUGET_SOURCE`, when
 set, selects the explicit producer restore source.
@@ -133,10 +135,16 @@ bytes but may have tested a current-RID projection.
 `run-native-runtime-smoke.sh <core> <archives> <new-results> <core-commit> development`
 uses supported local development-import preparation for the exact final archives.
 It does not install unpublished packages or fabricate Registry observations. The
-required methods exercise all fifteen Workers and Maker's separate create → author
+required methods exercise every Worker and Maker's separate create → author
 → build → archive → validate/extract → development activation → supervised App RPC
 → unload/cleanup journey without Agent loaded. This qualifies backend execution,
 not Maker view/UI, a desktop install/update or published-installed acceptance.
+The development smoke separately projects MCP's exact App target and tokenizes JSON
+in a fresh App process using the normal package load context. Highlighting must use
+the projected native library; a host or cache fallback is not acceptance. The
+Worker runtime under test and the installed-size ceiling are pinned in
+[`eng/ci/native-release.json`](../eng/ci/native-release.json), independently of
+package versions and the build SDK.
 
 `prepare_maker_inputs.py` builds an isolated App and exports the selected source
 catalog; development mode also packs and metadata-verifies all six Core authoring

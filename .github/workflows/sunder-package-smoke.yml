@@ -46,7 +46,7 @@ env:
 
 jobs:
   prepare:
-    name: Select versions
+    name: Select validation scope
     runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.matrix.outputs.behavior }}
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Compare authored versions before toolchain setup
+      - name: Select changed packages or explicit release inputs
         id: selection
         env:
           PACKAGES: ${{ inputs.packages }}
@@ -76,7 +76,7 @@ jobs:
           elif [[ "$FULL" == true ]]; then
             python3 -B scripts/ci/version_selection.py --all
           else
-            python3 -B scripts/ci/version_selection.py --base "$BASE"
+            python3 -B scripts/ci/version_selection.py --changed-since "$BASE"
           fi
       - name: Resolve Core source from the declared build-tool dependency
         id: core

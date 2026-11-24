@@ -1,5 +1,7 @@
 <Project>
   <ItemGroup Condition="'$(SunderAgentNativeReleaseTestSource)' != '' and '$(MSBuildProjectName)' == 'Sunder.Runtime.Host.Tests'">
+    <_AgentNativeAppHookSource Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppRpcStartupHook.cs;
+                                        $([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/McpAppSyntaxProbe.cs" />
     <Compile Include="$(SunderAgentNativeReleaseTestSource)"
               Link="AgentNativeReleaseSmokeTests.agent-release.cs" />
     <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Maker.cs"
@@ -17,11 +19,11 @@
   </ItemGroup>
   <Target Name="BuildAgentNativeAppRpcStartupHook" AfterTargets="Build" DependsOnTargets="ResolveReferences"
           Condition="'$(SunderAgentNativeReleaseTestSource)' != '' and '$(MSBuildProjectName)' == 'Sunder.Runtime.Host.Tests'"
-          Inputs="$(MSBuildThisFileFullPath);$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppRpcStartupHook.cs;@(_AgentNativeAppTargetPath);@(ReferencePathWithRefAssemblies)"
+          Inputs="$(MSBuildThisFileFullPath);@(_AgentNativeAppHookSource);@(_AgentNativeAppTargetPath);@(ReferencePathWithRefAssemblies)"
           Outputs="$(TargetDir)agent-native-app-hook/Sunder.App.Tests.dll;$(TargetDir)sunder-agent-native-app-target-path.txt">
     <Error Condition="'@(_AgentNativeAppTargetPath->Count())' != '1'" Text="Native App RPC requires one explicit source-built Sunder.App target." />
     <MakeDir Directories="$(TargetDir)agent-native-app-hook" />
-    <Csc Sources="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppRpcStartupHook.cs"
+    <Csc Sources="@(_AgentNativeAppHookSource)"
          References="@(ReferencePathWithRefAssemblies)" OutputAssembly="$(TargetDir)agent-native-app-hook/Sunder.App.Tests.dll"
          TargetType="Library" TargetFramework="$(TargetFramework)" LangVersion="$(LangVersion)" Nullable="$(Nullable)"
          NoConfig="true" NoLogo="true" NoStandardLib="true" Deterministic="true" TreatWarningsAsErrors="true"

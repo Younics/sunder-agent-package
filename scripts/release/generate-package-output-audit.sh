@@ -289,13 +289,14 @@ indexed_payload_bytes="$(for package_id in $(jq -r '.packageId' "$packages"); do
     | jq '[.files[].size] | add // 0'
 done | jq -s 'add')"
 
-footprint_ceiling=360003313
+footprint_policy="$(jq -ce '.installedProjectionGate' "$repository_root/eng/ci/native-release.json")"
+footprint_ceiling="$(jq -er '.maximumBytes | select(type == "number" and . > 0 and floor == .)' <<< "$footprint_policy")"
 failing_rids="$(jq -r --argjson ceiling "$footprint_ceiling" '
   .[] | select(.installedProjection.bytes > $ceiling)
   | "\(.rid)=\(.installedProjection.bytes)"
 ' <<< "$family_rids")"
 [[ -z "$failing_rids" ]] || {
-  printf 'Selected-current-RID installed projection exceeds the 360003313-byte Phase 5 ceiling: %s\n' \
+  printf 'Selected-current-RID installed projection exceeds the %s-byte ceiling: %s\n' "$footprint_ceiling" \
     "$(tr '\n' ' ' <<< "$failing_rids" | tr -d '[:space:]')" >&2
   exit 1
 }
@@ -313,6 +314,7 @@ jq -n \
   --argjson indexedPayloadFiles "$indexed_payload_files" \
   --argjson indexedPayloadBytes "$indexed_payload_bytes" \
   --argjson familyRids "$family_rids" \
+  --argjson footprintPolicy "$footprint_policy" \
   --slurpfile packages "$packages" '
     {
       schemaVersion: 1,
@@ -320,11 +322,7 @@ jq -n \
       version: $version,
       agentCommit: $agentCommit,
       core: $core,
-      installedProjectionGate: {
-        phase0BaselineBytes: 1440013254,
-        requiredReductionPercent: 75,
-        maximumBytes: 360003313
-      },
+      installedProjectionGate: $footprintPolicy,
       classification: {
         managed: "Projected .dll files except paths classified as native.",
         native: "RID-native directories and known native .dll, .so, .dylib, and .node names.",

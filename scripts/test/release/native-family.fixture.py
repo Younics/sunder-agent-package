@@ -57,6 +57,8 @@ def create_producer(root):
              "projectPath": "src/P" + str(i) + "/P" + str(i) + ".csproj"}
             for i, package_id in enumerate(family.FAMILY_PACKAGE_IDS)]
     write(repository / "packages.json", {"packages": rows})
+    write(repository / "eng/ci/native-release.json", {"installedProjectionGate": {
+        "phase0BaselineBytes": 1000000, "requiredReductionPercent": 75, "maximumBytes": 250000}})
     for row in rows:
         directory = repository / Path(row["projectPath"]).parent
         write(directory / "Source.cs", b"// reviewed source\n")

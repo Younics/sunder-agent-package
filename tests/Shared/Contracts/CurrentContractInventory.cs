@@ -40,7 +40,6 @@ internal static class CurrentContractInventory
 
     internal static void AssertPackageInventory(JsonElement inventory)
     {
-        Assert.Equal(PackageVersion, inventory.GetProperty("releaseVersion").GetString());
         var packages = inventory.GetProperty("packages").EnumerateArray().ToArray();
         Assert.Equal(Packages.Select(value => value.PackageId).Order(StringComparer.Ordinal),
             packages.Select(value => value.GetProperty("packageId").GetString()).Order(StringComparer.Ordinal));
@@ -74,15 +73,14 @@ internal static class CurrentContractInventory
         var value = JsonSerializer.Deserialize<Inventory>(File.ReadAllBytes(Path.Combine(
             RegressionTestRpcDescriptors.RepositoryRoot, RelativePath)), new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
         Assert.Equal(1, value.SchemaVersion);
-        Assert.Equal(15, value.Packages.Length);
-        Assert.Equal(12, value.Packages.Count(package => package.HasApp));
-        Assert.Equal(18, value.Contracts.Count(contract => contract.Exposure == "public"));
-        Assert.Equal(13, value.Contracts.Count(contract => contract.Exposure == "package"));
-        Assert.Equal(31, value.Contracts.Select(contract => contract.ContractId).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(15, value.Packages.Select(package => package.ProjectPath).Distinct(StringComparer.Ordinal).Count());
-        Assert.Equal(15, value.Packages.Select(package => package.PackageId).Distinct(StringComparer.Ordinal).Count());
+        Assert.NotEmpty(value.Packages);
+        Assert.NotEmpty(value.Contracts);
+        Assert.Equal(value.Contracts.Length, value.Contracts.Select(contract => contract.ContractId).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(value.Packages.Length, value.Packages.Select(package => package.ProjectPath).Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(value.Packages.Length, value.Packages.Select(package => package.PackageId).Distinct(StringComparer.Ordinal).Count());
         foreach (var contract in value.Contracts)
         {
+            Assert.Contains(contract.Exposure, new[] { "public", "package" });
             Assert.Contains(value.Packages, package => package.PackageId == contract.PackageId
                 && contract.Source.StartsWith(package.SourceDirectory + "/", StringComparison.Ordinal));
             Assert.NotEmpty(contract.Methods);

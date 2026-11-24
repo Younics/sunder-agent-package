@@ -1,4 +1,4 @@
-"""Version-first CI: real shallow Git history, owned suites and outcome gates."""
+"""Change-based validation: real shallow Git history, owned suites and outcome gates."""
 import copy
 import json
 import os
@@ -24,29 +24,75 @@ class VersionSelectionTests(unittest.TestCase):
         return subprocess.check_output(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
             "-c", "commit.gpgsign=false", *arguments], cwd=cwd or self.source, text=True).strip()
 
-    def test_shallow_event_base_selects_only_newer_literals_without_sdk_or_registry(self):
+    def initialize(self):
+        (self.source / "Sunder.AgentPackage.slnx").write_text("<Solution />")
         self.git("init", "-q")
         self.git("add", ".")
         self.git("commit", "-qm", "base")
-        base = self.git("rev-parse", "HEAD")
-        bumped = self.rows[2]
-        (self.source / bumped["projectPath"]).write_text('<Project><PropertyGroup><Version>2.0.1</Version></PropertyGroup></Project>')
-        (self.source / self.rows[3]["projectPath"]).write_text('<Project><PropertyGroup><Version>1.9.0</Version></PropertyGroup></Project>')
-        (self.source / "readme.txt").write_text("unversioned changes do not select components")
-        self.git("add", ".")
-        self.git("commit", "-qm", "patch")
+        return self.git("rev-parse", "HEAD")
+
+    def commit(self):
+        self.git("add", "-A")
+        self.git("commit", "-qm", "change")
+
+    def test_shallow_event_base_selects_unbumped_package_without_sdk_or_registry(self):
+        base = self.initialize()
+        changed = self.rows[2]
+        (self.source / changed["projectPath"]).with_name("Provider.cs").write_text("// Unversioned source change")
+        self.commit()
         checkout = self.root / "shallow"
         self.git("clone", "-q", "--depth=1", self.source.as_uri(), str(checkout))
         self.assertEqual("true", self.git("rev-parse", "--is-shallow-repository", cwd=checkout))
         self.assertNotEqual(0, subprocess.run(["git", "cat-file", "-e", base + "^{commit}"], cwd=checkout,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode)
-        self.assertEqual([bumped["packageId"]], selection.against_base(checkout, base))
-        self.assertEqual([], selection.against_base(checkout, self.git("rev-parse", "HEAD", cwd=checkout)))
-        with self.assertRaises(selection.r.Invalid): selection.against_base(checkout, "main")
-        with self.assertRaises(subprocess.CalledProcessError): selection.against_base(checkout, "f" * 40)
+        self.assertEqual([changed["packageId"]], selection.affected_by_changes(checkout, base))
+        self.assertEqual([], selection.affected_by_changes(checkout, self.git("rev-parse", "HEAD", cwd=checkout)))
+        with self.assertRaises(selection.r.Invalid):
+            selection.affected_by_changes(checkout, "main")
+        with self.assertRaises(subprocess.CalledProcessError):
+            selection.affected_by_changes(checkout, "f" * 40)
+
+    def test_docs_only_can_skip_but_workflow_only_and_unowned_source_cannot(self):
+        base = self.initialize()
+        (self.source / "docs").mkdir()
+        (self.source / "docs/guide.md").write_text("Documentation")
+        self.commit()
+        self.assertEqual([], selection.affected_by_changes(self.source, base))
+        for name in (".github/workflows/validate.yml", "src/Shared/Helper.cs"):
+            path = self.source / name
+            path.parent.mkdir(parents=True)
+            path.write_text("changed")
+            self.commit()
+            self.assertEqual(sorted(selection.r.FAMILY_PACKAGE_IDS), selection.affected_by_changes(self.source, base))
+            base = self.git("rev-parse", "HEAD")
+
+    def test_owned_test_and_cross_folder_rename_select_both_ends_and_reverse_dependencies(self):
+        self.initialize()
+        package, consumer, other = self.rows[2:5]
+        project = self.source / "tests/Owned/Owned.csproj"
+        project.parent.mkdir(parents=True)
+        project.write_text(f'<Project><PropertyGroup><SunderTestOwner>{other["packageId"]}</SunderTestOwner>'
+                           '</PropertyGroup></Project>')
+        (self.source / "Sunder.AgentPackage.slnx").write_text('<Solution><Project Path="tests/Owned/Owned.csproj" /></Solution>')
+        test = project.with_name("Behavior.cs")
+        test.write_text("// First location.")
+        lock = (self.source / consumer["projectPath"]).with_name("sunder-contracts.lock.json")
+        value = json.loads(lock.read_bytes())
+        value["packageArtifacts"][package["packageId"]] = {}
+        lock.write_text(json.dumps(value))
+        self.commit()
+        base = self.git("rev-parse", "HEAD")
+        test.write_text("// Changed test.")
+        self.commit()
+        self.assertEqual([other["packageId"]], selection.affected_by_changes(self.source, base))
+        base = self.git("rev-parse", "HEAD")
+        test.rename((self.source / package["projectPath"]).with_name(test.name))
+        self.commit()
+        self.assertEqual(sorted([package["packageId"], consumer["packageId"], other["packageId"]]),
+                         selection.affected_by_changes(self.source, base))
 
     def test_explicit_full_and_empty_selection_do_not_evaluate_or_resolve_dependencies(self):
-        for option, expected in ((["--all"], 15), (["--packages", "[]"], 0)):
+        for option, expected in ((["--all"], len(self.rows)), (["--packages", "[]"], 0)):
             output = self.root / "outputs"
             with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}, clear=True), \
                  patch.object(sys, "argv", ["version_selection.py", "--source", str(self.source), *option]), \
@@ -87,20 +133,22 @@ class VersionSelectionTests(unittest.TestCase):
                     broken[name]["result"] = outcome
                     with self.subTest(mode=mode, job=name, outcome=outcome), self.assertRaises(ValueError):
                         summary.verify(broken, mode, **options)
-        for count, pending in ((0, False), (1, False), (15, True), (1, True)):
+        family_size = len(self.rows)
+        for count, pending in ((0, False), (1, False), (family_size, True), (1, True)):
             active = count > 0
             required = dict(prepare=True, preflight=active, tools=active, bootstrap=pending, dependencies=active,
-                components=active, verifier=active, source=count == 15)
+                 components=active, verifier=active, source=count == family_size)
             required["dependency-discovery"] = active
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
-            jobs["prepare"]["outputs"] = dict(selected_count=str(count), full=str(count == 15).lower())
+            jobs["prepare"]["outputs"] = dict(selected_count=str(count), full=str(count == family_size).lower())
             jobs["dependency-discovery"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])
             audit(jobs, "validate")
-        for count, resume, owner, production in ((0, False, False, 0), (1, False, False, 1), (1, False, True, 0), (15, False, True, 14), (1, True, True, 0)):
+        for count, resume, owner, production in ((0, False, False, 0), (1, False, False, 1), (1, False, True, 0),
+                                                  (family_size, False, True, family_size - 1), (1, True, True, 0)):
             active, build = count > 0, count > 0 and not resume
             consumers = [f"consumer-{index}" for index in range(count - int(owner))]
             required = dict(prepare=True, validation=build, production=build, native=build and production > 0,
-                smoke=build, stage=active, release=active)
+                 archive=build, smoke=build, stage=active, release=active)
             required.update({"fan-in": build, "publish-owner": owner, "publish-consumers": bool(consumers), "installed-native": active})
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
             jobs["prepare"]["outputs"] = dict(selected_count=str(count), resume=str(resume).lower(),

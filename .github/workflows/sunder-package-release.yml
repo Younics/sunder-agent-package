@@ -118,12 +118,90 @@ jobs:
       inputs_sha256: ${{ needs.validation.outputs.inputs_sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}
 
-  smoke:
-    name: Test final archives · ${{ matrix.rid }}
+  archive:
+    name: Verify the immutable archive set before native smoke
     needs: [prepare, validation, production, native]
     if: >-
       always() && !cancelled() && needs.production.result == 'success'
       && (needs.native.result == 'success' || (needs.production.outputs.selected_count == '0' && needs.native.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      archive_records: ${{ steps.gather.outputs.archive_records }}
+    env:
+      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
+      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
+      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/artifacts/release-plan.json
+      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/retained-agent-archives
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          global-json-file: global.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-release-selection
+          path: artifacts
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: agent-candidate-*
+          merge-multiple: true
+          path: artifacts/candidates
+      - name: Gather selected and retained bytes against the exact plan
+        id: gather
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
+        run: |
+          set -euo pipefail
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "$PLAN_SHA256"
+          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
+          records="$(python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family \
+            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD")"
+          printf 'archive_records=%s\n' "$records" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: agent-package-test-binaries
+          path: artifacts/package-test-binaries
+      - name: Inspect the archive integrity and dependency closure
+        id: archive_tests
+        env:
+          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
+          SUNDER_AGENT_REPOSITORY_ROOT: ${{ github.workspace }}
+          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/family
+        run: >-
+          dotnet vstest artifacts/package-test-binaries/Sunder.Package.Agent.Archive.Tests.dll
+          '--TestCaseFilter:(FullyQualifiedName~PackageFamilyArchiveContractTests|FullyQualifiedName~AppNativeAssetContractTests)&FullyQualifiedName!~MeetInstalledProjectionBudget'
+          --Logger:trx --ResultsDirectory:artifacts/archive-results
+      - name: Require executed archive assertions
+        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure')
+        run: python3 -B scripts/test/generate-test-duration-report.py artifacts/archive-results --expected-skips 0
+      - name: Retain archive test results
+        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure' || steps.archive_tests.outcome == 'cancelled')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-archive-results-${{ github.run_attempt }}
+          path: artifacts/archive-results
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        id: candidate
+        with:
+          name: agent-inspected-archives-${{ github.run_attempt }}
+          path: artifacts/family/*.sunderpkg
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  smoke:
+    name: Test final archives · ${{ matrix.rid }}
+    needs: [prepare, archive]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
     permissions:
@@ -171,11 +249,15 @@ jobs:
           pattern: agent-candidate-*
           merge-multiple: true
           path: sunder-agent-package/artifacts/candidates
-      - name: Gather immutable selected candidates and exact retained versions
-        run: >-
-          python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family
-          "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
-      - name: Exercise all fifteen Workers from the final six-RID archives
+      - name: Verify the locally gathered bytes match the inspected set
+        env:
+          ARCHIVE_RECORDS: ${{ needs.archive.outputs.archive_records }}
+        run: |
+          set -euo pipefail
+          records="$(python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family \
+            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD")"
+          test "$records" = "$ARCHIVE_RECORDS"
+      - name: Exercise the selected family from the inspected archives
         id: native_smoke
         env:
           RID: ${{ matrix.rid }}
@@ -202,7 +284,7 @@ jobs:
 
   fan-in:
     name: Assemble and verify family
-    needs: [prepare, validation, smoke]
+    needs: [prepare, archive, smoke]
     if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
@@ -248,13 +330,11 @@ jobs:
           python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: agent-candidate-*
-          merge-multiple: true
-          path: sunder-agent-package/artifacts/candidates
+          artifact-ids: ${{ needs.archive.outputs.artifact_id }}
+          path: sunder-agent-package/artifacts/family
       - name: Verify complete final-archive smoke evidence without repacking
         run: |
           set -euo pipefail
-          python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
           python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
           python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION"
           cp "$SUNDER_AGENT_RELEASE_PLAN_PATH" artifacts/family/release-plan.json
@@ -263,17 +343,18 @@ jobs:
         with:
           name: agent-package-test-binaries
           path: sunder-agent-package/artifacts/package-test-binaries
-      - name: Inspect exact archives with the previously built Agent contract tests
-        id: archive_tests
+      - name: Check the measured installed projection budget
+        id: budget_tests
         env:
           SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
+          SUNDER_AGENT_REPOSITORY_ROOT: ${{ github.workspace }}/sunder-agent-package
           SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
           SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED: "1"
         run: >-
           dotnet vstest artifacts/package-test-binaries/Sunder.Package.Agent.Archive.Tests.dll
-          --TestCaseFilter:FullyQualifiedName~PackageFamilyArchiveContractTests --Logger:trx --ResultsDirectory:artifacts/family-results/agent
-      - name: Require executed Agent archive assertions
-        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure')
+          --TestCaseFilter:FullyQualifiedName~MeetInstalledProjectionBudget --Logger:trx --ResultsDirectory:artifacts/family-results/agent
+      - name: Require the executed budget check
+        if: always() && (steps.budget_tests.outcome == 'success' || steps.budget_tests.outcome == 'failure')
         run: python3 scripts/test/generate-test-duration-report.py artifacts/family-results/agent --expected-skips 0
       - name: Build Core validation paths
         working-directory: sunder-core
@@ -293,7 +374,7 @@ jobs:
           retention-days: 90
           compression-level: 0
       - name: Retain family test results
-        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure' || steps.archive_tests.outcome == 'cancelled')
+        if: always() && (steps.budget_tests.outcome == 'success' || steps.budget_tests.outcome == 'failure' || steps.budget_tests.outcome == 'cancelled')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-family-results-${{ github.run_attempt }}
@@ -552,7 +633,7 @@ jobs:
   summary:
     name: Summary
     if: always()
-    needs: [prepare, validation, production, native, smoke, fan-in, stage, publish-owner, publish-consumers, installed-native, release]
+    needs: [prepare, validation, production, native, archive, smoke, fan-in, stage, publish-owner, publish-consumers, installed-native, release]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

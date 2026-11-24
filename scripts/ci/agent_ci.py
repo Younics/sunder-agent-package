@@ -365,7 +365,7 @@ def preflight(args):
     import version_selection
     source = Path(args.source).resolve()
     if args.packages is not None and version_selection.package_ids(source, json.loads(args.packages)) == []:
-        print("No newer package versions; preflight skipped.")
+        print("No packages selected; preflight skipped.")
         return
     generate_inventory(source)
     for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
@@ -379,7 +379,7 @@ def validate(args):
     packages = getattr(args, "packages", None)
     selected = None if packages is None else version_selection.package_ids(source, json.loads(packages))
     if selected == []:
-        print("No newer package versions; validation skipped.")
+        print("No packages selected; validation skipped.")
         return
     builder_diagnostics = getattr(args, "builder_diagnostics", False)
     inputs.require(not builder_diagnostics or args.mode == "source", "Builder diagnostics require source mode")

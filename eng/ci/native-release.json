@@ -1,0 +1,8 @@
+{
+  "dotnetRuntimeVersion": "10.0.12",
+  "installedProjectionGate": {
+    "phase0BaselineBytes": 1440013254,
+    "requiredReductionPercent": 75,
+    "maximumBytes": 360003313
+  }
+}

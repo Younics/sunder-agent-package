@@ -25,12 +25,23 @@ fi
   || { printf 'Core test checkout does not match release provenance.\n' >&2; exit 1; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+runtime_policy="$script_dir/../../eng/ci/native-release.json"
+dotnet_runtime_version="$(python3 -B - "$runtime_policy" <<'PY'
+import json, re, sys
+with open(sys.argv[1], encoding="utf-8") as stream:
+    version = json.load(stream)["dotnetRuntimeVersion"]
+if not isinstance(version, str) or not re.fullmatch(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)", version):
+    sys.exit("Native release tests require a pinned stable .NET Worker runtime.")
+print(version)
+PY
+)"
 test_source="$(cd "$script_dir/../../tests/fixtures" && pwd)/AgentNativeReleaseSmokeTests.cs"
 test_project_directory="$core_repository/languages/csharp/dotnet/tests/Sunder.Runtime.Host.Tests"
 test_project="$test_project_directory/Sunder.Runtime.Host.Tests.csproj"
 injection_targets="$script_dir/Sunder.Agent.NativeReleaseTests.targets"
 [[ -f "$test_source" && -f "${test_source%.cs}.Maker.cs" && -f "${test_source%.cs}.Development.cs" \
-    && -f "${test_source%.cs}.AppRpc.cs" && -f "$(dirname "$test_source")/NativeAppRpcStartupHook.cs" && -f "$test_project" ]] \
+    && -f "${test_source%.cs}.AppRpc.cs" && -f "$(dirname "$test_source")/NativeAppRpcStartupHook.cs" \
+    && -f "$(dirname "$test_source")/McpAppSyntaxProbe.cs" && -f "$test_project" ]] \
   || { printf 'Native release smoke source or Core test project was not found.\n' >&2; exit 1; }
 [[ -f "$injection_targets" ]] || { printf 'Native release test injection targets were not found.\n' >&2; exit 1; }
 [[ ! -e "$metrics_directory" ]] || { printf 'Native result directory must be new; retain failed evidence separately.\n' >&2; exit 1; }
@@ -92,6 +103,7 @@ fi
 SUNDER_AGENT_NATIVE_ARCHIVE_DIR="$(native_path "$archive_directory")" \
 SUNDER_AGENT_NATIVE_METRICS_DIR="$(native_path "$metrics_directory")" \
 SUNDER_AGENT_NATIVE_PLATFORM_CATALOG="$(native_path "$metrics_directory/maker-inputs/sunder-platform-contracts.v1.json")" \
+SUNDER_AGENT_TEST_WORKER_DOTNET_VERSION="$dotnet_runtime_version" \
 SUNDER_AGENT_BUILDER_SDK_VERSION="$builder_sdk_version" \
 SUNDER_AGENT_BUILDER_DOTNET_PATH="$(native_path "$builder_dotnet_path")" \
 SUNDER_AGENT_BUILDER_NUGET_FEED="$(native_path "$metrics_directory/maker-inputs/feed")" \

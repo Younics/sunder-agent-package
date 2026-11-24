@@ -11,7 +11,7 @@ internal static class CurrentPackagePolicyAssertions
     {
         CurrentContractInventory.AssertPackageInventory(inventory);
         var package = CurrentContractInventory.Owner(Text(manifest, "id"));
-        Assert.Equal(CurrentContractInventory.PackageVersion, Text(manifest, "version"));
+        Assert.Equal(CurrentContractInventory.PackageVersionFor(package.PackageId), Text(manifest, "version"));
         var uses = CurrentContractInventory.Uses(package);
         var publicIds = CurrentPublicRpcDescriptors.ContractIds;
         var owned = CurrentContractInventory.Contracts.Where(value => value.PackageId == package.PackageId).Select(value => value.ContractId);
@@ -77,7 +77,10 @@ internal static class CurrentPackagePolicyAssertions
         {
             var dependency = Assert.Single(dependencies);
             Assert.Equal(CurrentContractInventory.AgentId, Text(dependency, "packageId"));
-            Assert.Equal(">=2.0.0 <3.0.0", Text(dependency, "versionRange"));
+            var source = RegressionTestRpcDescriptors.RepositoryRoot;
+            using var declared = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(source, package.SourceDirectory, "sunder-contracts.lock.json")));
+            var selection = declared.RootElement.GetProperty("packageArtifacts").GetProperty(CurrentContractInventory.AgentId);
+            Assert.Equal(Text(selection, "requestedVersionRange"), Text(dependency, "versionRange"));
             Assert.Equal(package.PackageId == "younics.sunder.package.maker" ? "optional" : "required", Text(dependency, "presence"));
         }
         var apiImports = Items(manifest, "packageApiImports");

@@ -36,6 +36,8 @@ public sealed partial class AgentNativeReleaseSmokeTests(
     private const string ShellPackageId = "younics.ai.agent.tools.shell";
     private const string AgentOwnerContractId = "younics.ai.agent.owner.runtime";
     private const string BuilderRuntimeContractId = "younics.sunder.package.maker.runtime";
+    private static string WorkerRuntimeVersion => Environment.GetEnvironmentVariable("SUNDER_AGENT_TEST_WORKER_DOTNET_VERSION")
+        ?? throw new InvalidOperationException("Select the pinned native Worker runtime test input.");
 
     [NativeReleaseFact]
     [Trait("Category", "Release")]
@@ -56,7 +58,6 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             ?? throw new InvalidOperationException("SUNDER_AGENT_NATIVE_METRICS_DIR is required."));
         var rid = PackageTargetSelection.GetCurrentRuntimeIdentifier();
         var archives = ReadArchives(archiveDirectory, rid);
-        Assert.Equal(15, archives.Count);
 
         var root = Path.Combine(
             ResolvePhysicalDirectory(Path.GetTempPath()),
@@ -64,7 +65,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync("10.0.12");
+        var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync(WorkerRuntimeVersion);
         var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var launchResolver, out var appConnection);
         var provider = runtimeHost.Services;
         var observedProcesses = new HashSet<ExecutionRuntimeProcessObservation>();
@@ -143,7 +144,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             var stagedSession = Assert.IsType<ActivePackageSession>(
                 installedLifecycle.GetStagedSession(stageId));
             var stagedWorkers = GetWorkers(stagedSession);
-            Assert.Equal(15, stagedWorkers.Count);
+            AssertSamePackageIds(archives.Keys, stagedWorkers.Keys);
             var activationMeasurements = stagedWorkers.ToDictionary(
                 static pair => pair.Key,
                 static pair => CaptureActivationMeasurement(pair.Value),
@@ -157,14 +158,14 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                     + launchResolver.DescribeStandardError(worker.Key)))));
 
             var installed = await installedLifecycle.GetInstalledAsync();
-            Assert.Equal(15, installed.Count);
+            AssertSamePackageIds(archives.Keys, installed.Select(package => package.PackageId));
             var installedRecords = await provider.GetRequiredService<InstalledPackageStore>().ListAsync();
-            Assert.Equal(15, installedRecords.Count);
+            AssertSamePackageIds(archives.Keys, installedRecords.Select(package => package.PackageId));
             Assert.All(installedRecords, package => CurrentRidRuntimeHostTestSupport.AssertBindingMatches(
                 Assert.Single(package.ExecutionRuntimeBindings),
                 runtimeReceipt));
             var initialWorkers = GetWorkers(sessionOwner);
-            Assert.Equal(15, initialWorkers.Count);
+            AssertSamePackageIds(archives.Keys, initialWorkers.Keys);
             Assert.All(
                 sessionOwner.State.ActiveSession.LoadedPackageMap,
                 package => CurrentRidRuntimeHostTestSupport.AssertRuntimeLaunch(
@@ -220,7 +221,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                 .ToArray(), CancellationToken.None);
             Assert.True(enable.Success, string.Join(Environment.NewLine, enable.Errors));
             var recoveredWorkers = GetWorkers(sessionOwner);
-            Assert.Equal(15, recoveredWorkers.Count);
+            AssertSamePackageIds(archives.Keys, recoveredWorkers.Keys);
             AssertReplacementProcess(crashedShellProcess, recoveredWorkers[ShellPackageId]);
             CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
             VerifySqliteDatabase(
@@ -375,8 +376,12 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             }
             Assert.True(result.TryAdd(packageId!, archivePath), $"Duplicate native archive for '{packageId}'.");
         }
+        Assert.NotEmpty(result);
         return result;
     }
+
+    private static void AssertSamePackageIds(IEnumerable<string> expected, IEnumerable<string> observed)
+        => Assert.Equal(expected.Order(StringComparer.Ordinal), observed.Order(StringComparer.Ordinal));
 
     private static PackageCapabilityConsent? ReadCapabilityConsent(string archivePath)
     {
@@ -901,6 +906,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         ISet<string> observedTemporaryPaths)
     {
         var worker = GetWorkers(owner)[ShellPackageId];
+        var survivingPackages = GetWorkers(owner).Keys.Where(id => id != ShellPackageId).ToArray();
         var process = WorkerReleaseMetrics.GetProcess(worker);
         var oldProcess = ProcessIdentity.Observe(process);
         var oldTemporaryPath = worker.WorkerTemporaryPath;
@@ -912,7 +918,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         await AssertProcessesStoppedAsync([oldProcess]);
         await WaitUntilAsync(() => !Directory.Exists(oldTemporaryPath));
         await WaitUntilAsync(() => !owner.State.ActiveSession.LoadedPackageMap.ContainsKey(ShellPackageId));
-        Assert.Equal(14, GetWorkers(owner).Count);
+        AssertSamePackageIds(survivingPackages, GetWorkers(owner).Keys);
         return oldProcess;
     }
 

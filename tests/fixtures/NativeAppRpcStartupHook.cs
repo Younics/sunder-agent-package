@@ -12,8 +12,8 @@ using Sunder.Runtime.Contracts;
 using Sunder.Runtime.LocalState;
 using Sunder.Sdk.Rpc;
 
-// Friend hook in the real App before Main. No desktop, package view or package
-// assembly is loaded: this scope qualifies supervised backend RPC only.
+// Friend hook in the real App before Main. The RPC path qualifies the
+// supervised backend; the separate syntax probe only exercises App loading.
 internal static class StartupHook
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web)
@@ -23,6 +23,12 @@ internal static class StartupHook
 
     public static void Initialize()
     {
+        var syntaxProbe = Environment.GetEnvironmentVariable("SUNDER_TEST_MCP_JSON_PROJECTION");
+        if (!string.IsNullOrWhiteSpace(syntaxProbe))
+        {
+            Environment.SetEnvironmentVariable("SUNDER_TEST_MCP_JSON_PROJECTION", null);
+            Environment.Exit(McpAppSyntaxProbe.Run(syntaxProbe));
+        }
         var path = Environment.GetEnvironmentVariable("SUNDER_TEST_NATIVE_APP_RPC_CONFIG");
         if (string.IsNullOrWhiteSpace(path)) return;
         Environment.SetEnvironmentVariable("SUNDER_TEST_NATIVE_APP_RPC_CONFIG", null);

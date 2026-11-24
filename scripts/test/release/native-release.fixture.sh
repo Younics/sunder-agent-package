@@ -5,55 +5,7 @@ fixture_scripts="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_dir="$(cd "$fixture_scripts/../../release" && pwd)"
 repository_root="$(cd "$script_dir/../.." && pwd)"
 lock_verifier="$script_dir/verify-release-locks.sh"
-test_targets="$script_dir/Sunder.Agent.NativeReleaseTests.targets"
-native_builder="$script_dir/build-native-family.ps1"
-native_helper="$script_dir/native-family.py"
-output_auditor="$script_dir/generate-package-output-audit.sh"
-native_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.cs"
-maker_smoke="$repository_root/tests/fixtures/AgentNativeReleaseSmokeTests.Maker.cs"
-
-lock_report="$(bash "$lock_verifier" "$repository_root")"
-printf '%s\n' "$lock_report"
-grep -Fq 'Verified 43 release locks and 15 primary package projects' <<< "$lock_report" \
-  || { printf 'Canonical release fixture requires the current 43-project lock inventory.\n' >&2; exit 1; }
-test ! -e "$script_dir/Sunder.Agent.ReleaseSigning.targets"
-test ! -e "$script_dir/sign-worker-apphost.ps1"
-grep -Fq 'expectedEntryPoint' "$native_builder"
-grep -Fq '.runtimeconfig.json' "$native_builder"
-grep -Fq 'SunderPackagePrebuiltRoleInputsFile=' "$native_builder"
-grep -Fq 'identity_keys(expected) + " nativeRuns finalArtifacts"' "$native_helper"
-grep -Fq 'Selective native builds still require all fifteen Worker tests' "$native_helper"
-grep -Fq 'Expected the complete unique runtime family' "$native_helper"
-grep -Fq 'maximumBytes: 360003313' "$output_auditor"
-grep -Fq 'meetsInstalledProjectionGate: true' "$output_auditor"
-grep -Fq 'universalIndexedPayload' "$output_auditor"
-grep -Fq 'OfficialRuntimeFixture executionRuntimes' "$native_smoke"
-grep -Fq 'EnsureDotNetAsync("10.0.12")' "$native_smoke"
-grep -Fq 'AssertBindingMatches' "$native_smoke"
-if grep -Eq 'SignedCurrentRidExecutionRuntimeFixture|ObserveSupportedAsync|packagingRevision|LifecyclePolicies|\.sunderruntime|Sunder\.ExecutionRuntime\.Build' "$native_smoke"; then
-  printf 'Native release smoke must use official runtime acquisition and exact bindings, without retired runtime artifacts or publication tooling.\n' >&2
-  exit 1
-fi
-grep -Fq 'AssertRuntimeLaunch' "$native_smoke"
-grep -Fq 'VerifyBuilderProjectLifecycleAsync' "$maker_smoke"
-grep -Fq 'SUNDER_AGENT_BUILDER_SDK_VERSION' "$maker_smoke"
-grep -Fq 'SUNDER_AGENT_BUILDER_NUGET_FEED' "$maker_smoke"
-grep -Fq '"start-job"' "$maker_smoke"
-grep -Fq 'RunJobAsync("create")' "$maker_smoke"
-grep -Fq 'RunJobAsync("archive"' "$maker_smoke"
-grep -Fq 'PrepareNativeDevelopmentPackageAsync' "$maker_smoke"
-grep -Fq 'Maker authored, native package!' "$maker_smoke"
-grep -Fq 'makerViewAcceptance = false' "$maker_smoke"
-grep -Fq 'PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost' "$native_smoke"
-grep -Fq 'RegistryPackagePolicySynchronizer' "$native_smoke"
-grep -Fq 'AppProcessPolicySupervisor' "$repository_root/tests/fixtures/NativeAppRpcStartupHook.cs"
-if grep -Eq '"execute-process"|"new", "console"|"publish", projectRoot' "$native_smoke" "$maker_smoke"; then
-  printf 'Maker acceptance must use current finite jobs and a real package, not the retired console/process smoke.\n' >&2
-  exit 1
-fi
-grep -Fq 'SunderAgentNativeReleaseTestSource' "$test_targets"
-grep -Fq '$(MSBuildProjectName)' "$test_targets"
-grep -Fq 'Sunder.Runtime.Host.Tests' "$test_targets"
+bash "$lock_verifier" "$repository_root"
 
 temp_root="${TMPDIR:-/tmp}"
 fixture_root="$(mktemp -d "${temp_root%/}/sunder-native-release-fixture.XXXXXX")"
@@ -76,7 +28,8 @@ worker_lock_relative="$(jq -r '.packages[] | select(.artifactType == "sunderpkg"
 worker_lock="$fixture_root/$(dirname "$worker_lock_relative")/packages.release.lock.json"
 # A plain NuGet version is a minimum, so compatible minor/patch upgrades are valid.
 # Mutate below the first supported SDK instead of rejecting an allowed upgrade.
-jq '.dependencies["net10.0"]["Sunder.Sdk.Worker"].resolved = "0.0.0"' "$worker_lock" > "$worker_lock.changed"
+jq '(.dependencies[] | select(has("Sunder.Sdk.Worker")) | .["Sunder.Sdk.Worker"].resolved) = "0.0.0"' \
+  "$worker_lock" > "$worker_lock.changed"
 mv "$worker_lock.changed" "$worker_lock"
 failure_log="$fixture_root/lock-failure.log"
 if bash "$lock_verifier" "$fixture_root" > "$failure_log" 2>&1; then
@@ -88,4 +41,4 @@ grep -Fq 'Release lock does not resolve Sunder.Sdk.Worker within declared' "$fai
 
 python3 -B "$fixture_scripts/native-family.fixture.py"
 
-printf 'Native release source fixture passed: 43 release locks, 15 canonical packages, Core version/lock metadata, framework-dependent module policy, qualified-input transport and mocked no-rebuild fan-in; no remote provenance or native execution was qualified.\n'
+printf 'Release lock and native transport fixtures passed. No remote provenance or native execution was qualified.\n'

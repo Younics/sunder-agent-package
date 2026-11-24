@@ -18,8 +18,6 @@ public sealed class PackageFamilyArchiveContractTests
     private const string ContentIndexPath = "manifest/content-index.json";
     private const string DotNetModuleAbi = "sunder.dotnet-worker-module.v1";
     private const string DotNetRuntimeId = "sunder.runtime.dotnet";
-    private const string DotNetRuntimeVersionRange = ">=10.0.0 <11.0.0";
-    private const string FamilyDependencyRangeText = ">=2.0.0 <3.0.0";
     private const string ManifestPath = "manifest/sunder-package.json";
     private const long MaxArchiveBytes = 256L * 1024 * 1024;
     private const long MaxPayloadBytes = 640L * 1024 * 1024;
@@ -39,15 +37,14 @@ public sealed class PackageFamilyArchiveContractTests
         "system.net.security.native", "system.private.corelib", "system.security.cryptography.native.apple",
         "system.security.cryptography.native.openssl",
     };
-    private static readonly string[] SupportedRids =
-    [
-        "linux-arm64",
-        "linux-x64",
-        "osx-arm64",
-        "osx-x64",
-        "win-arm64",
-        "win-x64",
-    ];
+    private static string[] SupportedRids => ReadSupportedRids.Value;
+    private static readonly Lazy<string[]> ReadSupportedRids = new(() =>
+    {
+        var source = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        using var platforms = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(source, "eng/ci/platforms.json")));
+        return platforms.RootElement.GetProperty("platforms").EnumerateArray()
+            .Select(platform => RequiredString(platform, "rid")).Order(StringComparer.Ordinal).ToArray();
+    });
 
     [PackageArtifactsFact]
     [Trait("Lane", "PackageCompatibility")]
@@ -59,7 +56,6 @@ public sealed class PackageFamilyArchiveContractTests
     {
         var archiveDirectory = ResolveArchiveDirectory();
         var inventory = LoadInventory();
-        Assert.Equal(15, inventory.Packages.Count);
         Assert.Equal(
             inventory.Packages.Count,
             inventory.Packages.Select(static package => package.PackageId)
@@ -76,9 +72,6 @@ public sealed class PackageFamilyArchiveContractTests
             .ToArray();
         Assert.Equal(expectedNames, actualNames);
 
-        var packageIds = inventory.Packages
-            .Select(static package => package.PackageId)
-            .ToHashSet(StringComparer.Ordinal);
         long familyBytes = 0;
         foreach (var package in inventory.Packages)
         {
@@ -94,13 +87,21 @@ public sealed class PackageFamilyArchiveContractTests
                 archive,
                 package,
                 package.Version,
-                packageIds,
+                inventory.Versions,
                 inventory.ContractIdentities);
         }
 
         Assert.InRange(familyBytes, 1, MaxFamilyBytes);
-        VerifyMeasuredInstalledProjectionGate(archiveDirectory, inventory);
     }
+
+    [PackageArtifactsFact]
+    [Trait("Lane", "PackageCompatibility")]
+    [Trait("Category", "Artifact")]
+    [Trait("Capability", "PackageArchive")]
+    [Trait("OS", "Any")]
+    [Trait("Size", "Large")]
+    public void ReleaseArchives_MeetInstalledProjectionBudget()
+        => VerifyMeasuredInstalledProjectionGate(ResolveArchiveDirectory(), LoadInventory());
 
     [PackageArtifactsFact]
     [Trait("Lane", "PackageCompatibility")]
@@ -133,7 +134,7 @@ public sealed class PackageFamilyArchiveContractTests
                     archive,
                     package,
                     package.Version,
-                    inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                    inventory.Versions,
                     inventory.ContractIdentities);
             });
         Assert.Contains("SHA-256", exception.Message, StringComparison.Ordinal);
@@ -169,7 +170,7 @@ public sealed class PackageFamilyArchiveContractTests
                 archive,
                 package,
                 package.Version,
-                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
+                inventory.Versions,
                 inventory.ContractIdentities);
         });
         Assert.Contains("noncanonical", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -189,6 +190,17 @@ public sealed class PackageFamilyArchiveContractTests
         var sourcePath = Path.Combine(
             archiveDirectory,
             $"{package.PackageId}.{package.Version}.sunderpkg");
+        void VerifyDescriptors(ZipArchive archive)
+        {
+            using var manifest = ReadJson(archive, ManifestPath, package.PackageId);
+            VerifyContractHashes(archive, manifest.RootElement,
+                manifest.RootElement.GetProperty("provides").EnumerateArray().ToArray(),
+                package.PackageId, inventory.ContractIdentities);
+        }
+        using (var source = ZipFile.OpenRead(sourcePath))
+        {
+            VerifyDescriptors(source);
+        }
         using var temporary = TemporaryDirectory.Create("sunder-agent-archive-descriptor-mutation");
         var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
         RewriteArchive(sourcePath, mutatedPath, entries =>
@@ -201,109 +213,37 @@ public sealed class PackageFamilyArchiveContractTests
         });
 
         using var archive = ZipFile.OpenRead(mutatedPath);
-        var exception = Assert.Throws<InvalidDataException>(() =>
-        {
-            VerifyArchive(
-                archive,
-                package,
-                package.Version,
-                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-                inventory.ContractIdentities);
-        });
+        var exception = Assert.Throws<InvalidDataException>(() => VerifyDescriptors(archive));
         Assert.Contains("descriptor identity", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
-    [PackageArtifactsFact]
+    [Theory]
+    [InlineData(">=4.0.0 <5.0.0", "4.3.2")]
+    [InlineData(">=6.0.0 <7.0.0", "6.0.0")]
     [Trait("Lane", "PackageCompatibility")]
-    [Trait("Category", "Artifact")]
-    [Trait("Capability", "PackageArchive")]
-    [Trait("OS", "Any")]
-    [Trait("Size", "Large")]
-    public void FullArchiveOracle_RejectsDependencyRangeMutation()
+    public void ArchiveDependencies_PreserveAuthoredRangeAndAcceptACompatibleSelection(string range, string selectedVersion)
     {
-        var archiveDirectory = ResolveArchiveDirectory();
-        var inventory = LoadInventory();
-        var package = inventory.Packages.First(static item =>
-            item.PackageId is not ("younics.ai.agent" or "younics.sunder.package.maker"));
-        var sourcePath = Path.Combine(
-            archiveDirectory,
-            $"{package.PackageId}.{package.Version}.sunderpkg");
-        using var temporary = TemporaryDirectory.Create("sunder-agent-archive-dependency-mutation");
-        var mutatedPath = Path.Combine(temporary.Path, Path.GetFileName(sourcePath));
-        RewriteArchive(sourcePath, mutatedPath, entries =>
+        const string owner = "example.owner";
+        var package = new PackageExpectation("example.consumer", "9.0.0", "Consumer",
+            false, "net10.0", new Dictionary<string, string> { [owner] = range }, []);
+        var versions = new Dictionary<string, string> { [owner] = selectedVersion };
+        JsonElement Manifest(string versionRange) => JsonSerializer.SerializeToElement(new
         {
-            var manifestEntry = entries.Single(static entry => entry.Path == ManifestPath);
-            var manifest = JsonNode.Parse(manifestEntry.Bytes)!.AsObject();
-            manifest["dependsOn"]!.AsArray()[0]!["versionRange"] = ">=2.0.1 <3.0.0";
-            manifestEntry.Bytes = JsonSerializer.SerializeToUtf8Bytes(manifest);
-            RefreshIndexedEntry(entries, manifestEntry);
+            dependsOn = new[] { new { packageId = owner, versionRange, presence = "required" } },
         });
-
-        using var archive = ZipFile.OpenRead(mutatedPath);
-        var exception = Assert.ThrowsAny<Exception>(() =>
-        {
-            VerifyArchive(
-                archive,
-                package,
-                package.Version,
-                inventory.Packages.Select(static item => item.PackageId).ToHashSet(StringComparer.Ordinal),
-                inventory.ContractIdentities);
-        });
-        Assert.Contains(FamilyDependencyRangeText, exception.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    [Trait("Lane", "PackageCompatibility")]
-    public void FamilyDependencyRange_IsIndependentOfPatchAndPrereleaseReleaseVersion()
-    {
-        foreach (var releaseVersion in new[]
-                 {
-                     "2.0.0",
-                     "2.0.1",
-                     "2.0.1-preview.1",
-                     "2.1.0-alpha.1",
-                     "2.9.0-rc.2+build.7",
-                 })
-        {
-            VerifyFamilyDependencyRange(releaseVersion, FamilyDependencyRangeText, "test.package");
-        }
-    }
-
-    [Fact]
-    [Trait("Lane", "PackageCompatibility")]
-    public void FamilyDependencyRange_RejectsIncorrectRanges()
-    {
-        foreach (var versionRange in new[]
-                 {
-                     ">=2.0.1 <3.0.0",
-                     ">=2.0.0 <2.1.0",
-                     ">=2.0.0",
-                     "[2.0.0,3.0.0)",
-                 })
-        {
-            Assert.ThrowsAny<Exception>(() =>
-                VerifyFamilyDependencyRange("2.0.1-preview.1", versionRange, "test.package"));
-        }
-
-        foreach (var releaseVersion in new[]
-                 {
-                     "1.99.99",
-                     "2.0.0-preview.1",
-                     "2.0.0-preview.99+build.7",
-                     "3.0.0",
-                 })
-        {
-            var exception = Assert.Throws<InvalidDataException>(() =>
-                VerifyFamilyDependencyRange(releaseVersion, FamilyDependencyRangeText, "test.package"));
-            Assert.Contains("does not satisfy", exception.Message, StringComparison.Ordinal);
-        }
+        VerifyDependencyRanges(Manifest(range), package, versions);
+        var exception = Assert.Throws<InvalidDataException>(() => VerifyDependencyRanges(Manifest(selectedVersion), package, versions));
+        Assert.Contains("dependency range differs", exception.Message, StringComparison.Ordinal);
+        versions[owner] = "0.0.1";
+        exception = Assert.Throws<InvalidDataException>(() => VerifyDependencyRanges(Manifest(range), package, versions));
+        Assert.Contains("does not satisfy", exception.Message, StringComparison.Ordinal);
     }
 
     private static void VerifyArchive(
         ZipArchive archive,
         PackageExpectation package,
         string releaseVersion,
-        IReadOnlySet<string> packageIds,
+        IReadOnlyDictionary<string, string> versions,
         IReadOnlyDictionary<string, ContractIdentity> contractIdentities)
     {
         var paths = archive.Entries.Select(static entry => entry.FullName).ToArray();
@@ -347,7 +287,7 @@ public sealed class PackageFamilyArchiveContractTests
             manifest.RootElement,
             package,
             releaseVersion,
-            packageIds,
+            versions,
             contractIdentities);
     }
 
@@ -355,8 +295,10 @@ public sealed class PackageFamilyArchiveContractTests
         string archiveDirectory,
         PackageInventory inventory)
     {
-        const long phase0BaselineBytes = 1_440_013_254;
-        const long maximumInstalledProjectionBytes = 360_003_313;
+        var policyPath = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "eng/ci/native-release.json");
+        using var policy = JsonDocument.Parse(File.ReadAllBytes(policyPath));
+        var expectedGate = policy.RootElement.GetProperty("installedProjectionGate");
+        var maximumInstalledProjectionBytes = expectedGate.GetProperty("maximumBytes").GetInt64();
         var auditPath = Path.Combine(archiveDirectory, "package-output-audit.json");
         if (!File.Exists(auditPath))
         {
@@ -373,8 +315,8 @@ public sealed class PackageFamilyArchiveContractTests
             Assert.Equal(package.Version, root.TryGetProperty("packageVersions", out var versions)
                 ? versions.GetProperty(package.PackageId).GetString() : root.GetProperty("version").GetString());
         var gate = root.GetProperty("installedProjectionGate");
-        Assert.Equal(phase0BaselineBytes, gate.GetProperty("phase0BaselineBytes").GetInt64());
-        Assert.Equal(75, gate.GetProperty("requiredReductionPercent").GetInt32());
+        Assert.Equal(expectedGate.GetProperty("phase0BaselineBytes").GetInt64(), gate.GetProperty("phase0BaselineBytes").GetInt64());
+        Assert.Equal(expectedGate.GetProperty("requiredReductionPercent").GetInt32(), gate.GetProperty("requiredReductionPercent").GetInt32());
         Assert.Equal(maximumInstalledProjectionBytes, gate.GetProperty("maximumBytes").GetInt64());
         var familyRids = root.GetProperty("family").GetProperty("rids").EnumerateArray().ToArray();
         Assert.Equal(
@@ -401,7 +343,7 @@ public sealed class PackageFamilyArchiveContractTests
         JsonElement root,
         PackageExpectation package,
         string releaseVersion,
-        IReadOnlySet<string> packageIds,
+        IReadOnlyDictionary<string, string> versions,
         IReadOnlyDictionary<string, ContractIdentity> contractIdentities)
     {
         Assert.Equal(1, root.GetProperty("archiveFormatVersion").GetInt32());
@@ -409,19 +351,7 @@ public sealed class PackageFamilyArchiveContractTests
         Assert.Equal(package.PackageId, root.GetProperty("id").GetString());
         Assert.Equal(releaseVersion, root.GetProperty("version").GetString());
 
-        var dependencies = root.GetProperty("dependsOn").EnumerateArray().ToArray();
-        if (package.PackageId == "younics.sunder.package.maker") Assert.Empty(dependencies);
-        var dependencyIds = dependencies
-            .Select(static dependency => RequiredString(dependency, "packageId"))
-            .ToArray();
-        Assert.Equal(dependencyIds.Length, dependencyIds.Distinct(StringComparer.Ordinal).Count());
-        Assert.DoesNotContain(package.PackageId, dependencyIds, StringComparer.Ordinal);
-        Assert.All(dependencyIds, packageId => Assert.Contains(packageId, packageIds));
-        Assert.All(dependencies, dependency =>
-        {
-            var dependencyId = RequiredString(dependency, "packageId");
-            VerifyFamilyDependencyRange(ReadPackageVersion(dependencyId), RequiredString(dependency, "versionRange"), dependencyId);
-        });
+        VerifyDependencyRanges(root, package, versions);
 
         var targets = root.GetProperty("targets").EnumerateArray().ToArray();
         var runtimeTargets = targets
@@ -439,11 +369,12 @@ public sealed class PackageFamilyArchiveContractTests
         Assert.All(runtimeTargets, target =>
         {
             Assert.Equal("worker", RequiredString(target, "kind"));
-            Assert.Equal("net10.0", RequiredString(target, "targetFramework"));
+            Assert.Equal(package.TargetFramework, RequiredString(target, "targetFramework"));
             Assert.Equal($"lib/{package.WorkerAssemblyName}.dll", RequiredString(target, "entryPoint"));
             var executionRuntime = target.GetProperty("executionRuntime");
             Assert.Equal(DotNetRuntimeId, RequiredString(executionRuntime, "id"));
-            Assert.Equal(DotNetRuntimeVersionRange, RequiredString(executionRuntime, "versionRange"));
+            var frameworkVersion = Version.Parse(package.TargetFramework["net".Length..]);
+            Assert.Equal($">={frameworkVersion.Major}.0.0 <{frameworkVersion.Major + 1}.0.0", RequiredString(executionRuntime, "versionRange"));
             Assert.Equal(DotNetModuleAbi, RequiredString(executionRuntime, "moduleAbi"));
             Assert.Contains(
                 "worker-protocol.v1",
@@ -452,15 +383,23 @@ public sealed class PackageFamilyArchiveContractTests
                 StringComparer.Ordinal);
             VerifyDotNetWorkerPayload(archive, target, package);
         });
-        Assert.All(appTargets, static target =>
+        Assert.All(appTargets, target =>
         {
             Assert.Equal("avalonia", RequiredString(target, "kind"));
-            Assert.Equal("net10.0", RequiredString(target, "targetFramework"));
+            Assert.Equal(package.TargetFramework, RequiredString(target, "targetFramework"));
             Assert.DoesNotContain(
                 "worker-protocol.v1",
                 target.GetProperty("requiredHostCapabilities").EnumerateArray()
                     .Select(static capability => capability.GetString()),
                 StringComparer.Ordinal);
+            var rid = RequiredString(target, "rid");
+            var entryPoint = RequiredString(target, "entryPoint");
+            Assert.EndsWith(".dll", entryPoint, StringComparison.Ordinal);
+            _ = ResolveProjectedEntry(archive, "app", rid, entryPoint, package.PackageId);
+            var depsEntry = ResolveProjectedEntry(archive, "app", rid, entryPoint[..^".dll".Length] + ".deps.json", package.PackageId);
+            using var deps = ReadJson(archive, depsEntry.FullName, package.PackageId);
+            AppNativeAssetContract.Verify(deps.RootElement, entryPoint, rid, package.PackageId,
+                ProjectedEntries(archive, "app", rid).Select(entry => entry.FullName));
         });
 
         var providers = root.GetProperty("provides").EnumerateArray().ToArray();
@@ -487,18 +426,18 @@ public sealed class PackageFamilyArchiveContractTests
         using (var runtimeConfig = ReadJson(archive, runtimeConfigEntry.FullName, package.PackageId))
         {
             var runtimeOptions = runtimeConfig.RootElement.GetProperty("runtimeOptions");
-            Assert.Equal("net10.0", RequiredString(runtimeOptions, "tfm"));
+            Assert.Equal(package.TargetFramework, RequiredString(runtimeOptions, "tfm"));
             Assert.False(runtimeOptions.TryGetProperty("includedFrameworks", out _));
             Assert.False(runtimeOptions.TryGetProperty("frameworks", out _));
             var framework = runtimeOptions.GetProperty("framework");
             Assert.Equal("Microsoft.NETCore.App", RequiredString(framework, "name"));
-            Assert.StartsWith("10.", RequiredString(framework, "version"), StringComparison.Ordinal);
+            Assert.StartsWith(Version.Parse(package.TargetFramework["net".Length..]).Major + ".", RequiredString(framework, "version"), StringComparison.Ordinal);
         }
 
         var depsPath = moduleBase + ".deps.json";
         var depsEntry = ResolveProjectedEntry(archive, "runtime", rid, depsPath, package.PackageId);
         using var dependencies = ReadJson(archive, depsEntry.FullName, package.PackageId);
-        var expectedRuntimeTarget = $".NETCoreApp,Version=v10.0/{rid}";
+        var expectedRuntimeTarget = $".NETCoreApp,Version=v{package.TargetFramework["net".Length..]}/{rid}";
         Assert.Equal(
             expectedRuntimeTarget,
             RequiredString(dependencies.RootElement.GetProperty("runtimeTarget"), "name"));
@@ -612,32 +551,6 @@ public sealed class PackageFamilyArchiveContractTests
         else
         {
             Assert.Empty(sqlitePaths);
-        }
-
-        var onigwrapOwner = package.PackageId is "younics.ai.agent" or "younics.ai.agent.mcp" or "younics.ai.agent.subagents";
-        var onigwrapPaths = paths.Where(static path =>
-            FileName(path).Contains("onigwrap", StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (onigwrapOwner)
-        {
-            _ = ResolveProjectedEntry(archive, "app", SupportedRids[0], "lib/Onigwrap.dll", package.PackageId);
-            foreach (var rid in SupportedRids)
-            {
-                var nativeName = rid.StartsWith("win-", StringComparison.Ordinal)
-                    ? "libonigwrap.dll"
-                    : rid.StartsWith("osx-", StringComparison.Ordinal)
-                        ? "libonigwrap.dylib"
-                        : "libonigwrap.so";
-                _ = ResolveProjectedEntry(
-                    archive,
-                    "app",
-                    rid,
-                    $"lib/runtimes/{rid}/native/{nativeName}",
-                    package.PackageId);
-            }
-        }
-        else
-        {
-            Assert.Empty(onigwrapPaths);
         }
 
         var systemManagementPaths = paths.Where(static path =>
@@ -917,20 +830,27 @@ public sealed class PackageFamilyArchiveContractTests
         indexEntry.Bytes = JsonSerializer.SerializeToUtf8Bytes(index);
     }
 
-    private static void VerifyFamilyDependencyRange(
-        string releaseVersion,
-        string versionRange,
-        string packageId)
+    private static void VerifyDependencyRanges(JsonElement manifest, PackageExpectation package, IReadOnlyDictionary<string, string> versions)
     {
-        var release = SemanticVersion.Parse(releaseVersion);
-        var expected = PackageVersionRange.Parse(FamilyDependencyRangeText);
-        var actual = PackageVersionRange.Parse(versionRange);
-        Require(
-            expected.IsSatisfiedBy(release),
-            $"{packageId}: release version '{releaseVersion}' does not satisfy the Agent family contract '{FamilyDependencyRangeText}'.");
-        Require(
-            actual.Equals(expected),
-            $"{packageId}: dependency range must be the Agent family contract '{FamilyDependencyRangeText}', not '{versionRange}'.");
+        var dependencies = manifest.GetProperty("dependsOn").EnumerateArray().ToArray();
+        var ids = dependencies.Select(dependency => RequiredString(dependency, "packageId")).ToArray();
+        Assert.Equal(ids.Length, ids.Distinct(StringComparer.Ordinal).Count());
+        Assert.DoesNotContain(package.PackageId, ids, StringComparer.Ordinal);
+        // Retained archives have independent publication evidence. Do not apply
+        // today's source lock to a different version of an unchanged package.
+        var policy = package.DependencyRanges ?? manifest.GetProperty("packageArtifactImports").EnumerateArray()
+            .ToDictionary(import => RequiredString(import, "packageId"), import => RequiredString(import, "requestedVersionRange"), StringComparer.Ordinal);
+        Assert.Equal(policy.Keys.Order(StringComparer.Ordinal), ids.Order(StringComparer.Ordinal));
+        foreach (var dependency in dependencies)
+        {
+            var id = RequiredString(dependency, "packageId");
+            var actual = RequiredString(dependency, "versionRange");
+            Require(policy[id] == actual, $"{package.PackageId}: dependency range differs from the reviewed range for '{id}': '{actual}'.");
+            Require(versions.TryGetValue(id, out var version) && PackageVersionRange.IsSatisfiedBy(version, actual),
+                $"{package.PackageId}: selected release of '{id}' does not satisfy '{actual}'.");
+            if (package.PackageId == "younics.sunder.package.maker" && id == CurrentContractInventory.AgentId)
+                Assert.Equal("optional", RequiredString(dependency, "presence"));
+        }
     }
 
     private static JsonDocument ReadJson(ZipArchive archive, string path, string packageId)
@@ -1013,21 +933,35 @@ public sealed class PackageFamilyArchiveContractTests
 
     private static PackageInventory LoadInventory()
     {
-        using var document = JsonDocument.Parse(File.ReadAllText(Path.Combine(
-            AgentPackageRepositoryInventory.RepositoryRoot.FullName,
-            "packages.json")));
+        var source = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
+        using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(source, "packages.json")));
         var root = document.RootElement;
         CurrentContractInventory.AssertPackageInventory(root);
+        var planPath = Environment.GetEnvironmentVariable("SUNDER_AGENT_RELEASE_PLAN_PATH");
+        using var plan = !string.IsNullOrEmpty(planPath) ? JsonDocument.Parse(File.ReadAllBytes(planPath)) : null;
+        var planRows = plan?.RootElement.GetProperty("packages").EnumerateArray()
+            .ToDictionary(row => RequiredString(row, "packageId"), StringComparer.Ordinal);
+        if (planRows is not null)
+            Assert.Equal(CurrentContractInventory.Packages.Select(package => package.PackageId).Order(StringComparer.Ordinal),
+                planRows.Keys.Order(StringComparer.Ordinal));
+        var framework = XDocument.Load(Path.Combine(source, "Directory.Build.props"))
+            .Root!.Elements("PropertyGroup").Elements("TargetFramework").Single().Value;
         var packages = root.GetProperty("packages").EnumerateArray()
             .Where(static package => RequiredString(package, "artifactType") == "sunderpkg")
-            .Select(static package =>
+            .Select(package =>
             {
                 var projectPath = RequiredString(package, "projectPath");
+                var id = RequiredString(package, "packageId");
+                var projectFramework = XDocument.Load(Path.Combine(source, projectPath)).Root!
+                    .Elements("PropertyGroup").Elements("TargetFramework").SingleOrDefault()?.Value ?? framework;
+                var selected = planRows is null || planRows[id].GetProperty("selected").GetBoolean();
                 return new PackageExpectation(
-                    RequiredString(package, "packageId"),
-                    ReadPackageVersion(RequiredString(package, "packageId")),
+                    id,
+                    planRows is null ? CurrentContractInventory.PackageVersionFor(id) : RequiredString(planRows[id], "version"),
                     Path.GetFileNameWithoutExtension(projectPath),
                     CurrentContractInventory.Packages.Single(value => value.ProjectPath == projectPath).HasApp,
+                    projectFramework,
+                    selected ? ReadDependencyRanges(Path.Combine(source, Path.GetDirectoryName(projectPath)!, "sunder-contracts.lock.json")) : null,
                     package.GetProperty("providerIds").EnumerateArray()
                         .Select(static providerId => providerId.GetString()!)
                         .Order(StringComparer.Ordinal)
@@ -1041,6 +975,12 @@ public sealed class PackageFamilyArchiveContractTests
         foreach (var expected in CurrentContractInventory.Contracts)
         {
             var descriptor = CurrentContractRecords.Get(expected.ContractId);
+            if (planRows is not null && expected.Exposure == "package")
+            {
+                var version = RequiredString(planRows[expected.PackageId], "version");
+                if (descriptor.Version != version)
+                    descriptor = CurrentContractRecords.ProjectPrivateVersion(descriptor, version);
+            }
             currentIdentities.Add(new(descriptor.ContractId, descriptor.Version, descriptor.Sha256, descriptor.AbiSha256));
         }
         var stack = Sunder.Sdk.Stacks.SunderStackContributorRpc.Descriptor;
@@ -1051,18 +991,20 @@ public sealed class PackageFamilyArchiveContractTests
                 StringComparer.Ordinal);
         return new PackageInventory(
             packages,
+            packages.ToDictionary(package => package.PackageId, package => package.Version, StringComparer.Ordinal),
             contractIdentities);
     }
 
     private sealed record PackageInventory(
         IReadOnlyList<PackageExpectation> Packages,
+        IReadOnlyDictionary<string, string> Versions,
         IReadOnlyDictionary<string, ContractIdentity> ContractIdentities);
 
-    private static string ReadPackageVersion(string packageId)
+    private static IReadOnlyDictionary<string, string> ReadDependencyRanges(string path)
     {
-        var projectPath = CurrentContractInventory.Packages.Single(package => package.PackageId == packageId).ProjectPath;
-        return XDocument.Load(Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, projectPath))
-            .Root!.Elements("PropertyGroup").Elements("Version").Single().Value;
+        using var lockFile = JsonDocument.Parse(File.ReadAllBytes(path));
+        return lockFile.RootElement.GetProperty("packageArtifacts").EnumerateObject()
+            .ToDictionary(artifact => artifact.Name, artifact => RequiredString(artifact.Value, "requestedVersionRange"), StringComparer.Ordinal);
     }
 
     private sealed record PackageExpectation(
@@ -1070,6 +1012,8 @@ public sealed class PackageFamilyArchiveContractTests
         string Version,
         string WorkerAssemblyName,
         bool HasApp,
+        string TargetFramework,
+        IReadOnlyDictionary<string, string>? DependencyRanges,
         IReadOnlyList<string> ProviderIds);
 
     private sealed record ContractIdentity(

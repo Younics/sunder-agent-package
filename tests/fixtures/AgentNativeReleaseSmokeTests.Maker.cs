@@ -27,7 +27,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var rid = PackageTargetSelection.GetCurrentRuntimeIdentifier();
         var archives = ReadArchives(directory, rid);
         var archive = archives[BuilderPackageId];
-        var receipt = await executionRuntimes.EnsureDotNetAsync("10.0.12");
+        var receipt = await executionRuntimes.EnsureDotNetAsync(WorkerRuntimeVersion);
         var root = Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sunder-native-maker-" + Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(root);
         RuntimeLocalState.EnsureInitialized(paths.RootPath);

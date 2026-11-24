@@ -287,15 +287,6 @@ class AgentCiTests(unittest.TestCase):
             tests.assert_not_called()
         self.assertFalse(work[0].exists())
 
-    def test_family_results_are_uploaded_only_after_archive_tests_were_attempted(self):
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
-        upload = workflow.split("      - name: Retain family test results\n")[1].split("\n  stage:")[0]
-        self.assertIn("id: archive_tests", workflow)
-        for outcome in ("success", "failure", "cancelled"):
-            self.assertIn(f"steps.archive_tests.outcome == '{outcome}'", upload)
-        self.assertNotIn("steps.archive_tests.outcome == 'skipped'", upload)
-        self.assertIn("if-no-files-found: error", upload)
-
     def test_release_plan_path_is_not_exported_as_an_msbuild_version(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
         for job, following in (("smoke", "fan-in"), ("fan-in", "stage")):
