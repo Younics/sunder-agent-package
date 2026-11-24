@@ -71,6 +71,7 @@ jobs:
     uses: ./.github/workflows/sunder-package-smoke.yml
     permissions:
       contents: read
+      actions: read
     with:
       core_commit: ${{ needs.prepare.outputs.core_commit }}
       package-tests: ${{ needs.prepare.outputs.selected_count != '0' }}

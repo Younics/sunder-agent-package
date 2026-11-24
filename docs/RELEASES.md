@@ -146,6 +146,23 @@ version, substitutes mismatched bytes or rewrites a lock. Missing published byte
 without matching authored source are a genuine dependency error, not a request for
 an operator-supplied SHA or asset locator.
 
+When an unpublished owner's rebuilt bytes require lock reselection, use
+**Qualify → compose** once on the exact non-main commit after its Build is
+published and verified. Enter one canonical package ID and its branch commit.
+This read-only operation checks only the import-free package project and its
+published catalog, then produces all six native leaves and composes them without
+rebuilding. It does not run component tests, admit old consumer locks, or grant
+qualification or publication. Retain the run, candidate artifact ID and ZIP
+digest, Core source, original leaves, and the actual archive SHA-256 and size.
+
+Use `UpdateSunderPackageApi` to reselect the composed owner in the consumer
+locks. For a reviewed reselection, `compatibility/agent-owner-authoring.json`
+records `schemaVersion` (1), `packageId`, `version`, `authoredSource`,
+`coreCommit`, `authoringRunId`, `authoringArtifactId`, `authoringZipSha256`, and
+`archive` (`size`, `sha256`). The ordinary shared input job must reproduce those
+raw owner bytes before it hands anything to consumers. The authoring artifact
+itself is never substituted for final-head production or used as a release input.
+
 Actions runs discovery once on Linux and prepares verified Core tools once per
 needed platform. It retains `agent-prepared-dependencies`, optional
 `agent-candidate-<package>` bootstrap outputs, then seals `agent-dependency-inputs`.
@@ -169,6 +186,22 @@ committed dependent selection. A missing/mismatched selected archive requires
 restoring its exact bytes or explicit authoring-tool selection review before a
 release can succeed; the pipeline does not rewrite locks or substitute merely
 descriptor-compatible archives.
+
+The corrected first `2.0.0` cohort can carry the original Windows Local filesystem
+cases only via a reviewed, committed `compatibility/agent-2.0.0-windows-case-carry.json`.
+It binds `schemaVersion` (1), `coreCommit`, `lockSetSha256`, and
+`sourceTreeSha256` (the committed tree projection from
+`windows_case_history.source_tree`, excluding only the review record itself).
+Create it after the exact published Build and final locks are reviewed. If the
+source, locks, Build, or test policy differs, the gate stops instead of quietly
+executing or accepting the old group. When active, prepare verifies both original
+job and artifact identities and exact ZIP/TRX bytes before scheduling tests. Only
+that source-mode Local Windows class is excluded from execution; the remaining
+tests and both final archive smokes are required. The summary stores historical
+cases separately and rejects repeated current execution. The original release
+remains failed. If transport expires, stop for review of the retained originals;
+do not substitute a fresh run. Remove the one-cohort review records when moving
+to a different source/release so ordinary fresh validation applies.
 
 CI package builds normalize generated-role compiler paths and omit debug symbols
 and commit-dependent assembly/Source Link metadata. This makes unchanged payloads

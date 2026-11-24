@@ -114,7 +114,7 @@ def run(command, source, home):
     subprocess.run(command, cwd=source, env=env, check=True)
 
 
-def catalog(source, core, destination, published, packages=None):
+def catalog(source, core, destination, published, packages=None, *, published_only=False):
     required = {(item["authorityId"], item["selectedAuthorityRelease"], item["selectedAuthorityContentIdentity"])
                 for _, lock in inputs.lock_documents(source, packages) for item in inputs.catalog_requirements(lock)}
     r.require(len(required) == 1, "Expected one exact Core catalog dependency")
@@ -125,6 +125,7 @@ def catalog(source, core, destination, published, packages=None):
     if found:
         inputs.download(found[1], path, 67108864)
     else:
+        r.require(not published_only, "The exact locked catalog is not published")
         # Source CI can export an unpublished catalog through the real owning tool.
         project = core / "languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj"
         with tempfile.TemporaryDirectory(prefix="sunder-catalog-home-") as home:
@@ -137,24 +138,25 @@ def catalog(source, core, destination, published, packages=None):
     return path
 
 
-def resolve(source, core, destination, *, packages=None, allow_missing=False):
+def resolve(source, core, destination, *, packages=None, allow_missing=False, published_catalog_only=False):
     r.require(not Path(destination).is_symlink(), "Linked dependency output")
     source, core, destination = Path(source).resolve(), Path(core).resolve(), Path(destination).resolve()
     r.require(not destination.exists() and not destination.is_relative_to(source) and not destination.is_relative_to(core), "Dependency output must be a new external directory")
     before = inputs.source_snapshot(source)
     try:
-        return resolve_dependencies(source, core, destination, packages, allow_missing=allow_missing)
+        return resolve_dependencies(source, core, destination, packages, allow_missing=allow_missing,
+                                    published_catalog_only=published_catalog_only)
     finally:
         r.require(inputs.source_snapshot(source) == before, "Dependency preparation changed authored source/locks")
 
 
-def resolve_dependencies(source, core, destination, packages=None, *, allow_missing=False):
+def resolve_dependencies(source, core, destination, packages=None, *, allow_missing=False, published_catalog_only=False):
     identities = {(package_id, entry["selectedPackageVersion"], entry["selectedPackageContentIdentity"], entry["publicInventorySha256"])
                   for _, lock in inputs.lock_documents(source, packages) for package_id, entry in lock["packageArtifacts"].items()}
     r.require(len({item[0] for item in identities}) == len(identities), "Conflicting exact dependency selections for the same package")
     destination.mkdir(parents=True)
     core_releases = releases(CORE)
-    catalog_path = catalog(source, core, destination, core_releases, packages)
+    catalog_path = catalog(source, core, destination, core_releases, packages, published_only=published_catalog_only)
     agent_releases = releases(AGENT) if identities else []
     paths, pending = {}, []
     for package_id, version, _, _ in sorted(identities):

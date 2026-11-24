@@ -1,4 +1,5 @@
 name: Qualify
+run-name: ${{ inputs.operation == 'compose' && 'Compose for lock authoring (not qualification)' || 'Qualify' }}
 
 on:
   workflow_dispatch:
@@ -7,6 +8,15 @@ on:
         description: Comma-separated canonical package IDs, or all for full qualification
         type: string
         default: all
+      operation:
+        description: Validate, or compose one import-free package for lock authoring
+        type: choice
+        options: [validate, compose]
+        default: validate
+      source:
+        description: Exact branch commit to compose (required for compose)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -18,6 +28,7 @@ concurrency:
 jobs:
   selection:
     name: Select explicit qualification inputs
+    if: inputs.operation == 'validate'
     runs-on: ubuntu-24.04
     outputs:
       packages: ${{ steps.selection.outputs.packages }}
@@ -40,7 +51,18 @@ jobs:
     name: Component and shared validation
     needs: selection
     uses: ./.github/workflows/sunder-package-smoke.yml
+    permissions:
+      contents: read
+      actions: read
     with:
       packages: ${{ needs.selection.outputs.packages }}
       core_commit: ${{ needs.selection.outputs.core_commit }}
       package-tests: true
+
+  authoring:
+    name: Compose without qualification or publication
+    if: inputs.operation == 'compose'
+    uses: ./.github/workflows/sunder-package-authoring.yml
+    with:
+      package: ${{ inputs.packages }}
+      source: ${{ inputs.source }}

@@ -41,6 +41,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 env:
   MSBUILDDISABLENODEREUSE: "1"
 
@@ -58,6 +59,7 @@ jobs:
       full: ${{ steps.selection.outputs.full }}
       packages: ${{ steps.selection.outputs.packages }}
       selected_count: ${{ steps.selection.outputs.selected_count }}
+      windows_history: ${{ steps.windows_history.outputs.ready }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -84,6 +86,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B scripts/ci/agent_ci.py coordinates
+      - name: Verify reviewed historical Windows evidence before starting tests
+        id: windows_history
+        if: steps.selection.outputs.selected_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PACKAGES: ${{ steps.selection.outputs.packages }}
+          CORE_COMMIT: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
+        run: >-
+          python3 -B scripts/ci/windows_case_history.py --packages "$PACKAGES"
+          --core "$CORE_COMMIT" --prepare "$RUNNER_TEMP/windows-history"
+      - name: Retain original Windows reports separately from current test results
+        if: steps.windows_history.outputs.ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-historical-windows-cases
+          path: ${{ runner.temp }}/windows-history
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
       - id: matrix
         if: steps.selection.outputs.selected_count != '0'
         env:
@@ -292,6 +313,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" "$CORE_COMMIT" --packages "$PACKAGES" --prepared
+          python3 -B scripts/ci/owner_authoring.py verify-reproduction "$RUNNER_TEMP/agent-inputs"
           echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -454,8 +476,23 @@ jobs:
         with:
           pattern: ${{ steps.evidence.outputs.pattern }}
           path: required-results
-      - name: Require exact platform case execution
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.prepare.outputs.windows_history == 'true'
+        with:
+          name: agent-historical-windows-cases
+          path: required-history
+      - name: Require exact platform cases and keep historical results separate
         if: steps.evidence.outputs.has_requirements == 'true'
         env:
           PACKAGES: ${{ needs.prepare.outputs.packages }}
-        run: python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --results required-results
+          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+        run: >-
+          python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --results required-results
+          --core "$CORE_COMMIT" --history required-history --historical-receipt required-history-receipt.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: needs.prepare.outputs.windows_history == 'true'
+        with:
+          name: agent-historical-windows-receipt-${{ github.run_attempt }}
+          path: required-history-receipt.json
+          if-no-files-found: error
+          retention-days: 90

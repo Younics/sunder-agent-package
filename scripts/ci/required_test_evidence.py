@@ -49,40 +49,54 @@ def plan(rows):
     return dict(has_requirements=bool(rows), pattern="@(" + "|".join(patterns) + ")" if patterns else "")
 
 
+def observations(document):
+    definitions = {}
+    for definition in document.findall(".//{*}UnitTest"):
+        method = definition.find("./{*}TestMethod")
+        identifier = definition.get("id")
+        require(identifier and identifier not in definitions and method is not None, "Invalid required-test definition")
+        definitions[identifier] = (method.get("className", "").split(",", 1)[0], method.get("name", ""))
+    observed = []
+    for result in document.findall(".//{*}UnitTestResult"):
+        require(result.get("testId") in definitions, "Required-test result has no definition")
+        observed.append((*definitions[result.get("testId")], result.get("testName"), result.get("outcome")))
+    return observed
+
+
+def read_scope(directory, scope):
+    pattern = f"agent-component-{scope[0]}-{scope[1]}-{scope[2]}-*"
+    directories = list(Path(directory).glob(pattern))
+    require(len(directories) == 1, f"Missing or duplicate required-test scope: {scope}")
+    return [record for path in sorted(directories[0].rglob("*.trx")) for record in observations(ET.parse(path))]
+
+
+def case_results(row, observed):
+    return [(name, outcome) for cls, method, name, outcome in observed
+            if cls == row["className"] and ("methodName" not in row or method == row["methodName"])]
+
+
+def verify_cases(row, rid, observed, *, historical=False):
+    cases = case_results(row, observed)
+    label = f"{row['owner']} / {rid} / {row['className']}" + ("." + row["methodName"] if "methodName" in row else "")
+    require(len(cases) == len({name for name, _ in cases}) == row["expectedCount"],
+            f"Missing, duplicate or unexpected required-test cases: {label}")
+    if "cases" in row:
+        require({name for name, _ in cases} == {row["className"] + "." + case for case in row["cases"]},
+                f"Required-test exact identities differ: {label}")
+    require(all(outcome == "Passed" for _, outcome in cases), f"Failed or skipped required-test cases: {label}")
+    print(f"{label}: {len(cases)} passed; zero skipped" + (" (original historical)" if historical else ""))
+    return dict(owner=row["owner"], mode=row["mode"], rid=rid, className=row["className"],
+                methodName=row.get("methodName"), passed=len(cases))
+
+
 def verify(directory, rows):
     reports, verified = {}, []
     for row in rows:
         for rid in row["rids"]:
             scope = (row["owner"], row["mode"], rid)
             if scope not in reports:
-                pattern = f"agent-component-{scope[0]}-{scope[1]}-{scope[2]}-*"
-                directories = list(Path(directory).glob(pattern))
-                require(len(directories) == 1, f"Missing or duplicate required-test scope: {scope}")
-                observed = []
-                for path in sorted(directories[0].rglob("*.trx")):
-                    document = ET.parse(path)
-                    definitions = {}
-                    for definition in document.findall(".//{*}UnitTest"):
-                        method = definition.find("./{*}TestMethod")
-                        identifier = definition.get("id")
-                        require(identifier and identifier not in definitions and method is not None, "Invalid required-test definition")
-                        definitions[identifier] = (method.get("className", "").split(",", 1)[0], method.get("name", ""))
-                    for result in document.findall(".//{*}UnitTestResult"):
-                        require(result.get("testId") in definitions, "Required-test result has no definition")
-                        observed.append((*definitions[result.get("testId")], result.get("testName"), result.get("outcome")))
-                reports[scope] = observed
-            cases = [(name, outcome) for cls, method, name, outcome in reports[scope]
-                     if cls == row["className"] and ("methodName" not in row or method == row["methodName"])]
-            label = f"{row['owner']} / {rid} / {row['className']}" + ("." + row["methodName"] if "methodName" in row else "")
-            require(len(cases) == len({name for name, _ in cases}) == row["expectedCount"],
-                    f"Missing, duplicate or unexpected required-test cases: {label}")
-            if "cases" in row:
-                require({name for name, _ in cases} == {row["className"] + "." + case for case in row["cases"]},
-                        f"Required-test exact identities differ: {label}")
-            require(all(outcome == "Passed" for _, outcome in cases), f"Failed or skipped required-test cases: {label}")
-            verified.append(dict(owner=row["owner"], mode=row["mode"], rid=rid, className=row["className"],
-                                 methodName=row.get("methodName"), passed=len(cases)))
-            print(f"{label}: {len(cases)} passed; zero skipped")
+                reports[scope] = read_scope(directory, scope)
+            verified.append(verify_cases(row, rid, reports[scope]))
     return verified
 
 
@@ -92,6 +106,9 @@ def main():
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--plan", action="store_true")
     operation.add_argument("--results", type=Path)
+    parser.add_argument("--core")
+    parser.add_argument("--history", type=Path)
+    parser.add_argument("--historical-receipt", type=Path)
     args = parser.parse_args()
     selected = version_selection.package_ids(ROOT, json.loads(args.packages))
     rows = requirements(ROOT, json.loads(POLICY.read_text()), selected)
@@ -103,8 +120,22 @@ def main():
                     stream.write(f"{key}={str(item).lower() if type(item) is bool else item}\n")
         print(json.dumps(value))
     else:
+        import windows_case_history as history
+        reviewed = history.active(ROOT, selected, args.core)
+        if reviewed is not None:
+            require(args.history and args.historical_receipt, "Reviewed Windows carry needs its own originals and receipt")
+            rows, historical = history.audit(reviewed, rows, args.results, args.history)
+        else:
+            require(not args.history or not args.history.exists(), "Unreviewed historical test evidence")
+            historical = None
         verified = verify(args.results, rows)
-        print(json.dumps(dict(requiredGroups=len(verified), passed=sum(row["passed"] for row in verified))))
+        result = dict(requiredGroups=len(verified), passed=sum(row["passed"] for row in verified))
+        if historical:
+            with args.historical_receipt.open("xb") as output:
+                output.write(history.inputs.canonical(historical) + b"\n")
+            result["historicalGroups"] = len(historical["groups"])
+            result["historicalPassed"] = sum(row["passed"] for row in historical["groups"])
+        print(json.dumps(result))
 
 
 if __name__ == "__main__":
