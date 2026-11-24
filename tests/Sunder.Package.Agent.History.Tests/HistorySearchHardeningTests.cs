@@ -1378,7 +1378,7 @@ public sealed class HistorySearchHardeningTests
     {
         using var scope = RegressionTestPackageScope.Create();
         await using var services = CreateRuntime(scope, new RegressionTestExtensionCatalog());
-        AsyncGate? nextProjectionWriteBlocker = null;
+        AsyncGate? nextRebuildBlocker = null;
         var workspace = services.GetRequiredService<AgentWorkspaceService>().CreateWorkspace("Drain worker");
         var sessions = services.GetRequiredService<AgentSessionService>();
         var session = sessions.CreateSession("Drain worker", workspaceId: workspace.WorkspaceId);
@@ -1401,9 +1401,9 @@ public sealed class HistorySearchHardeningTests
         Assert.NotNull(lifetimeField);
         Assert.NotNull(signalField);
         var operationGate = Assert.IsType<SemaphoreSlim>(operationGateField?.GetValue(indexer));
-        indexer.BeforeTurnProjectionWriteAsync = () =>
+        indexer.AfterSessionScanAsync = (_, _) =>
         {
-            var blocker = Interlocked.Exchange(ref nextProjectionWriteBlocker, null);
+            var blocker = Interlocked.Exchange(ref nextRebuildBlocker, null);
             return blocker is null
                 ? ValueTask.CompletedTask
                 : new ValueTask(blocker.EnterAndWaitAsync());
@@ -1416,11 +1416,15 @@ public sealed class HistorySearchHardeningTests
         Assert.NotNull(oldSignal);
 
         var oldWorkerBlocker = new AsyncGate();
-        Assert.Null(Interlocked.Exchange(ref nextProjectionWriteBlocker, oldWorkerBlocker));
+        Assert.Null(Interlocked.Exchange(ref nextRebuildBlocker, oldWorkerBlocker));
         try
         {
+            // Appending a turn can coalesce into a whole-session reindex instead
+            // of hitting a per-turn write hook. Park real work in the explicit
+            // rebuild, which owns the same operation gate this test exercises.
+            indexer.RequestRebuild();
+            await WaitForTaskAsync(oldWorkerBlocker.Entered, "old worker rebuild checkpoint");
             sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "blocked-restart-anchor");
-            await WaitForTaskAsync(oldWorkerBlocker.Entered, "old worker projection-write checkpoint");
             Assert.Equal(0, operationGate.CurrentCount);
             await AssertStopCancellationWhileWorkerBlockedAsync(indexer, oldLifetime, "old worker");
             var restart = indexer.StartAsync();
@@ -1446,13 +1450,14 @@ public sealed class HistorySearchHardeningTests
         Assert.True(oldWorker.IsCompleted);
 
         var replacementWorkerBlocker = new AsyncGate();
-        Assert.Null(Interlocked.Exchange(ref nextProjectionWriteBlocker, replacementWorkerBlocker));
+        Assert.Null(Interlocked.Exchange(ref nextRebuildBlocker, replacementWorkerBlocker));
         try
         {
-            sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "blocked-dispose-anchor");
+            indexer.RequestRebuild();
             await WaitForTaskAsync(
                 replacementWorkerBlocker.Entered,
-                "replacement worker projection-write checkpoint");
+                "replacement worker rebuild checkpoint");
+            sessions.AppendTextTurn(session.SessionId, AgentMessageRole.Assistant, "blocked-dispose-anchor");
             Assert.Equal(0, operationGate.CurrentCount);
             await AssertStopCancellationWhileWorkerBlockedAsync(
                 indexer,

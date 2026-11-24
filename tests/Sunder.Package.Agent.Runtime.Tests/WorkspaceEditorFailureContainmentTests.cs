@@ -47,9 +47,14 @@ public sealed class WorkspaceEditorFailureContainmentTests
         var previousRefresh = host.ViewModel.CurrentEditorSectionRefresh;
         try
         {
+            using var discoveryDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            // Initialization can finish before the catalog observer takes its
+            // initial snapshot. Publish after that cursor so this is a change,
+            // not just a provider already present in the observer's snapshot.
+            await host.EditorCatalogWatching.WaitAsync(discoveryDeadline.Token);
             host.Catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors,
                 new ScriptedWorkspaceEditorContributor("other-target", "irrelevant", "Irrelevant settings"));
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await entered.Task.WaitAsync(discoveryDeadline.Token);
             await WaitUntilAsync(() => !ReferenceEquals(previousRefresh, host.ViewModel.CurrentEditorSectionRefresh));
             Assert.False(host.ViewModel.IsBusy);
             Assert.Equal("Ready", host.ViewModel.DetailPhase.ToString());
@@ -414,24 +419,24 @@ public sealed class WorkspaceEditorFailureContainmentTests
     private sealed class EditorTestHost : IDisposable
     {
         private readonly RegressionTestPackageScope _scope;
+        private readonly PausedServiceProviderEvents<AppServices.IWorkspaceEditorService> _catalogEvents;
 
         private EditorTestHost(
             RegressionTestPackageScope scope,
             RegressionTestExtensionCatalog catalog,
             AgentWorkspacesViewModel viewModel,
             AgentWorkspaceRecord? secondWorkspace,
-            Action resumeCatalogNotifications)
+            PausedServiceProviderEvents<AppServices.IWorkspaceEditorService> catalogEvents)
         {
             _scope = scope;
             Catalog = catalog;
             ViewModel = viewModel;
             SecondWorkspace = secondWorkspace;
-            _resumeCatalogNotifications = resumeCatalogNotifications;
+            _catalogEvents = catalogEvents;
         }
 
-        private readonly Action _resumeCatalogNotifications;
-
-        public void ResumeCatalogNotifications() => _resumeCatalogNotifications();
+        public Task EditorCatalogWatching => _catalogEvents.Watching;
+        public void ResumeCatalogNotifications() => _catalogEvents.Resume();
 
         public RegressionTestExtensionCatalog Catalog { get; }
 
@@ -499,7 +504,7 @@ public sealed class WorkspaceEditorFailureContainmentTests
                 {
                     await viewModel.CurrentEditorSectionRefresh.WaitAsync(TimeSpan.FromSeconds(2));
                 }
-                return new EditorTestHost(scope, catalog, viewModel, secondWorkspace, events.Resume);
+                return new EditorTestHost(scope, catalog, viewModel, secondWorkspace, events);
             }
             catch
             {
