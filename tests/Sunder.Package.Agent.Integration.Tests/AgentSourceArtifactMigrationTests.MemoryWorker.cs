@@ -64,7 +64,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());
         var dependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
         Assert.Equal("younics.ai.agent", dependency.GetProperty("packageId").GetString());
-        Assert.Equal(">=2.0.0 <3.0.0", dependency.GetProperty("versionRange").GetString());
+        using var contractLock = JsonDocument.Parse(selected);
+        var selection = contractLock.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
+        Assert.Equal(selection.GetProperty("requestedVersionRange").GetString(), dependency.GetProperty("versionRange").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
         Assert.Equal(2, value.GetProperty("targets").GetArrayLength());
         await ProjectCanonicalWorker(worker, driver);

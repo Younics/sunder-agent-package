@@ -14,8 +14,6 @@ public sealed class GeneratedPackageManifestTests
     {
         var runtimePackages = AgentPackageRepositoryInventory.GetRuntimePackageProjects()
             .ToArray();
-        var appFamilies = 0;
-        var runtimeOnlyFamilies = 0;
         using var inventoryDocument = JsonDocument.Parse(File.ReadAllText(Path.Combine(
             AgentPackageRepositoryInventory.RepositoryRoot.FullName,
             "packages.json")));
@@ -28,7 +26,8 @@ public sealed class GeneratedPackageManifestTests
                 static package => package.GetProperty("releaseTitle").GetString()!,
                 StringComparer.Ordinal);
 
-        Assert.NotEmpty(runtimePackages);
+        Assert.Equal(CurrentContractInventory.Packages.Select(package => package.PackageId).Order(StringComparer.Ordinal),
+            runtimePackages.Select(package => package.FamilyId).Order(StringComparer.Ordinal));
 
         foreach (var package in runtimePackages)
         {
@@ -113,7 +112,9 @@ public sealed class GeneratedPackageManifestTests
             {
                 var baseAgent = Assert.Single(dependencies);
                 Assert.Equal("younics.ai.agent", baseAgent.GetProperty("packageId").GetString());
-                Assert.Equal(">=2.0.0 <3.0.0", baseAgent.GetProperty("versionRange").GetString());
+                using var contractLock = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(package.DirectoryPath, "sunder-contracts.lock.json")));
+                var selection = contractLock.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
+                Assert.Equal(selection.GetProperty("requestedVersionRange").GetString(), baseAgent.GetProperty("versionRange").GetString());
                 Assert.Equal(packageId == "younics.sunder.package.maker" ? "optional" : "required", baseAgent.GetProperty("presence").GetString());
             }
             var expected = expectedCapabilities.GetProperty(packageId)
@@ -128,19 +129,19 @@ public sealed class GeneratedPackageManifestTests
             Assert.Equal(RuntimeInformation.RuntimeIdentifier, workerTarget.GetProperty("rid").GetString());
             Assert.Equal($"lib/{package.Name}.dll", workerTarget.GetProperty("entryPoint").GetString());
             var appTarget = targets.Where(target => target.GetProperty("role").GetString() == "app").ToArray();
-            Assert.InRange(appTarget.Length, 0, 1);
-            if (appTarget.Length == 0)
+            var packagePolicy = CurrentContractInventory.Owner(packageId);
+            if (!packagePolicy.HasApp)
             {
-                runtimeOnlyFamilies++;
+                Assert.Empty(appTarget);
                 Assert.Single(targets);
             }
             else
             {
-                appFamilies++;
+                var app = Assert.Single(appTarget);
                 Assert.Equal(2, targets.Length);
-                Assert.Equal("avalonia", appTarget[0].GetProperty("kind").GetString());
-                Assert.Equal(RuntimeInformation.RuntimeIdentifier, appTarget[0].GetProperty("rid").GetString());
-                Assert.Equal($"lib/{package.Name}.App.dll", appTarget[0].GetProperty("entryPoint").GetString());
+                Assert.Equal("avalonia", app.GetProperty("kind").GetString());
+                Assert.Equal(RuntimeInformation.RuntimeIdentifier, app.GetProperty("rid").GetString());
+                Assert.Equal($"lib/{package.Name}.App.dll", app.GetProperty("entryPoint").GetString());
             }
             var executionRuntime = workerTarget.GetProperty("executionRuntime");
             Assert.Equal("sunder.runtime.dotnet", executionRuntime.GetProperty("id").GetString());
@@ -266,9 +267,6 @@ public sealed class GeneratedPackageManifestTests
                 Assert.False(File.Exists(stackSdkPath), $"Host-shared Stack SDK assembly was emitted for {package.Name}: {stackSdkPath}");
             }
         }
-        Assert.Equal(15, runtimePackages.Length);
-        Assert.Equal(12, appFamilies);
-        Assert.Equal(3, runtimeOnlyFamilies);
     }
 
     internal static IReadOnlySet<string> CoveredProjectPaths

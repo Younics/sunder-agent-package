@@ -228,10 +228,9 @@ public sealed partial class RepositoryArchitectureTests
 
         var inventoryPath = Path.Combine(root, "packages.json");
         using var inventory = JsonDocument.Parse(File.ReadAllBytes(inventoryPath));
-        Assert.Equal("2.0.0", inventory.RootElement.GetProperty("releaseVersion").GetString());
+        Assert.True(SemanticVersion.TryParse(inventory.RootElement.GetProperty("releaseVersion").GetString(), out _));
+        CurrentContractInventory.AssertPackageInventory(inventory.RootElement);
         var packages = inventory.RootElement.GetProperty("packages").EnumerateArray().ToArray();
-        Assert.Equal(15, packages.Length);
-        Assert.All(packages, package => Assert.Equal("sunderpkg", package.GetProperty("artifactType").GetString()));
         Assert.DoesNotContain(packages, package => package.GetProperty("key").GetString() == "agent-protocol");
 
         foreach (var package in inventory.RootElement.GetProperty("capabilities").EnumerateObject())
@@ -592,7 +591,7 @@ public sealed partial class RepositoryArchitectureTests
         Assert.Equal("true", GetSingleProperty(buildProperties, "TreatWarningsAsErrors"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "Deterministic"));
         Assert.Equal("true", GetSingleProperty(buildProperties, "EnableNETAnalyzers"));
-        Assert.Equal("2.0.0", GetSingleProperty(buildProperties, "VersionPrefix"));
+        Assert.True(SemanticVersion.TryParse(GetSingleProperty(buildProperties, "VersionPrefix"), out _));
         Assert.Empty(buildProperties.Descendants("SunderAgentVersion"));
         Assert.Equal("$(VersionPrefix)", GetSingleProperty(buildProperties, "Version"));
         var buildTargets = XDocument.Load(Path.Combine(repositoryRoot, "Directory.Build.targets"));
@@ -612,7 +611,6 @@ public sealed partial class RepositoryArchitectureTests
         var sunderPackageVersions = packageProperties.Descendants("PackageVersion")
             .Where(reference => reference.Attribute("Include")?.Value.StartsWith("Sunder.", StringComparison.Ordinal) == true)
             .ToArray();
-        Assert.Equal(5, sunderPackageVersions.Length);
         Assert.All(sunderPackageVersions, reference => Assert.True(
             SemanticVersion.TryParse(reference.Attribute("Version")?.Value, out _),
             $"{reference.Attribute("Include")?.Value} must declare its own ordinary NuGet version."));
@@ -723,8 +721,13 @@ public sealed partial class RepositoryArchitectureTests
             Assert.DoesNotContain("SunderPackageDependency", File.ReadAllText(package.MetadataPath), StringComparison.Ordinal);
             using var currentLock = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(package.DirectoryPath, "sunder-contracts.lock.json")));
             var currentOwner = currentLock.RootElement.GetProperty("packageArtifacts").GetProperty("younics.ai.agent");
-            Assert.Equal(">=2.0.0 <3.0.0", currentOwner.GetProperty("requestedVersionRange").GetString());
-            Assert.Equal("2.0.0", currentOwner.GetProperty("selectedPackageVersion").GetString());
+            var range = currentOwner.GetProperty("requestedVersionRange").GetString();
+            var version = currentOwner.GetProperty("selectedPackageVersion").GetString();
+            Assert.True(PackageVersionRange.TryParse(range, out var requested), $"{package.Name}: invalid locked Agent range '{range}'.");
+            Assert.True(SemanticVersion.TryParse(version, out var selected), $"{package.Name}: invalid locked Agent version '{version}'.");
+            Assert.True(requested.IsSatisfiedBy(selected), $"{package.Name}: locked Agent {version} is outside '{range}'.");
+            if (selected.Prerelease is not null)
+                Assert.True(currentOwner.GetProperty("includePrerelease").GetBoolean());
             if (package.Name == "Sunder.Package.Agent.Builder")
             {
                 var import = currentLock.RootElement.GetProperty("packageImports").GetProperty("younics.ai.agent");

@@ -11,10 +11,12 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var canonical = await BuildAndPackCanonicalFamily(root, "Builder", "BuilderWorker", cache, ownerArchive);
         var worker = canonical.Directory;
         var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
+        string? requestedAgentRange;
         using (var locked = JsonDocument.Parse(selected))
         {
             var artifact = Assert.Single(locked.RootElement.GetProperty("packageArtifacts").EnumerateObject());
             Assert.Equal("younics.ai.agent", artifact.Name);
+            requestedAgentRange = artifact.Value.GetProperty("requestedVersionRange").GetString();
             var api = Assert.Single(locked.RootElement.GetProperty("packageImports").EnumerateObject());
             Assert.Equal("younics.ai.agent", api.Name);
             Assert.Equal("optional", api.Value.GetProperty("presence").GetString());
@@ -53,7 +55,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.All(runtimeUses, entry => Assert.False(entry.GetProperty("required").GetBoolean()));
         var agentDependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
         Assert.Equal("younics.ai.agent", agentDependency.GetProperty("packageId").GetString());
-        Assert.Equal(">=2.0.0 <3.0.0", agentDependency.GetProperty("versionRange").GetString());
+        Assert.Equal(requestedAgentRange, agentDependency.GetProperty("versionRange").GetString());
         Assert.Equal("optional", agentDependency.GetProperty("presence").GetString());
         var import = Assert.Single(value.GetProperty("packageApiImports").EnumerateArray());
         Assert.Equal("younics.ai.agent", import.GetProperty("packageId").GetString());

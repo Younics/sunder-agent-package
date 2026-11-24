@@ -77,14 +77,21 @@ class SelectionTests(unittest.TestCase):
                 self.assertNotIn("ownerPrincipalId", r.load(destination))
                 self.assertIn(f"selected_count={0 if published else 15}\n", output.read_text())
 
-    def test_one_bump_selects_only_that_package_with_mixed_versions(self):
+    def test_patch_minor_and_major_select_only_the_changed_package(self):
+        row = next(item for item in self.rows if item["packageId"] == "younics.ai.agent.tools.web")
         self.published()
-        row = self.rows[9]
-        (self.source / row["projectPath"]).write_text('<Project><PropertyGroup><Version>2.1.0</Version></PropertyGroup></Project>')
-        self.registry.pop(row["packageId"])
-        result = self.plan()
-        self.assertEqual([(row["packageId"], "2.1.0")], [(p["packageId"], p["version"]) for p in selection.selected(result)])
-        self.assertEqual(14, sum(p["retainedArchive"] is not None for p in result["packages"]))
+        original = self.plan()
+        retained = [item for item in original["packages"] if item["packageId"] != row["packageId"]]
+        for version in ("2.0.1", "2.4.0", "3.0.0", "3.0.0-rc.1"):
+            with self.subTest(version=version):
+                self.published()
+                (self.source / row["projectPath"]).write_text(
+                    f"<Project><PropertyGroup><Version>{version}</Version></PropertyGroup></Project>")
+                self.registry.pop(row["packageId"])
+                result = self.plan()
+                self.assertEqual([(row["packageId"], version)], [(item["packageId"], item["version"]) for item in selection.selected(result)])
+                self.assertEqual(retained, [item for item in result["packages"] if not item["selected"]])
+                self.assertEqual(original["lockSetSha256"], result["lockSetSha256"])
 
     def test_newer_major_does_not_block_a_supported_major_patch(self):
         self.published()
