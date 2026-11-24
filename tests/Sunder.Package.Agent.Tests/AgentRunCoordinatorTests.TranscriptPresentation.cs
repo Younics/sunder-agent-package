@@ -1038,6 +1038,7 @@ public sealed partial class AgentRunCoordinatorTests
     public async Task AgentChatViewModel_JumpToLatestReloadsDetachedTranscriptAndResumesLiveRows()
     {
         const string toolId = "fetch_page";
+        var dispatcher = InlineAgentPresentationDispatcher.Instance;
 
         using var runtime = AgentTestRuntime.Create(
             new ScriptedProvider((_, _) => Complete("done")),
@@ -1058,42 +1059,54 @@ public sealed partial class AgentRunCoordinatorTests
             runtime.WorkspaceService,
             runtime.SessionService,
             runtime.PermissionService,
-            runtime.RunCoordinator
+            runtime.RunCoordinator,
+            dispatcher
         );
         await viewModel.InitializeAsync();
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(2));
 
-        viewModel.DetachTranscriptFromLatest();
-        runtime.SessionService.AppendTextTurn(
+        await dispatcher.InvokeAsync(() => Assert.True(viewModel.DetachTranscriptFromLatest()));
+        var detached = runtime.SessionService.AppendTextTurn(
             sessionId,
             AgentMessageRole.Assistant,
             "live while detached"
         );
 
-        Assert.DoesNotContain(
-            viewModel.Messages.OfType<AgentTextTranscriptRowViewModel>(),
-            row => row.Content == "live while detached"
-        );
-        Assert.True(viewModel.HasNewerTranscriptRows);
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.DoesNotContain(viewModel.Messages, row => row.RowId == detached.TurnId);
+            Assert.True(viewModel.HasNewerTranscriptRows);
+            viewModel.JumpToLatestTranscriptCommand.Execute(null);
+        });
+        // Wait for the authoritative refresh rather than treating a paging flag
+        // as a completion signal. Read the projected rows on their dispatcher.
+        await viewModel.PendingTranscriptActivities.WaitAsync(TimeSpan.FromSeconds(2));
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.False(viewModel.IsTranscriptLoading);
+            Assert.False(viewModel.HasNewerTranscriptRows);
+            Assert.True(viewModel.IsTranscriptFollowingLatest);
+            AssertLatestTurn(detached.TurnId, "live while detached");
+        });
 
-        viewModel.JumpToLatestTranscriptCommand.Execute(null);
-
-        await WaitUntilAsync(() => !viewModel.HasNewerTranscriptRows);
-        Assert.False(viewModel.HasNewerTranscriptRows);
-        Assert.Equal(
-            "live while detached",
-            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
-        );
-
-        runtime.SessionService.AppendTextTurn(
+        var following = runtime.SessionService.AppendTextTurn(
             sessionId,
             AgentMessageRole.Assistant,
             "live after jump"
         );
 
-        Assert.Equal(
-            "live after jump",
-            Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]).Content
-        );
+        await dispatcher.InvokeAsync(() =>
+        {
+            Assert.False(viewModel.HasNewerTranscriptRows);
+            AssertLatestTurn(following.TurnId, "live after jump");
+        });
+
+        void AssertLatestTurn(Guid turnId, string text)
+        {
+            var row = Assert.IsType<AgentTextTranscriptRowViewModel>(viewModel.Messages[^1]);
+            Assert.Equal(turnId, row.RowId);
+            Assert.Equal(text, row.Content);
+        }
     }
 
     [Fact]
