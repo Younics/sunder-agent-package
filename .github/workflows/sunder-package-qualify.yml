@@ -18,6 +18,7 @@ concurrency:
 jobs:
   selection:
     name: Select explicit qualification inputs
+    if: inputs.packages != 'recovery-intel-2.0.0'
     runs-on: ubuntu-24.04
     outputs:
       packages: ${{ steps.selection.outputs.packages }}
@@ -44,3 +45,80 @@ jobs:
       packages: ${{ needs.selection.outputs.packages }}
       core_commit: ${{ needs.selection.outputs.core_commit }}
       package-tests: true
+
+  recovery-intel:
+    name: Native Intel recovery proof · Agent 2.0.0
+    if: inputs.packages == 'recovery-intel-2.0.0'
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      actions: read
+    env:
+      NUGET_SOURCE: https://api.nuget.org/v3/index.json
+      SUNDER_RECOVERY_ORIGINAL: 5cb5cc1ed76a52eeb6fb358772bd28b2d93e20cb
+      SUNDER_RECOVERY_TEST_CORE: 0d0497f9712358218e715f5a325594b655a1b01d
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Refuse proof execution outside the recovery branch
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
+          test "$GITHUB_REF" = refs/heads/fix/agent-2.0.0-release-recovery
+          test "$GITHUB_WORKFLOW_REF" = "$GITHUB_REPOSITORY/.github/workflows/sunder-package-qualify.yml@$GITHUB_REF"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SUNDER_RECOVERY_ORIGINAL }}
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Younics/sunder-core
+          ref: ${{ env.SUNDER_RECOVERY_TEST_CORE }}
+          path: sunder-core
+          persist-credentials: false
+      - name: Check the controller and require native Intel
+        run: |
+          set -euo pipefail
+          test "$(git -C controller rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(uname -m)" = x86_64
+          test "$(sysctl -in sysctl.proc_translated)" != 1
+          sw_vers
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with:
+          node: 'false'
+      - name: Authenticate and collect original archives, Maker feed, catalog and TRXs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B controller/scripts/release/collect_agent_2_0_0.py \
+            sunder-agent-package sunder-core "$RUNNER_TEMP/agent-recovery-inputs" osx-x64
+      - name: Exercise exact archives using repaired Core and unchanged assertions
+        id: proof
+        run: |
+          python3 -B controller/scripts/release/run_agent_2_0_0_recovery.py \
+            sunder-agent-package sunder-core "$RUNNER_TEMP/agent-recovery-inputs" \
+            "$RUNNER_TEMP/agent-intel-proof" osx-x64 --intel-proof
+      - name: Retain proof and failures, not a publication handoff
+        if: always() && steps.proof.outcome != 'skipped' && steps.proof.outcome != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-2.0.0-intel-proof-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/agent-intel-proof/*.log
+            ${{ runner.temp }}/agent-intel-proof/reports/*.json
+            ${{ runner.temp }}/agent-intel-proof/reports/*.trx
+            ${{ runner.temp }}/agent-intel-proof/reports/apps/
+            ${{ runner.temp }}/agent-intel-proof/reports/maker/
+            ${{ runner.temp }}/agent-intel-proof/reports/scope/
+            ${{ runner.temp }}/agent-intel-proof/reports/maker-inputs/*.log
+            ${{ runner.temp }}/agent-intel-proof/reports/maker-inputs/*.json
+          if-no-files-found: error
+          retention-days: 90

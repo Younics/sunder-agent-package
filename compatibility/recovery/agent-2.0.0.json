@@ -1,0 +1,732 @@
+{
+  "status": "local-review-inputs-only",
+  "approved": false,
+  "testExecuted": false,
+  "publishable": false,
+  "archiveSource": {
+    "repository": "Younics/sunder-agent-package",
+    "ref": "refs/heads/main",
+    "commit": "5cb5cc1ed76a52eeb6fb358772bd28b2d93e20cb",
+    "tree": "5d609cdc683850d02c97a2b4f1cdf40b8e0f92ac",
+    "qualificationRun": 45122704634,
+    "releaseRun": 45150131370,
+    "releaseAttempt": 3,
+    "historicalConclusion": "failure",
+    "selectionSha256": "4c413c7220a2f6f39c3e01b05dfc84d62b69d132c3384967ef4f1ad6e88097b3",
+    "selectionArtifact": {
+      "id": 14805898008,
+      "name": "14805898008-verified.zip",
+      "size": 836,
+      "sha256": "5758c472c9ebd8789f444bed8c714f22535408e0a87eeffc8371cbcb8aef77b0"
+    },
+    "dependencyArtifact": {
+      "id": 14807177215,
+      "name": "14807177215-verified.zip",
+      "size": 32018274,
+      "sha256": "82c7bf44cc32eb2ff4f70ba5e63413a57427a73a3628940affd13109f9659646"
+    },
+    "lockSetSha256": "371396070d642a70bfbbede4392e0f40b433684c85c315bece4f365c810b1a85"
+  },
+  "buildInputs": {
+    "commit": "5a51f2040634bfef166516b04342f5115fb1be6a",
+    "packageBuildVersion": "1.1.0",
+    "sdkVersion": "1.0.2",
+    "dotnetSdk": "10.0.403",
+    "makerFeeds": {
+      "win-x64": {
+        "artifact": 14827606491,
+        "zipDigest": "sha256:4dfc496a7e0037d642f7874e7f4a24288a442b93ede8c4d482e014f81fcca322",
+        "zipSize": 320247910,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "c7ca90ed74929be372ae775c2a6f0f2e650ec268626da76e044921ad04536381",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461448,
+            "sha256": "bacfe873ad54e5707d29a75adcb0feaa8a92b314e3d3826c360ec73cdc3e5245"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321470,
+            "sha256": "c41410735605aeac7f77af4876d7598bde3d9845f1e6af2088bec2098a4166f0"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 356223,
+            "sha256": "df827725f8c2793fc403ac7664f15d2217b7c2a759a4aca818b1ebbb7b9f07ed"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405953,
+            "sha256": "231e51f34969d06010fb471982c91f8aecdb065e9a7424f043eb35c4aacd5733"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052506,
+            "sha256": "4c2dd273594c934bde38a5d93737c2e28fa0d9bcacfd32c53576eb8a06bebaec"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 302266,
+            "sha256": "f20650c7af2fb06d8dba3cd52a08c6f6e8a8e103e77e2f8476f85e1d7379b066"
+          }
+        ]
+      },
+      "win-arm64": {
+        "artifact": 14828040977,
+        "zipDigest": "sha256:9f467f2082bde5b23019fb773c0f7b104b25ef94e38c5527ff3d518efdb6d652",
+        "zipSize": 320028041,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "318c77f2082abb898f32be6363d10dc7cc3d566ed2457c1f3b9708496d27a703",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461452,
+            "sha256": "e36968938a4b2400b693b7ee1a48c561f0981291fa4e0f362f02241f1ba7ddc1"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321470,
+            "sha256": "17fbbdcf3bac1149d356a6a2958c911a8d8e487b7e536775ff68ff51acf65705"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 356216,
+            "sha256": "530149ee6558153ab4e5057a735dff61aaa585bc9344d0f016396cc1700db48e"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405953,
+            "sha256": "725163e3e067191ef883d7555182a3b7071aef737628e364c8fe635b7c78a436"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052492,
+            "sha256": "9048ea0917834746a7cf771b595ff19f7a19523bce504b59e68f2ab488b5761f"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 302262,
+            "sha256": "11736017fd6e867a7cbcec7077d24d5db631984e4876fb26a1b37b164b9ef1e8"
+          }
+        ]
+      },
+      "linux-x64": {
+        "artifact": 14826374955,
+        "zipDigest": "sha256:9f303a40451431fdeb9e423a5f20aeb0fedcc4dff51e27225b7101525ff98805",
+        "zipSize": 319401044,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "418fd05bfeac6bf00a4cdc1f4ac80c5bdf5625341e1742696811d81b6d464972",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461150,
+            "sha256": "4b74f46ed3f052e59ea566899b2db267e98de0eb480bf9f94dbb9afa7d2516ad"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321249,
+            "sha256": "edfb2744e43d83a18d022d0a0fab0c8e68a8da41b40749955c2c991a8fe44e43"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 355985,
+            "sha256": "5c7b46d65c35d0fed3b8cb8681a2604d36b297af67cf5533bfcd05a9c78d1395"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405737,
+            "sha256": "110cfb67052b55cd6114c96cb7d4d19999dbcb8e74c544102b4f91bc569b6543"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052158,
+            "sha256": "1620617d6ade344bb55b1ca80fe7b58d3fd58df75e06039798f1ce5d224a97a1"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 301974,
+            "sha256": "49bff408875f4b36af521f2ab74d90785717b0d8a77805ee850103dd041b5de7"
+          }
+        ]
+      },
+      "linux-arm64": {
+        "artifact": 14827307635,
+        "zipDigest": "sha256:76b8e9418f90a36b5a840bf9274997a7142328b750988221f366900c7fad81fb",
+        "zipSize": 319392534,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "fd3686364ebe623f9f14584fbee5dd12c6e71e47cf1f80099e7fa09966228cb1",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461150,
+            "sha256": "911f6fa0f7abc3339aa4d9214f689627ebfe9d7f47634b40921c391ff66700f0"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321248,
+            "sha256": "fdf0ef1c735f472fc2e3eb3d4d181a268d0acb166b7e74787bda9e75152eeabe"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 355990,
+            "sha256": "e02a081eb6548fe2df011202096361ce6a26e4a10f8c30efa86dfd1da2192e82"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405743,
+            "sha256": "54dd8ba0fc671383df108f139d055b5cc2b0f76c432435325e97fbc259828e11"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052141,
+            "sha256": "2444d09589496b75deab3b6b631833a002a8392369ecd1e65a1bd9a4e3fb4d9f"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 301981,
+            "sha256": "c743b85b6a0df02ec6efe7855c6f2c7e44c840db243def16e0164c24b27f30e3"
+          }
+        ]
+      },
+      "osx-x64": {
+        "artifact": 14828052625,
+        "zipDigest": "sha256:43ecdeaedd81a3d91a45e66962c06c7a8d04a7efe6be4baef024af3ac9419fd8",
+        "zipSize": 319395431,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "0b6199263c17e2f40ea515f8acf8b06f94238abb5f45d1d058408d82a75d68e7",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461147,
+            "sha256": "a5e9da604615ec411d99a369d1debf83579a33e73ecf2eb8e31949544e682d69"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321249,
+            "sha256": "dedce6f5887bb85c4a523fb4f9ef20a196a37bfd03601bf645e1c7ffcf6b3634"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 355977,
+            "sha256": "c2b7fad954585731b0bea83dff6b70079f3680f802e273c3c9d506fb531530e5"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405738,
+            "sha256": "4b31d1f43e1494a9173c56e4a140eb6456799b80456d429e6eeb362ae4ae2353"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052146,
+            "sha256": "cf1ea3802a2270dc2ff9d5be158cfe71b625b7276a29f2a27586915d06fb229e"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 301979,
+            "sha256": "3451d5317efdf48c839783864c40fc878dda4cbe2c310bc2a86353f588af8b48"
+          }
+        ]
+      },
+      "osx-arm64": {
+        "artifact": 14827294883,
+        "zipDigest": "sha256:d70b5993016e4af8a6258f8ea1d0559857cbe130517e1e5423acc784b59971b5",
+        "zipSize": 319360873,
+        "expiresAt": "2027-02-21T14:16:50Z",
+        "makerInputsDigest": "c655db93518616c6f53c566f54cce4a8275b534a5c18d99a9a9dcc04555ce90a",
+        "catalogSha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210",
+        "feed": [
+          {
+            "packageId": "Sunder.Sdk",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.1.0.2.nupkg",
+            "size": 461151,
+            "sha256": "1ae4308dab7b533282ddf63210de80911c5f351496a31db8de2b4c03378ce71e"
+          },
+          {
+            "packageId": "Sunder.Sdk.Avalonia",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Avalonia.1.0.2.nupkg",
+            "size": 321255,
+            "sha256": "4621f58e0c2f9c53dc138e77a1a97c65f9b7f31cd9c0394f8b8ff928d5ccf8a4"
+          },
+          {
+            "packageId": "Sunder.Sdk.Stacks",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Stacks.1.0.2.nupkg",
+            "size": 355981,
+            "sha256": "0e63b79feace99a0eed9790eba0b91d75da0ebb55f10cf54cfc69908e5a51be8"
+          },
+          {
+            "packageId": "Sunder.Sdk.Worker",
+            "version": "1.0.2",
+            "name": "Sunder.Sdk.Worker.1.0.2.nupkg",
+            "size": 405745,
+            "sha256": "e3ed99a97f462dc7343725105ca592d329caae056ad77b9f74c69d0bfa35b2ac"
+          },
+          {
+            "packageId": "Sunder.Package.Build",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Build.1.1.0.nupkg",
+            "size": 5052160,
+            "sha256": "57503124f36b8d0376fe54dd6f2a79e5381f45869937b51ae320254cfda6a675"
+          },
+          {
+            "packageId": "Sunder.Package.Templates",
+            "version": "1.1.0",
+            "name": "Sunder.Package.Templates.1.1.0.nupkg",
+            "size": 301977,
+            "sha256": "59fac95e414a0e84c28291df7a72e76cf2cf086b9579b7dde949a697423e6504"
+          }
+        ]
+      }
+    },
+    "platformCatalog": {
+      "version": "1.1.0",
+      "sha256": "7c79ee38af47a3b7c45fb9b9715233887a9f581bea354d6d874144e545fa6210"
+    }
+  },
+  "testInputs": {
+    "repository": "Younics/sunder-core",
+    "commit": "0d0497f9712358218e715f5a325594b655a1b01d",
+    "tree": "5c504cb690d9d3a65ec00345c248a33fc0962f27",
+    "run": 45250160914,
+    "attempt": 2,
+    "releases": {
+      "app": {
+        "id": 455942451,
+        "tag": "app/v1.1.1",
+        "assets": {
+          "native-release-plan.json": {
+            "id": 784390978,
+            "size": 256,
+            "digest": "sha256:e2828bc2e8c2bc3b277ff896a25bd0bc9289e3a1fc8a315b935a21fdf1250a91"
+          },
+          "release-provenance.json": {
+            "id": 784662005,
+            "size": 3900,
+            "digest": "sha256:6cce8aec3a7f1e4162a7e51310d7d38bcb1ac10a18d06f22d117be22075458e9"
+          },
+          "release-sbom.spdx.json": {
+            "id": 784662234,
+            "size": 5788,
+            "digest": "sha256:e1484dab7ee20b16afee64a9ccda35f2c54e6e91241276f58284c4aeb2b618c7"
+          },
+          "releases.app-linux-arm64-stable.json": {
+            "id": 784664673,
+            "size": 270,
+            "digest": "sha256:56001147cc5695bdaabdff1e501ac9299fd7ce40e8c3ed742da9b3d41f91fff8"
+          },
+          "releases.app-linux-x64-stable.json": {
+            "id": 784667924,
+            "size": 268,
+            "digest": "sha256:e921658d605f040c52ee8208cf1568774b5769d4a3f0c7e6fdb74ab671c6a578"
+          },
+          "releases.app-osx-arm64-stable.json": {
+            "id": 784665212,
+            "size": 268,
+            "digest": "sha256:7c66fc0346f8f3e00d30388d75841a275721eef64505d888cc8c7b096f982175"
+          },
+          "releases.app-osx-x64-stable.json": {
+            "id": 784663232,
+            "size": 266,
+            "digest": "sha256:9c28eca011c032d389511dcdd1dd137a37a2ab73fbb89464459af971e92f81f9"
+          },
+          "releases.app-win-arm64-stable.json": {
+            "id": 784671412,
+            "size": 268,
+            "digest": "sha256:99bbd9abb4c355af36fa248601dbf6add201cac237c492d97c2c8c87f7db2312"
+          },
+          "releases.app-win-x64-stable.json": {
+            "id": 784669723,
+            "size": 266,
+            "digest": "sha256:2258a50de3a550b94fe37d91bf9e48062fbc36b4bc5dc47b3c8682e66db9f7aa"
+          },
+          "SHA256SUMS": {
+            "id": 784662119,
+            "size": 1967,
+            "digest": "sha256:2148f2e2fb55f3e4049f9d41ca07233aa85c442c768e911aad4f8d4c1c1fdfb3"
+          },
+          "Sunder-1.1.1-app-linux-arm64-stable-full.nupkg": {
+            "id": 784664117,
+            "size": 100165328,
+            "digest": "sha256:af1b3cf76f5a54c6e6093d6c649b7431e7d2252bea8d47e329bd782fe602bf41"
+          },
+          "Sunder-1.1.1-app-linux-x64-stable-full.nupkg": {
+            "id": 784667395,
+            "size": 104616095,
+            "digest": "sha256:9dfd556dd47ee306b0c4fd0344eb1242fa4b22a5cccce9bed37ea1b20a8fc9b2"
+          },
+          "Sunder-1.1.1-app-osx-arm64-stable-full.nupkg": {
+            "id": 784666360,
+            "size": 185223768,
+            "digest": "sha256:8713084cca019111768d956ee81a4f76156e26707b2b09c3b53d31faa11268bc"
+          },
+          "Sunder-1.1.1-app-osx-x64-stable-full.nupkg": {
+            "id": 784662493,
+            "size": 196091742,
+            "digest": "sha256:fad77f7ca71f055ef0209739bed50fa325cd41e0fc9312207a052c1211804320"
+          },
+          "Sunder-1.1.1-app-win-arm64-stable-full.nupkg": {
+            "id": 784670721,
+            "size": 189631455,
+            "digest": "sha256:26eda19ea7f8df125168cbc8b8d0a7bd0555dd8cdde13a61d962081228230105"
+          },
+          "Sunder-1.1.1-app-win-x64-stable-full.nupkg": {
+            "id": 784668743,
+            "size": 197608335,
+            "digest": "sha256:49124464bd9a3060af8f7c7fda8457bd070c4202b7ed98c2bb6689972b3864dd"
+          },
+          "Sunder-app-linux-arm64-stable.AppImage": {
+            "id": 784664802,
+            "size": 101124616,
+            "digest": "sha256:e756f824ace943a47e9705adcee2727c31427f6f4775176a4a204f864f8a9ecc"
+          },
+          "Sunder-app-linux-x64-stable.AppImage": {
+            "id": 784666955,
+            "size": 105523704,
+            "digest": "sha256:13efee0034e7fd6a532a605f9f09831da4f690a247eda92e1ee39a8ee7d15bbf"
+          },
+          "Sunder-app-osx-arm64-stable.dmg": {
+            "id": 784665377,
+            "size": 184066331,
+            "digest": "sha256:3b0f4f461e0cad5a376d1159f0198f41a19de2bb6e680018c0bcef38fa68d9e0"
+          },
+          "Sunder-app-osx-x64-stable.dmg": {
+            "id": 784663375,
+            "size": 194115540,
+            "digest": "sha256:158063c70212e1df252f920660c212acf92e43f5b13fce3909f3dfa94d7e372a"
+          },
+          "Sunder-app-win-arm64-stable-Setup.exe": {
+            "id": 784669868,
+            "size": 195654840,
+            "digest": "sha256:8387b489b90a7d602640d3d45b5328843e9b1ea92c7a80e8386fce4bca26c7ba"
+          },
+          "Sunder-app-win-x64-stable-Setup.exe": {
+            "id": 784668020,
+            "size": 205237872,
+            "digest": "sha256:a30b3c642de1a3533d7e7a738d05e61c628f9329cbed720ad441b0e27ed71c68"
+          },
+          "toolchain.txt": {
+            "id": 784662367,
+            "size": 620,
+            "digest": "sha256:ebc37f4fbf2d086428e743afae183551eb4bc25743f75db9aa3e481cca48db96"
+          }
+        }
+      },
+      "host": {
+        "id": 455942637,
+        "tag": "host/v1.1.1",
+        "assets": {
+          "native-release-plan.json": {
+            "id": 784391570,
+            "size": 258,
+            "digest": "sha256:6943da77dfc8c51009f9f4a17adb6193bef86ebd5167350b637904daf89d99e3"
+          },
+          "release-provenance.json": {
+            "id": 784658584,
+            "size": 1837,
+            "digest": "sha256:9362373a38e77f966dd649b9c07729ae0e6aa98318e6282e12df404ae22064f7"
+          },
+          "release-sbom.spdx.json": {
+            "id": 784658914,
+            "size": 2389,
+            "digest": "sha256:77f4ce7ec77c0677d172dee9a07663fb32b2d6f7eab6c26125da6f9d03ca225a"
+          },
+          "SHA256SUMS": {
+            "id": 784658753,
+            "size": 737,
+            "digest": "sha256:d0c49e6bc70f8be9a0612d0eb07c866de3434daaf50bd0c2bed51bca9b6aaad7"
+          },
+          "sunder-runtime-host-1.1.1-linux-arm64.tar.gz": {
+            "id": 784660781,
+            "size": 94227123,
+            "digest": "sha256:e177634aec79e62c8d1db0543a0c8a15f60ac67ecae9f03e26e9b33a0b09974e"
+          },
+          "sunder-runtime-host-1.1.1-linux-x64.tar.gz": {
+            "id": 784659172,
+            "size": 99354818,
+            "digest": "sha256:3210cb7ca2ce44cff677190acc7d27f4da2d14482884f0f61def0872f2d2669d"
+          },
+          "sunder-runtime-host-1.1.1-osx-arm64.tar.gz": {
+            "id": 784659723,
+            "size": 91852509,
+            "digest": "sha256:02011629e25fdc3448998cb4d70604887a074b91a0459d3080eca44a6be715cc"
+          },
+          "sunder-runtime-host-1.1.1-osx-x64.tar.gz": {
+            "id": 784661173,
+            "size": 97139152,
+            "digest": "sha256:a8d1f62c1352e45ae2fe27def66d034efb893d80291ae839feafe75219de5c47"
+          },
+          "sunder-runtime-host-1.1.1-win-arm64.zip": {
+            "id": 784661936,
+            "size": 99712756,
+            "digest": "sha256:79d79c876132cd181403453fbf65b3c57207e9f486ec0ae080d5e7894d022150"
+          },
+          "sunder-runtime-host-1.1.1-win-x64.zip": {
+            "id": 784660236,
+            "size": 103903617,
+            "digest": "sha256:13e82f6dd86e687cde6c14ba57c27adc8819052d54a9b5d522970ffd7ce9e553"
+          },
+          "toolchain.txt": {
+            "id": 784659040,
+            "size": 556,
+            "digest": "sha256:3bec32d58d714bf171e7c6d321926142ea631ccdf35638d71e1bd150e915deb9"
+          }
+        }
+      }
+    },
+    "firstRunner": "macos-15-intel",
+    "originalAgentFixtureHashes": {
+      "scripts/release/Sunder.Agent.NativeReleaseTests.targets": "1420a8b22922f0c3f0dd3d9c4e831b6ef1c910972dada75b02d66f55d3b7e783",
+      "tests/fixtures/NativeAppRpcStartupHook.cs": "f37fe7941229d8be35ba96b6f5034532c8d1b46316e52b489b811aec3c086108",
+      "tests/fixtures/AgentNativeReleaseSmokeTests.cs": "bf7a87cb77f21e177e7f29a74989439c5a33bb1fd19b30ac489570ab488d5317",
+      "tests/fixtures/AgentNativeReleaseSmokeTests.AppRpc.cs": "1796d5799caa779016b3d0c68b6a713bb7a743872cc1b61da8400e5d5df330b7",
+      "tests/fixtures/AgentNativeReleaseSmokeTests.Maker.cs": "b10459c53e8ff572441076562bedb90ab159ea717bfd8cdbd4058db5ab9c0675",
+      "tests/fixtures/AgentNativeReleaseSmokeTests.Development.cs": "dee5fe1c7f9824b1b17fcb6f70827b7f874cad89ecd232a0888131aa5e94ee19"
+    }
+  },
+  "archives": [
+    {
+      "packageId": "younics.ai.agent",
+      "archive": "younics.ai.agent.2.0.0.sunderpkg",
+      "size": 32002853,
+      "sha256": "a7283fdfcde476b4b101441b01f9a77754797725c7d9d6ea057d506a7209e529",
+      "artifact": 14807656371,
+      "artifactDigest": "sha256:1486830e6c9d8873c6374760d3bfec2e7d606eccdcebba68a6845d22ea1ef9e5"
+    },
+    {
+      "packageId": "younics.ai.agent.execution.docker",
+      "archive": "younics.ai.agent.execution.docker.2.0.0.sunderpkg",
+      "size": 4352719,
+      "sha256": "ea248276209c2748137b6ad2f42a769efebebea2d7c4a6d37b8a8dc03854225c",
+      "artifact": 14825820492,
+      "artifactDigest": "sha256:819a7930d322da188e1e0eadb468f0529de8edbdb8319f01307c0ed852a74f32"
+    },
+    {
+      "packageId": "younics.ai.agent.execution.local",
+      "archive": "younics.ai.agent.execution.local.2.0.0.sunderpkg",
+      "size": 3656943,
+      "sha256": "795101bcb29532351240f2fbd2a3648f3ab42fb831512290c69e1ae72622c502",
+      "artifact": 14824683446,
+      "artifactDigest": "sha256:a51f58bdd907f2af517f8214267408845551eebfab367ab2f148404c9da13ba9"
+    },
+    {
+      "packageId": "younics.ai.agent.mcp",
+      "archive": "younics.ai.agent.mcp.2.0.0.sunderpkg",
+      "size": 15587467,
+      "sha256": "674cc63f7ff1387f2fa04c8eb0bd6b6b8573cfacb58c03b782c0c491a5f8edaf",
+      "artifact": 14824458070,
+      "artifactDigest": "sha256:a7c33ec67c0a0c8311471aa4dd907726478fec546c07fadeea0d8a8b7e3e7372"
+    },
+    {
+      "packageId": "younics.ai.agent.memory.semantic",
+      "archive": "younics.ai.agent.memory.semantic.2.0.0.sunderpkg",
+      "size": 19116454,
+      "sha256": "f3f705cd1b8b5000893f3e4b12f2d33dfe1e78281ea756dfade4453f8b2a1991",
+      "artifact": 14824369645,
+      "artifactDigest": "sha256:8c2bc0fc834c95457780eac1f4107f9dc0db3a0a067228684e196b0e2aeda303"
+    },
+    {
+      "packageId": "younics.ai.agent.provider.anthropic",
+      "archive": "younics.ai.agent.provider.anthropic.2.0.0.sunderpkg",
+      "size": 5837261,
+      "sha256": "22a0c94f684672ad97f2a1237b874a4c499428b43b12893d5c827f3a010dae63",
+      "artifact": 14825619330,
+      "artifactDigest": "sha256:4fe500e30cdabb49974f17a90e130690c7cb3da6be24ffd4be72b2fa969e34bf"
+    },
+    {
+      "packageId": "younics.ai.agent.provider.gemini",
+      "archive": "younics.ai.agent.provider.gemini.2.0.0.sunderpkg",
+      "size": 4499937,
+      "sha256": "f1b6c3a8424ce735520ba2481854b3898361867ada36f52343712b5953f7794d",
+      "artifact": 14825714335,
+      "artifactDigest": "sha256:2f6e82e91e3d7dd2eb1318ad8ca79e1fd149a8eef063411a6c8c0670495a428d"
+    },
+    {
+      "packageId": "younics.ai.agent.provider.lmstudio",
+      "archive": "younics.ai.agent.provider.lmstudio.2.0.0.sunderpkg",
+      "size": 4340986,
+      "sha256": "53b8abac55ab86a7e7a4677a31c6f8866f906520f5da797f7ff844bdc2cad848",
+      "artifact": 14824728713,
+      "artifactDigest": "sha256:7f52277e4b5b312046e4774becab1c1e769efd9b3e16b2728a1588c39dea7cf6"
+    },
+    {
+      "packageId": "younics.ai.agent.provider.openai",
+      "archive": "younics.ai.agent.provider.openai.2.0.0.sunderpkg",
+      "size": 4961207,
+      "sha256": "704553dad539ebc414fa51ea485434e066d36c8cb8258de1c117ac2f374610c4",
+      "artifact": 14823278204,
+      "artifactDigest": "sha256:38496b99137d20a865f89a3ad35319f4be0e0a2f9984889c69db3b705c05af17"
+    },
+    {
+      "packageId": "younics.ai.agent.skills",
+      "archive": "younics.ai.agent.skills.2.0.0.sunderpkg",
+      "size": 12749828,
+      "sha256": "0815fcc84c7b70802296a920b90fe520448947088bd3506390396417ccd9f3ce",
+      "artifact": 14824626984,
+      "artifactDigest": "sha256:1f073c0b3d3c15d5ef5f734385147d1d0c11c2f30adad187105d564ae529c520"
+    },
+    {
+      "packageId": "younics.ai.agent.subagents",
+      "archive": "younics.ai.agent.subagents.2.0.0.sunderpkg",
+      "size": 16486514,
+      "sha256": "d85e634c45403fdc2d04e695962afcbed8970493ef80d247e465eca497689082",
+      "artifact": 14825582059,
+      "artifactDigest": "sha256:7c3dfe14f65917f765f6417687f62919ee6d179955e226018547901312b3265f"
+    },
+    {
+      "packageId": "younics.ai.agent.tools.files",
+      "archive": "younics.ai.agent.tools.files.2.0.0.sunderpkg",
+      "size": 6539331,
+      "sha256": "94d48840fc9fc5092c10b67454b4aed45a74a738976fa5be072e8979e5b2ccb0",
+      "artifact": 14825333646,
+      "artifactDigest": "sha256:cabe1dfb38d8aca1c03ced397c53e23afe297279ad2bb99cf5b738fbc73a0efc"
+    },
+    {
+      "packageId": "younics.ai.agent.tools.shell",
+      "archive": "younics.ai.agent.tools.shell.2.0.0.sunderpkg",
+      "size": 6014381,
+      "sha256": "94856e6b4e6734062846ab835ce73227f928542d3415d1a48711c0ff166472b8",
+      "artifact": 14825467015,
+      "artifactDigest": "sha256:3558120eedad56c58e3cc7cbd80560572d4d742f6be91e26c1fb2c92a25ce809"
+    },
+    {
+      "packageId": "younics.ai.agent.tools.web",
+      "archive": "younics.ai.agent.tools.web.2.0.0.sunderpkg",
+      "size": 2254539,
+      "sha256": "8bd9c15680c07afa43e8878114fa9ef613bee67c0d4dd4aae3e8565bb330a98f",
+      "artifact": 14824049099,
+      "artifactDigest": "sha256:5f0effe276fc989f01661a892ad233468a03e3594b4fa53224f66e98642fa3c7"
+    },
+    {
+      "packageId": "younics.sunder.package.maker",
+      "archive": "younics.sunder.package.maker.2.0.0.sunderpkg",
+      "size": 19524853,
+      "sha256": "a2ae7b32054a598678eaa4723cf8754d87fdeb4cfd36fc2bfed05eae965c571a",
+      "artifact": 14825422114,
+      "artifactDigest": "sha256:95fa83fe68aa2e6de0a80157021316627459c1775c1413f185ed9112bbc503ff"
+    }
+  ],
+  "originalLeaves": 90,
+  "originalWindows": [
+    {
+      "rid": "win-arm64",
+      "originalJobId": 137619825418,
+      "carriedJobIds": [
+        137723787591,
+        137754208472
+      ],
+      "artifactId": 14808352147,
+      "zipDigest": "sha256:84702971df1324a8810c18e2f02b067fc57c7e29c8e89ee49eadd91dd272bdc8",
+      "size": 2481459,
+      "expiresAt": "2026-12-07T10:22:39Z",
+      "originalStartedAt": "2026-11-23T10:09:00Z",
+      "originalCompletedAt": "2026-11-23T10:22:52Z",
+      "nativeExecutionCount": 1,
+      "originalTrxSha256": "475194b30c817e7a4920d7203ce1e29d5023276e9ca6437f27e3773dc6c517a7",
+      "cases": {
+        "passed": 34,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    {
+      "rid": "win-x64",
+      "originalJobId": 137619825202,
+      "carriedJobIds": [
+        137723786652,
+        137754206858
+      ],
+      "artifactId": 14807852067,
+      "zipDigest": "sha256:a4e6eae54c6562f0922729c9bc4de27472dd9e601731630c293443b5ccc973fe",
+      "size": 2479873,
+      "expiresAt": "2026-12-07T10:16:03Z",
+      "originalStartedAt": "2026-11-23T10:08:10Z",
+      "originalCompletedAt": "2026-11-23T10:16:09Z",
+      "nativeExecutionCount": 1,
+      "originalTrxSha256": "71608fc05e9bc7e9026d1efcb6583c301f9aec555e698d7dc5746d99b7de3a6e",
+      "cases": {
+        "passed": 34,
+        "failed": 0,
+        "skipped": 0
+      }
+    }
+  ],
+  "originalArchiveTestBinaries": {
+    "originalRun": 45150131370,
+    "artifactSourceCommit": "5cb5cc1ed76a52eeb6fb358772bd28b2d93e20cb",
+    "archiveTestsReexecuted": false,
+    "artifactId": 14806258113,
+    "zipDigest": "sha256:c1e25e7263f9e9425759cc2cd0cc77ec3e422a92a2e88b28614974fcd658b064",
+    "size": 3107956,
+    "testAssemblySha256": "5f5608354a0f2344995b4739c12b6180b2b5b9b9e05e5138d53d1438dac509ca",
+    "expiresAt": "2027-02-21T09:47:03Z"
+  },
+  "registryOrigin": "https://hub.sunderapp.io"
+}
