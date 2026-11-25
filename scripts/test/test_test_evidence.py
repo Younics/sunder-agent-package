@@ -329,11 +329,11 @@ public class Outer {
                     with self.assertRaises(subprocess.CalledProcessError) as caught:
                         test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
                 self.assertEqual(defect == "none", isinstance(caught.exception, test_lanes.TestProjectFailure))
-                # Even exit zero must stop on absent, incomplete or inconsistent TRX.
+                # Even exit zero cannot pass the job's single evidence check.
                 status = 0
                 with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):
-                    with self.assertRaises((ValueError, OSError, ET.ParseError)):
-                        test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                    test_lanes.run_project("state", self.root, "Fixture.Tests.csproj", common, "", self.results)
+                self.assertTrue(self.report(success=False)["evidenceViolations"])
         self.rows[1] = ("OrdinaryTest", None, "Passed", "")
         self.write_reports()
         with patch.object(agent_ci, "execute", side_effect=execute), patch.object(agent_ci, "context", return_value=({}, {})):

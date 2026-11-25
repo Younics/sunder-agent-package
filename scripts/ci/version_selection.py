@@ -106,13 +106,19 @@ def scope_inventory(inventory, selected, mode, platform):
     return {**inventory, "projects": projects(inventory, selected)}
 
 
-def write_outputs(selected, *, changed_scope=False):
+def write_outputs(selected, *, changed_scope=False, matrix=False):
     value = dict(packages=selected, selected_count=len(selected), full=len(selected) == len(r.FAMILY_PACKAGE_IDS))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             stream.write("packages=" + json.dumps(selected, separators=(",", ":")) + "\n")
             stream.write(f"selected_count={len(selected)}\n")
             stream.write("full=" + str(value["full"]).lower() + "\n")
+            if matrix:
+                import ci_platforms
+                variables = json.loads(os.environ.get("RUNNER_VARIABLES", "{}"))
+                rows = ci_platforms.validation_targets(selected, value["full"], variables)
+                stream.write("behavior=" + r.canonical(rows).decode() + "\n")
+                stream.write("native=" + r.canonical(ci_platforms.matrices(variables)["native"]).decode() + "\n")
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             empty = "No executable changes against the event base." if changed_scope else "No packages were requested."
@@ -130,6 +136,7 @@ def main():
     choice.add_argument("--packages", help="JSON package IDs from the release planner")
     choice.add_argument("--manual", help="Comma-separated package IDs, or all")
     parser.add_argument("--verify-versions", action="store_true", help="Evaluate selected versions after SDK setup")
+    parser.add_argument("--matrix", action="store_true", help="Write Actions targets with the selection")
     args = parser.parse_args()
     if args.changed_since is not None:
         selected = affected_by_changes(args.source, args.changed_since)
@@ -143,7 +150,7 @@ def main():
     if args.verify_versions:
         import agent_selection
         agent_selection.evaluated_packages(args.source, selected)
-    write_outputs(selected, changed_scope=args.changed_since is not None)
+    write_outputs(selected, changed_scope=args.changed_since is not None, matrix=args.matrix)
 
 
 if __name__ == "__main__":

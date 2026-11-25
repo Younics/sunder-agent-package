@@ -83,18 +83,18 @@ python3 -B scripts/ci/agent_ci.py validate --inputs /tmp/agent-inputs
 python3 -B scripts/ci/agent_ci.py validate --inputs /tmp/agent-inputs --builder-diagnostics
 ```
 
-`preflight` generates and validates the test inventory and runs dependency-independent
-script checks (source checks on each behavior platform, release checks on Linux).
-Actions gates dependency production on its Linux/Windows results after version
-selection. Both `preflight` and `validate` accept `--packages '[]'` to stop before
-tool execution when no versions are selected.
+`preflight` runs dependency-independent scripts once on Linux in Actions. Each
+behavior job evaluates its own test inventory when it needs it. Both `preflight`
+and `validate` accept `--packages '[]'` to stop before tool execution when no
+packages are selected.
 
 `validate` discovers tests, resolves and hydrates
 exact inputs, builds the selected projects and their provider dependencies, executes the selected suites and
 verifies combined evidence. Its temporary cache is cleaned on success or
 failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
-local inputs. Source readers precede the required all-family artifact producer;
-required Linux/Docker cases run once in their owning lane. `--stress` adds the
+local inputs. The required all-family artifact producer uses the same built
+test graph as the other family tests. Required cases are checked against current
+reports in their owning native job. `--stress` adds the
 scheduled Linux repetitions. Report directories replace prior CI runs; hosted
 reports expire after fourteen days, while immutable release handoffs keep their
 release-specific retention.

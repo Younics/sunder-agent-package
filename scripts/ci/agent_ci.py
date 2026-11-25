@@ -59,10 +59,9 @@ def resolve(source, output, packages=None, *, allow_missing=False):
     return dependency_inputs.resolve(source, output, packages=packages, allow_missing=allow_missing)
 
 
-def matrices(package_tests, windows_filesystem_native=False):
+def matrices():
     import ci_platforms
-    value = ci_platforms.matrices(package_tests, json.loads(os.environ.get("RUNNER_VARIABLES", "{}")),
-                                 windows_filesystem_native=windows_filesystem_native)
+    value = ci_platforms.matrices(json.loads(os.environ.get("RUNNER_VARIABLES", "{}")))
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
             stream.writelines(f"{key}={json.dumps(item, separators=(',', ':'))}\n" for key, item in value.items())
@@ -316,7 +315,7 @@ def preflight(args):
     if args.packages is not None and version_selection.package_ids(source, json.loads(args.packages)) == []:
         print("No packages selected; preflight skipped.")
         return
-    generate_inventory(source)
+    # Windows Git Bash path/exit-code coverage stays on the Windows behavior jobs.
     for group in (["source", "release"] if sys.platform == "linux" else ["source"]):
         subprocess.run([sys.executable, "-B", "scripts/test/run-ci-checks.py", group], cwd=source, check=True)
 
@@ -349,6 +348,7 @@ def validate(args):
         inputs.require(getattr(args, "published_app", None), "Shared Agent validation requires the published App")
         inventory = inputs.load(inventory_path)
         inventory["projects"] = [row for row in inventory["projects"] if row["owner"] == "agent-family"]
+        inputs.require(inventory["projects"], "Empty family validation selection")
         inventory_path.write_bytes(inputs.canonical(inventory) + b"\n")
         args.project = [row["path"] for row in inventory["projects"] if args.mode in row["modes"]]
     else:
@@ -377,15 +377,13 @@ def validate(args):
         command = ["dotnet", "build", build_project, "-c", "Release", "--no-restore"]
         status = execute(state, command, log=reports / "build.log")
         if status: raise subprocess.CalledProcessError(status, command)
-        test_lanes.validate(state, args.mode, args.stress)
+        test_lanes.validate(state, args.mode, args.stress, rid=getattr(args, "rid", None))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="action", required=True)
-    matrix_parser = commands.add_parser("matrices")
-    matrix_parser.add_argument("--package-tests", action="store_true")
-    matrix_parser.add_argument("--windows-filesystem-native", action="store_true")
+    commands.add_parser("matrices")
     test_parser = commands.add_parser("test")
     test_parser.add_argument("--state", required=True)
     test_parser.add_argument("--lane", required=True, choices=("source", "artifact", "package", "required-linux", "stress"))
@@ -425,7 +423,8 @@ def main():
     validate_parser.add_argument("--mode", choices=("source", "package"), default="source")
     validate_parser.add_argument("--stress", action="store_true")
     validate_parser.add_argument("--builder-diagnostics", action="store_true", help="Run focused then full source-mode Builder tests")
-    validate_parser.add_argument("--shared", action="store_true", help="Run shared family assertions once during full validation")
+    validate_parser.add_argument("--shared", action="store_true", help="Run shared family behavior and authoring")
+    validate_parser.add_argument("--rid", help="Verify this native job's required test cases")
     validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     validate_parser.add_argument("--published-app", help="Prepared published App directory for hosted presentation tests")
     run_parser = commands.add_parser("run")
@@ -433,7 +432,7 @@ def main():
     run_parser.add_argument("--cwd")
     run_parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
-    if args.action == "matrices": matrices(args.package_tests, args.windows_filesystem_native)
+    if args.action == "matrices": matrices()
     elif args.action in ("test", "report", "retain-verifier", "prepare-verifier"):
         import test_lanes
         if args.action == "test": test_lanes.tests(args.state, args.lane)
@@ -449,7 +448,12 @@ def main():
         dependency_inputs.complete(args.source, args.inputs, args.candidates)
     elif args.action == "prepare": prepare(args)
     elif args.action == "preflight": preflight(args)
-    elif args.action == "validate": validate(args)
+    elif args.action == "validate":
+        import published_app
+        actual = published_app.current_rid()
+        inputs.require(args.rid is None or args.rid == actual, "Behavior job did not run on its native ABI")
+        args.rid = actual
+        validate(args)
     else:
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
         return execute(args.state, command, args.cwd)

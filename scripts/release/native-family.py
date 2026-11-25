@@ -537,10 +537,17 @@ def compose_component(repository, inputs, output, expected):
     candidate_receipt(output, expected)
 
 
+ARCHIVE_SET = "archive-set.json"
+
+
+def component_leaf_name(package_id, rid):
+    return f"native-leaf-evidence-{package_id}-{rid}.json"
+
+
 def gather_candidates(repository, candidates, output, expected):
     """Copy selected immutable candidates and retained unchanged versions; no packing."""
     output = artifact_output(output, repository)
-    records = []
+    records, leaves = [], {rid: {} for rid in RIDS}
     for row in inventory(repository):
         package_id = row["packageId"]
         if package_id in expected["packageVersions"]:
@@ -548,6 +555,10 @@ def gather_candidates(repository, candidates, output, expected):
             require(component["version"] == expected["packageVersions"][package_id], "Candidate version differs from release selection")
             receipt = candidate_receipt(candidates, component)
             record, source = receipt["archive"], candidates
+            for run in receipt["nativeRuns"]:
+                data = compact(run)
+                leaves[run["rid"]][package_id] = dict(path=component_leaf_name(package_id, run["rid"]),
+                                                      size=len(data), sha256=digest(data))
         else:
             name = package_id + "." + expected["familyVersions"][package_id] + ".sunderpkg"
             record = next(record for record in expected["retainedArtifacts"] if record["path"] == name)
@@ -558,15 +569,36 @@ def gather_candidates(repository, candidates, output, expected):
         else: shutil.copyfile(source / record["path"], target)
         records.append(record)
     require({path.name for path in output.glob("*.sunderpkg")} == {record["path"] for record in records}, "Unexpected family candidate archive")
-    return sorted(records, key=lambda item: item["path"])
+    records.sort(key=lambda item: item["path"])
+    index = compact(dict(planSha256=expected["planSha256"], archives=records, leaves=leaves))
+    with (output / ARCHIVE_SET).open("xb") as stream:
+        stream.write(index)
+    return records
 
 
-def record_final(repository, candidates, archives, metrics, output, rid, expected):
+def verify_archive_set(archives, expected_sha):
+    path = archives / ARCHIVE_SET
+    data = read_bytes(path, MAX_DOCUMENT)
+    sha(expected_sha)
+    require(digest(data) == expected_sha, "Inspected archive index changed")
+    value = parse(data)
+    keys(value, "planSha256 archives leaves")
+    records = value["archives"]
+    actual = [file_record(path) for path in sorted(archives.glob("*.sunderpkg"))]
+    require(records and records == actual, "Native runner did not receive the exact inspected family")
+    return value
+
+
+def record_final(repository, leaves, archives, metrics, output, rid, expected, archive_set_sha):
     require(rid in RIDS, "Unknown native smoke platform")
     require({path.name for path in archives.glob("*.sunderpkg")} ==
             {key + "." + version + ".sunderpkg" for key, version in expected["familyVersions"].items()},
             "Record only a complete, already-smoked final family")
-    records = gather_candidates(repository, candidates, archives, expected)
+    index = verify_archive_set(archives, archive_set_sha)
+    require(index["planSha256"] == expected["planSha256"] and set(index["leaves"]) == set(RIDS)
+            and set(index["leaves"][rid]) == set(expected["packageVersions"]),
+            "Inspected archive index has a different plan or incomplete native leaves")
+    records = index["archives"]
     output = artifact_output(output, repository)
     evidence_path = output / ("native-leaf-evidence-" + rid + ".json")
     bundle_path = output / ("native-leaves-" + rid + ".tar.gz")
@@ -584,9 +616,13 @@ def record_final(repository, candidates, archives, metrics, output, rid, expecte
             tests.append(test)
             if package_id in expected["packageVersions"]:
                 component = selected_component(repository, package_id, expected)
-                receipt = candidate_receipt(candidates, component)
-                leaf = next(run for run in receipt["nativeRuns"] if run["rid"] == rid)
-                transport(leaf, candidates / leaf["bundle"]["path"], work)
+                evidence = leaves / component_leaf_name(package_id, rid)
+                require(file_record(evidence, maximum=MAX_PROVENANCE) == index["leaves"][rid][package_id],
+                        "Native leaf evidence differs from the inspected composition")
+                leaf = json_file(evidence, MAX_PROVENANCE, 4 * 1024 * 1024)
+                validate_component(leaf, component)
+                require(leaf["rid"] == rid, "Mixed inspected native RID")
+                transport(leaf, leaves / leaf["bundle"]["path"], work)
                 packages.append(dict(leaf["packages"][0], **{key: value for key, value in test.items() if key != "packageId"}))
             (work / "metrics").mkdir(exist_ok=True)
             (work / "metrics" / metric_name).write_bytes(metric_data)
@@ -747,12 +783,15 @@ def main():
             print(compact(gather_candidates(repository, Path(source).resolve(), destination, expected)).decode("utf-8"))
         else:
             finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
-    elif command == "record-final" and len(args) == 8:
-        rid, version, agent_commit, candidates, archives, metrics, output, repository = args
+    elif command == "verify-archive-set" and len(args) == 2:
+        verify_archive_set(Path(args[0]).resolve(), args[1])
+    elif command == "record-final" and len(args) == 9:
+        rid, version, agent_commit, leaves, archives, metrics, output, repository, archive_set_sha = args
         expected = identity(version, agent_commit, repository=Path(repository).resolve())
         require(expected["schemaVersion"] == 4, "Final native smoke requires an explicit package selection")
         expected["schemaVersion"] = 6
-        record_final(Path(repository).resolve(), Path(candidates).resolve(), Path(archives).resolve(), Path(metrics).resolve(), output, rid, expected)
+        record_final(Path(repository).resolve(), Path(leaves).resolve(), Path(archives).resolve(), Path(metrics).resolve(),
+                     output, rid, expected, archive_set_sha)
     elif command == "record" and len(args) == 10:
         capture(args)
     elif command == "assemble" and len(args) == 8:

@@ -8,22 +8,20 @@ on:
   workflow_dispatch:
     inputs:
       packages:
-        description: Comma-separated package IDs, or all for full validation
+        description: Comma-separated package IDs, or all
         type: string
         default: all
   workflow_call:
     inputs:
       packages:
-        description: JSON package IDs selected by the release planner
+        description: JSON package IDs selected by Release
         type: string
-        default: ""
+        required: true
     outputs:
       inputs_sha256:
-        description: Digest of the one shared exact dependency inventory
-        value: ${{ jobs.dependencies.outputs.sha256 }}
-      bootstrap_packages:
-        description: Exact six-native owner candidates already composed
-        value: ${{ jobs.dependency-discovery.outputs.pending }}
+        value: ${{ jobs.admit-owner.outputs.sha256 || jobs.dependencies.outputs.sha256 }}
+      production_packages:
+        value: ${{ jobs.dependencies.outputs.production_packages }}
 
 permissions:
   contents: read
@@ -36,68 +34,40 @@ jobs:
     name: Select validation scope
     runs-on: ubuntu-24.04
     outputs:
-      matrix: ${{ steps.matrix.outputs.behavior }}
-      preflight: ${{ steps.matrix.outputs.preflight }}
-      native: ${{ steps.matrix.outputs.native }}
-      full: ${{ steps.selection.outputs.full }}
+      behavior: ${{ steps.selection.outputs.behavior }}
+      native: ${{ steps.selection.outputs.native }}
       packages: ${{ steps.selection.outputs.packages }}
       selected_count: ${{ steps.selection.outputs.selected_count }}
-      windows_history: ${{ steps.windows_history.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-          fetch-depth: 0
-      - name: Select changed packages or explicit release inputs
+      - name: Select packages and native test targets
         id: selection
         env:
           PACKAGES: ${{ inputs.packages }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
-          FULL: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-        run: |
-          if [[ "$PACKAGES" == \[* ]]; then
-            python3 -B scripts/ci/version_selection.py --packages "$PACKAGES"
-          elif [[ "${{ github.event_name }}" == workflow_dispatch ]]; then
-            python3 -B scripts/ci/version_selection.py --manual "${PACKAGES:-all}"
-          elif [[ "$FULL" == true ]]; then
-            python3 -B scripts/ci/version_selection.py --all
-          else
-            python3 -B scripts/ci/version_selection.py --changed-since "$BASE"
-          fi
-      - name: Verify reviewed historical Windows evidence before starting tests
-        id: windows_history
-        if: steps.selection.outputs.selected_count != '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PACKAGES: ${{ steps.selection.outputs.packages }}
-        run: python3 -B scripts/ci/windows_case_history.py --packages "$PACKAGES" --prepare "$RUNNER_TEMP/windows-history"
-      - name: Retain original Windows reports separately from current test results
-        if: steps.windows_history.outputs.sha256 != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-historical-windows-cases
-          path: ${{ runner.temp }}/windows-history
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-      - id: matrix
-        if: steps.selection.outputs.selected_count != '0'
-        env:
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
-        run: python3 -B scripts/ci/agent_ci.py matrices
+        run: |
+          set -euo pipefail
+          if [[ "$PACKAGES" == \[* ]]; then
+            python3 -B scripts/ci/version_selection.py --matrix --packages "$PACKAGES"
+          elif [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+            python3 -B scripts/ci/version_selection.py --matrix --manual "${PACKAGES:-all}"
+          elif [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+            python3 -B scripts/ci/version_selection.py --matrix --all
+          else
+            python3 -B scripts/ci/version_selection.py --matrix --changed-since "$BASE"
+          fi
 
-  preflight:
-    name: Check scripts · ${{ matrix.rid }}
+  checks:
+    name: Check repository scripts
     needs: prepare
     if: needs.prepare.outputs.selected_count != '0'
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.preflight) }}
     defaults:
       run:
-        shell: bash
         working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -105,32 +75,21 @@ jobs:
           path: sunder-agent-package
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
-      - name: Check inventory and dependency-independent scripts
-        id: scripts
-        env:
-          PACKAGES: ${{ needs.prepare.outputs.packages }}
-        run: python3 -B scripts/ci/agent_ci.py preflight --packages "$PACKAGES"
-      - name: Retain preflight diagnostics
-        if: always() && steps.scripts.outcome != 'skipped' && steps.scripts.outcome != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunder-agent-preflight-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/reports
-          if-no-files-found: error
-          retention-days: 14
+      - run: python3 -B scripts/ci/agent_ci.py preflight
 
-  dependency-discovery:
-    name: Discover exact dependencies
-    needs: [prepare, preflight]
+  dependencies:
+    name: Prepare locked dependencies
+    needs: prepare
     if: needs.prepare.outputs.selected_count != '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     outputs:
       pending: ${{ steps.inputs.outputs.pending }}
-      packages: ${{ steps.inputs.outputs.packages }}
+      closure: ${{ steps.inputs.outputs.packages }}
+      sha256: ${{ steps.seal.outputs.sha256 }}
+      production_packages: ${{ steps.seal.outputs.production_packages }}
     defaults:
       run:
-        shell: bash
         working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -140,102 +99,95 @@ jobs:
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
-      - name: Verify evaluated versions only for selected packages
-        env:
-          PACKAGES: ${{ needs.prepare.outputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --packages "$PACKAGES" --verify-versions
-      - name: Resolve selected archives and platform catalog
+      - name: Verify evaluated versions and resolve inputs
         id: inputs
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGES: ${{ needs.prepare.outputs.packages }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/reports
-          python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs" --packages "$PACKAGES" --test-dependencies --allow-missing 2>&1 | tee artifacts/reports/input-preparation.log
-      - name: Retain shared exact dependency bytes
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          python3 -B scripts/ci/version_selection.py --packages "$PACKAGES" --verify-versions
+          python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs" --packages "$PACKAGES" --test-dependencies --allow-missing
+      - name: Bind the release production scope and seal published inputs
+        id: seal
+        env:
+          SELECTED: ${{ needs.prepare.outputs.packages }}
+          PENDING: ${{ steps.inputs.outputs.pending }}
+          CLOSURE: ${{ steps.inputs.outputs.packages }}
+        run: |
+          set -euo pipefail
+          python3 -B - <<'PY'
+          import json, os
+          packages = sorted(set(json.loads(os.environ["SELECTED"])) - set(json.loads(os.environ["PENDING"])))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write("production_packages=" + json.dumps(packages) + "\n")
+          PY
+          if [[ "$PENDING" == '[]' ]]; then
+            python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" --packages "$CLOSURE" --prepared
+            echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: agent-prepared-dependencies
+          name: ${{ steps.inputs.outputs.pending != '[]' && 'agent-prepared-dependencies' || 'agent-dependency-inputs' }}
           path: ${{ runner.temp }}/agent-inputs/
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
-      - name: Retain rejected dependency bytes for identity diagnostics
-        if: failure() && steps.inputs.outcome == 'failure'
+      - name: Retain rejected dependency inputs
+        if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-input-diagnostics-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/agent-inputs/
-            sunder-agent-package/artifacts/reports/input-preparation.log
-          if-no-files-found: error
+          path: ${{ runner.temp }}/agent-inputs/
+          if-no-files-found: ignore
           retention-days: 14
 
   bootstrap:
-    name: Compose unpublished dependency
-    needs: [prepare, dependency-discovery]
-    if: needs.prepare.outputs.selected_count != '0' && needs.dependency-discovery.outputs.pending != '[]'
+    name: Build unpublished owner
+    needs: [prepare, checks, dependencies]
+    if: needs.dependencies.outputs.pending != '' && needs.dependencies.outputs.pending != '[]'
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.dependency-discovery.outputs.pending) }}
+        package: ${{ fromJSON(needs.dependencies.outputs.pending) }}
     uses: ./.github/workflows/sunder-package-component.yml
     with:
-      operation: native
       bootstrap: true
       package: ${{ matrix.package }}
       matrix: ${{ needs.prepare.outputs.native }}
 
-  dependencies:
-    name: Admit exact composed dependencies
-    needs: [prepare, dependency-discovery, bootstrap]
-    if: >-
-      always() && !cancelled() && needs.prepare.outputs.selected_count != '0'
-      && needs.dependency-discovery.result == 'success'
-      && ((needs.dependency-discovery.outputs.pending == '[]' && needs.bootstrap.result == 'skipped') || needs.bootstrap.result == 'success')
+  admit-owner:
+    name: Verify owner reproduction before consumers
+    needs: [dependencies, bootstrap]
+    if: needs.bootstrap.result == 'success'
     runs-on: ubuntu-24.04
     outputs:
       sha256: ${{ steps.inputs.outputs.sha256 }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: sunder-agent-package
           persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agent-prepared-dependencies
           path: ${{ runner.temp }}/agent-inputs
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.dependency-discovery.outputs.pending != '[]'
         with:
           pattern: agent-candidate-*
           merge-multiple: true
           path: ${{ runner.temp }}/candidates
-      - name: Verify exact owner content identity before any consumer build
-        if: needs.dependency-discovery.outputs.pending != '[]'
-        run: python3 -B scripts/ci/agent_ci.py complete-inputs --inputs "$RUNNER_TEMP/agent-inputs" --candidates "$RUNNER_TEMP/candidates"
-      - id: inputs
+      - name: Match the rebuilt owner to the exact locks and authoring archive
+        id: inputs
         env:
-          PACKAGES: ${{ needs.dependency-discovery.outputs.packages }}
-          PENDING: ${{ needs.dependency-discovery.outputs.pending }}
+          PACKAGES: ${{ needs.dependencies.outputs.closure }}
+          PENDING: ${{ needs.dependencies.outputs.pending }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          python3 -B scripts/ci/agent_ci.py complete-inputs --inputs "$RUNNER_TEMP/agent-inputs" --candidates "$RUNNER_TEMP/candidates"
           python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" --packages "$PACKAGES" --prepared
           python3 -B scripts/ci/owner_authoring.py verify-reproduction "$RUNNER_TEMP/agent-inputs" "$PENDING" "$RUNNER_TEMP/owner-reproduction.json"
           echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: needs.dependency-discovery.outputs.pending != '[]'
-        with:
-          name: agent-owner-reproduction-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/owner-reproduction.json
-          if-no-files-found: error
-          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-dependency-inputs
@@ -243,7 +195,13 @@ jobs:
           if-no-files-found: error
           retention-days: 90
           compression-level: 0
-      - name: Retain rejected identity diagnostics
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: agent-owner-reproduction-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/owner-reproduction.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Retain rejected owner inputs
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -252,62 +210,18 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  components:
-    name: Validate component
-    needs: [prepare, dependencies]
-    if: needs.prepare.outputs.selected_count != '0'
-    strategy:
-      fail-fast: false
-      matrix:
-        package: ${{ fromJSON(needs.prepare.outputs.packages) }}
-    uses: ./.github/workflows/sunder-package-component.yml
-    with:
-      package: ${{ matrix.package }}
-      inputs_sha256: ${{ needs.dependencies.outputs.sha256 }}
-      matrix: ${{ needs.prepare.outputs.matrix }}
-      stress: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
-      windows_history_sha256: ${{ needs.prepare.outputs.windows_history }}
-
-  verifier:
-    name: Prepare archive verifier
-    needs: prepare
-    if: needs.prepare.outputs.selected_count != '0'
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - run: python3 -B scripts/ci/agent_ci.py prepare-verifier
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-package-test-binaries
-          path: sunder-agent-package/artifacts/package-test-binaries
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always()
-        with:
-          name: agent-verifier-results-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/verifier-results
-          if-no-files-found: error
-
-  source:
-    name: Shared family · ${{ matrix.mode }} · ${{ matrix.rid }}
-    needs: [prepare, dependencies]
-    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.full == 'true'
+  behavior:
+    name: ${{ matrix.label }} · ${{ matrix.rid }}
+    needs: [prepare, checks, dependencies, admit-owner]
+    if: >-
+      !cancelled() && needs.checks.result == 'success' && needs.dependencies.result == 'success'
+      && ((needs.dependencies.outputs.pending == '[]' && needs.dependencies.outputs.sha256 != '')
+          || (needs.admit-owner.result == 'success' && needs.admit-owner.outputs.sha256 != ''))
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 360
+    timeout-minutes: ${{ matrix.lane == 'component' && 180 || 360 }}
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+      matrix: ${{ fromJSON(needs.prepare.outputs.behavior) }}
     defaults:
       run:
         shell: bash
@@ -322,79 +236,63 @@ jobs:
         with:
           name: agent-dependency-inputs
           path: ${{ runner.temp }}/agent-inputs
-      - name: Verify shared dependency inputs
-        id: inputs
-        env:
-          INPUTS_SHA256: ${{ needs.dependencies.outputs.sha256 }}
+      - name: Run Windows script transport checks
+        if: matrix.lane == 'family' && runner.os == 'Windows'
         run: |
           set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
-      - name: Build and test shared Agent behavior with the published App
+          python3 -B scripts/test/test_bash_runtime.py
+          bash scripts/test/test-silent-return-analyzer.fixture.sh
+      - name: Build and test against declared public dependencies
+        id: tests
         env:
+          INPUTS_SHA256: ${{ needs.admit-owner.outputs.sha256 || needs.dependencies.outputs.sha256 }}
+          RID: ${{ matrix.rid }}
+          LANE: ${{ matrix.lane }}
+          PACKAGE: ${{ matrix.package }}
           STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
-          app_input="$RUNNER_TEMP/agent-app"
-          python3 -B scripts/release/published_app.py "$app_input"
-          app="$(python3 -B -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); print(p / json.loads((p / "app-input.json").read_text())["app"])' "$app_input")"
-          args=(--shared --published-app "$app")
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+          args=(--inputs "$RUNNER_TEMP/agent-inputs" --rid "$RID")
+          case "$LANE" in
+            component)
+              packages="$(python3 -B -c 'import json,os; print(json.dumps([os.environ["PACKAGE"]]))')"
+              args+=(--packages "$packages")
+              ;;
+            family)
+              app_input="$RUNNER_TEMP/agent-app"
+              python3 -B scripts/release/published_app.py "$app_input"
+              app="$(python3 -B -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); print(p / json.loads((p / "app-input.json").read_text())["app"])' "$app_input")"
+              args+=(--shared --published-app "$app")
+              ;;
+            *) exit 2 ;;
+          esac
           [[ "$STRESS" != true ]] || args+=(--stress)
-          python3 -B scripts/ci/agent_ci.py validate --inputs "$RUNNER_TEMP/agent-inputs" "${args[@]}"
-      - name: Retain CI reports
-        if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
+          python3 -B scripts/ci/agent_ci.py validate "${args[@]}"
+      - name: Retain test and build diagnostics
+        if: always() && (steps.tests.outcome == 'success' || steps.tests.outcome == 'failure' || steps.tests.outcome == 'cancelled')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sunder-agent-shared-${{ matrix.mode }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          name: agent-validation-${{ matrix.lane }}${{ matrix.package && format('-{0}', matrix.package) || '' }}-${{ matrix.rid }}-${{ github.run_attempt }}
           path: |
             sunder-agent-package/artifacts/reports
             sunder-agent-package/artifacts/test-results
             sunder-agent-package/artifacts/stress
+            sunder-agent-package/artifacts/source-components
             sunder-agent-package/artifacts/source-family
             sunder-agent-package/artifacts/source-commands
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 14
 
   summary:
     name: Summary
     if: always()
-    needs: [prepare, preflight, dependency-discovery, bootstrap, dependencies, components, verifier, source]
+    needs: [prepare, checks, dependencies, bootstrap, admit-owner, behavior]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Require all selected validation jobs
-        env:
+      - env:
           JOB_RESULTS: ${{ toJSON(needs) }}
         run: python3 -B scripts/ci/workflow_summary.py validate
-      - name: Select test-owned required execution evidence
-        id: evidence
-        if: needs.prepare.outputs.selected_count != '0'
-        env:
-          PACKAGES: ${{ needs.prepare.outputs.packages }}
-        run: python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --plan
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: steps.evidence.outputs.has_requirements == 'true'
-        with:
-          pattern: ${{ steps.evidence.outputs.pattern }}
-          path: required-results
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.prepare.outputs.windows_history != ''
-        with:
-          name: agent-historical-windows-cases
-          path: required-history
-      - name: Require exact platform cases and keep historical results separate
-        if: steps.evidence.outputs.has_requirements == 'true'
-        env:
-          PACKAGES: ${{ needs.prepare.outputs.packages }}
-          WINDOWS_HISTORY_SHA256: ${{ needs.prepare.outputs.windows_history }}
-        run: >-
-          python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --results required-results
-          --history-sha256 "$WINDOWS_HISTORY_SHA256" --history required-history --historical-receipt required-history-receipt.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: needs.prepare.outputs.windows_history != ''
-        with:
-          name: agent-historical-windows-receipt-${{ github.run_attempt }}
-          path: required-history-receipt.json
-          if-no-files-found: error
-          retention-days: 90

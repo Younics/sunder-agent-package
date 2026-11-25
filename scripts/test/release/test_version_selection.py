@@ -125,39 +125,33 @@ class VersionSelectionTests(unittest.TestCase):
         self.assertEqual(before, inventory)
 
     def test_summary_rejects_failure_cancellation_and_unexpected_skips_in_every_selected_stage(self):
-        def audit(jobs, mode, **options):
-            summary.verify(jobs, mode, **options)
+        def audit(jobs, mode):
+            summary.verify(jobs, mode)
             for name in jobs:
                 for outcome in ("failure", "cancelled", "skipped" if jobs[name]["result"] == "success" else "success"):
                     broken = copy.deepcopy(jobs)
                     broken[name]["result"] = outcome
                     with self.subTest(mode=mode, job=name, outcome=outcome), self.assertRaises(ValueError):
-                        summary.verify(broken, mode, **options)
+                        summary.verify(broken, mode)
         family_size = len(self.rows)
         for count, pending in ((0, False), (1, False), (family_size, True), (1, True)):
             active = count > 0
-            required = dict(prepare=True, preflight=active, bootstrap=pending, dependencies=active,
-                 components=active, verifier=active, source=count == family_size)
-            required["dependency-discovery"] = active
+            required = {"prepare": True, "checks": active, "bootstrap": pending, "dependencies": active,
+                        "admit-owner": pending, "behavior": active}
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
-            jobs["prepare"]["outputs"] = dict(selected_count=str(count), full=str(count == family_size).lower())
-            jobs["dependency-discovery"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])
+            jobs["prepare"]["outputs"] = dict(selected_count=str(count))
+            jobs["dependencies"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])
             audit(jobs, "validate")
-        for count, resume, owner, production in ((0, False, False, 0), (1, False, False, 1), (1, False, True, 0),
-                                                  (family_size, False, True, family_size - 1), (1, True, True, 0)):
+        for count, resume, production in ((0, False, 0), (1, False, 1), (1, False, 0),
+                                          (family_size, False, family_size - 1), (1, True, 0)):
             active, build = count > 0, count > 0 and not resume
-            consumers = [f"consumer-{index}" for index in range(count - int(owner))]
-            required = dict(prepare=True, validation=build, production=build, native=build and production > 0,
+            required = dict(prepare=True, validation=build, native=build and production > 0,
                  archive=build, smoke=build, stage=active, release=active)
-            required.update({"fan-in": build, "publish-owner": owner, "publish-consumers": bool(consumers), "installed-native": active})
+            required.update({"fan-in": build, "publish": active, "installed-native": active})
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
-            jobs["prepare"]["outputs"] = dict(selected_count=str(count), resume=str(resume).lower(),
-                owner_selected=str(owner).lower(), consumers=json.dumps(consumers))
-            jobs["production"]["outputs"]["selected_count"] = str(production)
+            jobs["prepare"]["outputs"] = dict(selected_count=str(count), resume=str(resume).lower())
+            jobs["validation"]["outputs"]["production_packages"] = json.dumps(["fixture"] * production)
             audit(jobs, "release")
-        for operation in ("test", "native", "publish"):
-            required = {"test": operation == "test", "native": operation == "native", "compose": operation == "native", "publish": operation == "publish"}
-            audit({name: dict(result="success" if value else "skipped") for name, value in required.items()}, "component", operation=operation)
 
 
 if __name__ == "__main__": unittest.main()

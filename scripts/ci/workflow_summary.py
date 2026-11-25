@@ -17,13 +17,10 @@ def outcomes(jobs, expected):
             raise ValueError(f"{name}: expected {outcome}, observed {jobs[name]['result']}")
 
 
-def verify(jobs, mode, *, operation=None):
-    if mode == "component":
-        if operation not in ("test", "native", "publish"):
-            raise ValueError("Unknown component operation")
-        outcomes(jobs, {"test": operation == "test", "native": operation == "native",
-                        "compose": operation == "native", "publish": operation == "publish"})
-        return "All required component jobs succeeded."
+def verify(jobs, mode):
+    incomplete = [f"{name}: {job['result']}" for name, job in jobs.items() if job["result"] not in ("success", "skipped")]
+    if incomplete:
+        raise ValueError("; ".join(incomplete))
     if jobs["prepare"]["result"] != "success":
         raise ValueError("Package selection did not succeed")
     outputs = jobs["prepare"]["outputs"]
@@ -32,27 +29,15 @@ def verify(jobs, mode, *, operation=None):
         raise ValueError("Invalid package selection count")
     active = count > 0
     if mode == "validate":
-        full = count == len(FAMILY_PACKAGE_IDS)
-        if outputs["full"] != str(full).lower():
-            raise ValueError("Invalid full validation scope")
-        pending = json.loads(jobs["dependency-discovery"]["outputs"]["pending"]) if active else []
-        if type(pending) is not list or len(set(pending)) != len(pending):
-            raise ValueError("Invalid unpublished dependency selection")
-        expected = {"preflight": active, "dependency-discovery": active,
-            "bootstrap": active and bool(pending), "dependencies": active,
-            "components": active, "verifier": active, "source": full}
+        pending = json.loads(jobs["dependencies"]["outputs"]["pending"]) if active else []
+        expected = {"checks": active, "dependencies": active, "bootstrap": active and bool(pending),
+                    "admit-owner": active and bool(pending), "behavior": active}
     elif mode == "release":
         build = active and outputs["resume"] != "true"
-        production = int(jobs["production"]["outputs"]["selected_count"]) if build else 0
-        if not 0 <= production <= count:
-            raise ValueError("Invalid native component selection")
-        consumers = json.loads(outputs["consumers"])
-        owner = outputs["owner_selected"] == "true"
-        if type(consumers) is not list or len(set(consumers)) != len(consumers) or len(consumers) + owner != count:
-            raise ValueError("Publication leaves differ from the selected components")
-        expected = {"validation": build, "production": build, "native": build and production > 0,
+        production = json.loads(jobs["validation"]["outputs"]["production_packages"]) if build else []
+        expected = {"validation": build, "native": build and bool(production),
              "archive": build, "smoke": build, "fan-in": build, "stage": active,
-            "publish-owner": active and owner, "publish-consumers": active and bool(consumers), "installed-native": active, "release": active}
+             "publish": active, "installed-native": active, "release": active}
     else:
         raise ValueError("Unknown workflow summary")
     outcomes(jobs, dict(prepare=True, **expected))
@@ -61,7 +46,7 @@ def verify(jobs, mode, *, operation=None):
 
 if __name__ == "__main__":
     try:
-        message = verify(json.loads(os.environ["JOB_RESULTS"]), sys.argv[1], operation=os.environ.get("OPERATION"))
+        message = verify(json.loads(os.environ["JOB_RESULTS"]), sys.argv[1])
         print(message)
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:

@@ -93,7 +93,7 @@ def read_trx(root: Path, trx_path: Path) -> tuple[list[dict[str, object]], dict[
             continue
         if test_id in definitions:
             violations.append(f"TRX repeats test definition '{test_id}'")
-        class_name = method.get("className", "")
+        class_name = method.get("className", "").split(",", 1)[0]
         method_name = method.get("name", unit_test.get("name", ""))
         qualified_name = ".".join(part for part in (class_name, method_name) if part)
         definitions[test_id] = (
@@ -208,6 +208,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--verify", action="store_true", help="Require fresh adapter discovery and current source skip policy.")
     parser.add_argument("--repository-root", type=Path, default=REPOSITORY_ROOT)
     parser.add_argument("--expected-skips", type=int)
+    parser.add_argument("--rid", help="Check the required platform cases in this report")
     return parser.parse_args()
 
 
@@ -642,6 +643,9 @@ def main() -> int:
     if arguments.verify and (arguments.inventory is None or arguments.mode is None):
         print("--verify requires --inventory and --mode.", file=sys.stderr)
         return 2
+    if arguments.rid and not arguments.verify:
+        print("--rid requires --verify.", file=sys.stderr)
+        return 2
 
     root = arguments.trx_directory.resolve()
     trx_paths = sorted(root.rglob("*.trx"))
@@ -754,6 +758,13 @@ def main() -> int:
                 evidence_violations.append(
                     f"source-only test '{identity}' observed={observed}, expected={expected}"
                 )
+        if arguments.rid:
+            sys.path.insert(0, str(REPOSITORY_ROOT / "scripts/ci"))
+            from required_test_evidence import verify
+            if not re.fullmatch({"linux": "linux", "macos": "osx", "windows": "win"}[platform] + r"-(x64|arm64)", arguments.rid):
+                evidence_violations.append(f"Host platform {platform} differs from job RID {arguments.rid}")
+            else:
+                evidence_violations.extend(verify(results, inventory, arguments.mode, arguments.rid, arguments.repository_root))
 
     skipped_tests = []
     for result in primary_results:

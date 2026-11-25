@@ -211,19 +211,20 @@ def plan(source, source_sha, registry, published=None):
         packages=sorted(result, key=lambda row: row["packageId"])), source, source_sha)
 
 
-def retain(plan, directory):
+def retain(plan, directory, *, archives=True):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for row in plan["packages"]:
         locator = row["retainedArchive"]
         if locator is None:
             continue
-        path = directory / locator["name"]
-        if not path.exists():
-            inputs.download(locator, path)
-        r.require(r.file_sha(path) == locator["sha256"] and path.stat().st_size == locator["size"], "Retained archive changed")
-        manifest, _, _ = r.archive_metadata(path)
-        r.require((manifest["id"], manifest["version"]) == (row["packageId"], row["version"]), "Retained archive identity differs")
+        if archives:
+            path = directory / locator["name"]
+            if not path.exists():
+                inputs.download(locator, path)
+            r.require(r.file_sha(path) == locator["sha256"] and path.stat().st_size == locator["size"], "Retained archive changed")
+            manifest, _, _ = r.archive_metadata(path)
+            r.require((manifest["id"], manifest["version"]) == (row["packageId"], row["version"]), "Retained archive identity differs")
         evidence = row["retainedEvidence"]
         path = directory / evidence_name(evidence)
         if not path.exists():
@@ -272,6 +273,7 @@ def main():
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--directory", type=Path)
+    parser.add_argument("--evidence-only", action="store_true", help="Archives already travel in the inspected family")
     args = parser.parse_args()
     source = args.source.resolve()
     if args.action == "plan":
@@ -288,15 +290,13 @@ def main():
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 package_ids = [row["packageId"] for row in selected(value)]
                 output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n"
-                             + "packages=" + r.canonical(package_ids).decode() + "\n"
-                             + "owner_selected=" + str("younics.ai.agent" in package_ids).lower() + "\n"
-                             + "consumers=" + r.canonical([package_id for package_id in package_ids if package_id != "younics.ai.agent"]).decode() + "\n")
+                             + "packages=" + r.canonical(package_ids).decode() + "\n")
         print(f"Selected {count} version-bumped packages." if count else "No package version is newer; nothing to release.")
     else:
         value = load(args.plan, source)
         if args.action == "retain":
             r.require(args.directory is not None, "Retained archive directory required")
-            retain(value, args.directory)
+            retain(value, args.directory, archives=not args.evidence_only)
         else:
             print(r.encoded(selected(value)).decode())
 

@@ -1,55 +1,24 @@
-name: Qualify
-run-name: ${{ inputs.operation == 'compose' && 'Compose for lock authoring (not qualification)' || 'Qualify' }}
+name: Author a package lock input
+run-name: Compose for lock authoring (not qualification)
 
 on:
   workflow_dispatch:
     inputs:
-      packages:
-        description: Comma-separated canonical package IDs, or all for full qualification
+      package:
+        description: One import-free canonical package ID
         type: string
-        default: all
-      operation:
-        description: Validate, or compose one import-free package for lock authoring
-        type: choice
-        options: [validate, compose]
-        default: validate
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: sunder-package-qualification-${{ github.ref }}
+  group: agent-lock-authoring-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  selection:
-    name: Select explicit qualification inputs
-    if: inputs.operation == 'validate'
-    runs-on: ubuntu-24.04
-    outputs:
-      packages: ${{ steps.selection.outputs.packages }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - id: selection
-        env:
-          PACKAGES: ${{ inputs.packages }}
-        run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-
-  baseline:
-    name: Component and shared validation
-    needs: selection
-    uses: ./.github/workflows/sunder-package-smoke.yml
-    permissions:
-      contents: read
-      actions: read
-    with:
-      packages: ${{ needs.selection.outputs.packages }}
-
   authoring:
     name: Compose without qualification or publication
-    if: inputs.operation == 'compose'
     uses: ./.github/workflows/sunder-package-authoring.yml
     with:
-      package: ${{ inputs.packages }}
+      package: ${{ inputs.package }}

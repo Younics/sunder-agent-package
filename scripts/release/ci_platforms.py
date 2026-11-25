@@ -19,21 +19,26 @@ def platforms(root=ROOT):
 RIDS = tuple(row["rid"] for row in platforms())
 
 
-def matrices(package_tests=False, variables=None, *, windows_filesystem_native=False):
+def matrices(variables=None):
     variables = variables or {}
-    native, behavior, preflight = [], [], []
+    native, behavior = [], []
     for row in platforms():
         key = "SUNDER_AGENT_RUNNER_" + row["rid"].upper().replace("-", "_")
         labels = json.loads(variables[key]) if variables.get(key) else row["runner"]
         if not isinstance(labels, list) or not labels or any(not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9._-]+", label) for label in labels):
             raise ValueError("Invalid native runner labels: " + key)
         native.append(dict(rid=row["rid"], runner=labels))
-        extra_windows = windows_filesystem_native and row["rid"] == "win-arm64"
-        if row.get("behavior") or extra_windows:
-            platform = {"win": "windows", "linux": "linux", "osx": "macos"}[row["rid"].split("-")[0]]
-            runner = labels
-            preflight.append(dict(rid=row["rid"], runner=runner, platform=platform))
-            for mode in ("source", "package") if package_tests else ("source",):
-                behavior.append(dict(rid=row["rid"], runner=runner, mode=mode,
-                    platform=platform))
-    return dict(native=dict(include=native), behavior=dict(include=behavior), preflight=dict(include=preflight))
+        if row.get("behavior"):
+            behavior.append(native[-1])
+    if {row["rid"] for row in behavior} != set(RIDS):
+        raise ValueError("Agent behavior requires all native platforms")
+    return dict(native=dict(include=native), behavior=dict(include=behavior))
+
+
+def validation_targets(selected, full, variables=None):
+    platforms = matrices(variables)
+    scopes = [(key, "component", key) for key in selected]
+    if full:
+        scopes.append(("family integration", "family", ""))
+    return {"include": [dict(platform, label=label, lane=lane, package=package)
+                        for label, lane, package in scopes for platform in platforms["behavior"]["include"]]}

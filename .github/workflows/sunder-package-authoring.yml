@@ -64,7 +64,6 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/sunder-package-component.yml
     with:
-      operation: native
       package: ${{ needs.prepare.outputs.package }}
       inputs_sha256: ${{ needs.prepare.outputs.sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}

@@ -403,7 +403,13 @@ class NativeFamilyFixture(unittest.TestCase):
                     family.compose_component(self.repository, leaves, candidates, component)
             final_identity = dict(expected, schemaVersion=6)
             records = family.gather_candidates(self.repository, candidates, final, final_identity)
+            index_sha = family.digest((final / family.ARCHIVE_SET).read_bytes())
             before_smoke = {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")}
+            changed = final / records[0]["path"]
+            changed.write_bytes(before_smoke[changed.name] + b"substitution")
+            with self.assertRaisesRegex(ValueError, "exact inspected family"):
+                family.verify_archive_set(final, index_sha)
+            changed.write_bytes(before_smoke[changed.name])
             for rid in inputs.RIDS:
                 metrics = self.work / "metrics" / rid
                 for path in metrics.glob("*.json"):
@@ -417,7 +423,7 @@ class NativeFamilyFixture(unittest.TestCase):
                 receipt, documents = native_documents(execution_records, rid, expected["core"]["commit"])
                 for name, data in documents.items(): write(metrics / name, data)
                 write(metrics / family.runtime_evidence.RECEIPT, receipt)
-                family.record_final(self.repository, candidates, final, metrics, smoke, rid, final_identity)
+                family.record_final(self.repository, leaves, final, metrics, smoke, rid, final_identity, index_sha)
             family.finalize_candidates(self.repository, smoke, final, final_identity)
             self.assertEqual(4, len(self.log.read_text().splitlines()), "Only two legacy and two new component packs may execute")
             self.assertEqual(before_smoke, {path.name: path.read_bytes() for path in final.glob("*.sunderpkg")})

@@ -26,8 +26,8 @@ def entries(route, key, *, limit=100):
     raise ValueError("Actions inventory exceeded its bound")
 
 
-def attempt_jobs(run, attempt, *, reverse=False, stop_after_first=None):
-    """Read one completed attempt. Reverse traversal is only an existence-query optimization."""
+def attempt_jobs(run, attempt):
+    """Read one completed authoring attempt."""
     route = f"runs/{inputs.positive(run)}/attempts/{inputs.positive(attempt)}/jobs"
     size = 20
     first = api_json(f"{route}?per_page={size}&page=1")
@@ -43,13 +43,6 @@ def attempt_jobs(run, attempt, *, reverse=False, stop_after_first=None):
                        "Completed Actions job inventory changed")
         return jobs
 
-    if stop_after_first is not None:
-        pages = range(count, 0, -1) if reverse else range(1, count + 1)
-        for index in pages:
-            if any(stop_after_first(job) for job in page(index)):
-                return True
-        return False
-    inputs.require(not reverse, "Full attempt inventory must preserve its original order")
     with ThreadPoolExecutor(max_workers=4) as executor:
         values = [job for jobs in executor.map(page, range(1, count + 1)) for job in jobs]
     inputs.require(len({inputs.positive(job["id"]) for job in values}) == total, "Duplicate Actions job in completed attempt")
