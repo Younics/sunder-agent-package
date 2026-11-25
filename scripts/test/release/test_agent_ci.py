@@ -670,86 +670,134 @@ public class Cases {
             self.assertEqual(previous, dict(os.environ))
 
     def test_filesystem_volume_detaches_on_test_failure_but_never_deletes_a_failed_detach(self):
-        for fails in ("test", "detach", "create"):
+        for fails in ("test", "detach", "unmount", "attach", "create"):
             log = self.root / ("filesystem-" + fails + ".log")
             commands = []
+            image, mounted, attached = None, False, False
             def run(arguments, **kwargs):
+                nonlocal image, mounted, attached
                 commands.append(arguments)
-                code = 7 if arguments[1] == fails else 0
-                info = plistlib.dumps(dict(images=[])).decode() if arguments[1] == "info" else ""
+                action = arguments[1]
+                code = 7 if action == fails else 0
+                if action == "create":
+                    image = Path(arguments[-1])
+                elif action == "attach":
+                    mounted = attached = True  # Also exercise a partially successful attach.
+                elif action == "unmount" and not code:
+                    mounted = False
+                elif action == "detach" and not code:
+                    attached = False
+                info = ""
+                if action == "info":
+                    entries = [{"dev-entry": "/dev/disk27", "content-hint": "GUID_partition_scheme"}]
+                    if mounted:
+                        entries.append({"mount-point": str(image.parent / "mount")})
+                    info = plistlib.dumps(dict(images=[
+                        {"image-path": str(image), "system-entities": entries}] if attached else [])).decode()
                 return subprocess.CompletedProcess(arguments, code, stdout=info, stderr="")
+            primary = RuntimeError("test failed")
             with self.subTest(fails=fails), patch.dict(os.environ, RUNNER_TEMP=str(self.root)), \
-                 patch.object(test_filesystems.subprocess, "run", side_effect=run), \
-                 patch.object(test_filesystems, "require_case_sensitive"), \
-                 patch.object(test_filesystems.shutil, "rmtree") as cleanup:
-                with self.assertRaises((RuntimeError, subprocess.CalledProcessError)):
+                  patch.object(test_filesystems.subprocess, "run", side_effect=run), \
+                  patch.object(test_filesystems, "require_case_sensitive"), \
+                  patch.object(Path, "is_mount", lambda path: mounted and path == image.parent / "mount"):
+                with self.assertRaises((RuntimeError, subprocess.CalledProcessError)) as caught:
                     with test_filesystems.case_sensitive_volume(log):
-                        raise RuntimeError("test failed")
-                self.assertEqual(fails != "detach", bool(cleanup.call_count))
-                expected = {"create": ["create"], "detach": ["create", "attach", "detach"],
-                            "test": ["create", "attach", "detach", "info"]}
+                        raise primary
+                if fails == "test":
+                    self.assertIs(primary, caught.exception)
+                elif fails == "attach":
+                    self.assertEqual("attach", caught.exception.cmd[1])
+                self.assertEqual(fails in ("detach", "unmount"), image.parent.is_dir())
+                complete = ["create", "attach", "info", "unmount", "info", "detach", "info"]
+                expected = {"create": complete[:1], "unmount": complete[:4], "detach": complete[:6],
+                            "test": complete, "attach": complete}
                 self.assertEqual(expected[fails],
-                                 [command[1] for command in commands])
+                                 [command[1] for command in commands if command[0] != "/usr/sbin/lsof"])
 
-    def test_busy_eject_retries_only_the_backing_device_and_requires_verified_detach(self):
-        device = "/dev/disk27"
+    def test_eject_is_bounded_rebinds_the_exact_image_and_requires_verified_detach(self):
+        first, rebound = "/dev/disk27", "/dev/disk28"
         # Exercise JSON path escaping even on hosts without backslash separators.
         runner_temp = self.root / "runner-\u00e9"
         runner_temp.mkdir()
         cases = {
-            "detached": (2, 2, 2),
-            "busy": (6, 5, 5),
-            "unknown-device": (1, 0, 1),
-            "lost-device": (2, 1, 2),
-            "still-attached": (1, 1, 1),
+            "retry": (8, 9, None),
+            "busy": (30, 30, subprocess.CalledProcessError),
+            "detached-after-busy": (1, 1, None),
+            "unknown-device": (0, 0, ValueError),
+            "foreign-mount": (0, 0, ValueError),
+            "still-attached": (0, 1, ValueError),
+            "non-busy-error": (0, 1, subprocess.CalledProcessError),
+            "command-timeout": (0, 1, subprocess.TimeoutExpired),
         }
-        for result, (busy_attempts, retries, pauses) in cases.items():
+        for result, (busy_attempts, attempts, expected_error) in cases.items():
             with self.subTest(result=result), patch.dict(os.environ, RUNNER_TEMP=str(runner_temp)):
                 log = self.root / (result + ".log")
-                detaches = []
-                image = None
+                detaches, unmounts = [], []
+                image, elapsed, mounted = None, 0, False
+                def pause(seconds):
+                    nonlocal elapsed
+                    elapsed += seconds
                 def run(arguments, **kwargs):
-                    nonlocal image
+                    nonlocal image, mounted
                     action = arguments[1]
                     code, output, error = 0, "", ""
                     if action == "create":
                         image = Path(arguments[-1])
                         image.write_bytes(b"fixture disk image")
+                    elif action == "attach":
+                        mounted = True
+                    elif action == "unmount":
+                        unmounts.append(arguments)
+                        mounted = False
                     elif action == "detach":
-                        detaches.append(arguments)
+                        self.assertFalse(mounted)
+                        detaches.append((arguments, kwargs["timeout"]))
+                        if result == "command-timeout":
+                            raise subprocess.TimeoutExpired(arguments, kwargs["timeout"])
+                        if result == "non-busy-error":
+                            code = 7
                         if len(detaches) <= busy_attempts:
                             code, error = errno.EBUSY, "hdiutil: couldn't eject disk - Resource busy\n"
                     elif action == "info":
                         def attachment(path, dev):
                             return {"image-path": str(path), "system-entities": [
                                 {"content-hint": "GUID_partition_scheme", "dev-entry": dev}]}
-                        images = [attachment(self.root / "other.sparseimage", "/dev/disk19")]
-                        has_device = result != "unknown-device" and not (result == "lost-device" and len(detaches) > 1)
-                        if has_device and (len(detaches) <= busy_attempts or result == "still-attached"):
-                            images.append(attachment(image, device))
+                        # The earlier device can be reused by a different image.
+                        images = [attachment(self.root / "other.sparseimage", first if detaches else "/dev/disk19")]
+                        still_bound = (len(detaches) <= busy_attempts or result == "still-attached")
+                        if still_bound and not (result == "detached-after-busy" and detaches):
+                            current = attachment(image, ("invalid" if result == "unknown-device"
+                                                         else rebound if detaches else first))
+                            if mounted:
+                                path = image.parent / ("unexpected" if result == "foreign-mount" else "mount")
+                                current["system-entities"].append({"mount-point": str(path)})
+                            images.append(current)
                         output = plistlib.dumps(dict(images=images)).decode()
                     return subprocess.CompletedProcess(arguments, code, stdout=output, stderr=error)
                 with tempfile.TemporaryDirectory(dir=self.root) as prepared, \
                      patch.object(test_filesystems.subprocess, "run", side_effect=run), \
                      patch.object(test_filesystems, "require_case_sensitive"), \
-                     patch.object(test_filesystems.time, "sleep") as pause:
+                     patch.object(Path, "is_mount", lambda path: mounted and path == image.parent / "mount"), \
+                     patch.object(test_filesystems.time, "sleep", side_effect=pause), \
+                     patch.object(test_filesystems.time, "monotonic", side_effect=lambda: elapsed):
                     def exercise():
                         with test_filesystems.case_sensitive_volume(log) as mount:
                             self.assertFalse(mount.is_relative_to(Path(prepared)))
-                    if result == "detached": exercise()
-                    elif result == "still-attached":
-                        with self.assertRaisesRegex(ValueError, "still attached"): exercise()
+                    if expected_error is None:
+                        exercise()
                     else:
-                        with self.assertRaises(subprocess.CalledProcessError) as caught: exercise()
-                        self.assertEqual(errno.EBUSY, caught.exception.returncode)
-                    self.assertEqual([unittest.mock.call(1)] * pauses, pause.call_args_list)
-                self.assertEqual(("hdiutil", "detach", str(image.parent / "mount")), detaches[0])
-                self.assertEqual([("hdiutil", "detach", device)] * retries, detaches[1:])
-                self.assertEqual(result != "detached", image.is_file())
+                        with self.assertRaises(expected_error): exercise()
+                mount = str(image.parent / "mount")
+                self.assertEqual([] if result == "foreign-mount" else [("diskutil", "unmount", mount)], unmounts)
+                device_sequence = ([first] + [rebound] * (attempts - 1)) if attempts else []
+                self.assertEqual([(("hdiutil", "detach", dev), 30 - i)
+                                  for i, dev in enumerate(device_sequence)], detaches)
+                self.assertEqual(expected_error is not None, image.is_file())
                 text = log.read_text(encoding="utf-8")
                 commands = [json.loads(line)["command"] for line in text.splitlines() if line.startswith("{")]
-                self.assertIn("Resource busy", text)
-                self.assertIn(["/usr/sbin/lsof", "-nP", "--", str(image)], commands)
+                if busy_attempts:
+                    self.assertIn("Resource busy", text)
+                self.assertEqual(expected_error is not None, any(row[0] == "/usr/sbin/lsof" for row in commands))
                 self.assertNotIn("other.sparseimage", text)
 
     def test_builder_diagnostics_use_release_build_then_independently_verified_focused_and_full_runs(self):

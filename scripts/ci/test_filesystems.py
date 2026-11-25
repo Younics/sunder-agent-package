@@ -12,6 +12,10 @@ import tempfile
 import time
 
 
+EJECT_TIMEOUT = 30
+EJECT_RETRY_DELAY = 1
+
+
 def require_case_sensitive(root):
     probe = root / "case-probe"
     probe.write_text("probe", encoding="utf-8")
@@ -27,74 +31,102 @@ def case_sensitive_volume(log):
     mount = work / "mount"
     mount.mkdir()
     image = work / "tests.sparseimage"
-    attach_requested = attached = False
+    attach_requested = False
 
     def record(text):
         with Path(log).open("a", encoding="utf-8") as stream:
             stream.write(text)
 
     def command(*arguments, timeout=None, check=True, log_stdout=True):
-        result = subprocess.run(arguments, capture_output=True, text=True, timeout=timeout)
+        try:
+            result = subprocess.run(arguments, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            record(f"Timed out running {arguments!r} after {timeout:.1f}s\n")
+            raise
         record(json.dumps(dict(command=arguments, exitCode=result.returncode)) + "\n"
                + (result.stdout if log_stdout else "") + result.stderr)
         if check:
             result.check_returncode()
         return result
 
-    def image_attachment():
-        # A busy eject may already have unmounted the volume. Find the backing
-        # device by the exact image path, not by an old mountpoint or disk number.
-        info = command("hdiutil", "info", "-plist", timeout=5, log_stdout=False)
+    def image_attachment(timeout):
+        # Only this invocation's private image can authorize a teardown command.
+        info = command("hdiutil", "info", "-plist", timeout=min(5, timeout), log_stdout=False)
         rows = [row for row in plistlib.loads(info.stdout.encode("utf-8"))["images"]
                 if row.get("image-path") == str(image)]
         if len(rows) > 1:
             raise ValueError(f"Ambiguous attachment for the case-sensitive test image: {image}")
         return rows[0] if rows else None
 
+    def entities(attachment):
+        return [] if attachment is None else attachment["system-entities"]
+
+    def mounted_paths(attachment):
+        return [row["mount-point"] for row in entities(attachment) if row.get("mount-point")]
+
     def detach():
-        try:
-            command("hdiutil", "detach", str(mount))
-        except subprocess.CalledProcessError as error:
-            if error.returncode != errno.EBUSY:
-                raise
-            target = ("+f", "--", str(mount)) if mount.is_mount() else ("--", str(image))
+        deadline = time.monotonic() + EJECT_TIMEOUT
+
+        def remaining():
+            seconds = deadline - time.monotonic()
+            if seconds <= 0:
+                raise TimeoutError(f"Timed out waiting for the case-sensitive test image to detach: {image}")
+            return seconds
+
+        attachment = image_attachment(remaining())
+        # Unmount the verified APFS volume separately. Combining unmount and
+        # eject can leave its backing disk busy even after the mount disappears.
+        if mount.is_mount() or mounted_paths(attachment):
+            if not mount.is_mount() or mounted_paths(attachment) != [str(mount)]:
+                raise ValueError(f"Cannot verify the case-sensitive test mount: {mount}")
+            command("diskutil", "unmount", str(mount), timeout=remaining())
+            attachment = image_attachment(remaining())
+
+        while True:
+            if mount.is_mount() or mounted_paths(attachment):
+                raise ValueError(f"The case-sensitive test image is still mounted: {image}")
+            if attachment is None:
+                return
+
+            devices = [row["dev-entry"] for row in entities(attachment)
+                       if row.get("content-hint") == "GUID_partition_scheme"
+                       and re.fullmatch(r"/dev/disk[0-9]+", row.get("dev-entry", ""))]
+            if len(devices) != 1:
+                raise ValueError(f"Cannot verify the backing device for the case-sensitive test image: {image}")
             try:
-                command("/usr/sbin/lsof", "-nP", *target, timeout=5, check=False)
-            except (OSError, subprocess.TimeoutExpired) as diagnostic:
-                record(f"Could not capture image or mount holders: {diagnostic}\n")
-            # Disk Images may still be draining after unmount. Rebind the exact
-            # image on every bounded, non-forced retry; never reuse a disk number.
-            for _ in range(5):
-                time.sleep(1)
-                attachment = image_attachment()
-                devices = [row["dev-entry"] for row in attachment["system-entities"]
-                           if row.get("content-hint") == "GUID_partition_scheme"
-                           and re.fullmatch(r"/dev/disk[0-9]+", row.get("dev-entry", ""))] if attachment else []
-                if len(devices) != 1:
-                    record(f"Cannot verify the backing device for a non-forced retry: {image}\n")
-                    raise error
-                try:
-                    command("hdiutil", "detach", devices[0])
-                    return
-                except subprocess.CalledProcessError as retry:
-                    if retry.returncode != errno.EBUSY:
-                        raise
-                    error = retry
-            raise error
+                command("hdiutil", "detach", devices[0], timeout=remaining())
+            except subprocess.CalledProcessError as error:
+                if error.returncode != errno.EBUSY or deadline - time.monotonic() <= EJECT_RETRY_DELAY:
+                    raise
+                # Allow the APFS container to release the backing disk, but
+                # rebind the image each time rather than caching a device number.
+                time.sleep(EJECT_RETRY_DELAY)
+                attachment = image_attachment(remaining())
+            else:
+                if mount.is_mount() or image_attachment(remaining()) is not None:
+                    raise ValueError(f"The case-sensitive test image is still attached: {image}")
+                return
 
     try:
         command("hdiutil", "create", "-size", "512m", "-type", "SPARSE",
                 "-fs", "Case-sensitive APFS", "-volname", "Sunder Test", str(image))
         attach_requested = True
         command("hdiutil", "attach", "-nobrowse", "-mountpoint", str(mount), str(image))
-        attached = True
         require_case_sensitive(mount)
         yield mount
     finally:
         # Never traverse a still-mounted image on failed detach, even when the
         # test process itself failed. Retain it and fail the prerequisite instead.
-        if attached or mount.is_mount():
-            detach()
-        if mount.is_mount() or (attach_requested and image_attachment() is not None):
-            raise ValueError(f"The case-sensitive test image is still attached: {image}")
+        if attach_requested:
+            try:
+                detach()
+            except (OSError, ValueError, subprocess.SubprocessError):
+                target = ("+f", "--", str(mount)) if mount.is_mount() else ("--", str(image))
+                try:
+                    command("/usr/sbin/lsof", "-nP", *target, timeout=5, check=False)
+                except (OSError, subprocess.TimeoutExpired) as diagnostic:
+                    record(f"Could not capture image or mount holders: {diagnostic}\n")
+                raise
+        if mount.is_mount():
+            raise ValueError(f"The case-sensitive test volume is still mounted: {mount}")
         shutil.rmtree(work)
