@@ -98,7 +98,7 @@ public sealed class MemoryAppSourceMigrationTests
                 foreign.Handler, foreign.Handler, Noop.Instance, foreign.ProviderId, "2.0.0");
             state.Add("younics.ai.agent.memory.semantic", CurrentPrivateRpcDescriptors.Get("younics.ai.agent.memory.semantic.inspector"),
                 registration.Handler, registration.Handler, Noop.Instance, registration.ProviderId, CurrentContractInventory.PackageVersionFor("younics.ai.agent.memory.semantic"));
-            await using var store = new MemoryLocalStore(package.Context);
+            var store = new MemoryWorkerStoreFixture(worker, workerServices);
             var sessionId = Guid.NewGuid();
             var memory = store.UpsertMemory(new(sessionId, "fact", "Original memory", "original memory", "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
             var listed = Assert.Single(await gateway.ListMemoriesAsync(sessionId, "Original", includeInactive: true));

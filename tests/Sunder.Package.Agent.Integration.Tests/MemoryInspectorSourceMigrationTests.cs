@@ -41,7 +41,7 @@ public sealed class MemoryInspectorSourceMigrationTests
         Assert.Null(source.App.GetType("Sunder.Package.Agent.Memory.Semantic.Runtime.MemoryInspectorSourceClient"));
         Assert.NotNull(source.App.GetType(typeof(MemoryServices.IMemoryInspectorService).FullName!, true));
 
-        await using var store = new MemoryLocalStore(package.Context);
+        var store = new MemoryWorkerStoreFixture(source.Worker, workerServices);
         var sessionId = Guid.NewGuid();
         var memory = store.UpsertMemory(new(sessionId, "preference", "Initial content", "initial content", "Evidence", Guid.NewGuid(), false, 0.8f, 0.9f));
 
