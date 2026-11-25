@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "packageId": "younics.ai.agent",
   "version": "2.0.0",
-  "authoredSource": "ccd0ca02fcbce5f5b38385c0fab97f4920f04a56",
+  "authoredSource": "c027b62c7a3746b950a901cf65ad717ce6acdf88",
   "coreCommit": "0b23a207092a0dcd8c34d7bb3e35ad8d5eccbdf2",
-  "authoringRunId": 45422511747,
-  "authoringArtifactId": 14939240252,
-  "authoringZipSha256": "8fa9593f42d0d0954bd491e8db59ecf87af5a42103ab01f5f85eda7684293efd",
+  "authoringRunId": 45537670455,
+  "authoringArtifactId": 14988282782,
+  "authoringZipSha256": "e78f9e6c0b8bc09ecf048a03ca8f01c59774d81ed34c75bc6f57f09522e642ca",
   "archive": {
-    "size": 32804166,
-    "sha256": "68190afd6d535076537b2d542825cb3f58aa5ab23ee52b1330ab42077b80fdd3"
+    "size": 32803281,
+    "sha256": "53af0bfe971d4d0ed8110eb5a0df929e3748629af193d5d4ff3c6964502aacda"
   }
 }
