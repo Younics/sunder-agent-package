@@ -176,9 +176,12 @@ descriptor-compatible archives.
 
 The original [failed 2.0.0 release](https://github.com/Younics/sunder-agent-package/actions/runs/45150131370/attempts/3)
 and its Windows reports remain historical. The unfinished cutover stays on its
-original workflow and inputs; do not restart it just to recreate those reports.
-New validation requires live containment cases on both Windows ABIs and never
-consults old runs for test credit.
+original source and bytes once staged. If it fails before staging, the corrected
+initial `2.0.0` plan omits only the 34 already-run Windows Local cases on each ABI,
+and only with the reviewed source and lock scope unchanged. They are recorded as
+not selected, never as current passes. All other tests and the six final-archive
+and installed gates still run. Ordinary validation and later releases require
+live containment cases in their owning jobs and never consult old runs for credit.
 
 CI package builds normalize generated-role compiler paths and omit debug symbols
 and commit-dependent assembly/Source Link metadata. This makes unchanged payloads

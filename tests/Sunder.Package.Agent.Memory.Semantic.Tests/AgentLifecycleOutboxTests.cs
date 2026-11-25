@@ -1258,7 +1258,9 @@ public sealed class AgentLifecycleOutboxTests
         CreateStartedRun(store);
         var observer = new RecordingObserver("rpc-failure-observer")
         {
-            AlwaysFail = true,
+            // A slow flush can outlast the first backoff and process a due retry.
+            // Inject one failure so the log assertion does not depend on when the flush returns.
+            FailuresRemaining = 1,
             FailureException = new SunderRpcException(new SunderRpcError(
                 SunderRpcErrorKind.Domain,
                 rpcCode,
@@ -1273,6 +1275,7 @@ public sealed class AgentLifecycleOutboxTests
 
         var entry = Assert.Single(logger.Entries);
         Assert.Equal("lifecycle.delivery.retry", entry.EventName);
+        Assert.Equal(1, entry.Attributes["lifecycle.attempt"]);
         Assert.Equal(nameof(SunderRpcErrorKind.Domain), entry.Attributes["rpc.error_kind"]);
         Assert.Equal(rpcCode, entry.Attributes["rpc.error_code"]);
         Assert.Null(entry.Exception);

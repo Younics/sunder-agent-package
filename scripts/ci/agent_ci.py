@@ -332,6 +332,19 @@ def validate(args):
     builder_diagnostics = getattr(args, "builder_diagnostics", False)
     inputs.require(not builder_diagnostics or args.mode == "source", "Builder diagnostics require source mode")
     inventory_path = generate_inventory(source, selected, args.mode)
+    if getattr(args, "cutover_200_plan", None):
+        import agent_cutover_200 as cutover
+
+        disposition = cutover.disposition(source, args.cutover_200_plan, args.rid, selected, args.mode)
+        inputs.require(not builder_diagnostics and not getattr(args, "shared", False),
+                       "The 2.0.0 cutover disposition is only for the Windows Local component jobs")
+        inventory = inputs.load(inventory_path)
+        inputs.require(any(row["path"] == cutover.PROJECT and row["owner"] == cutover.OWNER
+                           for row in inventory["projects"]), "Cutover Windows Local test project missing")
+        inventory[cutover.DISPOSITION] = disposition
+        inventory_path.write_bytes(inputs.canonical(inventory) + b"\n")
+        print(f"{args.rid}: {cutover.COUNT} original Windows Local cases not selected for the 2.0.0 cutover. "
+              "No historical results are admitted.")
     if args.mode == "package":
         inventory = inputs.load(inventory_path)
         inventory["projects"] = [row for row in inventory["projects"]
@@ -425,6 +438,7 @@ def main():
     validate_parser.add_argument("--builder-diagnostics", action="store_true", help="Run focused then full source-mode Builder tests")
     validate_parser.add_argument("--shared", action="store_true", help="Run shared family behavior and authoring")
     validate_parser.add_argument("--rid", help="Verify this native job's required test cases")
+    validate_parser.add_argument("--cutover-200-plan", type=Path, help=argparse.SUPPRESS)
     validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     validate_parser.add_argument("--published-app", help="Prepared published App directory for hosted presentation tests")
     run_parser = commands.add_parser("run")

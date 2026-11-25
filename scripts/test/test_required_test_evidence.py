@@ -1,10 +1,15 @@
 import json
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts/ci"))
+sys.path.insert(0, str(ROOT / "scripts/release"))
+import agent_cutover_200 as cutover
+import agent_selection as selection
 from required_test_evidence import verify
 
 
@@ -33,6 +38,64 @@ class RequiredCasesTests(unittest.TestCase):
         correct = dict(wrong, fullyQualifiedName="Docker.Tests.DockerExecutionTarget_RealDaemon_VerifiesMountAndContainerCanReadNestedHostCreation")
         self.assertTrue(verify([wrong], inventory, "source", "linux-arm64"))
         self.assertEqual([], verify([correct], inventory, "source", "linux-arm64"))
+
+    def test_initial_cutover_does_not_grant_current_windows_credit(self):
+        digest = "b" * 64
+        for rid in cutover.RIDS:
+            marker = dict(className=cutover.CLASS, rid=rid, planSha256=digest, status="not-selected", caseCount=34)
+            inventory = {"projects": [dict(path=cutover.PROJECT, owner=cutover.OWNER)]}
+            self.assertTrue(verify([], inventory, "source", rid))
+            inventory[cutover.DISPOSITION] = marker
+            self.assertEqual([], verify([], inventory, "source", rid))
+            observed = dict(project=cutover.SUITE.casefold(), fullyQualifiedName=cutover.CLASS + ".OneCase",
+                            test=cutover.CLASS + ".OneCase", outcome="passed")
+            self.assertTrue(verify([observed], inventory, "source", rid))
+            with self.assertRaisesRegex(ValueError, "case disposition"):
+                verify([], inventory, "source", "linux-x64")
+            inventory["projects"].append(dict(path="Builder.Tests.csproj", owner="younics.sunder.package.maker"))
+            self.assertTrue(all("Builder" in error for error in verify([], inventory, "source", rid)))
+            self.assertTrue(verify([], inventory, "source", rid))
+
+    def test_cutover_disposition_is_exactly_bound_and_later_versions_never_enter_it(self):
+        def plan(version="2.0.0"):
+            return dict(schemaVersion=2, registryOrigin="https://hub.sunderapp.io", lockSetSha256=cutover.LOCKS,
+                        packages=[dict(packageId=key, version=version, selected=True)
+                                  for key in sorted(cutover.r.FAMILY_PACKAGE_IDS)])
+
+        self.assertTrue(cutover.applies(plan()))
+        for version in ("2.0.1", "2.1.0", "3.0.0", "2.0.0-rc.1"):
+            self.assertFalse(cutover.applies(plan(version)), version)
+        partial = plan()
+        partial["packages"][0]["selected"] = False
+        self.assertFalse(cutover.applies(partial))
+        mixed = plan()
+        mixed["packages"][0]["version"] = "2.0.1"
+        self.assertFalse(cutover.applies(mixed))
+
+        source = "a" * 40
+        objects = [f"{i:040x}".encode() for i in range(1, len(cutover.SCOPE) + 1)]
+        fingerprint = cutover.hashlib.sha256(b"".join(objects)).hexdigest()
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "release-plan.json"
+            path.write_text("{}")
+            with patch.object(selection, "load", return_value=plan()) as load, \
+                 patch.object(cutover, "SCOPE_SHA256", fingerprint):
+                def git(dirty=b"", changed=False):
+                    return [source.encode(), b"\n".join(objects[::-1] if changed else objects), dirty]
+
+                with patch.object(cutover.r, "git", side_effect=git()):
+                    result = cutover.disposition(ROOT, path, "win-arm64", [cutover.OWNER], "source")
+                self.assertEqual(dict(className=cutover.CLASS, caseCount=34, rid="win-arm64",
+                                      status="not-selected", planSha256=cutover.r.file_sha(path)), result)
+                load.assert_called_once_with(path, ROOT, source)
+                for steps in (git(dirty=b" M dirty"), git(changed=True)):
+                    with patch.object(cutover.r, "git", side_effect=steps), self.assertRaisesRegex(ValueError, "scope changed"):
+                        cutover.disposition(ROOT, path, "win-x64", [cutover.OWNER], "source")
+                for rid, packages, mode in (("win-x64", ["younics.ai.agent"], "source"),
+                                            ("osx-arm64", [cutover.OWNER], "source"),
+                                            ("win-x64", [cutover.OWNER], "package")):
+                    with patch.object(cutover.r, "git", side_effect=git()), self.assertRaisesRegex(ValueError, "Windows Local"):
+                        cutover.disposition(ROOT, path, rid, packages, mode)
 
 
 if __name__ == "__main__":

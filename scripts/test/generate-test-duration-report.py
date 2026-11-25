@@ -886,6 +886,8 @@ def main() -> int:
         "repeatedTests": repeated_tests,
         "flakeCandidates": flake_candidates,
     }
+    if inventory is not None and "cutoverWindowsCasesNotRun" in inventory:
+        report["cutoverWindowsCasesNotRun"] = inventory["cutoverWindowsCasesNotRun"]
     json.dump(report, sys.stdout, indent=2, ensure_ascii=True)
     sys.stdout.write("\n")
     return 1 if evidence_violations else 0

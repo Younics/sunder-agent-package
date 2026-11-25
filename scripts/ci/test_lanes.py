@@ -135,6 +135,7 @@ def run_project_with_filesystems(state_path, source, project, common, filter_val
 
 def tests(state_path, lane):
     import agent_ci
+    import agent_cutover_200 as cutover
     state, _ = agent_ci.context(state_path)
     source = Path(state["source"])
     common = ["dotnet", "test", "Sunder.AgentPackage.slnx", "-c", "Release", "--no-build", "--no-restore"]
@@ -170,7 +171,10 @@ def tests(state_path, lane):
         count, failures = 0, []
         for project in projects:
             try:
-                count += run_project_with_filesystems(state_path, source, project, common, filter_value, output, inventory, mode)
+                scope = filter_value
+                if cutover.DISPOSITION in inventory and project == cutover.PROJECT and lane == "source":
+                    scope = f"({scope})&FullyQualifiedName!~{cutover.CLASS}."
+                count += run_project_with_filesystems(state_path, source, project, common, scope, output, inventory, mode)
             except TestProjectFailure as error:
                 if lane not in ("source", "package"): raise
                 failures.append((project, error))

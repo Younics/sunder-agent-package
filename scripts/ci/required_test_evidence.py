@@ -7,6 +7,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def verify(results, inventory, mode, rid, root=ROOT):
+    import sys
+    sys.path.insert(0, str(ROOT / "scripts/release"))
+    import agent_cutover_200 as cutover
+
     owners = {Path(row["path"]).stem.casefold(): row["owner"] for row in inventory["projects"]}
     errors = []
     policy = json.loads((root / "scripts/test/required-platform-cases.json").read_bytes())
@@ -16,6 +20,16 @@ def verify(results, inventory, mode, rid, root=ROOT):
     known_owners = {row["packageId"] for row in json.loads((root / "packages.json").read_bytes())["packages"]}
     if rid not in known_rids:
         raise ValueError(f"Unknown required test platform {rid}")
+    omission = inventory.get(cutover.DISPOSITION)
+    if omission is not None and (
+            not isinstance(omission, dict) or rid not in cutover.RIDS or mode != "source"
+            or owners.get(cutover.SUITE.casefold()) != cutover.OWNER
+            or not isinstance(omission.get("planSha256"), str)
+            or not re.fullmatch(r"[0-9a-f]{64}", omission.get("planSha256", ""))
+            or omission != dict(className=cutover.CLASS, rid=rid, planSha256=omission["planSha256"],
+                                caseCount=cutover.COUNT, status="not-selected")):
+        raise ValueError("Invalid 2.0.0 Windows case disposition")
+    omission_checked = False
     seen = set()
     for row in policy["requirements"]:
         fields = {"owner", "mode", "rids", "className", "expectedCount"}
@@ -39,6 +53,11 @@ def verify(results, inventory, mode, rid, root=ROOT):
         observations = [case for case in results if owners.get(case["project"]) == row["owner"]
                         and (case["fullyQualifiedName"] == prefix + qualified if qualified
                              else case["fullyQualifiedName"].rpartition(".")[0] == row["className"])]
+        if omission is not None and key == (cutover.OWNER, "source", cutover.CLASS, None):
+            omission_checked = True
+            if observations or row["expectedCount"] != cutover.COUNT or set(row["rids"]) != cutover.RIDS:
+                errors.append(f"{rid}: 2.0.0 Windows case disposition conflicts with current execution or policy")
+            continue
         names = {case["test"] for case in observations}
         if not (len(observations) == len(names) == row["expectedCount"]
                 and all(case["outcome"] == "passed" for case in observations)
@@ -53,4 +72,6 @@ def verify(results, inventory, mode, rid, root=ROOT):
                             and case["fullyQualifiedName"].rpartition(".")[2] == method]
                 if not observed or any(case["outcome"] != "passed" for case in observed):
                     errors.append(f"{rid}: required {method} missing or non-passing")
+    if omission is not None and not omission_checked:
+        errors.append(f"{rid}: 2.0.0 Windows case group missing from policy")
     return errors

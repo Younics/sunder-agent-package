@@ -786,7 +786,9 @@ public class Cases {
         self.assertNotIn("builder-diagnostics", workflow)
         self.assertNotIn("windows-filesystem-native", workflow)
         self.assertNotIn("younics.sunder.package.maker", workflow)
-        self.assertNotIn("younics.ai.agent.execution.local", workflow)
+        for line in workflow.splitlines():
+            if "younics.ai.agent.execution.local" in line:
+                self.assertIn("cutover_200_plan_sha256", line.casefold())
 
     def test_only_independent_ordinary_projects_aggregate_completed_assertion_failures(self):
         self.write_test_inventory()

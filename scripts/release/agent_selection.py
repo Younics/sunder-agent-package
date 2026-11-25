@@ -287,9 +287,14 @@ def main():
             and release["target_commitish"] == value["artifactSourceCommit"]
             and any(asset["name"] == PLAN for asset in release["assets"]) for release in remote)
         if os.environ.get("GITHUB_OUTPUT"):
+            import agent_cutover_200
+
+            plan_sha = r.file_sha(args.plan)
+            cutover_sha = plan_sha if not resume and agent_cutover_200.applies(value) else ""
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 package_ids = [row["packageId"] for row in selected(value)]
-                output.write(f"selected_count={count}\nplan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n"
+                output.write(f"selected_count={count}\nplan_sha256={plan_sha}\nresume={str(resume).lower()}\n"
+                             f"cutover_200_plan_sha256={cutover_sha}\n"
                              + "packages=" + r.canonical(package_ids).decode() + "\n")
         print(f"Selected {count} version-bumped packages." if count else "No package version is newer; nothing to release.")
     else:

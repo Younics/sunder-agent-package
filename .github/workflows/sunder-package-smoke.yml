@@ -17,6 +17,10 @@ on:
         description: JSON package IDs selected by Release
         type: string
         required: true
+      cutover_200_plan_sha256:
+        description: Initial 2.0.0 release only; the original Windows Local case group is not selected again
+        type: string
+        default: ''
     outputs:
       inputs_sha256:
         value: ${{ jobs.admit-owner.outputs.sha256 || jobs.dependencies.outputs.sha256 }}
@@ -242,6 +246,11 @@ jobs:
           set -euo pipefail
           python3 -B scripts/test/test_bash_runtime.py
           bash scripts/test/test-silent-return-analyzer.fixture.sh
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.cutover_200_plan_sha256 != '' && matrix.package == 'younics.ai.agent.execution.local' && runner.os == 'Windows'
+        with:
+          name: agent-release-selection
+          path: ${{ runner.temp }}/agent-validation-plan
       - name: Build and test against declared public dependencies
         id: tests
         env:
@@ -249,6 +258,7 @@ jobs:
           RID: ${{ matrix.rid }}
           LANE: ${{ matrix.lane }}
           PACKAGE: ${{ matrix.package }}
+          CUTOVER_200_PLAN_SHA256: ${{ inputs.cutover_200_plan_sha256 }}
           STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
           set -euo pipefail
@@ -258,6 +268,14 @@ jobs:
             component)
               packages="$(python3 -B -c 'import json,os; print(json.dumps([os.environ["PACKAGE"]]))')"
               args+=(--packages "$packages")
+              if [[ -n "$CUTOVER_200_PLAN_SHA256" && "$PACKAGE" == younics.ai.agent.execution.local && "$RID" == win-* ]]; then
+                test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
+                test "$GITHUB_REF" = refs/heads/main
+                test "$GITHUB_REF_PROTECTED" = true
+                plan="$RUNNER_TEMP/agent-validation-plan/release-plan.json"
+                test "$(python3 -B scripts/release/agent_release.py file-sha "$plan")" = "$CUTOVER_200_PLAN_SHA256"
+                args+=(--cutover-200-plan "$plan")
+              fi
               ;;
             family)
               app_input="$RUNNER_TEMP/agent-app"
