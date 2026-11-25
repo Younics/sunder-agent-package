@@ -20,7 +20,7 @@ class DependencyInputTests(unittest.TestCase):
         self.core = self.root / "sunder-core"
         self.core.mkdir()
         self.output = self.root / "resolved"
-        self.publications = {d.CORE: [self.publication(self.catalog_path, 1)], d.AGENT: [self.publication(self.archive, 2)]}
+        self.publications = {d.AGENT: [self.publication(self.archive, 2)]}
 
     def publication(self, path, identifier):
         return dict(id=identifier, draft=False, tag_name=f"fixture/v{identifier}.0.0", assets=[dict(
@@ -30,7 +30,8 @@ class DependencyInputTests(unittest.TestCase):
         def download(asset, destination, maximum=None):
             shutil.copyfile(self.bundle / asset["name"], destination)
         with patch.object(d, "releases", side_effect=lambda repo: self.publications[repo]), \
-             patch.object(d.inputs, "download", side_effect=download), patch.object(d.r, "git", return_value=self.core_sha.encode()):
+             patch.object(d.inputs, "download", side_effect=download), patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+             patch.object(d.public_platform_catalog, "download", return_value=self.catalog_path.read_bytes()):
             return d.resolve(self.source, self.core, self.output, allow_missing=allow_missing)
 
     def test_published_dependencies_and_identical_coordinator_copies_need_no_seeds(self):
@@ -39,9 +40,7 @@ class DependencyInputTests(unittest.TestCase):
         found = d.locate(d.AGENT, list(reversed(self.publications[d.AGENT])), self.archive.name)
         self.assertEqual(2, found[1]["releaseId"])
         before = d.inputs.source_snapshot(self.source)
-        with patch.object(d, "run") as seed:
-            value = self.resolve()
-        seed.assert_not_called()
+        value = self.resolve()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         self.assertEqual(2, value["schemaVersion"])
         self.assertEqual([d.record(self.archive)], value["candidates"])
@@ -51,13 +50,11 @@ class DependencyInputTests(unittest.TestCase):
     def test_unpublished_owner_waits_for_six_native_candidate_before_consumer_admission(self):
         self.publications[d.AGENT] = []
         before = d.inputs.source_snapshot(self.source)
-        with patch.object(d, "run", side_effect=AssertionError("Dependency discovery must not build")) as build:
-            pending = self.resolve(allow_missing=True)
-            self.assertEqual(["younics.ai.agent"], pending["pending"])
-            self.assertFalse((self.output / "ci-inputs.json").exists())
-            with patch.object(d.r, "git", return_value=self.core_sha.encode()):
-                d.complete(self.source, self.core, self.output, self.bundle)
-        build.assert_not_called()
+        pending = self.resolve(allow_missing=True)
+        self.assertEqual(["younics.ai.agent"], pending["pending"])
+        self.assertFalse((self.output / "ci-inputs.json").exists())
+        with patch.object(d.r, "git", return_value=self.core_sha.encode()):
+            d.complete(self.source, self.core, self.output, self.bundle)
         self.assertFalse((self.output / "preparation.json").exists())
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         d.inputs.verify_selected_files(self.source, [self.output / self.archive.name], self.output / self.catalog_path.name)
@@ -66,6 +63,7 @@ class DependencyInputTests(unittest.TestCase):
         with patch.object(d, "releases", side_effect=lambda repo: self.publications[repo]), \
              patch.object(d.inputs, "download", side_effect=lambda asset, path, maximum=None: shutil.copyfile(self.bundle / asset["name"], path)), \
              patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+             patch.object(d.public_platform_catalog, "download", return_value=self.catalog_path.read_bytes()), \
              patch.object(d.inputs.subprocess, "check_output", return_value=self.core_sha), \
              patch.object(d, "core_packages", return_value=[("Sunder.Package.Build", "1.2.3")]):
             value = d.inputs.fetch(self.source, self.output, self.source_sha, self.core_sha)
@@ -82,9 +80,8 @@ class DependencyInputTests(unittest.TestCase):
             for name, data in entries.items(): archive.writestr(name, data)
         self.publications[d.AGENT] = [self.publication(self.archive, 2)]
         before = d.inputs.source_snapshot(self.source)
-        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "exact committed package selection"):
+        with self.assertRaisesRegex(d.r.Invalid, "exact committed package selection"):
             self.resolve()
-        build.assert_not_called()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         self.assertFalse((self.output / "ci-inputs.json").exists())
 
@@ -97,12 +94,11 @@ class DependencyInputTests(unittest.TestCase):
         entries["manifest/sunder-package.json"] += b"\n"
         with zipfile.ZipFile(self.archive, "w") as archive:
             for name, data in entries.items(): archive.writestr(name, data)
-        with patch.object(d, "run") as build, patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+        with patch.object(d.r, "git", return_value=self.core_sha.encode()), \
              self.assertRaisesRegex(d.r.Invalid, "exact committed package selection") as failure:
             d.complete(self.source, self.core, self.output, self.bundle)
         self.assertIn("expected (version, content identity, public inventory)=", str(failure.exception))
         self.assertIn("; actual=", str(failure.exception))
-        build.assert_not_called()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         self.assertFalse((self.output / "ci-inputs.json").exists())
 
@@ -115,28 +111,25 @@ class DependencyInputTests(unittest.TestCase):
         lock = d.r.load(path)
         lock["packageArtifacts"]["younics.ai.agent"]["selectedPackageContentIdentity"] = "0" * 64
         path.write_bytes(d.r.canonical(lock))
-        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "Conflicting exact dependency selections"):
+        with self.assertRaisesRegex(d.r.Invalid, "Conflicting exact dependency selections"):
             self.resolve()
-        build.assert_not_called()
         self.assertFalse(self.output.exists())
 
     def test_absent_dependency_cannot_use_another_authored_version_or_a_cycle(self):
         self.publications[d.AGENT] = []
         project = self.source / self.rows[0]["projectPath"]
         project.write_text('<Project><PropertyGroup><Version>3.0.0</Version></PropertyGroup></Project>')
-        with patch.object(d, "run") as build, self.assertRaisesRegex(d.r.Invalid, "source cannot substitute another version"):
+        with self.assertRaisesRegex(d.r.Invalid, "source cannot substitute another version"):
             self.resolve()
-        build.assert_not_called()
 
-    def test_source_catalog_export_must_match_the_selected_hash(self):
-        self.publications[d.CORE] = []
-        def run(command, source, home):
-            self.assertNotIn("SelectSunder", " ".join(command))
-            if "--output" in command:
-                Path(command[command.index("--output") + 1]).write_bytes(b"wrong catalog")
-        with patch.object(d, "run", side_effect=run), patch.object(d.subprocess, "check_output", return_value="/fixture/tool.dll"), \
-             self.assertRaisesRegex(d.r.Invalid, "committed dependency"):
-            self.resolve()
+    def test_public_catalog_requires_the_exact_authored_release_and_rejects_wrong_bytes(self):
+        self.output.mkdir()
+        with patch.object(d.public_platform_catalog, "download", return_value=b"wrong catalog") as network, \
+             self.assertRaisesRegex(d.r.Invalid, "authored platform selection"):
+            d.public_platform_catalog.fetch(self.source, self.output)
+        version = d.r.load(self.catalog_path)["releaseVersion"]
+        network.assert_called_once_with(f"https://hub.sunderapp.io/api/v1/platform-contracts/sunder.core/releases/{version}/catalog")
+        self.assertFalse((self.output / self.catalog_path.name).exists())
 
     def test_core_coordinates_follow_only_the_build_dependency_not_other_package_versions(self):
         versions = {"Sunder.Sdk": "1.2.3", "Sunder.Sdk.Avalonia": "2.3.4", "Sunder.Sdk.Worker": "3.4.5", "Sunder.Package.Build": "4.5.6"}

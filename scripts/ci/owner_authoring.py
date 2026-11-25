@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
-"""Prepare inputs for composing one import-free root, not for qualification."""
+"""Compose an import-free owner and authenticate its independent lock-authoring bytes."""
 import argparse
 import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
+from urllib.parse import quote
+from zipfile import ZipFile
 
 import agent_ci
 import agent_selection
 import dependency_inputs
+import hosted_evidence as hosted
 import project_scope
 import release_inputs as inputs
 
-REPRODUCTION = "compatibility/agent-owner-authoring.json"
+WORKFLOW = "sunder-package-qualify.yml"
+AUTHORING_TITLE = "Compose for lock authoring (not qualification)"
 
 
 def prepare(source, package, source_sha, core_sha, output):
     source = Path(source).resolve(strict=True)
     core = source.parent / "sunder-core"
     inputs.clean_source(source, inputs.digest(source_sha, 40))
-    inputs.require(agent_ci.head(core) == inputs.digest(core_sha, 40), "Core checkout differs from the published Build source")
+    inputs.require(agent_ci.head(core) == inputs.digest(core_sha, 40), "Core checkout differs from the recorded test source")
     selected = inputs.package_scope(source, [package])
     (row, lock), = inputs.lock_documents(source, selected)
     inputs.require(not lock["packageImports"] and not lock["packageArtifacts"],
@@ -29,45 +34,73 @@ def prepare(source, package, source_sha, core_sha, output):
     inputs.require(project_scope.packages(source, [row["projectPath"]], properties, env) == selected,
                    "An authoring root cannot reach other canonical package projects")
     agent_selection.evaluated_packages(source, selected)
-    dependency_inputs.resolve(source, core, output, packages=selected, published_catalog_only=True)
+    dependency_inputs.resolve(source, core, output, packages=selected)
     value = inputs.fetch(source, output, source_sha, core_sha, packages=selected, prepared=True)
     inputs.require(not value["candidates"], "An authoring root cannot consume a candidate package")
     return dict(package=package, sha256=inputs.file_sha(Path(output) / inputs.MANIFEST))
 
 
-def verify_reproduction(source, bundle):
-    record = inputs.source_file(source, REPRODUCTION, optional=True)
-    if record is None:
-        return
-    review = inputs.load(record)
-    inputs.closed(review, "schemaVersion packageId version authoredSource coreCommit authoringRunId authoringArtifactId authoringZipSha256 archive")
-    inputs.require(type(review["schemaVersion"]) is int and review["schemaVersion"] == 1, "Unknown owner authoring record")
-    package = inputs.package_scope(source, [review["packageId"]])[0]
-    inputs.version(review["version"])
-    inputs.digest(review["authoredSource"], 40)
-    inputs.positive(review["authoringRunId"])
-    inputs.positive(review["authoringArtifactId"])
-    inputs.digest(review["authoringZipSha256"])
-    expected = review["archive"]
-    inputs.closed(expected, "size sha256")
-    inputs.positive(expected["size"])
-    inputs.digest(expected["sha256"])
-    value = inputs.load(Path(bundle) / inputs.MANIFEST)
-    if not any(package in lock["packageArtifacts"] for _, lock in inputs.lock_documents(source, value.get("packageIds"))):
-        return
-    inputs.require(value["core"]["artifactSourceCommit"] == inputs.digest(review["coreCommit"], 40),
-                   "Reproduced owner must use the same Core source as lock authoring")
-    candidates = [item for item in value["candidates"] if item["packageId"] == package]
-    inputs.require(len(candidates) == 1 and candidates[0]["version"] == review["version"],
-                   "Missing exact owner authored for the consumer locks")
-    asset = candidates[0]["asset"]
-    name = f"{package}.{review['version']}.sunderpkg"
-    inputs.require(asset["name"] == name and all(asset[key] == item for key, item in expected.items()),
-                   "Rebuilt owner bytes differ from the archive used to author the consumer locks")
-    path = inputs.regular(Path(bundle) / name)
-    inputs.require(path.stat().st_size == expected["size"] and inputs.file_sha(path) == expected["sha256"],
-                   "Rebuilt owner archive on disk did not reproduce the authored bytes")
-    print(f"{package}@{review['version']}: reproduced the lock-authoring archive byte for byte before consumer builds.")
+def same_archive(transport, candidate):
+    with ZipFile(transport) as archive:
+        members = [member for member in archive.infolist() if member.filename == candidate.name]
+        if not members:
+            return False  # Another released version of this package.
+        inputs.require(len(members) == 1, "Ambiguous authoring archive")
+        if members[0].file_size != candidate.stat().st_size:
+            return False
+        with archive.open(members[0]) as original, candidate.open("rb") as rebuilt:
+            while block := rebuilt.read(65536):
+                if original.read(len(block)) != block:
+                    return False
+            return not original.read(1)
+
+
+def authored_archive(package, candidate, repository_run):
+    name = f"agent-candidate-{package}"
+    for item in hosted.entries("artifacts?name=" + quote(name, safe=""), "artifacts"):
+        origin = item.get("workflow_run")
+        if item["expired"] or not origin or str(origin["id"]) == repository_run:
+            continue
+        run_id = inputs.positive(origin["id"])
+        run = hosted.api_json(f"runs/{run_id}")
+        if (run["id"] != run_id or not hosted.run_origin(run, WORKFLOW, "workflow_dispatch")
+                or run["conclusion"] != "success" or run["head_branch"] == "main"
+                or run["display_title"] != AUTHORING_TITLE):
+            continue
+        attempt = inputs.positive(run["run_attempt"])
+        jobs = hosted.attempt_jobs(run_id, attempt)
+        matches = [job for job in jobs if job["name"].endswith(f"{package} · compose once")
+                   and job["run_id"] == run_id and job["run_attempt"] == attempt and job["head_sha"] == run["head_sha"]
+                   and job["conclusion"] == "success" and job["started_at"] and job["completed_at"]]
+        inputs.require(len(matches) == 1 and matches[0]["started_at"] <= item["created_at"] <= matches[0]["completed_at"],
+                       "Authoring artifact is not from the successful compose job")
+        record = hosted.artifact_receipt(run, item, name, 384 * 1024 * 1024)
+        with tempfile.TemporaryDirectory(prefix="sunder-owner-authoring-") as directory:
+            transport = Path(directory) / "artifact.zip"
+            hosted.download(record, transport)
+            if same_archive(transport, candidate):
+                return dict(record, runId=run_id, runAttempt=attempt, jobId=matches[0]["id"], source=run["head_sha"])
+    raise ValueError(f"{candidate.name}: no authenticated authoring archive reproduced byte for byte. "
+                     "Use the owning compose workflow to author or recover the exact dependency.")
+
+
+def verify_reproduction(source, bundle, pending, output=None):
+    bundle = Path(bundle)
+    value = inputs.load(bundle / inputs.MANIFEST)
+    candidates = {item["packageId"]: item for item in value["candidates"]}
+    inputs.require(len(pending) == len(set(pending)) and set(pending) <= candidates.keys(), "Invalid pending authoring scope")
+    records = []
+    for package in inputs.package_scope(source, pending) if pending else ():
+        asset = candidates[package]["asset"]
+        candidate = inputs.regular(bundle / asset["name"])
+        inputs.require(dependency_inputs.record(candidate) == asset, "Rebuilt owner changed after lock admission")
+        origin = authored_archive(package, candidate, os.environ.get("GITHUB_RUN_ID", ""))
+        records.append(dict(packageId=package, archive=asset, authoring=origin))
+        print(f"{candidate.name}: reproduced the lock-authoring archive byte for byte before consumer builds.")
+    if output:
+        with Path(output).open("xb") as stream:
+            stream.write(inputs.canonical(dict(schemaVersion=1, source=value["artifactSourceCommit"], owners=records)) + b"\n")
+    return records
 
 
 def main():
@@ -80,6 +113,8 @@ def main():
     command.add_argument("output", type=Path)
     command = commands.add_parser("verify-reproduction")
     command.add_argument("inputs", type=Path)
+    command.add_argument("pending")
+    command.add_argument("receipt", type=Path)
     args = parser.parse_args()
     if args.operation == "prepare":
         result = prepare(Path.cwd(), args.package, args.source_sha, args.core_sha, args.output)
@@ -88,7 +123,7 @@ def main():
                 stream.writelines(f"{key}={value}\n" for key, value in result.items())
         print("Prepared exact inputs for lock authoring only; no tests or publication.")
     else:
-        verify_reproduction(Path.cwd(), args.inputs)
+        verify_reproduction(Path.cwd(), args.inputs, inputs.decode(args.pending.encode()), args.receipt)
 
 
 if __name__ == "__main__":

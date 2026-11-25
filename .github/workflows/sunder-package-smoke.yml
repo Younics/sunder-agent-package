@@ -18,6 +18,14 @@ on:
   workflow_call:
     inputs:
       core_commit:
+        description: Existing source-backed test tools resolved by the caller
+        type: string
+        default: ""
+      core_tag:
+        description: Tag of the locked Build package, not a source ref
+        type: string
+        default: ""
+      core_version:
         type: string
         default: ""
       package-tests:
@@ -53,17 +61,18 @@ jobs:
       matrix: ${{ steps.matrix.outputs.behavior }}
       preflight: ${{ steps.matrix.outputs.preflight }}
       core_commit: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
-      core_tag: ${{ steps.core.outputs.core_tag }}
-      core_version: ${{ steps.core.outputs.core_version }}
+      core_tag: ${{ inputs.core_tag || steps.core.outputs.core_tag }}
+      core_version: ${{ inputs.core_version || steps.core.outputs.core_version }}
       native: ${{ steps.matrix.outputs.native }}
       full: ${{ steps.selection.outputs.full }}
       packages: ${{ steps.selection.outputs.packages }}
       selected_count: ${{ steps.selection.outputs.selected_count }}
-      windows_history: ${{ steps.windows_history.outputs.ready }}
+      windows_history: ${{ steps.windows_history.outputs.sha256 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Select changed packages or explicit release inputs
         id: selection
         env:
@@ -80,9 +89,9 @@ jobs:
           else
             python3 -B scripts/ci/version_selection.py --changed-since "$BASE"
           fi
-      - name: Resolve Core source from the declared build-tool dependency
+      - name: Resolve existing source-backed test tools
         id: core
-        if: steps.selection.outputs.selected_count != '0'
+        if: steps.selection.outputs.selected_count != '0' && inputs.core_commit == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B scripts/ci/agent_ci.py coordinates
@@ -92,12 +101,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGES: ${{ steps.selection.outputs.packages }}
-          CORE_COMMIT: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
-        run: >-
-          python3 -B scripts/ci/windows_case_history.py --packages "$PACKAGES"
-          --core "$CORE_COMMIT" --prepare "$RUNNER_TEMP/windows-history"
+        run: python3 -B scripts/ci/windows_case_history.py --packages "$PACKAGES" --prepare "$RUNNER_TEMP/windows-history"
       - name: Retain original Windows reports separately from current test results
-        if: steps.windows_history.outputs.ready == 'true'
+        if: steps.windows_history.outputs.sha256 != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-historical-windows-cases
@@ -309,12 +315,21 @@ jobs:
       - id: inputs
         env:
           PACKAGES: ${{ needs.dependency-discovery.outputs.packages }}
+          PENDING: ${{ needs.dependency-discovery.outputs.pending }}
           CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" "$CORE_COMMIT" --packages "$PACKAGES" --prepared
-          python3 -B scripts/ci/owner_authoring.py verify-reproduction "$RUNNER_TEMP/agent-inputs"
+          python3 -B scripts/ci/owner_authoring.py verify-reproduction "$RUNNER_TEMP/agent-inputs" "$PENDING" "$RUNNER_TEMP/owner-reproduction.json"
           echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: needs.dependency-discovery.outputs.pending != '[]'
+        with:
+          name: agent-owner-reproduction-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/owner-reproduction.json
+          if-no-files-found: error
+          retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-dependency-inputs
@@ -346,6 +361,7 @@ jobs:
       inputs_sha256: ${{ needs.dependencies.outputs.sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}
       stress: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      windows_history_sha256: ${{ needs.prepare.outputs.windows_history }}
 
   verifier:
     name: Prepare archive verifier
@@ -477,7 +493,7 @@ jobs:
           pattern: ${{ steps.evidence.outputs.pattern }}
           path: required-results
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.prepare.outputs.windows_history == 'true'
+        if: needs.prepare.outputs.windows_history != ''
         with:
           name: agent-historical-windows-cases
           path: required-history
@@ -485,12 +501,12 @@ jobs:
         if: steps.evidence.outputs.has_requirements == 'true'
         env:
           PACKAGES: ${{ needs.prepare.outputs.packages }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
+          WINDOWS_HISTORY_SHA256: ${{ needs.prepare.outputs.windows_history }}
         run: >-
           python3 -B scripts/ci/required_test_evidence.py --packages "$PACKAGES" --results required-results
-          --core "$CORE_COMMIT" --history required-history --historical-receipt required-history-receipt.json
+          --history-sha256 "$WINDOWS_HISTORY_SHA256" --history required-history --historical-receipt required-history-receipt.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: needs.prepare.outputs.windows_history == 'true'
+        if: needs.prepare.outputs.windows_history != ''
         with:
           name: agent-historical-windows-receipt-${{ github.run_attempt }}
           path: required-history-receipt.json

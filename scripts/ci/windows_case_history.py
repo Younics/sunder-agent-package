@@ -1,185 +1,205 @@
 #!/usr/bin/env python3
-"""One-cohort carry-forward: original Windows filesystem results, never a new verdict."""
+"""Separate original Windows reports for an unfinished release, not fresh test results."""
 import argparse
+import copy
 import os
 from pathlib import Path
 import subprocess
-import sys
+from urllib.parse import quote
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
+import hosted_evidence as hosted
 import required_test_evidence as evidence
 import release_inputs as inputs
 
 ROOT = Path(__file__).resolve().parents[2]
-ACTIVATION = "compatibility/agent-2.0.0-windows-case-carry.json"
-POLICY = "scripts/test/required-platform-cases.json"
-POLICY_SHA256 = "48ce435045f109724f8dbf5c4951d96263004953091a16075a76a4ec421da213"
 OWNER = "younics.ai.agent.execution.local"
+AGENT = "younics.ai.agent"
 PROJECT = "tests/Sunder.Package.Agent.Execution.Local.Tests/Sunder.Package.Agent.Execution.Local.Tests.csproj"
 CLASS = "Sunder.Package.Agent.Execution.Local.Tests.WindowsSecureMutationTests"
 TRX = "test-results/full/Sunder.Package.Agent.Execution.Local.Tests.trx"
-REPOSITORY = "Younics/sunder-agent-package"
-REPOSITORY_ID = 1232186250
-WORKFLOW_ID = 275269183
-RUN = 45150131370
-SOURCE = "5cb5cc1ed76a52eeb6fb358772bd28b2d93e20cb"
-# These are the two original successful source jobs, not reruns or archive smokes.
-ORIGINALS = {
-    "win-x64": dict(jobId=137619825202, artifactId=14807852067, size=2479873,
-        zipSha256="a4e6eae54c6562f0922729c9bc4de27472dd9e601731630c293443b5ccc973fe",
-        trxSha256="71608fc05e9bc7e9026d1efcb6583c301f9aec555e698d7dc5746d99b7de3a6e"),
-    "win-arm64": dict(jobId=137619825418, artifactId=14808352147, size=2481459,
-        zipSha256="84702971df1324a8810c18e2f02b067fc57c7e29c8e89ee49eadd91dd272bdc8",
-        trxSha256="475194b30c817e7a4920d7203ce1e29d5023276e9ca6437f27e3773dc6c517a7"),
-}
-require = inputs.require
+RIDS = {"win-x64", "win-arm64"}
+WORKFLOW = "sunder-package-release.yml"
+REPORT = "originals.json"
 
 
 def git(source, *args):
     return subprocess.check_output(["git", "-C", str(source), *args])
 
 
-def source_tree(source):
-    """Hash the committed projection, omitting only the file that names that hash."""
-    entries = git(source, "ls-tree", "-r", "-z", "--full-tree", "HEAD").split(b"\0")[:-1]
-    ledger = [item for item in entries if item.split(b"\t", 1)[1] == ACTIVATION.encode()]
-    return inputs.sha(b"\0".join(item for item in entries if item not in ledger)), ledger
-
-
 def is_historical_group(row):
     return (row["owner"], row["mode"], row["className"], row.get("methodName")) == (OWNER, "source", CLASS, None)
 
 
-def policy_row(source):
-    path = inputs.source_file(source, POLICY)
-    require(inputs.file_sha(path) == POLICY_SHA256, "Windows carry is not valid for a revised evidence policy")
-    rows = evidence.requirements(source, inputs.load(path), [OWNER])
+def policy_row(source, document=None):
+    rows = evidence.requirements(source, document if document is not None else inputs.load(source / "scripts/test/required-platform-cases.json"), [OWNER])
     matches = [row for row in rows if is_historical_group(row)]
-    require(len(matches) == 1 and "cases" in matches[0] and set(matches[0]["rids"]) == set(ORIGINALS),
-            "Windows carry does not cover the exact historical case scope")
+    inputs.require(len(matches) == 1 and "cases" in matches[0] and set(matches[0]["rids"]) == RIDS,
+                   "Recovery requires the exact Windows case definitions")
     return matches[0]
 
 
-def active(source, selected, core_commit):
-    if selected is not None and OWNER not in selected:
+def contract_projection(lock):
+    projected = copy.deepcopy(lock)
+    owner = projected["packageArtifacts"].get(AGENT)
+    if owner:
+        old = owner.pop("selectedPackageContentIdentity")
+        owner.pop("publicInventorySha256")
+        for item in [*owner["contracts"].values(), *projected["packageImports"].values()]:
+            if item.get("authorityId") == AGENT and item.get("selectedAuthorityContentIdentity") == old:
+                del item["selectedAuthorityContentIdentity"]
+    return projected
+
+
+def same_case_scope(source, prior, row, worker):
+    # Do not compare a whole tree or a whole lock set: the unchanged test, local
+    # implementation, common execution code, and selected RPC tuples are the scope.
+    lock = f"{worker}/sunder-contracts.lock.json"
+    changed = git(source, "diff", "--name-only", prior, "HEAD", "--", str(Path(PROJECT).parent), worker,
+                  "src/Sunder.Agent.Execution.Common",
+                  f":(exclude){lock}", f":(exclude){worker}/packages.release.lock.json")
+    if changed:
+        return False
+    previous_policy = inputs.decode(git(source, "show", f"{prior}:scripts/test/required-platform-cases.json"))
+    return policy_row(source, previous_policy) == row and contract_projection(inputs.load(source / lock)) == contract_projection(
+        inputs.decode(git(source, "show", f"{prior}:{lock}")))
+
+
+def original_observations(path, pin):
+    hosted.verify_zip(pin, path)
+    with ZipFile(path) as archive:
+        entries = [entry for entry in archive.infolist() if entry.filename == TRX]
+        inputs.require(len(entries) == 1 and 0 < entries[0].file_size <= 8 * 1024 * 1024,
+                       "Missing or ambiguous original Windows TRX")
+        data = archive.read(entries[0])
+    inputs.require(not any(marker in data.upper().replace(b"\0", b"") for marker in (b"<!DOCTYPE", b"<!ENTITY")),
+                   "Unsupported original Windows TRX markup")
+    document = ET.fromstring(data)
+    counters = document.find(".//{*}Counters")
+    inputs.require(counters is not None and counters.get("failed") == counters.get("notExecuted") == "0",
+                   "Original Windows report has failures or skipped cases")
+    return evidence.observations(document), inputs.sha(data)
+
+
+def eligible_release(source, row):
+    """Discover a protected-main failure with an unfinished, same authored cohort."""
+    from dependency_inputs import releases
+
+    current = {item["packageId"]: item for item in inputs.inventory(source)["packages"]}
+    cohort = [current[key] for key in (AGENT, OWNER)]
+    if any(release["tag_name"] == cohort[0]["key"] + "/v" + cohort[0]["version"]
+           for release in releases(hosted.REPOSITORY)):
         return None
-    tree, ledger = source_tree(source)
-    path = Path(source) / ACTIVATION
-    if not ledger and not path.exists() and not path.is_symlink():
-        return None
-    require(len(ledger) == 1 and ledger[0].startswith(b"100644 blob "),
-            "Windows carry must use a committed regular review record")
-    path = inputs.source_file(source, ACTIVATION)
-    require(subprocess.run(["git", "-C", str(source), "diff", "--quiet", "HEAD", "--"]).returncode == 0,
-            "Windows carry checkout differs from the reviewed commit")
-    require(not git(source, "ls-files", "--others", "--exclude-standard", "-z", "--", "src", "tests", "scripts", "compatibility"),
-            "Windows carry cannot use untracked build or test inputs")
+    route = f"workflows/{WORKFLOW}/runs?branch=main&event=push&status=failure&per_page=15"
+    for listed in hosted.api_json(route)["workflow_runs"]:
+        prior = inputs.digest(listed["head_sha"], 40)
+        if str(listed["id"]) == os.environ.get("GITHUB_RUN_ID") or listed["run_attempt"] <= 1:
+            continue
+        if subprocess.run(["git", "-C", str(source), "merge-base", "--is-ancestor", prior, "HEAD"],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+            continue
+        if not all(ET.fromstring(git(source, "show", f"{prior}:{item['projectPath']}")).findtext("./PropertyGroup/Version")
+                   == item["version"] for item in cohort):
+            continue
+        run = hosted.api_json(f"runs/{inputs.positive(listed['id'])}")
+        inputs.require(hosted.run_origin(run, WORKFLOW, "push") and run["head_sha"] == prior and run["head_branch"] == "main"
+                       and run["conclusion"] == "failure", "Original release verdict or source changed")
+        def final_failure(job):
+            return (job["name"].startswith("Test final archives · ") and job["conclusion"] == "failure"
+                    and job["runner_id"] and job["run_attempt"] == run["run_attempt"]
+                    and job["run_id"] == run["id"] and job["head_sha"] == prior)
+
+        if not hosted.attempt_jobs(run["id"], run["run_attempt"], reverse=True, stop_after_first=final_failure):
+            continue
+        # Different relevant inputs need ordinary validation; historical reports never cover them.
+        return run if same_case_scope(source, prior, row, str(Path(current[OWNER]["projectPath"]).parent)) else None
+    return None
+
+
+def prepare(source, selected, directory):
+    if OWNER not in selected:
+        return ""
+    row = policy_row(source)
+    run = eligible_release(source, row)
+    if run is None:
+        return ""
+    run_id = run["id"]
+    jobs = hosted.attempt_jobs(run_id, 1)
+    directory.mkdir(parents=True, exist_ok=False)
+    windows = {}
+    for rid in sorted(RIDS):
+        name = f"agent-component-{OWNER}-source-{rid}-1"
+        job, = [job for job in jobs if job["name"].endswith(f"{OWNER} · source · {rid}")
+                and job["head_sha"] == run["head_sha"] and job["run_id"] == run_id and job["run_attempt"] == 1
+                and job["status"] == "completed" and job["conclusion"] == "success" and job["started_at"] and job["completed_at"]]
+        artifact, = hosted.entries(f"runs/{run_id}/artifacts?name={quote(name, safe='')}", "artifacts")
+        inputs.require(job["started_at"] <= artifact["created_at"] <= job["completed_at"], "Wrong original Windows job artifact")
+        pin = hosted.artifact_receipt(run, artifact, name, 16 * 1024 * 1024)
+        path = directory / f"{pin['artifactId']}.zip"
+        hosted.download(pin, path)
+        observed, trx = original_observations(path, pin)
+        evidence.verify_cases(row, rid, observed, historical=True)
+        windows[rid] = dict(pin, jobId=job["id"], trxSha256=trx)
+    record = dict(schemaVersion=1, destinationSource=git(source, "rev-parse", "HEAD").decode().strip(),
+                  originalRun=run_id, originalAttempt=1, originalReleaseAttempt=run["run_attempt"],
+                  originalSource=run["head_sha"], originalReleaseVerdict="failure", windows=windows, row=row)
+    path = directory / REPORT
+    path.write_bytes(inputs.canonical(record) + b"\n")
+    return inputs.file_sha(path)
+
+
+def checked_history(source, directory, sha):
+    path = inputs.regular(Path(directory) / REPORT)
+    inputs.require(inputs.file_sha(path) == inputs.digest(sha), "Windows recovery receipt changed")
     value = inputs.load(path)
-    inputs.closed(value, "schemaVersion sourceTreeSha256 coreCommit lockSetSha256")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == 1 and value["sourceTreeSha256"] == tree
-            and value["coreCommit"] == inputs.digest(core_commit, 40) and value["lockSetSha256"] == inputs.locks(source),
-            "Windows carry approval does not bind this source, Build, and lock set")
-    versions = {row["packageId"]: row["version"] for row in inputs.inventory(source)["packages"]}
-    require(versions.get(OWNER) == versions.get("younics.ai.agent") == "2.0.0", "Windows carry is only for the corrected 2.0.0 cohort")
-    return dict(value, destinationSource=git(source, "rev-parse", "HEAD").decode().strip(), row=policy_row(source))
+    inputs.require(value["schemaVersion"] == 1 and value["originalReleaseVerdict"] == "failure"
+                   and value["destinationSource"] == git(source, "rev-parse", "HEAD").decode().strip()
+                   and value["row"] == policy_row(source) and set(value["windows"]) == RIDS,
+                   "Windows recovery receipt has another scope or verdict")
+    return value
 
 
-def filter_project(reviewed, project, current_filter):
-    if reviewed is None or project != PROJECT:
+def filter_project(project, current_filter):
+    if project != PROJECT:
         return current_filter
     prefix = f"({current_filter})&" if current_filter else ""
     return prefix + f"FullyQualifiedName!~{CLASS}."
 
 
-def file_name(pin):
-    return f"{pin['artifactId']}.zip"
-
-
-def original_observations(path, pin):
-    path = inputs.regular(path)
-    require(path.stat().st_size == pin["size"] and inputs.file_sha(path) == pin["zipSha256"],
-            "Original Windows artifact size or ZIP digest differs")
-    with ZipFile(path) as archive:
-        entries = [entry for entry in archive.infolist() if entry.filename == TRX]
-        require(len(entries) == 1 and 0 < entries[0].file_size <= 8 * 1024 * 1024, "Missing or ambiguous original Windows TRX")
-        data = archive.read(entries[0])
-    require(inputs.sha(data) == pin["trxSha256"], "Original Windows TRX digest differs")
-    require(not any(marker in data.upper().replace(b"\0", b"") for marker in (b"<!DOCTYPE", b"<!ENTITY")),
-            "Unsupported original Windows TRX markup")
-    document = ET.fromstring(data)
-    counters = document.find(".//{*}Counters")
-    require(counters is not None and counters.get("failed") == counters.get("notExecuted") == "0",
-            "Original Windows report has failures or skipped cases")
-    return evidence.observations(document)
-
-
-def retrieve(reviewed, directory):
-    prefix = f"repos/{REPOSITORY}/actions"
-    run = inputs.gh_json(f"{prefix}/runs/{RUN}")
-    require(run["id"] == RUN and run["workflow_id"] == WORKFLOW_ID and run["repository"]["id"] == REPOSITORY_ID
-            and run["head_sha"] == SOURCE and run["head_branch"] == "main" and run["event"] == "push"
-            and run["status"] == "completed" and run["conclusion"] == "failure" and run["run_attempt"] == 3,
-            "Historical carry does not name the original failed release")
-    directory.mkdir(parents=True, exist_ok=False)
-    for rid, pin in ORIGINALS.items():
-        job = inputs.gh_json(f"{prefix}/jobs/{pin['jobId']}")
-        require(job["id"] == pin["jobId"] and job["run_id"] == RUN and job["run_attempt"] == 1
-                and job["head_sha"] == SOURCE and job["name"].endswith(f"{OWNER} · source · {rid}")
-                and job["started_at"] and job["completed_at"] and job["status"] == "completed" and job["conclusion"] == "success",
-                "Wrong original Windows source job")
-        route = f"{prefix}/artifacts/{pin['artifactId']}"
-        artifact = inputs.gh_json(route)
-        origin = dict(id=RUN, repository_id=REPOSITORY_ID, head_repository_id=REPOSITORY_ID, head_branch="main", head_sha=SOURCE)
-        require(artifact["id"] == pin["artifactId"] and artifact["name"] == f"agent-component-{OWNER}-source-{rid}-1"
-                and artifact["size_in_bytes"] == pin["size"] and artifact["digest"] == "sha256:" + pin["zipSha256"]
-                and all(artifact["workflow_run"][key] == value for key, value in origin.items()),
-                "Wrong original Windows artifact")
-        require(artifact["expired"] is False, "Original Windows artifact expired; review authenticated retained transport, never rerun")
-        path = directory / file_name(pin)
-        with path.open("xb") as output:
-            subprocess.run(["gh", "api", "--allow-escape-sequences", route + "/zip"], stdout=output, check=True, timeout=120)
-        evidence.verify_cases(reviewed["row"], rid, original_observations(path, pin), historical=True)
-
-
 def audit(reviewed, rows, results, directory):
     row, = [row for row in rows if is_historical_group(row)]
-    require(row == reviewed["row"], "Historical case selection changed")
+    inputs.require(row == reviewed["row"], "Historical case selection changed")
     directory = inputs.directory(directory)
-    require({path.name for path in directory.iterdir()} == {file_name(pin) for pin in ORIGINALS.values()},
-            "Missing or duplicate original Windows artifacts")
+    originals = reviewed["windows"]
+    inputs.require({path.name for path in directory.iterdir()} == {REPORT, *(f"{pin['artifactId']}.zip" for pin in originals.values())},
+                   "Missing or duplicate original Windows artifacts")
     records = []
-    for rid, pin in ORIGINALS.items():
+    for rid, pin in originals.items():
         fresh = evidence.read_scope(results, (OWNER, "source", rid))
-        require(fresh and not evidence.case_results(row, fresh),
-                f"{rid}: current Windows evidence is missing or repeats historical case execution")
-        observed = original_observations(directory / file_name(pin), pin)
+        inputs.require(fresh and not evidence.case_results(row, fresh), f"{rid}: current evidence is missing or repeats historical execution")
+        observed, trx = original_observations(directory / f"{pin['artifactId']}.zip", pin)
+        inputs.require(trx == pin["trxSha256"], "Original Windows TRX digest differs")
         result = evidence.verify_cases(row, rid, observed, historical=True)
         records.append(dict(result, **pin, skipped=0, failed=0))
-    receipt = dict(originalRun=RUN, originalAttempt=1, originalSource=SOURCE, originalReleaseVerdict="failure",
-                   destinationSource=reviewed["destinationSource"], destinationTreeSha256=reviewed["sourceTreeSha256"],
-                   destinationLockSetSha256=reviewed["lockSetSha256"], destinationCoreCommit=reviewed["coreCommit"],
-                   policySha256=POLICY_SHA256, groups=records, executedOnDestination=False)
+    receipt = {key: item for key, item in reviewed.items() if key not in ("row", "windows")}
+    receipt.update(groups=records, executedOnDestination=False)
     return [value for value in rows if value != row], receipt
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--packages", required=True)
-    parser.add_argument("--core", required=True)
     parser.add_argument("--prepare", type=Path, required=True)
     args = parser.parse_args()
     selected = evidence.version_selection.package_ids(ROOT, inputs.decode(args.packages.encode()))
-    reviewed = active(ROOT, selected, args.core)
-    if reviewed:
-        retrieve(reviewed, args.prepare)
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-            output.write(f"ready={str(reviewed is not None).lower()}\n")
+    sha = prepare(ROOT, selected, args.prepare)
+    with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+        output.write(f"sha256={sha}\n")
 
 
 if __name__ == "__main__":
     try:
         main()
     except (ValueError, OSError, subprocess.SubprocessError, KeyError) as error:
-        raise SystemExit("Windows carry rejected: " + str(error))
+        raise SystemExit("Windows history rejected: " + str(error))

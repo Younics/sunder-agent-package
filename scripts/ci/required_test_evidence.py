@@ -106,8 +106,8 @@ def main():
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--plan", action="store_true")
     operation.add_argument("--results", type=Path)
-    parser.add_argument("--core")
     parser.add_argument("--history", type=Path)
+    parser.add_argument("--history-sha256", default="")
     parser.add_argument("--historical-receipt", type=Path)
     args = parser.parse_args()
     selected = version_selection.package_ids(ROOT, json.loads(args.packages))
@@ -121,9 +121,9 @@ def main():
         print(json.dumps(value))
     else:
         import windows_case_history as history
-        reviewed = history.active(ROOT, selected, args.core)
-        if reviewed is not None:
-            require(args.history and args.historical_receipt, "Reviewed Windows carry needs its own originals and receipt")
+        if args.history_sha256:
+            require(args.history and args.historical_receipt, "Windows history needs separate originals and receipt")
+            reviewed = history.checked_history(ROOT, args.history, args.history_sha256)
             rows, historical = history.audit(reviewed, rows, args.results, args.history)
         else:
             require(not args.history or not args.history.exists(), "Unreviewed historical test evidence")

@@ -13,10 +13,6 @@ on:
         type: choice
         options: [validate, compose]
         default: validate
-      source:
-        description: Exact branch commit to compose (required for compose)
-        type: string
-        default: ""
 
 permissions:
   contents: read
@@ -32,7 +28,6 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       packages: ${{ steps.selection.outputs.packages }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -41,11 +36,6 @@ jobs:
         env:
           PACKAGES: ${{ inputs.packages }}
         run: python3 -B scripts/ci/version_selection.py --manual "$PACKAGES"
-      - name: Resolve the declared Build release provenance
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
 
   baseline:
     name: Component and shared validation
@@ -56,7 +46,6 @@ jobs:
       actions: read
     with:
       packages: ${{ needs.selection.outputs.packages }}
-      core_commit: ${{ needs.selection.outputs.core_commit }}
       package-tests: true
 
   authoring:
@@ -65,4 +54,3 @@ jobs:
     uses: ./.github/workflows/sunder-package-authoring.yml
     with:
       package: ${{ inputs.packages }}
-      source: ${{ inputs.source }}

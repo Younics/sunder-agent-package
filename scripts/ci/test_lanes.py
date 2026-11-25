@@ -161,11 +161,15 @@ def tests(state_path, lane):
         filter_value = "|".join("FullyQualifiedName~" + name for name in required_linux)
     elif lane == "stress": filter_value = POLICY["stress"]["filter"]
     else: raise ValueError("Unknown Agent test lane")
-    history = None
-    if lane == "source" and sys.platform == "win32":
+    history = os.environ.get("WINDOWS_HISTORY_SHA256")
+    if history and lane == "source" and sys.platform == "win32":
         import windows_case_history
         if windows_case_history.PROJECT in projects:
-            history = windows_case_history.active(source, state.get("selectedPackages"), state["coreCommit"])
+            windows_case_history.checked_history(source, Path(os.environ["RUNNER_TEMP"]) / "windows-history", history)
+        else:
+            history = None
+    else:
+        history = None
     repetitions = POLICY["stress"]["repetitions"] if lane == "stress" else 1
     if type(repetitions) is not int or repetitions < 1: raise ValueError("Empty stress selection")
     for attempt in range(repetitions):
@@ -175,7 +179,7 @@ def tests(state_path, lane):
         count, failures = 0, []
         for project in projects:
             try:
-                selected_filter = windows_case_history.filter_project(history, project, filter_value) if history else filter_value
+                selected_filter = windows_case_history.filter_project(project, filter_value) if history else filter_value
                 count += run_project_with_filesystems(state_path, source, project, common, selected_filter, output, inventory, mode)
             except TestProjectFailure as error:
                 if lane not in ("source", "package"): raise

@@ -12,6 +12,7 @@ import tempfile
 from urllib.parse import quote
 
 import agent_release as r
+import public_platform_catalog
 import release_inputs as inputs
 
 CORE = "Younics/sunder-core"
@@ -67,6 +68,7 @@ def core_packages(source, packages=None):
 
 
 def coordinates(source, published=None):
+    """Legacy source-test coordinate; not used by standalone public-feed builds."""
     published = releases(CORE) if published is None else published
     versions = {version for name, version in core_packages(source) if name == "Sunder.Package.Build"}
     r.require(len(versions) == 1, "Native composition needs one declared Sunder.Package.Build version")
@@ -109,54 +111,23 @@ def record(path):
     return dict(name=path.name, size=path.stat().st_size, sha256=r.file_sha(path))
 
 
-def run(command, source, home):
-    env = inputs.isolated_env(home, Path(home) / "contracts/v1/sha256")
-    subprocess.run(command, cwd=source, env=env, check=True)
-
-
-def catalog(source, core, destination, published, packages=None, *, published_only=False):
-    required = {(item["authorityId"], item["selectedAuthorityRelease"], item["selectedAuthorityContentIdentity"])
-                for _, lock in inputs.lock_documents(source, packages) for item in inputs.catalog_requirements(lock)}
-    r.require(len(required) == 1, "Expected one exact Core catalog dependency")
-    authority, version, digest = next(iter(required))
-    r.require(authority == "sunder.core", "Unknown platform catalog authority")
-    path = destination / "sunder-platform-contracts.v1.json"
-    found = locate(CORE, published, path.name, digest)
-    if found:
-        inputs.download(found[1], path, 67108864)
-    else:
-        r.require(not published_only, "The exact locked catalog is not published")
-        # Source CI can export an unpublished catalog through the real owning tool.
-        project = core / "languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj"
-        with tempfile.TemporaryDirectory(prefix="sunder-catalog-home-") as home:
-            run(["dotnet", "restore", str(project), "--locked-mode"], source, home)
-            run(["dotnet", "build", str(project), "-c", "Release", "--no-restore", "-p:GeneratePackageOnBuild=false"], source, home)
-            tool = subprocess.check_output(["dotnet", "msbuild", str(project), "-p:Configuration=Release", "-getProperty:TargetPath"],
-                cwd=core, env=inputs.isolated_env(home, Path(home) / "contracts/v1/sha256"), text=True).strip()
-            run(["dotnet", str(tool), "platform-contracts", "export", "--core-root", str(core), "--catalog-release", version, "--output", str(path)], source, home)
-    r.require(r.file_sha(path) == digest, "Core catalog does not match the committed dependency; update the authored selection explicitly")
-    return path
-
-
-def resolve(source, core, destination, *, packages=None, allow_missing=False, published_catalog_only=False):
+def resolve(source, core, destination, *, packages=None, allow_missing=False):
     r.require(not Path(destination).is_symlink(), "Linked dependency output")
     source, core, destination = Path(source).resolve(), Path(core).resolve(), Path(destination).resolve()
     r.require(not destination.exists() and not destination.is_relative_to(source) and not destination.is_relative_to(core), "Dependency output must be a new external directory")
     before = inputs.source_snapshot(source)
     try:
-        return resolve_dependencies(source, core, destination, packages, allow_missing=allow_missing,
-                                    published_catalog_only=published_catalog_only)
+        return resolve_dependencies(source, core, destination, packages, allow_missing=allow_missing)
     finally:
         r.require(inputs.source_snapshot(source) == before, "Dependency preparation changed authored source/locks")
 
 
-def resolve_dependencies(source, core, destination, packages=None, *, allow_missing=False, published_catalog_only=False):
+def resolve_dependencies(source, core, destination, packages=None, *, allow_missing=False):
     identities = {(package_id, entry["selectedPackageVersion"], entry["selectedPackageContentIdentity"], entry["publicInventorySha256"])
                   for _, lock in inputs.lock_documents(source, packages) for package_id, entry in lock["packageArtifacts"].items()}
     r.require(len({item[0] for item in identities}) == len(identities), "Conflicting exact dependency selections for the same package")
     destination.mkdir(parents=True)
-    core_releases = releases(CORE)
-    catalog_path = catalog(source, core, destination, core_releases, packages, published_only=published_catalog_only)
+    catalog_path = public_platform_catalog.fetch(source, destination, packages)
     agent_releases = releases(AGENT) if identities else []
     paths, pending = {}, []
     for package_id, version, _, _ in sorted(identities):

@@ -25,6 +25,10 @@ on:
       core_version:
         type: string
         default: ""
+      windows_history_sha256:
+        description: Original case-only evidence generated in this run, if applicable
+        type: string
+        default: ""
       matrix:
         description: Behavior platforms and reference modes
         type: string
@@ -86,11 +90,17 @@ jobs:
         env:
           INPUTS_SHA256: ${{ inputs.inputs_sha256 }}
         run: test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: inputs.windows_history_sha256 != '' && inputs.package == 'younics.ai.agent.execution.local' && matrix.mode == 'source' && runner.os == 'Windows'
+        with:
+          name: agent-historical-windows-cases
+          path: ${{ runner.temp }}/windows-history
       - name: Build and test the selected component
         env:
           PACKAGE: ${{ inputs.package }}
           MODE: ${{ matrix.mode }}
           STRESS: ${{ inputs.stress && matrix.mode == 'source' }}
+          WINDOWS_HISTORY_SHA256: ${{ inputs.windows_history_sha256 }}
         run: |
           set -euo pipefail
           packages="$(python3 -c 'import json, os; print(json.dumps([os.environ["PACKAGE"]]))')"

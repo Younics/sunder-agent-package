@@ -23,6 +23,29 @@ from windows_case_history import inputs
 fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].setUp
 
 
+class HostedAttemptTests(unittest.TestCase):
+    def pages(self, route):
+        page = int(route.rsplit("=", 1)[-1])
+        return dict(total_count=45, jobs=[dict(id=value) for value in range((page - 1) * 20 + 1, min(45, page * 20) + 1)])
+
+    def test_authenticates_complete_attempt_without_loading_unrelated_artifacts(self):
+        with patch.object(history.hosted, "api_json", side_effect=self.pages):
+            jobs = history.hosted.attempt_jobs(17, 5)
+        self.assertEqual(list(range(1, 46)), [job["id"] for job in jobs])
+        with patch.object(history.hosted, "api_json", side_effect=self.pages):
+            self.assertTrue(history.hosted.attempt_jobs(17, 5, reverse=True, stop_after_first=lambda job: job["id"] == 43))
+
+    def test_refuses_to_bind_a_job_listing_that_changed_mid_read(self):
+        def mutate(route):
+            result = self.pages(route)
+            if route.endswith("page=2"):
+                result["jobs"][0]["id"] = 1
+            return result
+        with patch.object(history.hosted, "api_json", side_effect=mutate), \
+             self.assertRaisesRegex(ValueError, "Duplicate Actions job"):
+            history.hosted.attempt_jobs(17, 5)
+
+
 def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
 
@@ -60,12 +83,9 @@ class OwnerAuthoringTests(unittest.TestCase):
         return author.prepare(self.source, package or self.owner, self.source_sha, self.core_sha, self.output)
 
     def test_owner_authoring_uses_only_the_published_catalog_and_exact_scoped_locks(self):
-        asset = dict(id=303, name=self.catalog_path.name, size=self.catalog_path.stat().st_size,
-                     digest="sha256:" + inputs.file_sha(self.catalog_path), state="uploaded")
-        published = [dict(id=202, draft=False, assets=[asset])]
-        with patch.object(author.dependency_inputs, "releases", return_value=published) as releases, \
-                 patch.object(inputs, "download", side_effect=lambda item, path, maximum: shutil.copyfile(self.catalog_path, path)), \
-                 patch.object(author.dependency_inputs, "run") as tool, redirect_stdout(io.StringIO()):
+        with patch.object(author.dependency_inputs, "releases") as releases, \
+                 patch.object(author.dependency_inputs.public_platform_catalog, "download", return_value=self.catalog_path.read_bytes()) as catalog, \
+                 redirect_stdout(io.StringIO()):
             result = self.prepare()
         self.assertEqual(self.owner, result["package"])
         value = inputs.verify(self.source, self.output, result["sha256"], self.source_sha, self.core_sha, [self.owner])
@@ -74,14 +94,15 @@ class OwnerAuthoringTests(unittest.TestCase):
         self.assertEqual([self.owner], value["packageIds"])
         self.assertEqual([self.rows[0]["projectPath"]], self.graph.call_args.args[1])
         self.evaluated.assert_called_once_with(self.source.resolve(), [self.owner])
-        releases.assert_called_once_with(author.dependency_inputs.CORE)
-        tool.assert_not_called()
+        releases.assert_not_called()
+        catalog.assert_called_once()
         with self.assertRaisesRegex(ValueError, "does not cover"):
             inputs.verify(self.source, self.output, result["sha256"], self.source_sha, self.core_sha, [history.OWNER])
 
     def test_cannot_use_consumer_or_build_an_unpublished_catalog_to_author(self):
         with patch.object(author.dependency_inputs, "releases", return_value=[]) as releases, \
-                 patch.object(author.dependency_inputs, "run") as tool:
+                 patch.object(author.dependency_inputs.public_platform_catalog, "download",
+                              side_effect=subprocess.CalledProcessError(22, "curl")) as catalog:
             with self.assertRaisesRegex(ValueError, "import-free"):
                 self.prepare(history.OWNER)
             releases.assert_not_called()
@@ -89,24 +110,18 @@ class OwnerAuthoringTests(unittest.TestCase):
                 with patch.object(author.project_scope, "packages", return_value=[self.owner, history.OWNER]):
                     self.prepare()
             releases.assert_not_called()
-            with self.assertRaisesRegex(ValueError, "locked catalog is not published"):
+            catalog.assert_not_called()
+            with self.assertRaises(subprocess.CalledProcessError):
                 self.prepare()
-            tool.assert_not_called()
+            catalog.assert_called_once()
 
     def test_final_handoff_reproduces_raw_owner_bytes_not_just_the_locked_inventory(self):
-        record = self.source / author.REPRODUCTION
-        record.parent.mkdir()
-        asset = self.manifest["candidates"][0]["asset"]
-        record.write_text(json.dumps(dict(schemaVersion=1, packageId=self.owner, version="2.0.0",
-            authoredSource="8" * 40, coreCommit=self.manifest["core"]["artifactSourceCommit"],
-            authoringRunId=123, authoringArtifactId=456, authoringZipSha256="9" * 64,
-            archive={key: asset[key] for key in ("size", "sha256")})))
-        with redirect_stdout(io.StringIO()):
-            author.verify_reproduction(self.source, self.bundle)
+        transport = self.root / "authoring.zip"
+        with ZipFile(transport, "w") as archive:
+            archive.write(self.archive, self.archive.name)
+        self.assertTrue(author.same_archive(transport, self.archive))
         self.archive.write_bytes(self.archive.read_bytes() + b"different ZIP bytes")
-        # The same descriptors and contract lock are insufficient.
-        with self.assertRaisesRegex(ValueError, "on disk did not reproduce"):
-            author.verify_reproduction(self.source, self.bundle)
+        self.assertFalse(author.same_archive(transport, self.archive))
 
 
 def make_trx(class_name, cases):
@@ -125,42 +140,27 @@ class WindowsHistoryTests(unittest.TestCase):
     def setUp(self):
         fixture_setup(self)
         git(self.source, "init", "-q")
-        policy = self.source / history.POLICY
+        policy_name = "scripts/test/required-platform-cases.json"
+        policy = self.source / policy_name
         policy.parent.mkdir(parents=True)
-        shutil.copyfile(SCRIPTS.parent / history.POLICY, policy)
+        shutil.copyfile(SCRIPTS.parent / policy_name, policy)
         self.row = history.policy_row(self.source)
         self.selected = [history.OWNER]
-        commit(self.source, "Fixture inputs")
-        self.marker = self.source / history.ACTIVATION
-        self.marker.parent.mkdir()
+        self.source_sha = commit(self.source, "Fixture inputs")
         self.originals = self.root / "historical"
         self.originals.mkdir()
         self.results = self.root / "current"
 
-    def activate(self):
-        tree, ledger = history.source_tree(self.source)
-        self.assertFalse(ledger)
-        self.marker.write_text(json.dumps(dict(schemaVersion=1, sourceTreeSha256=tree, coreCommit=self.core_sha,
-                                               lockSetSha256=inputs.locks(self.source))))
-        return commit(self.source, "Reviewed destination and exact Build/locks")
-
-    def test_carry_is_opt_in_and_fails_closed_if_destination_or_build_changes(self):
-        self.assertIsNone(history.active(self.source, self.selected, self.core_sha))
-        selected = self.activate()
-        self.assertEqual(selected, history.active(self.source, self.selected, self.core_sha)["destinationSource"])
-        self.assertIsNone(history.active(self.source, ["younics.ai.agent"], self.core_sha))
-        with self.assertRaisesRegex(ValueError, "does not bind"):
-            history.active(self.source, self.selected, "f" * 40)
-        lock = (self.source / self.rows[0]["projectPath"]).with_name("sunder-contracts.lock.json")
-        lock.write_bytes(lock.read_bytes() + b"\n")
-        with self.assertRaisesRegex(ValueError, "checkout differs"):
-            history.active(self.source, self.selected, self.core_sha)
-        commit(self.source, "Different lock bytes")
-        with self.assertRaisesRegex(ValueError, "does not bind"):
-            history.active(self.source, self.selected, self.core_sha)
+    def test_unrelated_commit_does_not_invalidate_scope_but_worker_and_test_changes_do(self):
+        worker = Path(next(row["projectPath"] for row in self.rows if row["packageId"] == history.OWNER)).parent
+        (self.source / "README.md").write_text("unrelated")
+        commit(self.source, "Unrelated documentation")
+        self.assertTrue(history.same_case_scope(self.source, self.source_sha, self.row, worker.as_posix()))
+        (self.source / worker / "Worker.cs").write_text("changed Worker")
+        commit(self.source, "Behavioral input change")
+        self.assertFalse(history.same_case_scope(self.source, self.source_sha, self.row, worker.as_posix()))
 
     def test_only_windows_source_local_discovery_and_execution_get_the_exclusion(self):
-        self.activate()
         inventory = self.source / "artifacts/reports/test-inventory.json"
         inventory.parent.mkdir(parents=True)
         paths = [history.PROJECT, "tests/Other.Tests.csproj"]
@@ -168,15 +168,22 @@ class WindowsHistoryTests(unittest.TestCase):
             dict(path=path, owner=history.OWNER, modes=["source", "package"], lanes=["PackageCompatibility"]) for path in paths])))
         state = dict(source=str(self.source), coreCommit=self.core_sha, selectedPackages=self.selected)
         with patch.object(agent_ci, "context", return_value=(state, {})), \
+                 patch.dict("os.environ", {"WINDOWS_HISTORY_SHA256": "c" * 64, "RUNNER_TEMP": str(self.root)}), \
+                 patch.object(history, "checked_history") as receipt, \
                  patch.object(test_lanes.sys, "platform", "win32"), \
                  patch.object(test_lanes, "run_project", return_value=1) as run:
             test_lanes.tests("state", "source")
             filters = {call.args[2]: call.args[4] for call in run.call_args_list}
             self.assertIn("!~" + history.CLASS + ".", filters[history.PROJECT])
+            receipt.assert_called_once()
             self.assertEqual("FullyQualifiedName!~" + test_lanes.POLICY["artifactProducer"], filters[paths[1]])
             run.reset_mock()
             test_lanes.tests("state", "package")
             self.assertTrue(all(call.args[4] == "Lane=PackageCompatibility&Category!=Artifact" for call in run.call_args_list))
+            with patch.dict("os.environ", {"WINDOWS_HISTORY_SHA256": ""}):
+                run.reset_mock()
+                test_lanes.tests("state", "source")
+                self.assertTrue(all(history.CLASS not in call.args[4] for call in run.call_args_list))
 
     def original(self, rid, identifier):
         data = make_trx(history.CLASS, self.row["cases"])
@@ -188,9 +195,12 @@ class WindowsHistoryTests(unittest.TestCase):
                     zipSha256=inputs.file_sha(path), trxSha256=inputs.sha(data))
 
     def test_original_groups_cannot_be_duplicated_swapped_or_counted_as_current(self):
-        self.activate()
-        approved = history.active(self.source, self.selected, self.core_sha)
-        originals = {rid: self.original(rid, identifier) for identifier, rid in enumerate(history.ORIGINALS, 1)}
+        originals = {rid: self.original(rid, identifier) for identifier, rid in enumerate(sorted(history.RIDS), 1)}
+        approved = dict(schemaVersion=1, destinationSource=self.source_sha, originalReleaseVerdict="failure",
+                        originalRun=123, originalAttempt=1, row=self.row, windows=originals)
+        report = self.originals / history.REPORT
+        report.write_text(json.dumps(approved))
+        self.assertEqual(approved, history.checked_history(self.source, self.originals, inputs.file_sha(report)))
         current = {}
         for rid in originals:
             directory = self.results / f"agent-component-{history.OWNER}-source-{rid}-1"
@@ -198,21 +208,21 @@ class WindowsHistoryTests(unittest.TestCase):
             current[rid] = directory / "result.trx"
             current[rid].write_bytes(make_trx("Fixture.OtherTests", ["CurrentCase"]))
         fresh = dict(self.row, className="Fixture.OtherTests", expectedCount=1, cases=["CurrentCase"])
-        with patch.object(history, "ORIGINALS", originals), redirect_stdout(io.StringIO()):
+        with redirect_stdout(io.StringIO()):
             remaining, receipt = history.audit(approved, [self.row, fresh], self.results, self.originals)
             self.assertEqual([fresh], remaining)
             self.assertFalse(receipt["executedOnDestination"])
             self.assertEqual("failure", receipt["originalReleaseVerdict"])
             self.assertEqual({rid: (len(self.row["cases"]), 0, 0) for rid in originals},
                              {group["rid"]: (group["passed"], group["failed"], group["skipped"]) for group in receipt["groups"]})
-            source = self.originals / history.file_name(originals["win-x64"])
+            source = self.originals / f'{originals["win-x64"]["artifactId"]}.zip'
             duplicate = self.originals / "another-copy.zip"
             shutil.copyfile(source, duplicate)
             with self.assertRaisesRegex(ValueError, "duplicate"):
                 history.audit(approved, [self.row], self.results, self.originals)
             duplicate.unlink()
             expected = source.read_bytes()
-            source.write_bytes((self.originals / history.file_name(originals["win-arm64"])).read_bytes())
+            source.write_bytes((self.originals / f'{originals["win-arm64"]["artifactId"]}.zip').read_bytes())
             with self.assertRaisesRegex(ValueError, "ZIP digest"):
                 history.audit(approved, [self.row], self.results, self.originals)
             source.write_bytes(expected)
@@ -220,7 +230,7 @@ class WindowsHistoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "repeats historical"):
                 history.audit(approved, [self.row], self.results, self.originals)
             current["win-arm64"].unlink()
-            with self.assertRaisesRegex(ValueError, "current Windows evidence is missing"):
+            with self.assertRaisesRegex(ValueError, "current evidence is missing"):
                 history.audit(approved, [self.row], self.results, self.originals)
 
 

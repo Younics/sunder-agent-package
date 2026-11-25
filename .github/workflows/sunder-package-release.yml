@@ -53,7 +53,7 @@ jobs:
           path: artifacts/release-plan.json
           if-no-files-found: error
           retention-days: 90
-      - name: Resolve the declared Core build-tool release
+      - name: Resolve existing source-backed test tools
         if: steps.selection.outputs.selected_count != '0'
         id: release
         env:
@@ -74,6 +74,8 @@ jobs:
       actions: read
     with:
       core_commit: ${{ needs.prepare.outputs.core_commit }}
+      core_tag: ${{ needs.prepare.outputs.core_tag }}
+      core_version: ${{ needs.prepare.outputs.core_version }}
       package-tests: ${{ needs.prepare.outputs.selected_count != '0' }}
       packages: ${{ needs.prepare.outputs.packages }}
       native: true

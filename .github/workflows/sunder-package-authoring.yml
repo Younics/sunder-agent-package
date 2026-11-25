@@ -7,17 +7,13 @@ on:
         description: One import-free canonical project, not its test closure
         type: string
         required: true
-      source:
-        description: Exact Agent branch source selected by the caller
-        type: string
-        required: true
 
 permissions:
   contents: read
 
 jobs:
   prepare:
-    name: Bind the authoring source, catalog, and published Build
+    name: Bind the authoring event, catalog, and test tools
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -36,18 +32,15 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - name: Require the explicitly selected authoring branch source
-        env:
-          SOURCE: ${{ inputs.source }}
+      - name: Require the exact authoring event source
         run: |
           set -euo pipefail
           test "$GITHUB_REPOSITORY" = Younics/sunder-agent-package
           test "$GITHUB_EVENT_NAME" = workflow_dispatch
           test "$GITHUB_REF_TYPE" = branch
           test "$GITHUB_REF" != refs/heads/main
-          test "$GITHUB_SHA" = "$SOURCE"
-          test "$(git rev-parse HEAD)" = "$SOURCE"
-      - name: Resolve the published Build source
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Resolve existing source-backed test tools
         id: core
         env:
           GH_TOKEN: ${{ github.token }}
