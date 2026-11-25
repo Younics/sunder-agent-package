@@ -66,7 +66,9 @@ internal sealed class SilentReturnTest
 EOF
 
 build_log="$fixture_root/build.log"
-if dotnet build "$fixture_root/SilentReturnFixture.csproj" --nologo > "$build_log" 2>&1; then
+# The EXIT trap owns this short-lived directory. Don't let a reusable MSBuild
+# node or compiler server outlive the build and retain a handle on Windows.
+if dotnet build "$fixture_root/SilentReturnFixture.csproj" --nologo --disable-build-servers > "$build_log" 2>&1; then
   printf 'Silent return analyzer fixture unexpectedly built successfully.\n' >&2
   exit 1
 fi
