@@ -38,7 +38,7 @@ def verify(jobs, mode, *, operation=None):
         pending = json.loads(jobs["dependency-discovery"]["outputs"]["pending"]) if active else []
         if type(pending) is not list or len(set(pending)) != len(pending):
             raise ValueError("Invalid unpublished dependency selection")
-        expected = {"preflight": active, "dependency-discovery": active, "tools": active,
+        expected = {"preflight": active, "dependency-discovery": active,
             "bootstrap": active and bool(pending), "dependencies": active,
             "components": active, "verifier": active, "source": full}
     elif mode == "release":

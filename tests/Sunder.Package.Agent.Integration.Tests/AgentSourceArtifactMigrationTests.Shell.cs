@@ -40,7 +40,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Single(value.GetProperty("targets").EnumerateArray());
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         var workspace = Directory.CreateDirectory(Path.Combine(root, "ShellProcessWorkspace")).FullName;
         await using (var candidate = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
         { await candidate.Prepare(); await candidate.Shutdown(); }

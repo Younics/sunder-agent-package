@@ -35,11 +35,8 @@ def source_guard(core, plan):
         "Selective publication requires the exact protected-main workflow")
     r.require(plan["artifactSourceCommit"] == source and plan["lockSetSha256"] == r.locks(ROOT)
         and plan["registryOrigin"] == r.origin(os.environ["REGISTRY_API_URL"]), "Release source/locks/destination differ")
-    for root, sha in ((ROOT, source), (core, r.digest(os.environ["CORE_COMMIT"], 40))):
-        r.require(r.git(root, "rev-parse", "HEAD").decode().strip() == sha
-            and not r.git(root, "status", "--porcelain", "--untracked-files=no").strip(), "Release checkout is not the exact clean source")
-    r.require(os.environ["CORE_TAG"] in ("sdk/v" + os.environ["CORE_BUILD_VERSION"],
-        "nuget-sunder-package-build/v" + os.environ["CORE_BUILD_VERSION"]), "Core build-tool release coordinates differ")
+    r.require(r.git(ROOT, "rev-parse", "HEAD").decode().strip() == source
+        and not r.git(ROOT, "status", "--porcelain", "--untracked-files=no").strip(), "Release checkout is not the exact clean source")
     selection.validate(plan, ROOT, source)
 
 
@@ -73,7 +70,7 @@ def verify_primary(core, directory, plan):
               "New release staging requires schema 6 development execution evidence; historical readers do not qualify new releases")
     subprocess.run([sys.executable, "-B", str(ROOT / "scripts/release/native-family.py"), "verify",
         str(directory / "native-test-evidence.json"), str(directory), str(ROOT / "packages.json"), str(directory / selection.PLAN),
-        plan["artifactSourceCommit"], os.environ["CORE_TAG"], os.environ["CORE_COMMIT"], os.environ["CORE_BUILD_VERSION"]], check=True)
+        plan["artifactSourceCommit"]], check=True)
     with tempfile.TemporaryDirectory() as temporary:
         audit = Path(temporary) / "audit.json"
         subprocess.run(bash_runtime.command(ROOT / "scripts/release/generate-package-output-audit.sh", directory,
@@ -86,14 +83,14 @@ def provenance(directory, plan, release_id, family):
     destination = dict(registryOrigin=plan["registryOrigin"])
     if plan["schemaVersion"] == 1:
         destination["ownerPrincipalId"] = plan["ownerPrincipalId"]
-    return dict(schemaVersion=plan["schemaVersion"] + 1, buildType="https://sunderapp.io/provenance/github-actions/v1",
+    return dict(schemaVersion=4, buildType="https://sunderapp.io/provenance/github-actions/v1",
         invocation=dict(repository=selection.REPOSITORY, workflowPath=publication.WORKFLOW,
             workflowRef=os.environ["GITHUB_WORKFLOW_REF"], workflowSha=os.environ["GITHUB_WORKFLOW_SHA"],
             event=os.environ["GITHUB_EVENT_NAME"], repositoryId=int(os.environ["GITHUB_REPOSITORY_ID"]),
             runId=os.environ["GITHUB_RUN_ID"], runAttempt=os.environ["GITHUB_RUN_ATTEMPT"], releaseId=int(release_id)),
         artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN),
         lockSetSha256=plan["lockSetSha256"], publication=destination,
-        materials=[dict(name="Sunder.Package.Build", tag=os.environ["CORE_TAG"], sha=os.environ["CORE_COMMIT"], packageVersion=os.environ["CORE_BUILD_VERSION"])],
+        materials=r.sdk_materials(ROOT, {row["packageId"] for row in selection.selected(plan)}),
         artifacts=family["artifacts"])
 
 
@@ -146,7 +143,7 @@ def files_for(directory, plan, row, coordinator=False):
 def installed_native_value(directory, plan, family, *, exact_directory=False):
     records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
                for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
-    value = native_execution.installed_set(directory, records, os.environ["CORE_COMMIT"], plan["registryOrigin"], exact_directory=exact_directory)
+    value = native_execution.installed_set(directory, records, None, plan["registryOrigin"], exact_directory=exact_directory)
     return dict(value, artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
 
 
@@ -154,7 +151,7 @@ def retain_installed_native(core, directory, plan, receipts_directory):
     targets, infos, family = verified(core, directory, plan)
     records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
                for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
-    value = native_execution.installed_set(receipts_directory, records, os.environ["CORE_COMMIT"], plan["registryOrigin"])
+    value = native_execution.installed_set(receipts_directory, records, None, plan["registryOrigin"])
     value.update(artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
     for record in value["bundles"]:
         persist(directory / record["path"], (Path(receipts_directory) / record["path"]).read_bytes())
@@ -407,7 +404,7 @@ def visibility(core, directory, plan):
         else:
             r.require(info["draft"], "Published release has no retained result")
             os.environ["SUNDER_REGISTRY_PRE_MUTATION_GUARD_JSON"] = r.encoded([sys.executable, "-B", str(Path(__file__).resolve()),
-                "guard", "--core", str(core), "--directory", str(directory)]).decode()
+                "guard", "--directory", str(directory)]).decode()
             cohort.apply(plan["registryOrigin"], path, result_path)
             receipt = dict(schemaVersion=2, registryOrigin=plan["registryOrigin"], artifactSourceCommit=plan["artifactSourceCommit"],
                 releaseId=info["id"], request=proposed, result=r.load(result_path))
@@ -443,7 +440,6 @@ def finalize(core, directory, plan):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("stage", "recover", "publish", "publish-component", "merge-publications", "retain-installed-native", "visibility", "guard", "finalize"))
-    parser.add_argument("--core", type=Path, required=True)
     parser.add_argument("--directory", type=Path, required=True)
     parser.add_argument("--package")
     parser.add_argument("--receipts", type=Path)
@@ -451,7 +447,7 @@ def main():
     parser.add_argument("--read-only", action="store_true", help="Recover and verify without changing tags or release assets.")
     args = parser.parse_args()
     r.require(not args.read_only or args.action == "recover", "Read-only is a recovery option, not a publication bypass")
-    directory, core = args.directory.resolve(), args.core.resolve(strict=True)
+    directory, core = args.directory.resolve(), None
     plan = selection.load(directory / selection.PLAN, ROOT)
     if args.action == "stage": stage(core, directory, plan)
     elif args.action == "recover": recover(core, directory, plan, read_only=args.read_only)

@@ -36,21 +36,16 @@ public sealed partial class BuilderSourceMigrationTests
     // SDK commands must retain the build host even when VSTest uses a newer CLR.
     internal static string DotnetBuildHost => Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") is { Length: > 0 } host ? host : "dotnet";
 
-    // Core 1.0.2's fixture driver emits Debug evidence. Temporary probe projects
-    // use that same explicit configuration even under Release CI. Authored package
+    // Temporary probe projects use Debug even under Release CI. Authored package
     // builds and their retained role snapshots use CanonicalPackageRoles.Configuration.
     internal const string FixtureConfiguration = "Debug";
 
-    internal static string CoreBuildTaskAssembly
+    internal static string BuildTaskAssembly
     {
         get
         {
-            var prepared = Environment.GetEnvironmentVariable("SunderPackageBuildTaskAssembly");
-            var path = Path.GetFullPath(string.IsNullOrWhiteSpace(prepared)
-                ? Path.Combine(FindRepository(), "../sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/bin",
-                    CanonicalPackageRoles.Configuration, "net10.0/Sunder.Package.Build.dll")
-                : prepared);
-            Assert.True(File.Exists(path), "Prepare the selected Core build tooling before this required-input probe: " + path);
+            var path = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "sunder-build-task-path.txt")).Trim();
+            Assert.True(File.Exists(path), "Restore the project's declared Sunder.Package.Build dependency: " + path);
             return path;
         }
     }
@@ -69,6 +64,7 @@ public sealed partial class BuilderSourceMigrationTests
         start.ArgumentList.Add("-p:Configuration=" + FixtureConfiguration);
         start.ArgumentList.Add("-v:minimal");
         foreach (var argument in arguments.Skip(1)) start.ArgumentList.Add(argument);
+        if (arguments[0] != "restore") DenyNetwork(start);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start.");
         using var timeout = new CancellationTokenSource(timeLimit);
         var output = process.StandardOutput.ReadToEndAsync();
@@ -87,6 +83,13 @@ public sealed partial class BuilderSourceMigrationTests
         return diagnostics;
     }
 
+    internal static void DenyNetwork(ProcessStartInfo start)
+    {
+        foreach (var key in new[] { "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy" })
+            start.Environment[key] = "http://127.0.0.1:1";
+        start.Environment["NO_PROXY"] = start.Environment["no_proxy"] = "";
+    }
+
     internal static string RequireProbeOutput(string directory, string assemblyName, string diagnostics)
     {
         var path = Path.Combine(directory, "bin", FixtureConfiguration, "net10.0", assemblyName + ".dll");
@@ -102,8 +105,7 @@ internal sealed class BuilderSourceMigrationFactAttribute : FactAttribute
     public BuilderSourceMigrationFactAttribute()
     {
         if (Environment.GetEnvironmentVariable("SUNDER_REQUIRE_BUILDER_SOURCE_MIGRATION") == "1") return;
-        var root = BuilderSourceMigrationTests.FindRepository();
-        if (!File.Exists(Path.GetFullPath(Path.Combine(root, "..", "sunder-core", "Sunder.Core.slnx"))))
-            Skip = "Requires sibling Core source/tooling. Set SUNDER_REQUIRE_BUILDER_SOURCE_MIGRATION=1 to require this source-migration lane.";
+        if (!File.Exists(Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG")))
+            Skip = "Requires the public catalog selected by the Agent locks.";
     }
 }

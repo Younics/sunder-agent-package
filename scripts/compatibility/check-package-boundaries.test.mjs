@@ -32,6 +32,15 @@ test("runtime identity remains independent of C# project/assembly identity", asy
   assert((await check({ collectProjectEvaluations: async () => evaluated })).failures.some((value) => value.includes("SunderPackageFamilyId")));
 });
 
+test("changing the package release version does not rebind the independent contract baseline", async () => {
+  for (const releaseVersion of ["2.0.1", "2.1.0", "3.0.0", "3.0.0-rc.1"]) {
+    const result = await check({ inventoryText: JSON.stringify({ ...inventory, releaseVersion }) });
+    assert.deepEqual(result, { mode: "current", failures: [] });
+  }
+  const result = await check({ inventoryText: JSON.stringify({ ...inventory, releaseVersion: "3.0.0-rc.01" }) });
+  assert.equal(result.mode, "invalid");
+});
+
 for (const [name, mutate] of [
   ["missing package", (value) => value.packages.pop()],
   ["duplicate package", (value) => value.packages.push(value.packages[0])],

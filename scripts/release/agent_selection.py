@@ -28,7 +28,7 @@ def evaluated_packages(source, package_ids=None):
     for row in rows:
         project = r.source_file(source, row["projectPath"])
         result = subprocess.check_output(["dotnet", "msbuild", str(project), "-p:Configuration=Release",
-            "-p:ContinuousIntegrationBuild=true", "-p:SunderUseSourceSdk=false",
+            "-p:ContinuousIntegrationBuild=true",
             "-getProperty:Version,PackageVersion,InformationalVersion,SunderAgentVersion"], cwd=source, env=env)
         props = r.decode(result)["Properties"]
         r.require(not props["SunderAgentVersion"] and all(props[key] == row["version"] for key in

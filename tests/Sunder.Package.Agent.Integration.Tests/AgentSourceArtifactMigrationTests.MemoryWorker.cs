@@ -69,7 +69,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(selection.GetProperty("requestedVersionRange").GetString(), dependency.GetProperty("versionRange").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
         Assert.Equal(2, value.GetProperty("targets").GetArrayLength());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         var runtimeRoot = Path.Combine(worker, "bin/worker-projection");
         Assert.True(File.Exists(Path.Combine(runtimeRoot, "lib/Sunder.Package.Agent.Memory.Semantic.dll")));
         Assert.True(File.Exists(Path.Combine(runtimeRoot, "lib/Sunder.Package.Agent.Memory.Semantic.runtimeconfig.json")));

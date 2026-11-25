@@ -54,7 +54,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.Equal(4, value.GetProperty("providerImports").GetArrayLength());
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         await ExerciseMcpWorkerProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
     }
 

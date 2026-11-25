@@ -140,8 +140,7 @@ def mock_dotnet(args):
     props = dict(arg[3:].split("=", 1) for arg in args if arg.startswith("-p:"))
     assert props["Configuration"] == "Release" and props["ContinuousIntegrationBuild"] == "true"
     assert props["SunderPackageComposeRuntimeIdentifiers"].strip('"').split(";") == list(inputs.RIDS)
-    if props["SunderUseSourceSdk"] == "true":
-        assert props["SunderPackageBuildTaskSourceIsImmutable"] == "true" and props["SunderPackageBuildTaskAssembly"]
+    assert props["RestoreLockedMode"] == "true"
     if os.environ.get("NATIVE_FIXTURE_CORE_FAILURE"):
         sys.exit(31)  # No retry/fallback after Core rejection.
     selection_path = Path(props["SunderPackagePrebuiltRoleInputsFile"])
@@ -711,20 +710,6 @@ class NativeFamilyFixture(unittest.TestCase):
                 document["finalArtifacts"] = [inputs.file_record(archive) if r["path"] == archive.name else r for r in document["finalArtifacts"]]
                 write(document_path, document)
                 self.verify(success=False)
-
-    def test_workspace_mode_requires_and_passes_complete_retained_immutable_toolset(self):
-        self.env["SUNDER_NATIVE_USE_SOURCE_SDK"] = "true"
-        self.assemble(success=False)
-        self.assertFalse(self.log.exists())
-        tools = self.work / "retained tasks"
-        self.env["SUNDER_NATIVE_TASK_ASSEMBLY"] = str(tools / "Sunder.Package.Build.dll")
-        for name in ("Sunder.Package.Build.dll", "Sunder.Package.Build.Editor.dll", "Sunder.Package.Format.dll", "Sunder.Sdk.dll",
-                     "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll", "Microsoft.Extensions.DependencyInjection.Abstractions.dll",
-                     "Microsoft.Extensions.Logging.Abstractions.dll"):
-            write(tools / name, b"mock immutable tool bytes")
-        if sys.platform == "darwin":
-            self.env["SUNDER_NATIVE_TASK_ASSEMBLY"] = self.env["SUNDER_NATIVE_TASK_ASSEMBLY"].replace("/private/var/", "/var/", 1)
-        self.assemble()
 
     def test_json_tar_and_filesystem_bounds(self):
         for data in (b"[" * 17 + b"0" + b"]" * 17, b'{"A":1,"a":2}', b"[NaN]", b"\xef\xbb\xbf{}"):

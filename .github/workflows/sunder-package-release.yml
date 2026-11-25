@@ -29,9 +29,6 @@ jobs:
       owner_selected: ${{ steps.selection.outputs.owner_selected }}
       consumers: ${{ steps.selection.outputs.consumers }}
       plan_sha256: ${{ steps.selection.outputs.plan_sha256 }}
-      core_commit: ${{ steps.release.outputs.core_commit }}
-      core_tag: ${{ steps.release.outputs.core_tag }}
-      core_version: ${{ steps.release.outputs.core_version }}
       matrix: ${{ steps.matrix.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -53,16 +50,12 @@ jobs:
           path: artifacts/release-plan.json
           if-no-files-found: error
           retention-days: 90
-      - name: Resolve existing source-backed test tools
+      - name: Require the exact protected workflow source
         if: steps.selection.outputs.selected_count != '0'
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           test "$GITHUB_REF_PROTECTED" = true
-          python3 -B scripts/ci/agent_ci.py coordinates
 
   validation:
     name: Validate selected packages
@@ -73,12 +66,7 @@ jobs:
       contents: read
       actions: read
     with:
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
-      package-tests: ${{ needs.prepare.outputs.selected_count != '0' }}
       packages: ${{ needs.prepare.outputs.packages }}
-      native: true
 
   production:
     name: Select remaining component production
@@ -115,9 +103,6 @@ jobs:
     with:
       operation: native
       package: ${{ matrix.package }}
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
       inputs_sha256: ${{ needs.validation.outputs.inputs_sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}
 
@@ -135,9 +120,6 @@ jobs:
       artifact_id: ${{ steps.candidate.outputs.artifact-id }}
       archive_records: ${{ steps.gather.outputs.archive_records }}
     env:
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/artifacts/release-plan.json
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/retained-agent-archives
     steps:
@@ -166,7 +148,7 @@ jobs:
           test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "$PLAN_SHA256"
           python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
           records="$(python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family \
-            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD")"
+            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$PWD")"
           printf 'archive_records=%s\n' "$records" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -213,9 +195,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
@@ -227,12 +206,6 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
@@ -240,11 +213,10 @@ jobs:
         with:
           name: agent-release-selection
           path: sunder-agent-package/artifacts
-      - name: Verify release locks and download native inputs
+      - name: Download exact retained native inputs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          bash scripts/release/verify-release-locks.sh
           test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "${{ needs.prepare.outputs.plan_sha256 }}"
           python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -258,7 +230,7 @@ jobs:
         run: |
           set -euo pipefail
           records="$(python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family \
-            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD")"
+            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$PWD")"
           test "$records" = "$ARCHIVE_RECORDS"
       - name: Exercise the selected family from the inspected archives
         id: native_smoke
@@ -266,15 +238,18 @@ jobs:
           RID: ${{ matrix.rid }}
         run: |
           set -euo pipefail
-          bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/family "artifacts/native-metrics/$RID" "$CORE_COMMIT"
-          python3 -B scripts/release/native-family.py record-final "$RID" "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" \
+          bash scripts/release/run-native-runtime-smoke.sh artifacts/family "artifacts/native-metrics/$RID"
+          python3 -B scripts/release/native-family.py record-final "$RID" "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" \
             artifacts/candidates artifacts/family "artifacts/native-metrics/$RID" "artifacts/native/$RID" "$PWD"
       - name: Retain native smoke and Maker diagnostics
         if: always() && steps.native_smoke.outcome != 'skipped' && steps.native_smoke.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-native-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/
+          path: |
+            sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/
+            !sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/maker-inputs/distribution/
+            !sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/maker-inputs/nuget/
           if-no-files-found: error
           retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -294,9 +269,6 @@ jobs:
     permissions:
       contents: read
     env:
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
     defaults:
@@ -307,12 +279,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -338,8 +304,8 @@ jobs:
       - name: Verify complete final-archive smoke evidence without repacking
         run: |
           set -euo pipefail
-          python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION" "$PWD"
-          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$CORE_TAG" "$CORE_COMMIT" "$CORE_BUILD_VERSION"
+          python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$PWD"
+          python3 -B scripts/release/native-family.py verify artifacts/family/native-test-evidence.json artifacts/family packages.json "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA"
           cp "$SUNDER_AGENT_RELEASE_PLAN_PATH" artifacts/family/release-plan.json
           bash scripts/release/generate-package-output-audit.sh artifacts/family artifacts/family/native-test-evidence.json "$PWD" artifacts/family/package-output-audit.json
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -359,16 +325,6 @@ jobs:
       - name: Require the executed budget check
         if: always() && (steps.budget_tests.outcome == 'success' || steps.budget_tests.outcome == 'failure')
         run: python3 scripts/test/generate-test-duration-report.py artifacts/family-results/agent --expected-skips 0
-      - name: Build Core validation paths
-        working-directory: sunder-core
-        run: |
-          for project in host/Sunder.Cli tools/Sunder.ExecutionRuntime.Build tests/Sunder.Runtime.Host.Tests tests/Sunder.App.Integration.Tests; do
-            path="languages/csharp/dotnet/$project/${project##*/}.csproj"
-            dotnet restore "$path" --locked-mode
-            dotnet build "$path" -c Release --no-restore -p:GeneratePackageOnBuild=false
-          done
-      - name: Validate and exercise exact family bytes through Runtime and App
-        run: python3 -B scripts/ci/agent_ci.py test-family --core ../sunder-core --directory artifacts/family
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sunder-agent-family-release
@@ -395,9 +351,6 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
     defaults:
@@ -407,12 +360,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
@@ -432,10 +379,10 @@ jobs:
           python3 -B scripts/release/agent_selection.py retain --plan artifacts/release/release-plan.json --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
       - name: Recover original tested bytes without rebuilding
         if: needs.prepare.outputs.resume == 'true'
-        run: python3 -B scripts/release/agent_pipeline.py recover --core ../sunder-core --directory artifacts/release
+        run: python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
       - name: Automatically tag and stage selected package releases
         if: needs.prepare.outputs.resume != 'true'
-        run: python3 -B scripts/release/agent_pipeline.py stage --core ../sunder-core --directory artifacts/release
+        run: python3 -B scripts/release/agent_pipeline.py stage --directory artifacts/release
   publish-owner:
     name: Publish owner first
     needs: [prepare, stage]
@@ -446,9 +393,6 @@ jobs:
     with:
       operation: publish
       package: younics.ai.agent
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
       plan_sha256: ${{ needs.prepare.outputs.plan_sha256 }}
     secrets:
       SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
@@ -469,9 +413,6 @@ jobs:
     with:
       operation: publish
       package: ${{ matrix.package }}
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
       plan_sha256: ${{ needs.prepare.outputs.plan_sha256 }}
       owner_selected: ${{ needs.prepare.outputs.owner_selected == 'true' }}
     secrets:
@@ -494,9 +435,6 @@ jobs:
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     env:
       GH_TOKEN: ${{ github.token }}
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       RID: ${{ matrix.rid }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
@@ -508,12 +446,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
@@ -527,7 +459,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_pipeline.py recover --read-only --core ../sunder-core --directory artifacts/release
+          python3 -B scripts/release/agent_pipeline.py recover --read-only --directory artifacts/release
           mkdir -p artifacts/installed-native
           if [[ -f artifacts/release/installed-native-test-evidence.json ]]; then
             for suffix in .json .tar.gz; do
@@ -544,14 +476,16 @@ jobs:
           set -euo pipefail
           SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
           export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN
-          bash scripts/release/run-native-runtime-smoke.sh ../sunder-core artifacts/release "artifacts/installed-native-metrics/$RID" "$CORE_COMMIT" published
+          bash scripts/release/run-native-runtime-smoke.sh artifacts/release "artifacts/installed-native-metrics/$RID" published
           python3 -B scripts/release/native_runtime_evidence.py export-installed "artifacts/installed-native-metrics/$RID" "artifacts/installed-native/native-installed-$RID.tar.gz"
       - name: Retain published installed diagnostics
         if: always() && steps.installed_smoke.outcome != 'skipped' && steps.installed_smoke.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-installed-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/
+          path: |
+            sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/
+            !sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/maker-inputs/distribution/
           if-no-files-found: error
           retention-days: 90
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -577,9 +511,6 @@ jobs:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
-      CORE_TAG: ${{ needs.prepare.outputs.core_tag }}
-      CORE_BUILD_VERSION: ${{ needs.prepare.outputs.core_version }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
       SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
       SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
@@ -591,12 +522,6 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
@@ -607,7 +532,7 @@ jobs:
       - name: Download and verify the exact retained package releases
         run: |
           test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_pipeline.py recover --core ../sunder-core --directory artifacts/release
+          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-publication-*
@@ -616,22 +541,22 @@ jobs:
       - name: Merge exact component receipts through the single coordinator writer
         env:
           SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
-        run: python3 -B scripts/release/agent_pipeline.py merge-publications --core ../sunder-core --directory artifacts/release --receipts artifacts/publication-receipts
+        run: python3 -B scripts/release/agent_pipeline.py merge-publications --directory artifacts/release --receipts artifacts/publication-receipts
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: agent-installed-native-*
           merge-multiple: true
           path: sunder-agent-package/artifacts/installed-native
       - name: Durably retain all six installed native receipts before visibility
-        run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --core ../sunder-core --directory artifacts/release --receipts artifacts/installed-native
+        run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --directory artifacts/release --receipts artifacts/installed-native
       - name: Commit and confirm one retained atomic visibility request
         env:
           SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
-        run: python3 -B scripts/release/agent_pipeline.py visibility --core ../sunder-core --directory artifacts/release
+        run: python3 -B scripts/release/agent_pipeline.py visibility --directory artifacts/release
       - name: Recheck public bytes, policy, tags and six-RID plans before announcement
         env:
           SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
-        run: python3 -B scripts/release/agent_pipeline.py finalize --core ../sunder-core --directory artifacts/release
+        run: python3 -B scripts/release/agent_pipeline.py finalize --directory artifacts/release
 
   summary:
     name: Summary

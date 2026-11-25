@@ -9,7 +9,7 @@ import tempfile
 from urllib.parse import quote
 from zipfile import ZipFile
 
-import agent_ci
+import agent_ci  # Adds scripts/release to the direct CLI module path.
 import agent_selection
 import dependency_inputs
 import hosted_evidence as hosted
@@ -20,22 +20,19 @@ WORKFLOW = "sunder-package-qualify.yml"
 AUTHORING_TITLE = "Compose for lock authoring (not qualification)"
 
 
-def prepare(source, package, source_sha, core_sha, output):
+def prepare(source, package, source_sha, output):
     source = Path(source).resolve(strict=True)
-    core = source.parent / "sunder-core"
     inputs.clean_source(source, inputs.digest(source_sha, 40))
-    inputs.require(agent_ci.head(core) == inputs.digest(core_sha, 40), "Core checkout differs from the recorded test source")
     selected = inputs.package_scope(source, [package])
     (row, lock), = inputs.lock_documents(source, selected)
     inputs.require(not lock["packageImports"] and not lock["packageArtifacts"],
                    "Authoring requires an import-free canonical project")
-    properties = dict(Configuration="Release", SunderUseSourceSdk="false")
+    properties = dict(Configuration="Release")
     env = inputs.isolated_env(Path(output) / "evaluation", Path(output) / "evaluation" / "contracts")
     inputs.require(project_scope.packages(source, [row["projectPath"]], properties, env) == selected,
                    "An authoring root cannot reach other canonical package projects")
     agent_selection.evaluated_packages(source, selected)
-    dependency_inputs.resolve(source, core, output, packages=selected)
-    value = inputs.fetch(source, output, source_sha, core_sha, packages=selected, prepared=True)
+    value = inputs.fetch(source, output, source_sha, packages=selected)
     inputs.require(not value["candidates"], "An authoring root cannot consume a candidate package")
     return dict(package=package, sha256=inputs.file_sha(Path(output) / inputs.MANIFEST))
 
@@ -109,7 +106,6 @@ def main():
     command = commands.add_parser("prepare")
     command.add_argument("package")
     command.add_argument("source_sha")
-    command.add_argument("core_sha")
     command.add_argument("output", type=Path)
     command = commands.add_parser("verify-reproduction")
     command.add_argument("inputs", type=Path)
@@ -117,7 +113,7 @@ def main():
     command.add_argument("receipt", type=Path)
     args = parser.parse_args()
     if args.operation == "prepare":
-        result = prepare(Path.cwd(), args.package, args.source_sha, args.core_sha, args.output)
+        result = prepare(Path.cwd(), args.package, args.source_sha, args.output)
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.writelines(f"{key}={value}\n" for key, value in result.items())

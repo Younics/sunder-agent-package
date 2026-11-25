@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {"packageId": "Sunder.Package.Build", "version": "1.1.0"},
+    {"packageId": "Sunder.Package.Templates", "version": "1.1.0"},
+    {"packageId": "Sunder.Sdk", "version": "1.0.2"},
+    {"packageId": "Sunder.Sdk.Avalonia", "version": "1.0.2"},
+    {"packageId": "Sunder.Sdk.Stacks", "version": "1.0.2"},
+    {"packageId": "Sunder.Sdk.Worker", "version": "1.0.2"}
+  ]
+}

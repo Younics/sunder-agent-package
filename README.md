@@ -116,28 +116,29 @@ oracles remain inert history, outside normal test/build/release inputs. See the
 
 ## Build From Source
 
-The checked-in locks currently select unpublished local inputs. Retain the exact
-Main candidate and Core catalog from their matching handoff under
-`.sunder/contract-inputs/` (or select another directory with
-`SunderContractInputsRoot`). See [local restore inputs](scripts/README.md#local-contract-preparation)
-for the filenames and validation rules. Do not replace them with a fresh
-same-version build.
-
-Build normally; its ordinary restore fills the user contract cache automatically:
+Agent builds against released SDK and Build packages on NuGet.org. You do not
+need a Core checkout. For unpublished imports, supply the exact Agent archive
+selected by the contract locks and the matching platform catalog from the
+public Sunder Registry.
 
 ```sh
-dotnet build Sunder.AgentPackage.slnx
+python3 -B scripts/ci/agent_ci.py prepare --work /tmp/agent-public-build \
+  --catalog /path/to/selected-catalog.json --candidate /path/to/exact-agent-archive.sunderpkg
+python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-public-build/ci-state.json -- \
+  dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
 ```
 
-Workspace builds use sibling Core source; standalone clones use independently versioned NuGet
-packages. No Python preparation command or temporary cache override is needed.
-`dotnet restore Sunder.AgentPackage.slnx` also hydrates missing selected evidence;
-after restore, `--no-restore` builds remain offline. Build emits each current-RID `bin/<configuration>/<tfm>/sunder-dev`.
+Use a new work directory for each isolated build. To build only the import-free
+Agent package, pass `--packages '["younics.ai.agent"]'` and omit `--candidate`.
+Build emits each current-RID `bin/<configuration>/<tfm>/sunder-dev`.
 Invoke `PackSunderPackage` on the same canonical project for all declared RIDs.
 For automatic development builds, run `dotnet watch build` from the package directory
 and enable `--watch` when loading its output in Sunder.
 
 ## Tests
+
+The published App/Host qualification lanes are documented in
+[Releases](docs/RELEASES.md#public-feed-builds-and-qualification).
 
 Start with the changed class, then the affected project:
 

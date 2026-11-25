@@ -54,18 +54,9 @@ def new_directory(path):
     return path.resolve()
 
 
-def resolve(source, core, output, packages=None, *, allow_missing=False):
+def resolve(source, output, packages=None, *, allow_missing=False):
     import dependency_inputs
-    return dependency_inputs.resolve(source, core, output, packages=packages, allow_missing=allow_missing)
-
-
-def coordinates(source):
-    import dependency_inputs
-    value = dependency_inputs.coordinates(source)
-    if os.environ.get("GITHUB_OUTPUT"):
-        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
-            stream.writelines(f"{key}={item}\n" for key, item in value.items())
-    print(inputs.canonical(value).decode())
+    return dependency_inputs.resolve(source, output, packages=packages, allow_missing=allow_missing)
 
 
 def matrices(package_tests, windows_filesystem_native=False):
@@ -78,33 +69,17 @@ def matrices(package_tests, windows_filesystem_native=False):
     print(json.dumps(value))
 
 
-def selected_files(args, source, core, packages=None):
+def selected_files(args, source, packages=None):
     if args.inputs:
         root = inputs.directory(args.inputs)
         if (root / inputs.MANIFEST).exists():
-            value = inputs.verify(source, root, inputs.file_sha(root / inputs.MANIFEST), head(source), head(core), packages)
+            value = inputs.verify(source, root, inputs.file_sha(root / inputs.MANIFEST), head(source), packages=packages)
             paths = [root / item["asset"]["name"] for item in value["candidates"]]
             catalog = root / value["platformCatalog"]["asset"]["name"]
             return scoped_candidates(source, paths, packages), catalog
-        value = inputs.load(root / "ci-inputs.json")
-        inputs.closed(value, "schemaVersion coreCommit candidates platformCatalog" + (" packageIds" if value.get("schemaVersion") == 3 else ""))
-        inputs.require(value["schemaVersion"] in (1, 2, 3) and value["coreCommit"] == head(core), "CI Core checkout differs from the selected input")
-        declared = inputs.package_scope(source, value.get("packageIds"))
-        inputs.require(value.get("packageIds", declared) == declared and set(inputs.package_scope(source, packages)) <= set(declared),
-                       "CI inputs do not cover the requested package scope")
-        paths = []
-        for item in [*value["candidates"], value["platformCatalog"]]:
-            if value["schemaVersion"] == 1:
-                inputs.locator(item)
-            else:
-                inputs.closed(item, "name size sha256")
-                inputs.require(Path(item["name"]).name == item["name"] and item["name"] not in (".", ".."), "Unsafe input filename")
-                inputs.positive(item["size"]); inputs.digest(item["sha256"])
-            path = inputs.regular(root / item["name"])
-            inputs.require(path.stat().st_size == item["size"] and inputs.file_sha(path) == item["sha256"], "CI input changed after download")
-            paths.append(path.resolve())
-        inputs.verify_selected_files(source, paths[:-1], paths[-1], declared)
-        return scoped_candidates(source, paths[:-1], packages), paths[-1]
+        value = inputs.read_prepared(source, root, packages)
+        paths = [root / item["name"] for item in value["candidates"]]
+        return scoped_candidates(source, paths, packages), root / value["platformCatalog"]["name"]
     inputs.require(args.catalog, "Supply exact --candidate and --catalog files, or --inputs")
     return [inputs.regular(path).resolve() for path in args.candidate or []], inputs.regular(args.catalog).resolve()
 
@@ -118,12 +93,8 @@ def test_dependency_scope(source, selected):
     import project_scope
     source = Path(source).resolve(strict=True)
     inventory = inputs.load(generate_inventory(source, selected))
-    scope = set()
-    for mode in ("source", "package"):
-        roots = project_scope.projects(source, selected, inventory, mode)
-        props = {"SunderUseSourceSdk": "true" if mode == "source" else "false", "Configuration": "Release"}
-        scope.update(project_scope.packages(source, roots, props, os.environ))
-    return sorted(scope)
+    roots = project_scope.projects(source, selected, inventory, "source")
+    return project_scope.packages(source, roots, {"Configuration": "Release"}, os.environ)
 
 
 def arguments(properties):
@@ -138,18 +109,19 @@ def output_directory(project, env):
 
 
 def prepare(args):
-    import core_tools
     import project_scope
     import version_selection
-    source, core = Path(args.source).resolve(strict=True), Path(args.core).resolve(strict=True)
-    inputs.require(core == source.parent / "sunder-core", "Core must be the explicit sibling source checkout")
+    source = Path(args.source).resolve(strict=True)
     before = inputs.source_snapshot(source)
     output = Path(args.work).resolve()
-    inputs.require(not output.is_relative_to(source) and not output.is_relative_to(core), "Keep CI state outside source checkouts")
+    inputs.require(not output.is_relative_to(source), "Keep CI state outside source")
     home, cache = output / "home", output / "home/contracts/v1/sha256"
     env = inputs.isolated_env(home, cache)
-    props = {"Configuration": "Release", "SunderUseSourceSdk": "false" if args.mode == "package" else "true", "ContinuousIntegrationBuild": "true",
-             "SunderContractCacheRoot": str(cache)}
+    props = {"Configuration": "Release", "ContinuousIntegrationBuild": "true",
+             "RestoreLockedMode": "true", "SunderContractCacheRoot": str(cache)}
+    app = getattr(args, "published_app", None)
+    if app is not None:
+        props.update(SunderPublishedAppDirectory=str(Path(app).resolve(strict=True)), SunderRequirePublishedApp="true")
     selection = getattr(args, "packages", None)
     selection = None if selection is None else version_selection.package_ids(source, json.loads(selection))
     projects = getattr(args, "project", None) or project_scope.projects(source, selection, {"projects": []}, args.mode)
@@ -157,7 +129,7 @@ def prepare(args):
     for project in projects:
         inputs.source_file(source, project)
     scope = project_scope.packages(source, projects, props, env)
-    candidates, catalog = selected_files(args, source, core, scope) if scope else ([], None)
+    candidates, catalog = selected_files(args, source, scope) if scope else ([], None)
     selected = inputs.verify_selected_files(source, candidates, catalog, scope) if scope else {}
     restore_inputs = {}
     if scope:
@@ -173,30 +145,15 @@ def prepare(args):
     home.mkdir()
     try:
         build_project = project_scope.write_build_graph(source, projects, root)
-        subprocess.run(["dotnet", "restore", str(build_project), "--locked-mode", *arguments(props),
-                        *arguments(restore_inputs)], env=env, check=True)
-        tools = (core_tools.verify(core, args.tools) if getattr(args, "tools", None)
-                 else core_tools.prepare(core, root / "tools"))
-        package_tools = (core_tools.package_tasks(source,
-            [row["projectPath"] for row, _ in inputs.lock_documents(source, scope)], props, env)
-            if args.mode == "package" and scope else {})
-        props.update(SunderPackageBuildTaskAssembly=str(package_tools.get("Sunder.Package.Build.dll", tools / "Sunder.Package.Build.dll")),
-                     SunderPackageBuildTaskSourceIsImmutable="true")
-        for package, lock in inputs.lock_documents(source, scope) if scope else []:
-            command = ["dotnet", "msbuild", str(source / package["projectPath"]), "-t:RestoreSunderContracts", *arguments(props)]
-            paths = [str(selected[key]) for key in sorted(lock["packageArtifacts"])]
-            inputs.require(all(not any(c in path for c in "%\r\n;") for path in [str(catalog), *paths]), "Ambiguous MSBuild input path")
-            if paths: command.append("-p:SunderPackageCandidatePath=" + "%3B".join(paths))
-            if inputs.catalog_requirements(lock): command.append("-p:SunderPlatformCatalogPath=" + str(catalog))
-            if paths or inputs.catalog_requirements(lock): subprocess.run(command, cwd=source, env=env, check=True)
-        state = dict(schemaVersion=3, source=str(source), core=str(core), sourceCommit=head(source), coreCommit=head(core),
+        subprocess.run(["dotnet", "restore", str(build_project), "--configfile", str(source / "NuGet.Config"),
+                        "--locked-mode", *arguments(props), *arguments(restore_inputs)], cwd=source, env=env, check=True)
+        state = dict(schemaVersion=4, source=str(source), sourceCommit=head(source),
                       home=str(home), cache=str(cache), properties=props, sourceInputs=before,
                       candidates=[str(path) for path in candidates], catalog=str(catalog) if catalog else None,
-                      packages=scope, selectedPackages=selection, projects=projects, buildProject=str(build_project), tools=str(tools),
+                       packages=scope, selectedPackages=selection, projects=projects, buildProject=str(build_project),
                       inputHashes={str(path): inputs.file_sha(path) for path in [build_project,
                                     *([source / "Sunder.AgentPackage.slnx"] if len(projects) > 1 else []),
-                                    *candidates, *([catalog] if catalog else []), *package_tools.values(), tools / core_tools.MANIFEST,
-                                   *[path for path in sorted(tools.rglob("*")) if path.is_file()]]})
+                                     *candidates, *([catalog] if catalog else [])]})
         (root / "ci-state.json").write_bytes(inputs.canonical(state) + b"\n")
         print(root / "ci-state.json")
     finally:
@@ -204,40 +161,32 @@ def prepare(args):
 
 
 def context(path):
-    import core_tools
     import project_scope
     path = Path(path).resolve(strict=True)
     state = inputs.load(path)
-    inputs.closed(state, "schemaVersion source core sourceCommit coreCommit home cache properties sourceInputs candidates catalog inputHashes"
-                  + (" packages selectedPackages projects tools" if state.get("schemaVersion") in (2, 3) else "")
-                  + (" buildProject" if state.get("schemaVersion") == 3 else ""))
-    inputs.require(state["schemaVersion"] in (1, 2, 3) and head(state["source"]) == state["sourceCommit"]
-                   and head(state["core"]) == state["coreCommit"], "CI checkout identity changed")
+    inputs.closed(state, "schemaVersion source sourceCommit home cache properties sourceInputs candidates catalog inputHashes"
+                   " packages selectedPackages projects buildProject")
+    inputs.require(state["schemaVersion"] == 4 and head(state["source"]) == state["sourceCommit"], "CI checkout identity changed")
     inputs.require(inputs.source_snapshot(state["source"]) == state["sourceInputs"], "CI contract/release inputs changed")
     inputs.require(all(inputs.file_sha(file) == digest for file, digest in state["inputHashes"].items()), "CI input/tool bytes changed")
     if state.get("packages") == []:
         inputs.require(not state["candidates"] and state["catalog"] is None, "Dependency-free test roots cannot receive contract inputs")
     else:
         inputs.verify_selected_files(state["source"], state["candidates"], state["catalog"], state.get("packages"))
-    if state["schemaVersion"] in (2, 3):
-        core_tools.verify(state["core"], state["tools"])
-    if state["schemaVersion"] == 3:
-        target = project_scope.build_target(state["source"], state["projects"], path.parent)
-        inputs.require(state["buildProject"] == str(target) and str(target) in state["inputHashes"],
-                       "CI build graph differs from the prepared roots")
-        if len(state["projects"]) > 1:
-            inputs.require(inputs.load(target) == project_scope.filter_document(state["source"], state["projects"]),
-                           "CI solution filter differs from the prepared roots")
+    target = project_scope.build_target(state["source"], state["projects"], path.parent)
+    inputs.require(state["buildProject"] == str(target) and str(target) in state["inputHashes"],
+                   "CI build graph differs from the prepared roots")
+    if len(state["projects"]) > 1:
+        inputs.require(inputs.load(target) == project_scope.filter_document(state["source"], state["projects"]),
+                       "CI solution filter differs from the prepared roots")
     props = state["properties"]
-    inputs.require(props["SunderUseSourceSdk"] in ("true", "false") and props["Configuration"] == "Release"
-                   and props["SunderPackageBuildTaskSourceIsImmutable"] == "true" and props["SunderContractCacheRoot"] == state["cache"],
+    inputs.require(props["RestoreLockedMode"] == "true" and props["Configuration"] == "Release"
+                    and props["SunderContractCacheRoot"] == state["cache"],
                    "CI build context differs")
     env = inputs.isolated_env(state["home"], state["cache"])
     env.update(props)
     if state["catalog"] is not None:
         env["SUNDER_AGENT_SOURCE_PLATFORM_CATALOG"] = state["catalog"]
-    if state.get("tools"):
-        env["SUNDER_AGENT_CORE_TEST_DRIVER"] = str(Path(state["tools"]) / core_tools.DRIVER)
     return state, env
 
 
@@ -397,6 +346,7 @@ def validate(args):
     import project_scope
     if getattr(args, "shared", False):
         inputs.require(selected is None, "Shared family validation is an explicit full-validation lane")
+        inputs.require(getattr(args, "published_app", None), "Shared Agent validation requires the published App")
         inventory = inputs.load(inventory_path)
         inventory["projects"] = [row for row in inventory["projects"] if row["owner"] == "agent-family"]
         inventory_path.write_bytes(inputs.canonical(inventory) + b"\n")
@@ -407,9 +357,10 @@ def validate(args):
         root = Path(temporary)
         if not args.inputs and not args.candidate:
             # Include actual test dependencies when preparing local inputs, too.
-            props = {"SunderUseSourceSdk": "false" if args.mode == "package" else "true", "Configuration": "Release"}
+            props = {"Configuration": "Release"}
             scope = project_scope.packages(source, args.project, props, os.environ)
-            resolve(source, args.core, root / "inputs", scope)
+            if scope:
+                resolve(source, root / "inputs", scope)
             args.inputs = root / "inputs"
         args.work = root / "prepared"
         prepare(args)
@@ -442,33 +393,19 @@ def main():
     report_parser.add_argument("--mode", required=True, choices=("source", "package"))
     report_parser.add_argument("--platform", required=True, choices=("linux", "windows", "macos"))
     commands.add_parser("retain-verifier")
-    verifier_parser = commands.add_parser("prepare-verifier")
-    verifier_parser.add_argument("--core", required=True)
-    verifier_parser.add_argument("--tools", required=True)
-    family_parser = commands.add_parser("test-family")
-    family_parser.add_argument("--core", required=True)
-    family_parser.add_argument("--directory", required=True)
-    family_parser.add_argument("--results-directory", help="Fresh Core family input/report root; existing inputs are never overwritten")
+    commands.add_parser("prepare-verifier")
     resolve_parser = commands.add_parser("resolve")
     resolve_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
-    resolve_parser.add_argument("--core", required=True)
     resolve_parser.add_argument("--output", required=True)
     resolve_parser.add_argument("--packages", help="JSON package IDs whose exact dependencies are required")
     resolve_parser.add_argument("--allow-missing", action="store_true", help="Prepare published inputs and schedule native unpublished owners")
     resolve_parser.add_argument("--test-dependencies", action="store_true", help="Include the evaluated owned test dependency closure")
     complete_parser = commands.add_parser("complete-inputs")
     complete_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
-    complete_parser.add_argument("--core", required=True)
     complete_parser.add_argument("--inputs", required=True)
     complete_parser.add_argument("--candidates", required=True)
-    tools_parser = commands.add_parser("prepare-tools")
-    tools_parser.add_argument("--core", required=True)
-    tools_parser.add_argument("--output", required=True)
-    coordinate_parser = commands.add_parser("coordinates")
-    coordinate_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     prepare_parser = commands.add_parser("prepare")
     prepare_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
-    prepare_parser.add_argument("--core", required=True)
     prepare_parser.add_argument("--work", required=True)
     prepare_parser.add_argument("--inputs")
     prepare_parser.add_argument("--candidate", action="append")
@@ -476,13 +413,12 @@ def main():
     prepare_parser.add_argument("--mode", choices=("source", "package"), default="source")
     prepare_parser.add_argument("--packages", help="JSON component package IDs; omitted means explicit full preparation")
     prepare_parser.add_argument("--project", action="append", help="Explicit restore/build root, relative to the Agent repository")
-    prepare_parser.add_argument("--tools", help="Verified platform Core tool handoff")
+    prepare_parser.add_argument("--published-app", help="Prepared published App directory for hosted presentation tests")
     preflight_parser = commands.add_parser("preflight")
     preflight_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
     preflight_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     validate_parser = commands.add_parser("validate")
     validate_parser.add_argument("--source", default=str(Path(__file__).resolve().parents[2]))
-    validate_parser.add_argument("--core", required=True)
     validate_parser.add_argument("--inputs")
     validate_parser.add_argument("--candidate", action="append")
     validate_parser.add_argument("--catalog")
@@ -491,31 +427,26 @@ def main():
     validate_parser.add_argument("--builder-diagnostics", action="store_true", help="Run focused then full source-mode Builder tests")
     validate_parser.add_argument("--shared", action="store_true", help="Run shared family assertions once during full validation")
     validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
-    validate_parser.add_argument("--tools", help="Verified platform Core tool handoff")
+    validate_parser.add_argument("--published-app", help="Prepared published App directory for hosted presentation tests")
     run_parser = commands.add_parser("run")
     run_parser.add_argument("--state", required=True)
     run_parser.add_argument("--cwd")
     run_parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.action == "matrices": matrices(args.package_tests, args.windows_filesystem_native)
-    elif args.action in ("test", "report", "retain-verifier", "prepare-verifier", "test-family"):
+    elif args.action in ("test", "report", "retain-verifier", "prepare-verifier"):
         import test_lanes
         if args.action == "test": test_lanes.tests(args.state, args.lane)
         elif args.action == "report": test_lanes.report(args.mode, args.platform)
         elif args.action == "retain-verifier": test_lanes.retain_verifier()
-        elif args.action == "prepare-verifier": test_lanes.prepare_verifier(args.core, args.tools)
-        else: test_lanes.family(args.core, args.directory, args.results_directory)
+        elif args.action == "prepare-verifier": test_lanes.prepare_verifier()
     elif args.action == "resolve":
         selected = None if args.packages is None else json.loads(args.packages)
         if args.test_dependencies: selected = test_dependency_scope(args.source, selected)
-        resolve(args.source, args.core, args.output, selected, allow_missing=args.allow_missing)
+        resolve(args.source, args.output, selected, allow_missing=args.allow_missing)
     elif args.action == "complete-inputs":
         import dependency_inputs
-        dependency_inputs.complete(args.source, args.core, args.inputs, args.candidates)
-    elif args.action == "prepare-tools":
-        import core_tools
-        core_tools.prepare(args.core, args.output)
-    elif args.action == "coordinates": coordinates(args.source)
+        dependency_inputs.complete(args.source, args.inputs, args.candidates)
     elif args.action == "prepare": prepare(args)
     elif args.action == "preflight": preflight(args)
     elif args.action == "validate": validate(args)

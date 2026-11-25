@@ -2,7 +2,6 @@ using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Core.TestSupport;
 using Sunder.Runtime.Host.Services;
 using Sunder.Runtime.LocalState;
 using Xunit;
@@ -11,6 +10,14 @@ namespace Sunder.Runtime.Host.Tests;
 
 public sealed partial class AgentNativeReleaseSmokeTests
 {
+    private static ProcessStartInfo CreateNativeAppStartInfo(string assembly, string workingDirectory)
+    {
+        Assert.True(File.Exists(assembly), "The exact qualified App entry point is required.");
+        var executable = Path.Combine(Path.GetDirectoryName(assembly)!, OperatingSystem.IsWindows() ? "Sunder.App.exe" : "Sunder.App");
+        Assert.True(File.Exists(executable), "The exact qualified App launcher is required.");
+        return new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = workingDirectory };
+    }
+
     // Commands run in the actual App image, not in a Worker, a fabricated peer or
     // an in-process broker caller. The hook is test-only and never enters a package.
     private sealed class NativeAppRpcProxy(CapturedProcess process, string responsePath, string diagnosticsPath) : IAsyncDisposable
@@ -25,9 +32,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
             var marker = Path.Combine(AppContext.BaseDirectory, "sunder-agent-native-app-target-path.txt");
             Assert.True(File.Exists(marker), "The native test build must record its exact Sunder.App output.");
             var assembly = (await File.ReadAllTextAsync(marker)).Trim();
-            var executable = Path.Combine(Path.GetDirectoryName(assembly)!, OperatingSystem.IsWindows() ? "Sunder.App.exe" : "Sunder.App");
             var hook = Path.Combine(AppContext.BaseDirectory, "agent-native-app-hook", "Sunder.App.Tests.dll");
-            Assert.True(File.Exists(assembly) && File.Exists(executable) && File.Exists(hook), "Build the selected App and its native RPC hook first.");
+            Assert.True(File.Exists(hook), "Build the selected App's native RPC hook first.");
             var snapshot = Assert.Single(services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid), item => item.PackageId == packageId);
             var source = services.GetRequiredService<PackageSessionState>().GetActivePackageSources().Single(item => item.PackageId == packageId);
             Directory.CreateDirectory(root);
@@ -40,10 +46,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 connectionPath, responsePath, snapshot,
                 manifestSha256 = RuntimeRpcPackageMetadata.GetManifestSha256(source.ContentIndex!),
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-            var start = new ProcessStartInfo(executable)
-            {
-                UseShellExecute = false, RedirectStandardInput = true, WorkingDirectory = Path.GetDirectoryName(executable)!,
-            };
+            var start = CreateNativeAppStartInfo(assembly, Path.GetDirectoryName(assembly)!);
+            start.RedirectStandardInput = true;
             start.Environment["DOTNET_STARTUP_HOOKS"] = hook;
             start.Environment["SUNDER_TEST_NATIVE_APP_RPC_CONFIG"] = configPath;
             start.Environment["SUNDER_APP_STATE_ROOT"] = Path.Combine(root, "app-state");

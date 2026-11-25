@@ -33,41 +33,39 @@ class ProjectScopeTests(unittest.TestCase):
             commands.append(command)
             self.assertEqual(["dotnet", "msbuild"], command[:2])
             self.assertIn("-getItem:ProjectReference", command)
-            self.assertIn("-p:SunderUseSourceSdk=false", command)
+            self.assertIn("-p:Configuration=Release", command)
             name = Path(command[2]).relative_to(self.source.resolve()).as_posix()
             return subprocess.CompletedProcess(command, 0, json.dumps(dict(Items=dict(ProjectReference=[
                 dict(FullPath=str(self.source / path)) for path in references[name]]))))
         with patch.object(project_scope.subprocess, "run", side_effect=evaluate):
-            selected = project_scope.packages(self.source, roots, {"SunderUseSourceSdk": "false"}, {})
+            selected = project_scope.packages(self.source, roots, {"Configuration": "Release"}, {})
         self.assertEqual(sorted([owner["packageId"], component["packageId"]]), selected)
         self.assertEqual(3, len(commands))
         self.assertFalse(any(unrelated["projectPath"] in command[2] for command in commands))
         with patch.object(project_scope.subprocess, "run", side_effect=AssertionError("no evaluation for explicit full graph")):
             self.assertEqual(15, len(project_scope.packages(self.source, ["Sunder.AgentPackage.slnx"], {}, {})))
 
-    def test_discovery_covers_source_and_package_test_dependencies_in_the_scoped_handoff(self):
-        owner, component, package_only = self.rows[:3]
+    def test_discovery_covers_owned_test_dependencies_in_the_scoped_handoff(self):
+        owner, component = self.rows[:2]
         path = self.root / "inventory.json"
         path.write_text(json.dumps(dict(projects=[
             dict(path="tests/Source.csproj", modes=["source"]),
             dict(path="tests/Package.csproj", modes=["package"])])))
         def closure(source, roots, properties, env):
-            mode = properties["SunderUseSourceSdk"]
             self.assertIn(component["projectPath"], roots)
-            self.assertEqual(mode == "true", "tests/Source.csproj" in roots)
-            self.assertEqual(mode == "false", "tests/Package.csproj" in roots)
-            return [owner["packageId"], component["packageId"]] + ([package_only["packageId"]] if mode == "false" else [])
+            self.assertIn("tests/Source.csproj", roots)
+            return sorted([owner["packageId"], component["packageId"]])
         with patch.object(agent_ci, "generate_inventory", return_value=path), \
              patch.object(project_scope, "packages", side_effect=closure):
             scope = agent_ci.test_dependency_scope(self.source, [component["packageId"]])
-        self.assertEqual(sorted(row["packageId"] for row in self.rows[:3]), scope)
+        self.assertEqual(sorted(row["packageId"] for row in self.rows[:2]), scope)
         manifest = copy.deepcopy(self.manifest)
-        manifest.update(schemaVersion=3, packageIds=scope)
-        manifest["core"] = dict(artifactSourceCommit=self.core_sha, buildToolVersion="1.0.2")
+        manifest.update(schemaVersion=4, packageIds=scope)
+        manifest.pop("core")
         for item in [*manifest["candidates"], manifest["platformCatalog"]]:
             item["asset"] = {key: item["asset"][key] for key in ("name", "size", "sha256")}
         self.assertEqual(manifest, agent_ci.inputs.validate_manifest(
-            self.source, manifest, self.source_sha, self.core_sha, [owner["packageId"], component["packageId"]]))
+            self.source, manifest, self.source_sha, packages=[owner["packageId"], component["packageId"]]))
 
     def test_selected_graph_uses_the_authored_solution_and_keeps_every_root(self):
         roots = [row["projectPath"] for row in self.rows[:2]]

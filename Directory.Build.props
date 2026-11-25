@@ -26,20 +26,8 @@
         <PackageTags>sunder;agent;ai</PackageTags>
         <RepositoryType>git</RepositoryType>
         <RepositoryUrl>https://github.com/Younics/sunder-agent-package</RepositoryUrl>
-        <SunderSdkProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk\Sunder.Sdk.csproj</SunderSdkProject>
-        <SunderSdkAvaloniaProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Avalonia\Sunder.Sdk.Avalonia.csproj</SunderSdkAvaloniaProject>
-        <SunderSdkStacksProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Stacks\Sunder.Sdk.Stacks.csproj</SunderSdkStacksProject>
-        <SunderSdkWorkerProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Sdk.Worker\Sunder.Sdk.Worker.csproj</SunderSdkWorkerProject>
-        <SunderBuildToolingProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Package.Build\Sunder.Package.Build.csproj</SunderBuildToolingProject>
-        <SunderAppProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.App\Sunder.App.csproj</SunderAppProject>
-        <SunderRuntimeClientProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.Client\Sunder.Runtime.Client.csproj</SunderRuntimeClientProject>
-        <SunderRuntimeContractsProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.Contracts\Sunder.Runtime.Contracts.csproj</SunderRuntimeContractsProject>
-        <SunderRuntimeLocalStateProject>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\host\Sunder.Runtime.LocalState\Sunder.Runtime.LocalState.csproj</SunderRuntimeLocalStateProject>
-        <SunderPackageBuildTargets>$(MSBuildThisFileDirectory)..\sunder-core\languages\csharp\dotnet\packages\Sunder.Package.Build\build\Sunder.Package.Build.targets</SunderPackageBuildTargets>
-        <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == '' and Exists('$(SunderSdkProject)')">true</SunderUseSourceSdk>
-        <SunderUseSourceSdk Condition="'$(SunderUseSourceSdk)' == ''">false</SunderUseSourceSdk>
-        <RestorePackagesWithLockFile Condition="'$(SunderUseSourceSdk)' == 'false'">true</RestorePackagesWithLockFile>
-        <NuGetLockFilePath Condition="'$(SunderUseSourceSdk)' == 'false'">$(MSBuildProjectDirectory)/packages.release.lock.json</NuGetLockFilePath>
-        <RestoreLockedMode Condition="'$(SunderUseSourceSdk)' == 'false' and ('$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true')">true</RestoreLockedMode>
+        <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+        <NuGetLockFilePath>$(MSBuildProjectDirectory)/packages.release.lock.json</NuGetLockFilePath>
+        <RestoreLockedMode Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true' or '$(CIRCLECI)' == 'true'">true</RestoreLockedMode>
     </PropertyGroup>
 </Project>

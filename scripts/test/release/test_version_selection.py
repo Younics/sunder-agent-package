@@ -136,7 +136,7 @@ class VersionSelectionTests(unittest.TestCase):
         family_size = len(self.rows)
         for count, pending in ((0, False), (1, False), (family_size, True), (1, True)):
             active = count > 0
-            required = dict(prepare=True, preflight=active, tools=active, bootstrap=pending, dependencies=active,
+            required = dict(prepare=True, preflight=active, bootstrap=pending, dependencies=active,
                  components=active, verifier=active, source=count == family_size)
             required["dependency-discovery"] = active
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}

@@ -204,8 +204,7 @@ internal sealed class AgentPublicSourceMigrationFactAttribute : FactAttribute
     public AgentPublicSourceMigrationFactAttribute()
     {
         if (Environment.GetEnvironmentVariable("SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION") == "1") return;
-        var root = BuilderSourceMigrationTests.FindRepository();
-        if (!File.Exists(Path.GetFullPath(Path.Combine(root, "..", "sunder-core", "Sunder.Core.slnx"))))
-            Skip = "Requires sibling Core source/tooling. Set SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION=1 to require this lane.";
+        if (!File.Exists(Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG")))
+            Skip = "Requires the public catalog selected by the Agent locks.";
     }
 }

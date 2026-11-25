@@ -87,7 +87,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var dependency = Assert.Single(value.GetProperty("dependsOn").EnumerateArray());
         Assert.Equal("younics.ai.agent", dependency.GetProperty("packageId").GetString());
         Assert.Equal("required", dependency.GetProperty("presence").GetString());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         await VerifySubagentsProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
     }
 

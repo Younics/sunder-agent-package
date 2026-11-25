@@ -6,7 +6,7 @@ namespace Sunder.Package.Agent.Tests;
 
 public sealed partial class AgentSourceArtifactMigrationTests
 {
-    private static void VerifyFamilyPolicies(string root, string repository, string core)
+    private static void VerifyFamilyPolicies(string root, string repository)
     {
         using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "packages.json")));
         var actualPackages = new List<string>();

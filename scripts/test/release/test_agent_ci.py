@@ -30,17 +30,12 @@ import project_scope
 import required_test_evidence
 
 fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].setUp
+public_manifest = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixture.py")))["ColdInputsTests"].public_manifest
 
 
 class AgentCiTests(unittest.TestCase):
     def setUp(self):
         fixture_setup(self)
-        # Python 3.11 on Windows may query cmd.exe for platform metadata. Keep
-        # that OS probe outside the build-command mock without inventing a RID.
-        machine = platform.machine()
-        architecture = patch("core_tools.platform.machine", return_value=machine)
-        architecture.start()
-        self.addCleanup(architecture.stop)
 
     def write_test_inventory(self):
         path = self.source / "artifacts/reports/test-inventory.json"
@@ -56,15 +51,15 @@ class AgentCiTests(unittest.TestCase):
 
     def test_ci_resolves_dependencies_without_an_operator_locator(self):
         output = self.root / "missing-ci-inputs"
-        with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--source", str(self.source), "--core", "../sunder-core", "--output", str(output)]), \
+        with patch.object(sys, "argv", ["agent_ci.py", "resolve", "--source", str(self.source), "--output", str(output)]), \
              patch.dict(os.environ, {}, clear=True), patch.object(ci, "resolve") as resolve:
             ci.main()
-        resolve.assert_called_once_with(str(self.source), "../sunder-core", str(output), None, allow_missing=False)
+        resolve.assert_called_once_with(str(self.source), str(output), None, allow_missing=False)
         self.assertFalse(output.exists())
 
     def test_workflow_retains_input_failure_without_masking_exit_or_reporting_unstarted_tests(self):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
-        section = workflow.split("      - name: Resolve exact selected archives, catalog and Core source\n")[1].split("\n      - ")[0]
+        section = workflow.split("      - name: Resolve selected archives and platform catalog\n")[1].split("\n      - ")[0]
         script = textwrap.dedent(section.split("        run: |\n")[1])
         stub = self.root / "scripts/ci/agent_ci.py"
         stub.parent.mkdir(parents=True)
@@ -90,9 +85,7 @@ class AgentCiTests(unittest.TestCase):
 
     def test_workflow_optional_stress_arguments_preserve_bash_nounset_and_exact_arguments(self):
         workflows = SCRIPTS.parent / ".github/workflows"
-        for workflow, step, component in (
-                ("sunder-package-component.yml", "Build and test the selected component", True),
-                ("sunder-package-smoke.yml", "Build and test selected reference mode", False)):
+        for workflow, step in (("sunder-package-component.yml", "Build and test the selected component"),):
             text = (workflows / workflow).read_text()
             section = text.split("      - name: " + step + "\n", 1)[1].split("\n      - name:", 1)[0]
             script = "set -euo pipefail\n" + textwrap.dedent(section.split("        run: |\n", 1)[1])
@@ -104,10 +97,8 @@ class AgentCiTests(unittest.TestCase):
                     result = subprocess.run(bash_runtime.command("-c", script), env=environment,
                                             text=True, capture_output=True, timeout=10)
                     self.assertEqual(0, result.returncode, result.stdout + result.stderr)
-                    expected = ["validate", "--core", "../sunder-core", "--inputs",
-                                environment["RUNNER_TEMP"] + "/agent-inputs", "--tools",
-                                environment["RUNNER_TEMP"] + "/core-tools", "--mode", "package"]
-                    expected += ["--packages", '["younics.ai.agent"]'] if component else ["--shared"]
+                    expected = ["validate", "--inputs", environment["RUNNER_TEMP"] + "/agent-inputs",
+                                "--mode", "package", "--packages", '["younics.ai.agent"]']
                     if stress == "true": expected.append("--stress")
                     self.assertEqual(expected, result.stdout.splitlines())
 
@@ -273,7 +264,6 @@ class AgentCiTests(unittest.TestCase):
         workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-smoke.yml").read_text()
         dependencies = workflow.split("  dependency-discovery:\n")[1].split("\n  tools:")[0]
         self.assertIn("needs: [prepare, preflight]", dependencies)
-        self.assertIn("needs: [prepare, preflight, dependency-discovery, tools, bootstrap, dependencies, components, verifier, source]", workflow)
 
     def test_preparation_failure_cleans_temporary_state_and_does_not_report_unstarted_tests(self):
         work = []
@@ -299,14 +289,13 @@ class AgentCiTests(unittest.TestCase):
     def test_native_smoke_passes_exact_preparation_arguments_under_bash_nounset(self):
         launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()
         self.assertIn("\nset -euo pipefail\n", launcher)
-        preparation = launcher[launcher.index("# The Maker job driver"):].split("\napp_target=", 1)[0]
+        preparation = launcher[launcher.index("preparation_args=("):].split("\ndistribution=", 1)[0]
         script = textwrap.dedent("""\
             set -euo pipefail
             mode="$1"
             script_dir="agent source/scripts/release"
-            core_repository="core source"
             metrics_directory="native metrics"
-            expected_core_commit="$2"
+            native_path() { printf '%s' "$1"; }
             python3() { printf '%s\\n' "$@"; }
             """) + preparation
         for mode in ("development", "published"):
@@ -314,51 +303,8 @@ class AgentCiTests(unittest.TestCase):
                 result = subprocess.run(bash_runtime.command("-c", script, "--", mode, self.core_sha),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
-                expected = ["-B", "agent source/scripts/release/prepare_maker_inputs.py", "core source",
-                            "native metrics/maker-inputs", self.core_sha]
+                expected = ["-B", "agent source/scripts/release/prepare_maker_inputs.py", "native metrics/maker-inputs"]
                 self.assertEqual(expected + (["--host-only"] if mode == "published" else []), result.stdout.splitlines())
-
-    def test_prepublication_family_uses_development_and_supervised_app_gates_without_credentials(self):
-        import release_inputs
-        core = self.root / "family-core"
-        baseline = core / "eng/platform-contracts/sunder-contracts.owned.json"
-        baseline.parent.mkdir(parents=True)
-        baseline.write_text(json.dumps({"contracts": {"stack": {"current": {"catalogRelease": {"releaseVersion": "2.0.0"}}}}}))
-        archives = self.root / "family-archives"
-        archives.mkdir()
-        for name in ("owner", "maker"):
-            (archives / (name + ".sunderpkg")).write_bytes(name.encode())
-        output = self.root / "family-proof"
-        ids = {"owner.sunderpkg": "younics.ai.agent", "maker.sunderpkg": "younics.sunder.package.maker"}
-        with patch.object(test_lanes, "ROOT", self.source), patch.object(test_lanes, "run") as run, \
-             patch.object(test_lanes.subprocess, "check_output", return_value="tool.dll") as evaluate, \
-             patch.object(release_inputs, "archive_metadata", side_effect=lambda path: ({"id": ids[path.name]}, None)), \
-             patch.dict(os.environ, {"GH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_API_KEY": "must-not-reach-tests",
-                                     "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_CLI_TOKEN": "must-not-reach-tests",
-                                     "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN": "must-not-reach-tests", "SUNDER_REGISTRY_NATIVE_READ_TOKEN": "must-not-reach-tests",
-                                     "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY": "1"}):
-            test_lanes.family(core, archives, output)
-            calls = run.call_args_list
-            before = len(calls)
-            with self.assertRaises(FileExistsError):
-                test_lanes.family(core, archives, output)
-            self.assertEqual(before, run.call_count, "a repeated result directory must fail before invoking any tools")
-        tests = [call for call in calls if call.args[:2] == ("dotnet", "test")]
-        self.assertEqual(2, len(tests))
-        self.assertIn("Sunder.App.Integration.Tests", str(tests[1].args[2]))
-        selectors = " ".join(str(arg) for call in tests for arg in call.args)
-        self.assertIn("DevelopmentArchives_ActivateUnloadReloadAndReplaceAsOneFamily", selectors)
-        self.assertIn("RuntimeProducedAgentSnapshot_MaterializesAndActivatesInSupervisedApp", selectors)
-        self.assertNotIn("ReleaseArchives_InstallActivateUnloadReloadAndReinstallAsOneFamily", selectors)
-        self.assertEqual(2, evaluate.call_count)
-        for call in [*calls, *evaluate.call_args_list]:
-            environment = call.kwargs["env"]
-            self.assertFalse(any(key in environment for key in ("GH_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY")))
-            self.assertEqual(str(output.resolve() / "app-snapshot"), environment["SUNDER_AGENT_UI_SNAPSHOT_DIR"])
-            self.assertEqual(str(self.source), environment["SUNDER_AGENT_CURRENT_BASELINE_ROOT"])
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
-        build = workflow.split("      - name: Build Core validation paths\n")[1].split("      - name:")[0]
-        self.assertIn("tests/Sunder.App.Integration.Tests", build)
 
     def test_publication_api_key_keeps_its_environment_secret_name_through_component_calls(self):
         workflows = SCRIPTS.parent / ".github/workflows"
@@ -385,7 +331,7 @@ class AgentCiTests(unittest.TestCase):
         installed = workflow.split("  installed-native:\n")[1].split("\n  release:")[0]
         release = workflow.split("  release:\n")[1].split("\n  summary:")[0]
         self.assertIn("needs: [prepare, stage, publish-owner, publish-consumers]", installed)
-        self.assertIn('"$CORE_COMMIT" published', installed)
+        self.assertIn('artifacts/installed-native-metrics/$RID" published', installed)
         self.assertNotIn("secrets.", installed)
         self.assertIn("REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}", installed)
         self.assertIn("agent_pipeline.py recover --read-only", installed)
@@ -397,14 +343,13 @@ class AgentCiTests(unittest.TestCase):
         self.assertNotIn("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN=", launcher)
         # Exercise the real launcher prologue without native artifacts/toolchains.
         # Both phases must strip credentials before the first external operation.
-        prologue = launcher.split('[[ "$expected_core_commit" =~', 1)[0]
+        prologue = launcher.split('script_dir=', 1)[0]
         credentials = ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
                        "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")
         script = prologue + '\nfor credential in ' + " ".join(credentials) + '; do [[ -z "${!credential+x}" ]] || exit 1; done\n'
         for mode in ("development", "published"):
             with self.subTest(mode=mode):
-                result = subprocess.run(bash_runtime.command("-c", script, "--", self.root.as_posix(), self.bundle.as_posix(),
-                    "metrics", "a" * 40, mode),
+                result = subprocess.run(bash_runtime.command("-c", script, "--", self.bundle.as_posix(), "metrics", mode),
                     env={**os.environ, **dict.fromkeys(credentials, "must-not-reach-tools"),
                          "SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN": "https://registry.test"},
                     capture_output=True, text=True, check=False)
@@ -431,8 +376,6 @@ class AgentCiTests(unittest.TestCase):
                 if name == "valid": self.assertEqual("https://registry.test", (directory / "launcher-reached").read_text())
 
     def prepare(self):
-        self.core = self.root / "sunder-core"
-        self.core.mkdir()
         self.work = self.root / "ordinary-ci"
         (self.source / "Sunder.AgentPackage.slnx").write_text("<Solution />")
         self.commands = []
@@ -443,15 +386,8 @@ class AgentCiTests(unittest.TestCase):
             self.assertNotIn("SUNDER_REGISTRY_PUBLISH_TOKEN", kwargs["env"])
             self.assertNotIn("-m:1", command)
             self.assertNotIn("--force-evaluate", command)
-            if command[:2] == ["dotnet", "build"]:
-                output = Path(command[2]).parent / "bin/Release/custom-framework"
-                output.mkdir(parents=True)
-                for name in (*ci.inputs.TOOL_FILES, "Sunder.Package.Build.Tests.dll"):
-                    (output / name).write_bytes(b"built tool " + name.encode())
-            if "-t:RestoreSunderContracts" in command:
-                Path(kwargs["env"]["SunderContractCacheRoot"]).mkdir(parents=True, exist_ok=True)
-            return subprocess.CompletedProcess(command, 0, str(Path(command[2]).parent / "bin/Release/custom-framework") if "-getProperty:TargetDir" in command else "")
-        args = argparse.Namespace(source=self.source, core=self.core, work=self.work,
+            return subprocess.CompletedProcess(command, 0, "")
+        args = argparse.Namespace(source=self.source, work=self.work,
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="source")
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
              patch.object(ci.inputs, "offline_prefix", side_effect=AssertionError("ordinary CI does not request a production offline runner")), \
@@ -461,38 +397,33 @@ class AgentCiTests(unittest.TestCase):
             ci.prepare(args)
         return self.work / "ci-state.json"
 
-    def test_fresh_preparation_restores_full_graph_and_only_core_hydrates_contracts(self):
+    def test_fresh_preparation_uses_locked_restore_and_authored_contract_inputs(self):
         before = ci.inputs.source_snapshot(self.source)
         state_path = self.prepare()
         restores = [c for c in self.commands if c[:2] == ["dotnet", "restore"]]
-        self.assertEqual(2, len(restores))
-        self.assertTrue(all("--locked-mode" in c and "-r" not in c for c in restores))
-        restore = next(command for command in restores if command[2] == str((self.source / "Sunder.AgentPackage.slnx").resolve()))
+        restore, = restores
+        self.assertIn("--locked-mode", restore)
+        self.assertIn(str(self.source.resolve() / "NuGet.Config"), restore)
+        self.assertNotIn("-r", restore)
         self.assertIn("-p:SunderPlatformCatalogPath=" + str(self.catalog_path.resolve()), restore)
         self.assertIn("-p:SunderPackageCandidatePath=" + str(self.archive.resolve()), restore)
         self.assertNotIn("-p:SunderRestoreContracts=false", restore)
-        hydration = [c for c in self.commands if "-t:RestoreSunderContracts" in c]
-        self.assertEqual(15, len(hydration))
-        self.assertEqual(14, sum(any(a.startswith("-p:SunderPackageCandidatePath=") for a in c) for c in hydration))
         self.assertFalse(any("Accept" in a or "Freeze" in a or "ImplementSunder" in a for c in self.commands for a in c))
         self.assertEqual(before, ci.inputs.source_snapshot(self.source))
         with patch.object(ci, "head", return_value=self.source_sha):
             state, env = ci.context(state_path)
         self.assertEqual(str(self.catalog_path.resolve()), env["SUNDER_AGENT_SOURCE_PLATFORM_CATALOG"])
-        self.assertEqual("true", state["properties"]["SunderPackageBuildTaskSourceIsImmutable"])
         self.assertNotIn("GeneratePackageOnBuild", state["properties"])
         self.assertNotIn("SunderPackageCandidatePath", state["properties"])
         self.assertNotIn("SunderPlatformCatalogPath", state["properties"])
 
     def test_bootstrap_owner_supplies_verified_catalog_to_initial_restore_without_a_candidate_seed(self):
-        tools = Path(ci.inputs.load(self.prepare())["tools"])
         owner = self.rows[0]
-        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "owner-ci", mode="package",
+        args = argparse.Namespace(source=self.source, work=self.root / "owner-ci", mode="package",
                                   packages=json.dumps([owner["packageId"]]), candidate=[], catalog=self.catalog_path,
-                                  inputs=None, tools=tools)
+                                  inputs=None)
         result = subprocess.CompletedProcess([], 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", return_value=result) as run, \
-             patch("core_tools.package_tasks", return_value={name: tools / name for name in ci.inputs.TOOL_FILES}), \
              patch("sys.stdout", new_callable=io.StringIO):
             ci.prepare(args)
         restore = next(call.args[0] for call in run.call_args_list if call.args[0][:2] == ["dotnet", "restore"])
@@ -504,10 +435,9 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual([owner["packageId"]], state["packages"])
         self.assertFalse((self.source / ".sunder/contract-inputs").exists())
 
-    def test_changed_tool_or_selected_archive_is_rejected_before_build(self):
+    def test_changed_archive_is_rejected_before_build(self):
         state_path = self.prepare()
-        state = ci.inputs.load(state_path)
-        for path in (Path(state["properties"]["SunderPackageBuildTaskAssembly"]), self.archive):
+        for path in (self.catalog_path, self.archive):
             before = path.read_bytes()
             path.write_bytes(before + b"changed")
             with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run") as run:
@@ -516,26 +446,14 @@ class AgentCiTests(unittest.TestCase):
                 run.assert_not_called()
             path.write_bytes(before)
 
-    def test_component_preparation_reuses_tools_and_only_restores_and_hydrates_its_graph(self):
-        full_state = self.prepare()
-        tools = ci.inputs.load(full_state)["tools"]
+    def test_component_preparation_restores_only_its_graph(self):
         component = self.rows[1]
-        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "component-ci",
+        args = argparse.Namespace(source=self.source, work=self.root / "component-ci",
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="package",
-                                  packages=json.dumps([component["packageId"]]), tools=tools)
-        published = (self.root / "nuget/tasks").resolve()
-        published.mkdir(parents=True)
-        for name in ci.inputs.TOOL_FILES:
-            (published / name).write_bytes(b"published immutable " + name.encode())
+                                  packages=json.dumps([component["packageId"]]))
         commands = []
         def run(command, **kwargs):
             commands.append(command)
-            target = "_CollectSunderPackageBuildTaskDependencyFiles"
-            if "-getTargetResult:" + target in command:
-                return subprocess.CompletedProcess(command, 0, json.dumps(dict(
-                    Properties=dict(SunderPackageBuildTaskSourceIsImmutable="true"),
-                    TargetResults={target: dict(Result="Success", Items=[dict(TargetFileName=name, FullPath=str(published / name))
-                        for name in ci.inputs.TOOL_FILES])})))
             return subprocess.CompletedProcess(command, 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
         with patch.object(ci, "head", return_value=self.source_sha), patch.object(ci.subprocess, "run", side_effect=run), \
              patch("sys.stdout", new_callable=io.StringIO):
@@ -546,24 +464,16 @@ class AgentCiTests(unittest.TestCase):
         self.assertEqual([component["packageId"]], state["packages"])
         self.assertEqual([component["projectPath"]], state["projects"])
         self.assertEqual(1, sum(command[:2] == ["dotnet", "restore"] for command in commands))
-        self.assertEqual(1, sum("-t:RestoreSunderContracts" in command for command in commands))
         self.assertFalse(any(command[:2] == ["dotnet", "build"] or command[2].endswith(".slnx") for command in commands))
-        self.assertEqual(str(published / "Sunder.Package.Build.dll"), state["properties"]["SunderPackageBuildTaskAssembly"])
-        self.assertTrue(all(str(published / name) in state["inputHashes"] for name in ci.inputs.TOOL_FILES))
-        (published / "Sunder.Package.Build.Editor.dll").write_bytes(b"changed published analyzer")
-        with patch.object(ci, "head", return_value=self.source_sha):
-            with self.assertRaisesRegex(ValueError, "bytes changed"):
-                ci.context(args.work / "ci-state.json")
 
     def test_selected_graph_restores_once_and_rejects_changed_filter_or_roots_before_execution(self):
-        full_state = self.prepare()
         roots = [row["projectPath"] for row in self.rows[:2]]
         solution = self.source / "Sunder.AgentPackage.slnx"
         solution.write_text("<Solution>" + "".join(f'<Project Path="{row["projectPath"]}" />' for row in self.rows) + "</Solution>")
-        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "graph-ci",
+        args = argparse.Namespace(source=self.source, work=self.root / "graph-ci",
                                   inputs=None, candidate=[self.archive], catalog=self.catalog_path, mode="source",
                                   packages=json.dumps([row["packageId"] for row in self.rows[:2]]),
-                                  project=roots, tools=ci.inputs.load(full_state)["tools"])
+                                  project=roots)
         result = subprocess.CompletedProcess([], 0, json.dumps(dict(Items=dict(ProjectReference=[]))))
         with patch.object(ci, "head", return_value=self.source_sha), \
              patch.object(ci.subprocess, "run", return_value=result) as run, patch("sys.stdout", new_callable=io.StringIO):
@@ -575,7 +485,6 @@ class AgentCiTests(unittest.TestCase):
             restore = next(call.args[0] for call in run.call_args_list if call.args[0][:2] == ["dotnet", "restore"])
             self.assertIn(str(graph), restore)
             self.assertIn("--locked-mode", restore)
-            self.assertEqual(2, sum("-t:RestoreSunderContracts" in call.args[0] for call in run.call_args_list))
             self.assertEqual(roots, state["projects"])
             self.assertEqual(0, ci.execute(state_path, ["dotnet", "build", str(graph), "--no-restore"]))
             run.reset_mock()
@@ -601,14 +510,12 @@ class AgentCiTests(unittest.TestCase):
             ci.inputs.verify_selected_files(self.source, [self.archive], self.catalog_path)
 
     def test_archive_only_preparation_has_no_canonical_restore_or_contract_hydration(self):
-        full_state = self.prepare()
-        tools = ci.inputs.load(full_state)["tools"]
         project = "tests/Archive.Tests/Archive.Tests.csproj"
         path = self.source / project
         path.parent.mkdir(parents=True)
         path.write_text('<Project Sdk="Microsoft.NET.Sdk" />')
-        args = argparse.Namespace(source=self.source, core=self.core, work=self.root / "archive-ci", mode="package",
-                                  packages="[]", project=[project], tools=tools, inputs=None, candidate=None, catalog=None)
+        args = argparse.Namespace(source=self.source, work=self.root / "archive-ci", mode="package",
+                                  packages="[]", project=[project], inputs=None, candidate=None, catalog=None)
         commands = []
         def run(command, **kwargs):
             commands.append(command)
@@ -628,15 +535,15 @@ class AgentCiTests(unittest.TestCase):
     def test_shared_dependency_bundle_is_portable_and_reverified_without_runner_local_seeds(self):
         transported = self.root / "another-runner"
         shutil.copytree(self.bundle, transported)
-        core = self.root / "sunder-core"
+        public_manifest(self, transported)
         args = argparse.Namespace(inputs=transported)
-        with patch.object(ci, "head", side_effect=lambda root: self.core_sha if root == core else self.source_sha), \
+        with patch.object(ci, "head", return_value=self.source_sha), \
              patch.object(ci, "resolve", side_effect=AssertionError("consumers must reuse shared bytes")):
-            candidates, catalog = ci.selected_files(args, self.source, core)
+            candidates, catalog = ci.selected_files(args, self.source)
             self.assertEqual(self.archive.read_bytes(), candidates[0].read_bytes())
             self.assertEqual(self.catalog_path.read_bytes(), catalog.read_bytes())
             candidates[0].write_bytes(candidates[0].read_bytes() + b"changed in transport")
-            with self.assertRaises(ValueError): ci.selected_files(args, self.source, core)
+            with self.assertRaises(ValueError): ci.selected_files(args, self.source)
 
     def test_command_failure_and_input_mutation_are_not_hidden(self):
         state_path = self.prepare()
@@ -1172,7 +1079,7 @@ class CommandProcessTests(unittest.TestCase):
 
     def test_post_execution_integrity_failure_keeps_real_child_status(self):
         state = self.prepare()
-        tool = self.work / "tools/Sunder.Package.Build.dll"
+        tool = self.archive
         log = self.root / "child.log"
         command = self.child(0, f"open({str(tool)!r}, 'ab').write(b'changed')")
         with patch.object(ci, "head", return_value=self.source_sha), patch("sys.stdout", io.StringIO()):
@@ -1185,7 +1092,7 @@ class CommandProcessTests(unittest.TestCase):
 
     def test_execution_failure_retains_secondary_integrity_and_evidence_write_errors(self):
         state = self.prepare()
-        tool = self.work / "tools/Sunder.Package.Build.dll"
+        tool = self.archive
         original = tool.read_bytes()
         log = self.root / "child.log"
         write_text = Path.write_text

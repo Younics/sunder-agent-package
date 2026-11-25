@@ -16,7 +16,6 @@
     <SunderTestSourceOnlyTests>Sunder.Package.Agent.Presentation.Tests.CrossRepositoryCandidatePreparationTests.SelectedAgentChat_RecoversWhenCandidateOwnerProviderBecomesLeaseReady</SunderTestSourceOnlyTests>
     <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.BuilderJobCompositionTests.RealQueueCancellationWhileWaitingForBuilderGateReturnsConfirmedNoDispatch;Sunder.Package.Agent.Presentation.Tests.BuilderJobCompositionTests.FailedJobThenQueuedSuccessorSettlesWithItsOwnJournalAndDispatcherAuthority</SunderTestSourceOnlyTests>
     <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.GeneratedSettingsLayoutTests.RealPackageSchemasUseSpacedSectionsInlineHelpAndEdgeToEdgeScrollingWithoutReplacingDrafts;Sunder.Package.Agent.Presentation.Tests.SettingsLayoutTests.HostedSettingsKeepGuttersInsideScrollingContentAtEveryPaneWidth;Sunder.Package.Agent.Presentation.Tests.ProviderSettingsRenderedTests.ProviderSettings_ResizeWithoutOverflowOrReplacingCredentialDraft</SunderTestSourceOnlyTests>
-    <SunderTestSourceOnlyTests>$(SunderTestSourceOnlyTests);Sunder.Package.Agent.Presentation.Tests.NativeViewportLayoutTests.AppNativeViewport_RadiusOnlyChangeInvalidatesArrangementAndReparentingUsesTheNewShell;Sunder.Package.Agent.Presentation.Tests.NativeViewportLayoutTests.AppNativeViewport_NormalizesAllCornerRadiiTogetherWithoutBlankingOrUnsafeHalfSizeClamping</SunderTestSourceOnlyTests>
   </PropertyGroup>
 
   <ItemGroup>
@@ -86,22 +85,21 @@
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Subagents\Sunder.Package.Agent.Subagents.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="SubagentsApp" />
-    <ProjectReference Include="$(SunderAppProject)"
-                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
-    <ProjectReference Include="$(SunderRuntimeClientProject)"
-                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
-    <ProjectReference Include="$(SunderRuntimeContractsProject)"
-                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
-    <ProjectReference Include="$(SunderRuntimeLocalStateProject)"
-                      Condition="'$(SunderUseSourceSdk)' == 'true'" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport\Sunder.Package.Agent.TestSupport.csproj" />
     <ProjectReference Include="..\Sunder.Package.Agent.TestSupport.Avalonia\Sunder.Package.Agent.TestSupport.Avalonia.csproj" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderUseSourceSdk)' != 'true'">
-    <!-- These assertions exercise the actual Core shell implementation. -->
+  <ItemGroup Condition="'$(SunderPublishedAppDirectory)' != ''">
+    <Reference Include="$(SunderPublishedAppDirectory)/Sunder.*.dll"
+               Exclude="$(SunderPublishedAppDirectory)/Sunder.Sdk*.dll" />
+    <Reference Include="$(SunderPublishedAppDirectory)/Avalonia.Controls.WebView.dll" />
+    <Reference Include="$(SunderPublishedAppDirectory)/Velopack.dll" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(SunderPublishedAppDirectory)' == ''">
+    <!-- Keep Agent-only headless development independent of the desktop install.
+         The shared CI lane requires the published App tests. -->
     <Compile Remove="CrossRepositoryCandidatePreparationTests.cs" />
-    <Compile Remove="BuilderJobCompositionTests.cs;GeneratedSettingsLayoutTests.cs;NativeViewportLayoutTests.cs" />
+    <Compile Remove="BuilderJobCompositionTests.cs;GeneratedSettingsLayoutTests.cs" />
     <Compile Remove="HostedSettingsWindow.cs;SettingsLayoutTests.Hosted.cs;ProviderSettingsRenderedTests.Hosted.cs" />
   </ItemGroup>
 
@@ -112,4 +110,8 @@
   </ItemGroup>
   <Import Project="../RegressionTestHarness.props" />
   <Import Project="../PackageContextFixtures.props" />
+  <Target Name="RequirePublishedAppForHostedTests" BeforeTargets="ResolveReferences">
+    <Error Condition="'$(SunderRequirePublishedApp)' == 'true' and ('$(SunderPublishedAppDirectory)' == '' or !Exists('$(SunderPublishedAppDirectory)/Sunder.App.dll'))"
+           Text="Prepare the published App distribution to run the hosted Agent tests." />
+  </Target>
 </Project>

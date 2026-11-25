@@ -363,14 +363,14 @@ def report(mode, platform, *, results="artifacts/test-results", inventory="artif
     result.check_returncode()
 
 
-def prepare_verifier(core, tools):
+def prepare_verifier():
     """Build the archive-only verifier once, without any package implementation."""
     import agent_ci
     output = ROOT / "artifacts/verifier-results"
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="sunder-archive-verifier-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
-        args = Namespace(source=ROOT, core=core, work=Path(temporary) / "prepared", mode="package",
-                         packages="[]", project=[ARCHIVE_PROJECT], tools=tools, inputs=None, candidate=None, catalog=None)
+        args = Namespace(source=ROOT, work=Path(temporary) / "prepared", mode="package",
+                         packages="[]", project=[ARCHIVE_PROJECT], inputs=None, candidate=None, catalog=None)
         agent_ci.prepare(args)
         state = args.work / "ci-state.json"
         command = ["dotnet", "build", ARCHIVE_PROJECT, "-c", "Release", "--no-restore"]
@@ -391,42 +391,3 @@ def retain_verifier(env=None):
     destination = ROOT / "artifacts/package-test-binaries"
     if destination.exists(): shutil.rmtree(destination)
     shutil.copytree(output, destination)
-
-
-def family(core, directory, results_directory=None):
-    import release_inputs
-    core, directory = Path(core).resolve(strict=True), Path(directory).resolve(strict=True)
-    output = Path(results_directory).resolve() if results_directory is not None else ROOT / "artifacts/family-results"
-    inputs = output / "inputs"
-    inputs.mkdir(parents=True, exist_ok=False)
-    env = {key: value for key, value in os.environ.items() if key not in {
-        "GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
-        "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", "SUNDER_REQUIRE_AGENT_INSTALLED_FAMILY"}}
-    env.update({"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE": "1", "SUNDER_REQUIRE_AGENT_UI_SNAPSHOT": "1"},
-               SUNDER_AGENT_CURRENT_BASELINE_ROOT=str(ROOT), SUNDER_AGENT_PACKAGE_ARCHIVE_DIR=str(directory),
-               SUNDER_AGENT_UI_SNAPSHOT_DIR=str(output / "app-snapshot"))
-    cli = core / "languages/csharp/dotnet/host/Sunder.Cli/Sunder.Cli.csproj"
-    target = subprocess.check_output(["dotnet", "msbuild", str(cli), "-p:Configuration=Release", "-getProperty:TargetPath"], cwd=core, text=True, env=env).strip()
-    archives = list(directory.glob("*.sunderpkg"))
-    if not archives: raise ValueError("No family archives")
-    for archive in archives: run("dotnet", target, "dev", "package", "validate", archive, env=env)
-    by_id = {release_inputs.archive_metadata(archive)[0]["id"]: archive for archive in archives}
-    if len(by_id) != len(archives): raise ValueError("Duplicate family package identities")
-    catalog = inputs / "sunder-platform-contracts.v1.json"
-    baseline = json.loads((core / "eng/platform-contracts/sunder-contracts.owned.json").read_text())
-    releases = {row["current"]["catalogRelease"]["releaseVersion"] for row in baseline["contracts"].values()}
-    if len(releases) != 1: raise ValueError("Ambiguous selected Core catalog release")
-    tool_project = core / "languages/csharp/dotnet/tools/Sunder.ExecutionRuntime.Build/Sunder.ExecutionRuntime.Build.csproj"
-    tool = subprocess.check_output(["dotnet", "msbuild", str(tool_project), "-p:Configuration=Release", "-getProperty:TargetPath"], cwd=core, text=True, env=env).strip()
-    run("dotnet", tool, "platform-contracts", "check", "--core-root", core, env=env)
-    run("dotnet", tool, "platform-contracts", "export", "--core-root", core, "--catalog-release", releases.pop(), "--output", catalog, env=env)
-    env.update(SUNDER_AGENT_PLATFORM_CATALOG=str(catalog),
-               SUNDER_REQUIRE_MAKER_STANDALONE="1", SUNDER_MAKER_PACKAGE_ARCHIVE=str(by_id["younics.sunder.package.maker"]),
-               SUNDER_MAKER_IMPORT_CANDIDATE=str(by_id["younics.ai.agent"]), SUNDER_MAKER_PLATFORM_CATALOG=str(catalog))
-    results = output / "core"
-    for project, required in POLICY["coreFamily"].items():
-        path = core / f"languages/csharp/dotnet/tests/{project}/{project}.csproj"
-        run("dotnet", "test", path, "-c", "Release", "--no-build", "--no-restore", "--filter", "|".join("FullyQualifiedName=" + name for name in required),
-            "--logger", f"trx;LogFileName={project}.trx", "--results-directory", results, env=env)
-    required = [arg for names in POLICY["coreFamily"].values() for name in names for arg in ("--require-test", name)]
-    run("node", core / "scripts/test-oracles/summarize-core-test-results.mjs", results, "--allow-partial", *required, env=env)

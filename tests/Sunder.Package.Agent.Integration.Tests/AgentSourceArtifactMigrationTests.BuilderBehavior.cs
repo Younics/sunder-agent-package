@@ -69,9 +69,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static Sunder.Sdk.Abstractions.SunderDevelopmentToolchain ReadDevelopmentToolchain()
     {
-        using var document = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(), "../sunder-core/eng/toolchains.json")));
-        var policy = document.RootElement;
-        return new(policy.GetProperty("dotnetSdk").GetString()!, policy.GetProperty("node").GetString()!, policy.GetProperty("npm").GetString()!);
+        var repository = BuilderSourceMigrationTests.FindRepository();
+        using var global = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(repository, "global.json")));
+        return new(global.RootElement.GetProperty("sdk").GetProperty("version").GetString()!,
+            File.ReadAllText(Path.Combine(repository, ".node-version")).Trim(),
+            File.ReadAllText(Path.Combine(repository, ".npm-version")).Trim());
     }
 
     private static async Task<object?> Call(object instance, string method, params object?[] args)

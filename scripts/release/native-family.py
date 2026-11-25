@@ -55,14 +55,21 @@ def plan_coordinate(value):
         return str(value).endswith(".json")
 
 
-def identity(version, agent_commit, core_tag, core_commit, core_version):
-    for value in ([core_version] if plan_coordinate(version) else [version, core_version]):
-        release_version(value)
-    require(all(re.fullmatch(r"[0-9a-f]{40}", commit) for commit in (agent_commit, core_commit)),
-            "Agent and Core commits must be full lowercase Git SHAs")
-    require(core_tag in ("sdk/v" + core_version, "nuget-sunder-package-build/v" + core_version), "Core build-tool tag and package version do not agree")
-    result = {"schemaVersion": SCHEMA, "version": version, "agentCommit": agent_commit,
-              "core": {"tag": core_tag, "commit": core_commit, "packageVersion": core_version}}
+def identity(version, agent_commit, *historical, repository=None, package_ids=None):
+    require(re.fullmatch(r"[0-9a-f]{40}", agent_commit), "Agent commit must be a full lowercase Git SHA")
+    result = {"schemaVersion": SCHEMA, "version": version, "agentCommit": agent_commit}
+    if not plan_coordinate(version):
+        release_version(version)
+    if historical:
+        core_tag, core_commit, core_version = historical
+        release_version(core_version)
+        require(re.fullmatch(r"[0-9a-f]{40}", core_commit) and core_tag in
+                ("sdk/v" + core_version, "nuget-sunder-package-build/v" + core_version), "Historical Core coordinate differs")
+        result["core"] = {"tag": core_tag, "commit": core_commit, "packageVersion": core_version}
+    else:
+        from agent_release import sdk_materials
+        require(repository is not None, "Need the Agent source to identify declared dependencies")
+        result["nuget"] = sdk_materials(repository, package_ids)
     if plan_coordinate(version):
         from agent_selection import selected, retained_role_uses
         plan = json_file(Path(version).resolve())
@@ -74,6 +81,8 @@ def identity(version, agent_commit, core_tag, core_commit, core_version):
             retainedSourceRoleUses=retained_role_uses(plan, os.environ.get("SUNDER_AGENT_RETAINED_ARCHIVE_DIR", "")),
             retainedArtifacts=[dict(path=row["retainedArchive"]["name"], size=row["retainedArchive"]["size"],
                 sha256=row["retainedArchive"]["sha256"]) for row in plan["packages"] if row["retainedArchive"] is not None])
+        if not historical:
+            result["nuget"] = sdk_materials(repository, result["packageVersions"])
     return result
 
 
@@ -106,26 +115,8 @@ def artifact_output(path, repository):
 
 
 def tool_properties(repository):
-    mode = os.environ.get("SUNDER_NATIVE_USE_SOURCE_SDK", "false")
-    require(mode in ("true", "false"), "SUNDER_NATIVE_USE_SOURCE_SDK must be true or false")
-    assembly = os.environ.get("SUNDER_NATIVE_TASK_ASSEMBLY", "")
-    require(mode != "true" or assembly, "Workspace native operations require SUNDER_NATIVE_TASK_ASSEMBLY: a retained complete immutable Core toolset")
-    result = ["-p:SunderUseSourceSdk=" + mode, "-p:ContinuousIntegrationBuild=true",
-              "-p:SunderPackageRoleInputSourceRoot=" + str(repository)]
-    if mode == "false":
-        result.append("-p:RestoreLockedMode=true")
-    if assembly:
-        assembly = Path(os.path.abspath(assembly))
-        # Normalize the explicitly selected root (e.g. macOS /var -> /private/var),
-        # while still rejecting links/reparse points for every tool file beneath it.
-        assembly = assembly.parent.resolve() / assembly.name
-        require(assembly.name == "Sunder.Package.Build.dll", "Select the retained Sunder.Package.Build.dll")
-        for name in ("Sunder.Package.Build.dll", "Sunder.Package.Build.Editor.dll", "Sunder.Package.Format.dll", "Sunder.Sdk.dll",
-                     "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
-                     "Microsoft.Extensions.DependencyInjection.Abstractions.dll", "Microsoft.Extensions.Logging.Abstractions.dll"):
-            regular(assembly.parent / name)
-        result += ["-p:SunderPackageBuildTaskAssembly=" + str(assembly), "-p:SunderPackageBuildTaskSourceIsImmutable=true"]
-    return result
+    return ["-p:ContinuousIntegrationBuild=true", "-p:RestoreLockedMode=true",
+            "-p:SunderPackageRoleInputSourceRoot=" + str(repository)]
 
 
 def frozen_baselines(repository, rows, version):
@@ -224,7 +215,7 @@ def validate_run(run, expected, rows):
         records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"],
                         size=test["testedArchive"]["size"], sha256=test["testedArchive"]["sha256"])
                    for test in sorted(run["familyTests"], key=lambda row: row["packageId"])]
-        runtime_evidence.validate_receipt(run["execution"], "development", records, expected["core"]["commit"], rid)
+        runtime_evidence.validate_receipt(run["execution"], "development", records, runtime_material(expected, rid), rid)
 
 
 def transport(run, bundle, destination=None):
@@ -432,11 +423,24 @@ def verify_document(document, artifacts, rows, expected):
         verify_archive(artifacts / record["path"], packages, versions[package_id])
 
 
-def component_identity(repository, package_id, agent_commit, core_tag, core_commit, core_version):
+def component_identity(repository, package_id, agent_commit, *historical):
     from agent_release import inventory as source_inventory
     row = next(row for row in source_inventory(repository)["packages"] if row["packageId"] == package_id)
-    expected = identity(row["version"], agent_commit, core_tag, core_commit, core_version)
+    expected = identity(row["version"], agent_commit, *historical, repository=repository, package_ids={package_id})
     return dict(expected, schemaVersion=1, packageId=package_id, workerProject=row["projectPath"])
+
+
+def runtime_material(expected, rid):
+    if "core" in expected:
+        return expected["core"]["commit"]
+    from published_app import selection
+    return selection(rid)
+
+
+def selected_component(repository, package_id, expected):
+    core = expected.get("core")
+    history = (core["tag"], core["commit"], core["packageVersion"]) if core is not None else ()
+    return component_identity(repository, package_id, expected["agentCommit"], *history)
 
 
 def validate_component(run, expected):
@@ -540,8 +544,7 @@ def gather_candidates(repository, candidates, output, expected):
     for row in inventory(repository):
         package_id = row["packageId"]
         if package_id in expected["packageVersions"]:
-            component = component_identity(repository, package_id, expected["agentCommit"],
-                expected["core"]["tag"], expected["core"]["commit"], expected["core"]["packageVersion"])
+            component = selected_component(repository, package_id, expected)
             require(component["version"] == expected["packageVersions"][package_id], "Candidate version differs from release selection")
             receipt = candidate_receipt(candidates, component)
             record, source = receipt["archive"], candidates
@@ -580,8 +583,7 @@ def record_final(repository, candidates, archives, metrics, output, rid, expecte
             validate_metrics(test, rid)
             tests.append(test)
             if package_id in expected["packageVersions"]:
-                component = component_identity(repository, package_id, expected["agentCommit"], expected["core"]["tag"],
-                    expected["core"]["commit"], expected["core"]["packageVersion"])
+                component = selected_component(repository, package_id, expected)
                 receipt = candidate_receipt(candidates, component)
                 leaf = next(run for run in receipt["nativeRuns"] if run["rid"] == rid)
                 transport(leaf, candidates / leaf["bundle"]["path"], work)
@@ -593,7 +595,7 @@ def record_final(repository, candidates, archives, metrics, output, rid, expecte
             execution = json_file(metrics / runtime_evidence.RECEIPT)
             records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"], size=test["testedArchive"]["size"],
                             sha256=test["testedArchive"]["sha256"]) for test in sorted(tests, key=lambda test: test["packageId"])]
-            runtime_evidence.validate_receipt(execution, "development", records, expected["core"]["commit"], rid)
+            runtime_evidence.validate_receipt(execution, "development", records, runtime_material(expected, rid), rid)
             runtime_evidence.verify_reports(execution, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
             for report in execution["reports"]:
                 destination = work / "execution" / rid / report["path"]
@@ -729,25 +731,25 @@ def main():
     if command == "version" and len(args) == 2:
         from agent_release import inventory as source_inventory
         print(next(row["version"] for row in source_inventory(Path(args[0]))["packages"] if row["packageId"] == args[1]))
-    elif command in ("collect-component", "compose-component") and len(args) == 8:
+    elif command in ("collect-component", "compose-component") and len(args) == 5:
         repository, source, destination, package_id, *versions = args
         repository = Path(repository).resolve()
         expected = component_identity(repository, package_id, *versions)
         if command == "collect-component": collect_component(repository, source, destination, expected)
         else: compose_component(repository, Path(source).resolve(), destination, expected)
-    elif command in ("gather", "finalize") and len(args) == 8:
+    elif command in ("gather", "finalize") and len(args) == 5:
         source, destination, version, *versions, repository = args
         repository = Path(repository).resolve()
-        expected = identity(version, *versions)
+        expected = identity(version, *versions, repository=repository)
         require(expected["schemaVersion"] == 4, "Final candidates require an explicit package selection")
         expected["schemaVersion"] = 6
         if command == "gather":
             print(compact(gather_candidates(repository, Path(source).resolve(), destination, expected)).decode("utf-8"))
         else:
             finalize_candidates(repository, Path(source).resolve(), Path(destination).resolve(), expected)
-    elif command == "record-final" and len(args) == 11:
-        rid, version, agent_commit, core_tag, core_commit, core_version, candidates, archives, metrics, output, repository = args
-        expected = identity(version, agent_commit, core_tag, core_commit, core_version)
+    elif command == "record-final" and len(args) == 8:
+        rid, version, agent_commit, candidates, archives, metrics, output, repository = args
+        expected = identity(version, agent_commit, repository=Path(repository).resolve())
         require(expected["schemaVersion"] == 4, "Final native smoke requires an explicit package selection")
         expected["schemaVersion"] = 6
         record_final(Path(repository).resolve(), Path(candidates).resolve(), Path(archives).resolve(), Path(metrics).resolve(), output, rid, expected)
@@ -755,10 +757,10 @@ def main():
         capture(args)
     elif command == "assemble" and len(args) == 8:
         assemble(args)
-    elif command == "verify" and len(args) == 8:
+    elif command == "verify" and len(args) in (5, 8):
         evidence, artifacts, inventory_path, *versions = args
         document = json_file(Path(evidence).resolve(), MAX_PROVENANCE, 24 * 1024 * 1024)
-        expected = identity(*versions)
+        expected = identity(*versions, repository=Path(inventory_path).resolve().parent)
         if document.get("schemaVersion") in (5, 6):
             require(expected["schemaVersion"] == 4, "Final archive evidence requires a package selection")
             expected["schemaVersion"] = document["schemaVersion"]

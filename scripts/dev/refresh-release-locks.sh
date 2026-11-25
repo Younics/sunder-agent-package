@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 || $# -gt 2 ]]; then
-  printf 'Usage: refresh-release-locks.sh <core-package-feed> [repository-root]\n' >&2
+if [[ $# -gt 1 ]]; then
+  printf 'Usage: refresh-release-locks.sh [repository-root]\n' >&2
   exit 2
 fi
 
-core_package_feed="$(cd "$1" && pwd -P)"
-repository_root="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+repository_root="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 repository_root="$(cd "$repository_root" && pwd -P)"
 
 for command_name in dotnet mktemp rm; do
@@ -26,12 +25,6 @@ dotnet restore "$repository_root/Sunder.AgentPackage.slnx" \
   --no-http-cache \
   --artifacts-path "$work_directory/artifacts" \
   --packages "$work_directory/packages" \
-  --source "$core_package_feed" \
-  --source https://api.nuget.org/v3/index.json \
-  -p:SunderUseSourceSdk=false \
+  --configfile "$repository_root/NuGet.Config" \
   -p:RestoreLockedMode=false \
   -p:RestorePackagesWithLockFile=true
-
-bash "$repository_root/scripts/release/verify-release-locks.sh" \
-  "$repository_root" \
-  "$core_package_feed"

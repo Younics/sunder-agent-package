@@ -40,10 +40,18 @@ def expected_inventory(root):
             and sum(p["hasApp"] for p in packages.values()) == 12, "Expected 15 project/package pairs and 12 App roles")
     require(len(contracts) == 31 and sum(c["exposure"] == "public" for c in contracts.values()) == 18
             and sum(c["exposure"] == "package" for c in contracts.values()) == 13, "Expected 18 public / 13 private contracts")
-    require(expected["platform"] == dict(contractId=STACK, authorityKind="platform", authorityId="sunder.core", version="2.0.0"), "Platform authority differs")
+    release.closed(expected["platform"], "contractId authorityKind authorityId version")
+    require({key: expected["platform"][key] for key in ("contractId", "authorityKind", "authorityId")}
+            == dict(contractId=STACK, authorityKind="platform", authorityId="sunder.core"), "Platform authority differs")
+    release.version(expected["platform"]["version"])
     inventory = release.inventory(root)
     actual = index(inventory["packages"], "packageId")
-    require(packages.keys() == actual.keys() and inventory["releaseVersion"] == expected["packageVersion"], "Current release family differs")
+    require(packages.keys() == actual.keys(), "Current release family differs")
+    expected["ownerRanges"] = {
+        package_id: release.load(root / PurePosixPath(row["projectPath"]).with_name("sunder-contracts.lock.json"))[
+            "packageArtifacts"][AGENT]["requestedVersionRange"]
+        for package_id, row in actual.items() if package_id != AGENT
+    }
     require(set(inventory["capabilities"]) == packages.keys(), "Capability owners differ")
     for package_id, package in packages.items():
         require(all(package[key] == actual[package_id][key] for key in ("key", "projectPath")), "Current project/package pair differs")
@@ -198,7 +206,8 @@ def verify_manifest(manifest, package, expected, inventory):
         require(not dependencies, "Owner must not acquire a package dependency")
     else:
         require(len(dependencies) == 1 and all(dependencies[0][key] == value for key, value in
-                dict(packageId=AGENT, versionRange=">=2.0.0 <3.0.0", presence="optional" if package["key"] == "agent-builder" else "required").items()), "Package dependency policy differs")
+                dict(packageId=AGENT, versionRange=expected["ownerRanges"][package["packageId"]],
+                     presence="optional" if package["key"] == "agent-builder" else "required").items()), "Package dependency policy differs")
     public_ids = {cid for cid, contract in contracts.items() if contract["exposure"] == "public"}
     api_imports = manifest.get("packageApiImports", [])
     if package["packageApi"]:

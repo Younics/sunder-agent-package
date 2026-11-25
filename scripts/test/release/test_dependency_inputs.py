@@ -17,8 +17,6 @@ fixture_setup = runpy.run_path(str(Path(__file__).with_name("release-inputs.fixt
 class DependencyInputTests(unittest.TestCase):
     def setUp(self):
         fixture_setup(self)
-        self.core = self.root / "sunder-core"
-        self.core.mkdir()
         self.output = self.root / "resolved"
         self.publications = {d.AGENT: [self.publication(self.archive, 2)]}
 
@@ -30,9 +28,9 @@ class DependencyInputTests(unittest.TestCase):
         def download(asset, destination, maximum=None):
             shutil.copyfile(self.bundle / asset["name"], destination)
         with patch.object(d, "releases", side_effect=lambda repo: self.publications[repo]), \
-             patch.object(d.inputs, "download", side_effect=download), patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+             patch.object(d.inputs, "download", side_effect=download), patch.object(d.r, "git", return_value=self.source_sha.encode()), \
              patch.object(d.public_platform_catalog, "download", return_value=self.catalog_path.read_bytes()):
-            return d.resolve(self.source, self.core, self.output, allow_missing=allow_missing)
+            return d.resolve(self.source, self.output, allow_missing=allow_missing)
 
     def test_published_dependencies_and_identical_coordinator_copies_need_no_seeds(self):
         duplicate = self.publication(self.archive, 3)
@@ -42,7 +40,7 @@ class DependencyInputTests(unittest.TestCase):
         before = d.inputs.source_snapshot(self.source)
         value = self.resolve()
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
-        self.assertEqual(2, value["schemaVersion"])
+        self.assertEqual(self.source_sha, value["sourceCommit"])
         self.assertEqual([d.record(self.archive)], value["candidates"])
         self.assertEqual(d.record(self.catalog_path), value["platformCatalog"])
         self.assertEqual(value, d.r.load(self.output / "ci-inputs.json"))
@@ -53,8 +51,8 @@ class DependencyInputTests(unittest.TestCase):
         pending = self.resolve(allow_missing=True)
         self.assertEqual(["younics.ai.agent"], pending["pending"])
         self.assertFalse((self.output / "ci-inputs.json").exists())
-        with patch.object(d.r, "git", return_value=self.core_sha.encode()):
-            d.complete(self.source, self.core, self.output, self.bundle)
+        with patch.object(d.r, "git", return_value=self.source_sha.encode()):
+            d.complete(self.source, self.output, self.bundle)
         self.assertFalse((self.output / "preparation.json").exists())
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
         d.inputs.verify_selected_files(self.source, [self.output / self.archive.name], self.output / self.catalog_path.name)
@@ -62,14 +60,11 @@ class DependencyInputTests(unittest.TestCase):
     def test_cold_acceptance_inventory_is_generated_from_the_same_automatic_inputs(self):
         with patch.object(d, "releases", side_effect=lambda repo: self.publications[repo]), \
              patch.object(d.inputs, "download", side_effect=lambda asset, path, maximum=None: shutil.copyfile(self.bundle / asset["name"], path)), \
-             patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+             patch.object(d.r, "git", return_value=self.source_sha.encode()), \
              patch.object(d.public_platform_catalog, "download", return_value=self.catalog_path.read_bytes()), \
-             patch.object(d.inputs.subprocess, "check_output", return_value=self.core_sha), \
-             patch.object(d, "core_packages", return_value=[("Sunder.Package.Build", "1.2.3")]):
-            value = d.inputs.fetch(self.source, self.output, self.source_sha, self.core_sha)
-        self.assertEqual(dict(artifactSourceCommit=self.core_sha, buildToolVersion="1.2.3"), value["core"])
-        self.assertEqual(2, value["schemaVersion"])
-        self.assertEqual(value, d.inputs.verify(self.source, self.output, d.r.file_sha(self.output / d.inputs.MANIFEST), self.source_sha, self.core_sha))
+             patch.object(d.inputs.subprocess, "check_output", return_value=self.source_sha):
+            value = d.inputs.fetch(self.source, self.output, self.source_sha)
+        self.assertEqual(value, d.inputs.verify(self.source, self.output, d.r.file_sha(self.output / d.inputs.MANIFEST), self.source_sha))
         self.assertFalse((self.output / "ci-inputs.json").exists())
 
     def test_published_same_version_with_another_content_identity_is_never_rebuilt_or_reselected(self):
@@ -94,9 +89,9 @@ class DependencyInputTests(unittest.TestCase):
         entries["manifest/sunder-package.json"] += b"\n"
         with zipfile.ZipFile(self.archive, "w") as archive:
             for name, data in entries.items(): archive.writestr(name, data)
-        with patch.object(d.r, "git", return_value=self.core_sha.encode()), \
+        with patch.object(d.r, "git", return_value=self.source_sha.encode()), \
              self.assertRaisesRegex(d.r.Invalid, "exact committed package selection") as failure:
-            d.complete(self.source, self.core, self.output, self.bundle)
+            d.complete(self.source, self.output, self.bundle)
         self.assertIn("expected (version, content identity, public inventory)=", str(failure.exception))
         self.assertIn("; actual=", str(failure.exception))
         self.assertEqual(before, d.inputs.source_snapshot(self.source))
@@ -130,30 +125,5 @@ class DependencyInputTests(unittest.TestCase):
         version = d.r.load(self.catalog_path)["releaseVersion"]
         network.assert_called_once_with(f"https://hub.sunderapp.io/api/v1/platform-contracts/sunder.core/releases/{version}/catalog")
         self.assertFalse((self.output / self.catalog_path.name).exists())
-
-    def test_core_coordinates_follow_only_the_build_dependency_not_other_package_versions(self):
-        versions = {"Sunder.Sdk": "1.2.3", "Sunder.Sdk.Avalonia": "2.3.4", "Sunder.Sdk.Worker": "3.4.5", "Sunder.Package.Build": "4.5.6"}
-        for row in self.rows:
-            path = self.source / Path(row["projectPath"]).parent / "packages.release.lock.json"
-            path.write_bytes(d.r.canonical(dict(dependencies={"net10.0": {name: dict(type="Direct", resolved=version, contentHash="fixture") for name, version in versions.items()}})))
-        release = dict(id=1, tag_name="nuget-sunder-package-build/v4.5.6", target_commitish="main", draft=False, prerelease=False,
-                       assets=[dict(id=2, name="Sunder.Package.Build.4.5.6.nupkg", size=1, digest="sha256:" + "c" * 64, state="uploaded"),
-                               dict(id=3, name="release-provenance.json", size=1, digest="sha256:" + "d" * 64, state="uploaded")])
-        provenance = dict(schemaVersion=1, sources=[dict(name="sunder-core", sha=self.core_sha)],
-                          invocation=dict(repository=d.CORE, releaseId=1, sha=self.core_sha),
-                          artifacts=[dict(path="Sunder.Package.Build.4.5.6.nupkg", size=1, sha256="c" * 64)])
-        with patch.object(d.inputs, "gh_json", side_effect=[dict(object=dict(type="tag", sha="d" * 40)), dict(object=dict(type="commit", sha=self.core_sha))]), \
-             patch.object(d.inputs, "download", side_effect=lambda _, path, maximum: path.write_bytes(d.r.canonical(provenance))):
-            value = d.coordinates(self.source, [release])
-        self.assertEqual(dict(core_commit=self.core_sha, core_tag=release["tag_name"], core_version="4.5.6"), value)
-        provenance["sources"][0]["sha"] = "f" * 40
-        with patch.object(d.inputs, "gh_json", return_value=dict(object=dict(type="commit", sha=self.core_sha))), \
-             patch.object(d.inputs, "download", side_effect=lambda _, path, maximum: path.write_bytes(d.r.canonical(provenance))), \
-             self.assertRaisesRegex(d.r.Invalid, "another source"):
-            d.coordinates(self.source, [release])
-        release["tag_name"] = "sdk/v9.9.9"
-        with self.assertRaisesRegex(d.r.Invalid, "version/tag"):
-            d.coordinates(self.source, [release])
-
 
 if __name__ == "__main__": unittest.main()

@@ -117,23 +117,17 @@ discovered from Core's qualified role bundles and ambiguous outputs fail. Workfl
 own ordering, permissions, protected credentials, artifact transport and action pins.
 
 `scripts/ci/agent_ci.py` shares the release input owner's complete byte/lock
-validator. It invokes Core's `RestoreSunderContracts`, uses an isolated cache and
-retained toolset, and runs normal parallel builds. Generated test providers are a
+validator. It uses an isolated contract cache and runs normal parallel builds.
+Generated test providers are a
 project dependency built with the tests; discovery and execution retain per-run
 evidence. It does not write approval or cold-release receipts.
 Verified candidate/catalog paths are supplied to the initial ordinary NuGet restore,
 where Core also hydrates missing contracts. These restore-only byte sources are not
 inherited by test/build children. The import-free owner supplies only its exact
 catalog, without an empty candidate override or a runner-local input seed.
-Package-mode preparation selects the installed locked NuGet Build tasks and binds
-all their hashes into the prepared state. Native producers and composition therefore
-use identical published tooling across operating systems; platform-built Core tools
-remain the source-mode toolset and test-driver handoff.
-
-`dependency_inputs.py` discovers dependencies automatically. The locked
-`Sunder.Package.Build` NuGet version identifies its published Core release/tag and
-source commit. Other SDK packages retain their independent locked versions.
-Published Agent archive/catalog assets are located from their actual identities;
+Each project restores its declared NuGet dependencies, including the Build tasks.
+`dependency_inputs.py` resolves the selected Agent archives and platform catalog,
+not the SDK release or repository. Published archives are located from their actual identities;
 identical coordinator copies are allowed, conflicting copies are rejected.
 
 If an exact selected owner was never published, discovery retains its exact catalog
@@ -154,7 +148,7 @@ This read-only operation checks only the import-free package project and its
 published catalog, then produces all six native leaves and composes them without
 rebuilding. It does not run component tests, admit old consumer locks, or grant
 qualification or publication. Retain the run, candidate artifact ID and ZIP
-digest, Core source, original leaves, and the actual archive SHA-256 and size.
+digest, original leaves, and the actual archive SHA-256 and size.
 
 Use `UpdateSunderPackageApi` to reselect the composed owner in the consumer
 locks. For an unpublished dependency, the shared input job locates the
@@ -163,12 +157,11 @@ admitted archive reproduces its raw bytes. The generated run receipt records
 the authoring artifact and its digest. Authoring bytes cannot substitute for
 the candidate rebuilt by the validating run.
 
-Actions runs discovery once on Linux and prepares verified Core tools once per
-needed platform. It retains `agent-prepared-dependencies`, optional
+Actions runs discovery once on Linux. It retains `agent-prepared-dependencies`, optional
 `agent-candidate-<package>` bootstrap outputs, then seals `agent-dependency-inputs`.
-The `cold-inputs.json` SHA-256 is passed to source, package-mode and native jobs.
+The `cold-inputs.json` SHA-256 is passed to behavior and native jobs.
 Each consumer checks that digest,
-source/Core commits, locks and candidate/catalog bytes before hydration. Runners
+the source commit, locks and candidate/catalog bytes before hydration. Runners
 never independently regenerate the selected owner archive. A failed identity check
 retains the rejected bytes and original log and stops downstream work.
 
@@ -204,7 +197,7 @@ Use a clean checkout, or `dotnet clean` before switching an existing output tree
 to these CI settings, so stale portable symbols cannot enter the archive.
 
 The local resolver generates `ci-inputs.json` with local `{name,size,sha256}` records.
-The shared Actions producer binds those records to source/Core/locks in
+The shared Actions producer binds those records to the Agent source and locks in
 `cold-inputs.json`; the same verifier also accepts historical durable input bundles.
 No `SUNDER_AGENT_CI_INPUTS`, approval reference or per-release input manifest needs
 configuration. Ordinary CI and production native preparation use normal prepared
@@ -214,9 +207,8 @@ For local validation:
 
 ```sh
 python3 -B scripts/ci/agent_ci.py preflight
-python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output /tmp/agent-inputs
-python3 -B scripts/ci/agent_ci.py prepare --core ../sunder-core \
-  --inputs /tmp/agent-inputs --work /tmp/agent-ci
+python3 -B scripts/ci/agent_ci.py resolve --output /tmp/agent-inputs
+python3 -B scripts/ci/agent_ci.py prepare --inputs /tmp/agent-inputs --work /tmp/agent-ci
 python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
   dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
 python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
@@ -225,27 +217,32 @@ python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
 
 Use a fresh temporary work directory. On macOS, use physical paths consistently
 when invoking package projects beneath `/var` (`/private/var`). No baseline or lock
-selection is updated by these commands. `--mode package` is the focused compatibility
-profile against the final locked SDK packages. Explicit `--candidate` and `--catalog`
+selection is updated by these commands. Explicit `--candidate` and `--catalog`
 files remain available for local authoring checks; their identities are checked too.
 
 For selected local behavior validation, add
 `--packages '["younics.ai.agent.provider.openai"]'` to `agent_ci.py validate`.
 `--packages '[]'` stops before SDK/dependency work; omitting the option runs the full
-profile. Temporary integration probe projects explicitly use the Debug configuration
-required by Core 1.0.2's fixture driver; canonical source outputs, toolsets and role
-snapshots follow the test assembly's configuration, including Release CI.
+profile. Temporary authoring probes invoke the tasks from the restored Build package.
 
-## Core Coordination
+## Public-feed builds and qualification
 
-Publish the declared Core developer dependencies first. The resolver accepts the
-Build project's `nuget-sunder-package-build/v*` release or a historical combined
-`sdk/v*` release, resolves its immutable tag, and checks out that source on all
-standalone runners. No manually maintained Core commit/version variable is needed.
-Workspace CI instead uses its checked-out Core source. Exact NuGet release locks
-still bind real dependency versions/content hashes; no common SDK version is imposed.
+Builds restore the declared SDK packages from NuGet.org in locked mode. The
+catalog is read from the public Sunder Registry; the Agent artifact dependencies
+remain bound to their authored selections. A sibling checkout cannot change
+the build.
 
-Local `scripts/dev/refresh-release-locks.sh <feed>` is explicit preparation,
+Hosted presentation and native release tests use the published App and its
+bundled Host from [`app-release.json`](../eng/ci/app-release.json). macOS uses
+the signed, notarized DMG, not a reconstructed updater bundle; Linux extracts
+the shipped AppImage without installing it, and Windows uses the full updater
+archive. The native
+smoke runs Agent tests against that distribution; product builds do not consume
+it. Maker's local authoring test feed is seeded by normal NuGet restore of the
+template's declared toolset, independently of Agent's build dependencies.
+Development execution and installed acceptance remain separate gates.
+
+Local `scripts/dev/refresh-release-locks.sh` is explicit preparation,
 not a release-time fallback. Source baseline publication evidence remains a separate
 authoring operation; the immutable artifact-source tag and frozen histories never move.
 
@@ -280,15 +277,14 @@ fan-in verifies and copies those bytes without another Pack. The schema-3/4/5 re
 remain for retained evidence, not new release staging. Native smoke exercises real
 official .NET installation, every Worker lifecycle, domain RPC/auth/SQLite behavior,
 crash recovery, cleanup and Builder's separate SDK path. Core metric budgets and
-the current-RID projection-size gate remain enforced. Fan-in retains the Agent archive
-and Core Runtime/App gates. The pre-publication Core family selection now uses local
-development admission for all fifteen universal archives, then consumes a hash-bound
-Runtime snapshot in a genuine supervised App process. It preserves Runtime-first
-execution order, fresh evidence roots and credential isolation; schema/phase and
-archive/catalog changes fail before App activation. The installed lifecycle remains
-separately selected, not reclassified as development evidence. This adaptation still
-needs real full-family execution qualification; the pre-Main artifact hook does not
-exercise ordinary App startup, package views, Maker UI or published-installed behavior.
+the current-RID projection-size gate remain enforced. The native development lane
+admits the exact universal family locally using the shipped Host. A separate App
+process materializes a hash-bound Host snapshot, activates the Agent Chat module,
+and retires its policy session. Fan-in verifies those original reports without
+repacking. The snapshot hook does not exercise ordinary desktop startup or the
+installed lifecycle. Installed evidence is separate and must cover all six RIDs;
+before releasing `2.0.1`, prove installed compatibility with `2.0.0` in both
+directions on all six.
 
 ## Stable Boundary
 

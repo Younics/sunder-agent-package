@@ -43,7 +43,7 @@ while IFS=$'\t' read -r package_id project; do
     bash "$script_dir/publish-registry-package.sh" --verify-only "${availability[@]}" --initial-yanked "$work/expected.json" \
       "$registry" "$archive" "$package_id" "$version"
   dotnet msbuild "$source_directory/$project" -t:ImportSunderContractPublication \
-    -p:Configuration=Release -p:SunderUseSourceSdk=false -p:BuildProjectReferences=false \
+    -p:Configuration=Release -p:BuildProjectReferences=false \
     -p:SunderPackagePublicationPath="$archive" -p:SunderRegistryOrigin="$registry/"
   [[ "$(python3 -B "$script_dir/agent_release.py" lock-set "$source_directory")" == "$lock_set" ]] \
     || { printf 'Import changed a production lock; stop evidence preparation.\n' >&2; exit 1; }

@@ -23,6 +23,18 @@ internal static class StartupHook
 
     public static void Initialize()
     {
+        var snapshotConfig = Environment.GetEnvironmentVariable("SUNDER_TEST_AGENT_FAMILY_APP_CONFIG");
+        if (!string.IsNullOrWhiteSpace(snapshotConfig))
+        {
+            Environment.SetEnvironmentVariable("SUNDER_TEST_AGENT_FAMILY_APP_CONFIG", null);
+            try { NativeAppSnapshotProbe.RunAsync(snapshotConfig).GetAwaiter().GetResult(); Environment.Exit(0); }
+            catch (Exception error)
+            {
+                Console.Error.WriteLine(error);
+                foreach (var entry in AppSessionLog.Snapshot()) Console.Error.WriteLine(entry.Message + Environment.NewLine + entry.ExceptionText);
+                Environment.Exit(1);
+            }
+        }
         var syntaxProbe = Environment.GetEnvironmentVariable("SUNDER_TEST_MCP_JSON_PROJECTION");
         if (!string.IsNullOrWhiteSpace(syntaxProbe))
         {

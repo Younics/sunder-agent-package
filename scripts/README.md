@@ -13,34 +13,29 @@
 
 ### Local contract preparation
 
-Ordinary SDK restore now owns contract-cache hydration. Obtain the exact local
-inputs selected by the current `sunder-contracts.lock.json` files from their
-matching qualification or release handoff and retain them at:
-
-```text
-.sunder/contract-inputs/younics.ai.agent.2.0.0.sunderpkg
-.sunder/contract-inputs/sunder-platform-contracts.v1.json
-```
-
-These are source archives/catalogs, not copied cache receipts. The directory is
-ignored local data. `Directory.Build.targets` declares these paths only during
-restore; they do not become defaults for API Add/Update/Implement commands.
-`SunderContractInputsRoot` selects another retained directory. Per-request
-`SunderPackageCandidatePath` and `SunderPlatformCatalogPath` still override their
-respective sources. Core verifies exact content, inventory and projections against
-each existing lock; a hash cannot locate missing bytes.
+For the ordinary build, the published Build SDK hydrates the contract cache.
+`agent_ci.py prepare` accepts the selected platform catalog and exact
+Agent `.sunderpkg` selected by the lock:
 
 ```sh
-dotnet build Sunder.AgentPackage.slnx
-# Or restore separately, then build offline:
-dotnet restore Sunder.AgentPackage.slnx
+python3 -B scripts/ci/agent_ci.py prepare --work /tmp/agent-public-build \
+  --candidate /absolute/path/to/exact-owner.sunderpkg \
+  --catalog /absolute/path/to/selected-catalog.json
+```
+
+For direct `dotnet` calls, pass `SunderPackageCandidatePath` and
+`SunderPlatformCatalogPath` on restore. These are byte sources, not defaults for
+API Add/Update/Implement commands, and the SDK verifies them against the locks.
+
+```sh
+dotnet restore Sunder.AgentPackage.slnx --locked-mode \
+  -p:SunderPackageCandidatePath=/absolute/path/to/exact-owner.sunderpkg \
+  -p:SunderPlatformCatalogPath=/absolute/path/to/sunder-platform-contracts.v1.json
 dotnet build Sunder.AgentPackage.slnx --no-restore
 ```
 
-No script, cache override, Registry selection, lock refresh or API acceptance is
-required. Source mode imports Core directly. NuGet mode resolves the same Build
-SDK version pinned in `global.json`/`Directory.Packages.props` on cold restore;
-ordinary PackageReference build imports are unavailable during that phase.
+No lock refresh or API acceptance is needed. A sibling checkout cannot override
+the NuGet selection. Hosted App tests need an explicit published App distribution.
 
 The Python wrapper remains an **optional** all-project diagnostic/recovery tool.
 It requires Python 3.9+ and restored NuGet compiler references, and can use retained
@@ -48,7 +43,7 @@ inputs from any location:
 
 ```sh
 python3 -B scripts/dev/prepare-contracts.py \
-  --candidate "/absolute/path/younics.ai.agent.2.0.0.sunderpkg" \
+  --candidate "/absolute/path/to/exact-owner.sunderpkg" \
   --catalog "/absolute/path/sunder-platform-contracts.v1.json"
 
 # Check the existing cache without restoring contract evidence:
@@ -82,11 +77,10 @@ The same discovered script-check groups used by GitHub can be listed or executed
 ```sh
 python3 -B scripts/test/run-ci-checks.py source --list
 python3 -B scripts/test/run-ci-checks.py release
-python3 -B scripts/ci/agent_ci.py matrices --package-tests
+python3 -B scripts/ci/agent_ci.py matrices
 python3 -B scripts/ci/agent_ci.py preflight
-python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core
-python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --mode package
-python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core --builder-diagnostics
+python3 -B scripts/ci/agent_ci.py validate --inputs /tmp/agent-inputs
+python3 -B scripts/ci/agent_ci.py validate --inputs /tmp/agent-inputs --builder-diagnostics
 ```
 
 `preflight` generates and validates the test inventory and runs dependency-independent
@@ -97,7 +91,7 @@ tool execution when no versions are selected.
 
 `validate` discovers tests, resolves and hydrates
 exact inputs, builds the selected projects and their provider dependencies, executes the selected suites and
-verify combined evidence. Its temporary tools/cache are cleaned on success or
+verifies combined evidence. Its temporary cache is cleaned on success or
 failure. Supply `--inputs` or `--candidate`/`--catalog` to use existing reviewed
 local inputs. Source readers precede the required all-family artifact producer;
 required Linux/Docker cases run once in their owning lane. `--stress` adds the
@@ -108,7 +102,7 @@ release-specific retention.
 Restore and build each use one ordinary MSBuild graph. Multiple selected roots
 produce a temporary `.slnf` over the authored solution; a single project or the
 full solution stays unchanged. Dependencies and generated providers are still
-built normally, with locked restore and the same source/package properties.
+built normally, with locked public restores.
 The prepared graph and solution bytes are integrity-bound. Build selection,
 UTF-8 output, elapsed time and exit status are retained under `artifacts/reports/`.
 This does not replace the fresh all-family artifact test with prebuilt packing.
@@ -119,7 +113,7 @@ incomplete-run and cancellation errors stop execution. UTF-8 logs and command
 records retain child status and diagnostic failures; the console prints a bounded
 failure summary, and reporting failures remain attached to the original error.
 
-`--builder-diagnostics` prepares verified source-mode Release inputs, builds Builder,
+`--builder-diagnostics` prepares the locked Release inputs, builds Builder,
 then runs its portability fixtures followed by the complete Builder project. Each
 stage verifies fresh discovery, TRX and declared skips, retaining reports under
 `artifacts/builder-diagnostics/`. This is a local, owning-suite diagnostic command,

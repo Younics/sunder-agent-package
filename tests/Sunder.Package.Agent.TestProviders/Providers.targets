@@ -1,12 +1,7 @@
 <Project>
   <PropertyGroup>
     <_ProviderCandidate>$([System.IO.Path]::GetFullPath('$(IntermediateOutputPath)agent.sunderpkg', '$(MSBuildProjectDirectory)'))</_ProviderCandidate>
-    <_ProviderTaskAssembly>$(SunderPackageBuildTaskAssembly)</_ProviderTaskAssembly>
-    <_ProviderTaskAssembly Condition="'$(_ProviderTaskAssembly)' == '' and '$(SunderUseSourceSdk)' == 'true'">$([System.IO.Path]::GetDirectoryName('$(SunderBuildToolingProject)'))/bin/$(Configuration)/net10.0/Sunder.Package.Build.dll</_ProviderTaskAssembly>
-    <_ProviderTaskAssembly Condition="'$(_ProviderTaskAssembly)' == ''">$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll</_ProviderTaskAssembly>
-    <_ProviderPackTaskAssembly>$(SunderPackageBuildTaskAssembly)</_ProviderPackTaskAssembly>
-    <_ProviderPackTaskAssembly Condition="'$(_ProviderPackTaskAssembly)' == '' and '$(SunderUseSourceSdk)' == 'true'">$([System.IO.Path]::GetDirectoryName('$(SunderBuildToolingProject)'))/bin/$(Configuration)-sunder-bootstrap/net10.0/Sunder.Package.Build.dll</_ProviderPackTaskAssembly>
-    <_ProviderPackTaskAssembly Condition="'$(_ProviderPackTaskAssembly)' == ''">$(_ProviderTaskAssembly)</_ProviderPackTaskAssembly>
+    <_ProviderTaskAssembly>$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll</_ProviderTaskAssembly>
   </PropertyGroup>
   <ItemGroup>
     <!-- Share the normal solution build before packing its qualified native output.
@@ -47,7 +42,7 @@
     <Error Condition="'@(_ProviderAgentInput->Count())' != '1' or '$(_ProviderRolePath)' == '' or '$(_ProviderRoleHash)' == ''" Text="The Agent build must return one qualified native role input for test providers." />
     <MakeDir Directories="$(_ProviderInputs)/tools" />
     <ItemGroup>
-      <_ProviderPackTool Include="$([System.IO.Path]::GetDirectoryName('$(_ProviderPackTaskAssembly)'))/**/*" />
+      <_ProviderPackTool Include="$([System.IO.Path]::GetDirectoryName('$(_ProviderTaskAssembly)'))/**/*" />
       <_ProviderNativeInput Include="$([System.IO.Path]::GetDirectoryName('$(_ProviderRolePath)'))/**/*" />
     </ItemGroup>
     <Copy SourceFiles="@(_ProviderPackTool)" DestinationFiles="@(_ProviderPackTool->'$(_ProviderInputs)/tools/%(RecursiveDir)%(Filename)%(Extension)')"

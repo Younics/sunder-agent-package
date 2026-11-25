@@ -642,10 +642,25 @@ def family_plan(source, assets, registry):
             "publications": [publication(record) for record in verified["artifacts"]]}
 
 
+def sdk_materials(source, package_ids=None):
+    """Provenance of the declared NuGet graph, not another SDK verification."""
+    names = {"Sunder.Package.Build", "Sunder.Sdk", "Sunder.Sdk.Avalonia", "Sunder.Sdk.Stacks", "Sunder.Sdk.Worker"}
+    result = set()
+    for row in inventory(source)["packages"]:
+        if package_ids is not None and row["packageId"] not in package_ids:
+            continue
+        relative = str(PurePosixPath(row["projectPath"]).with_name("packages.release.lock.json"))
+        for graph in load(source_file(source, relative))["dependencies"].values():
+            result.update((name, entry["resolved"], entry["contentHash"])
+                          for name, entry in graph.items() if name in names)
+    return [dict(name=name, packageVersion=release, contentHash=content, source="https://api.nuget.org/v3/index.json")
+            for name, release, content in sorted(result)]
+
+
 def validate_provenance(source, assets):
     path = Path(assets) / "release-provenance.json"
     value = load(path)
-    if value.get("schemaVersion") in (2, 3):
+    if value.get("schemaVersion") in (2, 3, 4):
         return validate_selective_provenance(source, assets, value)
     closed(value, "schemaVersion buildType invocation sources materials artifactSourceCommit lockSetSha256 controlPlane publication artifacts")
     require(path.read_bytes() == canonical(value) + b"\n", "Noncanonical release provenance")
@@ -696,13 +711,13 @@ def validate_provenance(source, assets):
 def validate_selective_provenance(source, assets, value):
     from agent_selection import load as load_plan, PLAN, REPOSITORY
     closed(value, "schemaVersion buildType invocation artifactSourceCommit planSha256 lockSetSha256 publication materials artifacts")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (2, 3)
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (2, 3, 4)
             and value["buildType"] == "https://sunderapp.io/provenance/github-actions/v1", "Unknown selective provenance")
     plan = load_plan(Path(assets) / PLAN, source, digest(value["artifactSourceCommit"], 40))
     destination = dict(registryOrigin=plan["registryOrigin"])
     if plan["schemaVersion"] == 1:
         destination["ownerPrincipalId"] = plan["ownerPrincipalId"]
-    require(value["schemaVersion"] == plan["schemaVersion"] + 1
+    require((value["schemaVersion"] == 4 or value["schemaVersion"] == plan["schemaVersion"] + 1)
             and value["planSha256"] == file_sha(Path(assets) / PLAN) and value["lockSetSha256"] == plan["lockSetSha256"]
             and value["publication"] == destination,
             "Selective provenance input/destination differs")
@@ -716,12 +731,16 @@ def validate_selective_provenance(source, assets, value):
         positive(inv[key])
     for key in ("runId", "runAttempt"):
         require(type(inv[key]) is str and re.fullmatch(r"[1-9][0-9]*", inv[key]), "Invalid original run coordinate")
-    require(len(value["materials"]) == 1, "Selective release requires one exact Core material")
-    material = value["materials"][0]
-    closed(material, "name tag sha packageVersion")
-    digest(material["sha"], 40); version(material["packageVersion"])
-    require(material["name"] == "Sunder.Package.Build" and material["tag"] in ("sdk/v" + material["packageVersion"],
-        "nuget-sunder-package-build/v" + material["packageVersion"]), "Selective Core build material differs")
+    if value["schemaVersion"] == 4:
+        require(value["materials"] == sdk_materials(source, {row["packageId"] for row in plan["packages"] if row["selected"]}),
+                "Declared producer NuGet materials differ")
+    else:
+        require(len(value["materials"]) == 1, "Historical release requires its exact Core material")
+        material = value["materials"][0]
+        closed(material, "name tag sha packageVersion")
+        digest(material["sha"], 40); version(material["packageVersion"])
+        require(material["name"] == "Sunder.Package.Build" and material["tag"] in ("sdk/v" + material["packageVersion"],
+            "nuget-sunder-package-build/v" + material["packageVersion"]), "Historical Core build material differs")
     require(canonical(value["artifacts"]) == canonical(artifact_records(source, assets)),
             "Selective provenance differs from full-family tested archives")
     require((Path(assets) / "release-provenance.json").read_bytes() == canonical(value) + b"\n", "Noncanonical selective provenance")

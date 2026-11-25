@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Sunder.Sdk.Rpc;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -16,17 +17,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
     public async Task CompleteOwnerArtifact_DerivesConsumerAndProviderLocksFromFreshSourcePayload()
     {
         var repository = BuilderSourceMigrationTests.FindRepository();
-        var core = Path.GetFullPath(Path.Combine(repository, "..", "sunder-core"));
-        var configuration = CanonicalPackageRoles.Configuration;
-        var driver = Environment.GetEnvironmentVariable("SUNDER_AGENT_CORE_TEST_DRIVER")
-            ?? Path.Combine(core, "languages/csharp/dotnet/tests/Sunder.Package.Build.Tests/bin", configuration, "net10.0/Sunder.Package.Build.Tests.dll");
-        Assert.True(File.Exists(driver), "Prepare the verified Core test driver before the required artifact source lane: " + driver);
+        var core = repository; // Fixture root, not a dependency checkout.
+        var driver = BuilderSourceMigrationTests.BuildTaskAssembly;
         var root = Directory.CreateTempSubdirectory("sunder-agent-source-artifact-").FullName;
         var completed = false;
         try
         {
             var cache = Path.Combine(root, "fixture-cache");
-            var canonical = await PrepareOwnerArtifact(root, driver, cache);
+            var canonical = await PrepareOwnerArtifact(root, cache);
             var worker = canonical.Directory;
             var selected = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json"));
             var owned = File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json"));
@@ -37,14 +35,14 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 CurrentContractInventory.Packages.Select(package => package.PackageId).ToHashSet(StringComparer.Ordinal));
             // Full acceptance requires all fifteen archives before cross-package
             // probes run. Component selections cannot stand in for this gate.
-            VerifyFamilyPolicies(root, repository, core);
+            VerifyFamilyPolicies(root, repository);
             await VerifyCombinedImports(root, core, driver, archive, cache);
             await VerifyAgentWorkspaceAndPermissionConsumers(root);
             await canonical.Pack();
             Assert.Equal(before, File.ReadAllBytes(archive));
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.lock.json")));
             Assert.Equal(owned, File.ReadAllBytes(Path.Combine(worker, "sunder-contracts.owned.json")));
-            Assert.True(Directory.Exists(Path.Combine(worker, "bin", configuration, "net10.0/sunder-dev")));
+            Assert.True(Directory.Exists(Path.Combine(worker, "bin", CanonicalPackageRoles.Configuration, "net10.0/sunder-dev")));
             RetainArtifactEvidence(root);
             completed = true;
         }
@@ -55,7 +53,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         }
     }
 
-    private async Task<CanonicalFamilyBuild> PrepareOwnerArtifact(string root, string driver, string cache)
+    private async Task<CanonicalFamilyBuild> PrepareOwnerArtifact(string root, string cache)
     {
         var canonical = await BuildAndPackCanonicalFamily(root, "Agent", "Worker", cache);
         var worker = canonical.Directory;
@@ -64,7 +62,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var archive = Path.Combine(worker, "bin/agent-source.sunderpkg");
         Assert.True(File.Exists(archive));
         VerifyArchive(archive);
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         await VerifyOwnerProcess(root, worker, archive);
         return canonical;
     }
@@ -145,5 +143,16 @@ public sealed partial class AgentSourceArtifactMigrationTests
     }
 
     private static Task<string> Run(string root, params string[] arguments) => BuilderSourceMigrationTests.Run(root, arguments);
+
+    private static SunderRpcContractDescriptor StackContributorDescriptor()
+    {
+        var path = Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG");
+        Assert.True(File.Exists(path), "Supply the catalog selected by the Agent family.");
+        using var document = JsonDocument.Parse(File.ReadAllBytes(path!));
+        var record = Assert.Single(document.RootElement.GetProperty("contracts").EnumerateArray(),
+            value => value.GetProperty("contractId").GetString() == "sunder.stack.contributor");
+        return SunderRpcContractDescriptor.Parse(System.Text.Encoding.UTF8.GetBytes(record.GetProperty("canonicalDescriptor").GetString()!));
+    }
+
     private static string Escape(string value) => System.Security.SecurityElement.Escape(value)!;
 }

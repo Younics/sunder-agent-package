@@ -10,7 +10,6 @@ param(
 
     [string] $InputsDirectory,
     [string] $CatalogPath,
-    [string] $ToolsDirectory,
     [string] $Package
 )
 
@@ -65,20 +64,11 @@ function Resolve-ProjectPath([string] $Path) {
 }
 
 $commonProperties = @(
-    "-p:SunderUseSourceSdk=$($env:SUNDER_NATIVE_USE_SOURCE_SDK -ceq 'true' ? 'true' : 'false')",
+    "-p:RestoreLockedMode=true",
     "-p:Configuration=Release",
     "-p:ContinuousIntegrationBuild=true",
     "-p:SunderPackageRoleInputSourceRoot=$repositoryRoot"
 )
-if ($env:SUNDER_NATIVE_USE_SOURCE_SDK -cne 'true') {
-    $commonProperties += "-p:RestoreLockedMode=true"
-}
-if ($env:SUNDER_NATIVE_TASK_ASSEMBLY) {
-    $commonProperties += @(
-        "-p:SunderPackageBuildTaskAssembly=$([System.IO.Path]::GetFullPath($env:SUNDER_NATIVE_TASK_ASSEMBLY))",
-        "-p:SunderPackageBuildTaskSourceIsImmutable=true"
-    )
-}
 
 # Public baselines must already be frozen before the first Build. Private-only
 # baseline absence and immutable retired private records are also qualified inputs;
@@ -94,13 +84,11 @@ if ($Package) { $preflightArguments += $Package }
 if ($LASTEXITCODE -ne 0) { throw "Native producer prerequisites failed." }
 
 $coldWork = Join-Path ([System.IO.Path]::GetTempPath()) ("sunder-agent-cold-" + $Rid + "-" + [guid]::NewGuid().ToString("N"))
-$mode = $env:SUNDER_NATIVE_USE_SOURCE_SDK -ceq 'true' ? 'source' : 'package'
-$prepareArguments = @("prepare", "--source", $repositoryRoot, "--core", (Join-Path $repositoryRoot "../sunder-core"),
-    "--work", $coldWork, "--mode", $mode, "--packages", (ConvertTo-Json -InputObject @($packages.packageId) -Compress))
+$prepareArguments = @("prepare", "--source", $repositoryRoot, "--work", $coldWork,
+    "--packages", (ConvertTo-Json -InputObject @($packages.packageId) -Compress))
 if ($InputsDirectory) { $prepareArguments += @("--inputs", $InputsDirectory) }
 elseif ($CatalogPath) { $prepareArguments += @("--catalog", $CatalogPath) }
 else { throw "Supply the verified dependency handoff or the import-free owner's exact catalog." }
-if ($ToolsDirectory) { $prepareArguments += @("--tools", $ToolsDirectory) }
 & python3 -B $ciHelper @prepareArguments
 if ($LASTEXITCODE -ne 0) { throw "Declared dependency preparation failed." }
 $ciState = Join-Path $coldWork "ci-state.json"

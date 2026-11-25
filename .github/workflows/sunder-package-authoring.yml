@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   prepare:
-    name: Bind the authoring event, catalog, and test tools
+    name: Bind the authoring event and catalog
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     defaults:
@@ -23,9 +23,6 @@ jobs:
     outputs:
       package: ${{ steps.inputs.outputs.package }}
       sha256: ${{ steps.inputs.outputs.sha256 }}
-      core_commit: ${{ steps.core.outputs.core_commit }}
-      core_tag: ${{ steps.core.outputs.core_tag }}
-      core_version: ${{ steps.core.outputs.core_version }}
       matrix: ${{ steps.matrix.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -40,17 +37,6 @@ jobs:
           test "$GITHUB_REF_TYPE" = branch
           test "$GITHUB_REF" != refs/heads/main
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-      - name: Resolve existing source-backed test tools
-        id: core
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ steps.core.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
@@ -59,9 +45,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PACKAGE: ${{ inputs.package }}
-          CORE_COMMIT: ${{ steps.core.outputs.core_commit }}
         run: >-
-          python3 -B scripts/ci/owner_authoring.py prepare "$PACKAGE" "$GITHUB_SHA" "$CORE_COMMIT" "$RUNNER_TEMP/agent-inputs"
+          python3 -B scripts/ci/owner_authoring.py prepare "$PACKAGE" "$GITHUB_SHA" "$RUNNER_TEMP/agent-inputs"
       - id: matrix
         env:
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
@@ -74,50 +59,12 @@ jobs:
           retention-days: 90
           compression-level: 0
 
-  tools:
-    name: Prepare Core tools · ${{ matrix.rid }}
-    needs: prepare
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - run: python3 -B scripts/ci/agent_ci.py prepare-tools --core ../sunder-core --output "$RUNNER_TEMP/core-tools"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-core-tools-${{ matrix.rid }}
-          path: ${{ runner.temp }}/core-tools
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 90
-
   compose:
     name: Produce six native leaves and compose once (authoring only)
-    needs: [prepare, tools]
+    needs: prepare
     uses: ./.github/workflows/sunder-package-component.yml
     with:
       operation: native
       package: ${{ needs.prepare.outputs.package }}
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
       inputs_sha256: ${{ needs.prepare.outputs.sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}

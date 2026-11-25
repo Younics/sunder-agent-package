@@ -1,11 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderSdkReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkReference>
-    <SunderSdkAvaloniaReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkAvaloniaReference>
-    <!-- These source-only implementation tests need the current Core internals.
-         Locked-package compatibility remains in the existing selected suites. -->
-    <IsTestProject Condition="'$(SunderUseSourceSdk)' != 'true'">false</IsTestProject>
-    <EnableDefaultCompileItems Condition="'$(SunderUseSourceSdk)' != 'true'">false</EnableDefaultCompileItems>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
     <SunderTestOwner>younics.sunder.package.maker</SunderTestOwner>
     <SunderTestCategory>Component</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;HTTP;Process;Worker</SunderTestCapabilities>
@@ -14,7 +10,7 @@
     <SunderTestSourceMode>true</SunderTestSourceMode>
     <SunderTestPackageMode>false</SunderTestPackageMode>
   </PropertyGroup>
-  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+  <ItemGroup>
     <Compile Include="../Shared/Platform/*.cs" Link="TestSupport/Platform/%(Filename)%(Extension)" />
     <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
@@ -29,6 +25,6 @@
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
   </ItemGroup>
-  <Import Project="../RegressionTestHarness.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
-  <Import Project="../PackageContextFixtures.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
 </Project>

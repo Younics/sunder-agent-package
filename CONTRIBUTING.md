@@ -18,30 +18,22 @@ implementation.
 
 ## Local Development
 
-Restore and build the repository:
+Build the canonical package projects against public dependencies as described
+in [Build From Source](README.md#build-from-source). The build consumes the
+catalog and exact `.sunderpkg` inputs selected in the locks.
 
-```powershell
-dotnet restore Sunder.AgentPackage.slnx
-dotnet build Sunder.AgentPackage.slnx --no-restore
-```
-
-Useful targeted tests:
+After restoring the owning test projects with those inputs, useful targeted tests:
 
 ```powershell
 dotnet test tests/Sunder.Package.Agent.Tests/Sunder.Package.Agent.Tests.csproj --no-restore
 dotnet test tests/Sunder.Package.Agent.Provider.OpenAI.Tests/Sunder.Package.Agent.Provider.OpenAI.Tests.csproj --no-restore
 ```
 
-## Development Modes
+## Dependency boundary
 
-Package projects support two development modes:
-
-| Mode | References |
-| --- | --- |
-| Inside the private `sunder` workspace | Local source references to `repos/sunder-core` |
-| Standalone public clone | NuGet references to `Sunder.Sdk` and `Sunder.Package.Build` |
-
-Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host` directly.
+Product builds use released `Sunder.Sdk` and `Sunder.Package.Build` packages from
+NuGet.org. An adjacent checkout must not change that selection. Package projects
+must not reference `Sunder.App` or `Sunder.Runtime.Host` directly.
 
 ## Package Boundaries
 

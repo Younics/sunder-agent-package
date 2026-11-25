@@ -19,12 +19,14 @@ This repository contains the public first-party Sunder Agent package family.
 
 ## References
 
-Package projects support two development modes:
+Ordinary Agent builds use public NuGet packages (`Sunder.Sdk`, its role/stacks
+companions, and `Sunder.Package.Build`). A sibling checkout must not change that
+graph. Use public npm packages when authoring needs Node tooling.
 
-- In the private Sunder workspace, they use source references to `repos/sunder-core`.
-- In a standalone public clone, they use NuGet packages `Sunder.Sdk` and `Sunder.Package.Build`.
-
-Package projects must not reference `Sunder.App` or `Sunder.Runtime.Host`.
+Hosted integration and native qualification use the published App and bundled
+Runtime Host, never a Core checkout. Keep Agent behavior, archive, and installed
+acceptance assertions intact. Product projects must not reference `Sunder.App` or
+`Sunder.Runtime.Host`.
 
 ## Package Rules
 

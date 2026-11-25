@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Xml.Linq;
+using Sunder.Package.Format;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -28,8 +29,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
         var catalog = Environment.GetEnvironmentVariable("SUNDER_AGENT_SOURCE_PLATFORM_CATALOG");
         Assert.True(!string.IsNullOrWhiteSpace(catalog) && File.Exists(catalog),
-            "Set SUNDER_AGENT_SOURCE_PLATFORM_CATALOG to the canonical local Core catalog selected by the family locks. "
-            + "This required-input lane never substitutes Registry or conformance-catalog evidence.");
+            "Set SUNDER_AGENT_SOURCE_PLATFORM_CATALOG to the exact published catalog selected by the family locks. "
+            + "This required-input lane never substitutes another release or a conformance catalog.");
         var fixture = Directory.CreateDirectory(Path.Combine(root, fixtureDirectory)).FullName;
         var evidence = new[] { "sunder-contracts.lock.json", "sunder-contracts.owned.json" }
             .ToDictionary(file => file, file => file == "sunder-contracts.owned.json"
@@ -55,8 +56,6 @@ public sealed partial class AgentSourceArtifactMigrationTests
             Assert.Equal(string.Empty, properties.GetProperty("SunderPackageRole").GetString());
             Assert.Equal(Path.GetFullPath(project), properties.GetProperty("MSBuildProjectFullPath").GetString());
         }
-        // Core's producer closure is a required parent input. Restoring this
-        // exact-RID consumer must not rewrite its referenced Core lock files.
         // API selection below is deliberate fixture authoring, not a developer
         // prerequisite. Restore its compiler references without acquiring the old
         // production selection; then exercise ordinary restore for the selected inputs.
@@ -135,15 +134,9 @@ public sealed partial class AgentSourceArtifactMigrationTests
             };
             foreach (var argument in new[] { command, project }.Concat(arguments).Concat([
                 "-p:Configuration=" + CanonicalPackageRoles.Configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
-                "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
+                "-p:BuildProjectReferences=false", "-p:RestoreLockedMode=true",
                 "-p:SunderContractCacheRoot=" + cache, "-nodeReuse:false", "-nologo"]))
                 start.ArgumentList.Add(argument);
-            var task = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
-            var stamp = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(task)));
-            start.ArgumentList.Add("-p:SunderPackageBuildTaskSourceIsImmutable=true");
-            start.ArgumentList.Add("-p:SunderPackageBuildTaskAssembly=" + task);
-            start.ArgumentList.Add("-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(Path.GetTempPath(), "sunder-agent-artifact-task-shadows"));
-            start.ArgumentList.Add("-p:SunderPackageBuildTaskShadowStamp=" + stamp);
             start.ArgumentList.Add("-p:SunderPackageRoleInputSourceRoot=" + Path.Combine(BuilderSourceMigrationTests.FindRepository(), "src"));
             if (_fixtureLockPath is not null) start.ArgumentList.Add("-p:SunderContractLockPath=" + _fixtureLockPath);
             if (denyNetwork)
@@ -230,18 +223,18 @@ public sealed partial class AgentSourceArtifactMigrationTests
         foreach (var child in Directory.EnumerateDirectories(source)) CopyDirectory(child, Path.Combine(destination, Path.GetFileName(child)));
     }
 
-    private static async Task ProjectCanonicalWorker(string worker, string driver)
+    private static async Task ProjectCanonicalWorker(string worker)
     {
-        // The projection driver remains wholly inside the temporary test fixture.
-        // Production projects contain only their ordinary authoring/build targets.
-        var project = new XElement("Project",
-            new XElement("UsingTask", new XAttribute("TaskName", "Sunder.Package.Build.Tests.AgentSourceArtifactTestTask"), new XAttribute("AssemblyFile", driver)),
-            new XElement("Target", new XAttribute("Name", "ProjectWorker"),
-                new XElement("AgentSourceArtifactTestTask", new XAttribute("Operation", "Project"),
-                    new XAttribute("ProjectDirectory", worker), new XAttribute("Candidate", Path.Combine(worker, "bin/agent-source.sunderpkg")),
-                    new XAttribute("ProjectionPath", Path.Combine(worker, "bin/worker-projection")),
-                    new XAttribute("RuntimeIdentifier", RuntimeInformation.RuntimeIdentifier))));
-        new XDocument(project).Save(Path.Combine(worker, "ProjectWorker.proj"));
-        await Run(worker, "msbuild", "ProjectWorker.proj", "-t:ProjectWorker");
+        var extracted = Path.Combine(worker, "obj/projected-archive");
+        var archive = await SunderPackageArchiveInspector.ExtractAndValidateAsync(Path.Combine(worker, "bin/agent-source.sunderpkg"), extracted);
+        Assert.True(archive.Success, string.Join(Environment.NewLine, archive.Errors));
+        var plan = SunderPackageTargetResolver.CreateProjectionPlan(archive.Manifest!, archive.ContentIndex!, new("runtime", RuntimeInformation.RuntimeIdentifier));
+        var projection = Path.Combine(worker, "bin/worker-projection");
+        foreach (var file in plan.Files)
+        {
+            var target = file.LogicalPath.ToPlatformPath(projection);
+            System.IO.Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file.PhysicalPath.ToPlatformPath(extracted), target);
+        }
     }
 }

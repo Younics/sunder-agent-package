@@ -44,6 +44,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         async Task Reject(string expected, params string[] arguments)
         {
             var start = new ProcessStartInfo(BuilderSourceMigrationTests.DotnetBuildHost) { WorkingDirectory = consumer, RedirectStandardOutput = true, RedirectStandardError = true };
+            BuilderSourceMigrationTests.DenyNetwork(start);
             foreach (var argument in new[] { "msbuild", "Imported.csproj", "-nodeReuse:false", "-v:minimal" }.Concat(arguments)) start.ArgumentList.Add(argument);
             start.ArgumentList.Add("-p:Configuration=" + BuilderSourceMigrationTests.FixtureConfiguration);
             using var process = Process.Start(start)!;

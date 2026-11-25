@@ -87,8 +87,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             foreach (var provider in options.Providers)
             {
                 var descriptor = provider.ProviderId == "docker.presentation" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.execution.docker.presentation")
-                    : provider.ProviderId == "docker.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(BuilderSourceMigrationTests.FindRepository(),
-                        "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json"))) : CurrentPublicRpcDescriptors.Get(provider.ContractId);
+                    : provider.ProviderId == "docker.stack" ? StackContributorDescriptor() : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 Assert.Equal(descriptor.Sha256, provider.DescriptorSha256); Assert.Equal(descriptor.AbiSha256, provider.AbiSha256);
                 state.Add("younics.ai.agent.execution.docker", descriptor, provider.Handler, provider.Handler, Noop.Instance, provider.ProviderId, context.Version);
             }

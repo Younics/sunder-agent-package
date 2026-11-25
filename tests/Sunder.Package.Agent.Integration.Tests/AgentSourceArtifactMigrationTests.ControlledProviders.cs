@@ -20,10 +20,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         var files = new[] { "ControlledNaturalTarget.cs.txt", "ControlledNaturalTools.cs.txt", "ControlledNaturalObservedTools.cs.txt", "ControlledStrictReferenceService.cs.txt" };
         var fixtureRoot = Path.Combine(RegressionTestRpcDescriptors.RepositoryRoot, "tests/Sunder.Package.Agent.Tests/Fixtures");
         var source = files.Select(name => File.ReadAllText(Path.Combine(fixtureRoot, name))).ToArray();
-        var compiler = Path.Combine(Path.GetDirectoryName(driver)!, "Sunder.Package.Build.dll");
-        Assert.True(File.Exists(compiler), "The qualified fixture compiler must already be built beside its test task.");
-        var identity = string.Join('\n', new[] { archive, driver, compiler, typeof(ISunderRpcClient).Assembly.Location, typeof(SunderWorker).Assembly.Location }
-            .Select(path => Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path))))) + "\n" + BuilderSourceMigrationTests.FixtureConfiguration + "\n" + string.Join('\n', source);
+        var identity = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(archive))) + "\n" + string.Join('\n', source);
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
         var directory = Path.Combine(root, "ControlledProviders-" + hash);
         return ControlledProviderBuilds.GetOrAdd(directory, _ => new(() => BuildAsync(), LazyThreadSafetyMode.ExecutionAndPublication)).Value;
@@ -54,36 +51,11 @@ public sealed partial class AgentSourceArtifactMigrationTests
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Accept", "-p:BuildProjectReferences=false");
             await Run(directory, "msbuild", "Imported.csproj", "-t:FixtureOperation", "-p:Operation=Freeze", "-p:BuildProjectReferences=false");
             var selected = File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json"));
-            EnableControlledRoleClients(directory, compiler, cache);
-            await Run(directory, "build", "Imported.csproj", "--no-restore", "-p:BuildProjectReferences=false");
+            await Run(directory, "build", "Imported.csproj", "--no-restore", "-p:BuildProjectReferences=false", "-p:GeneratePackageRoles=true");
             Assert.Equal(selected, File.ReadAllBytes(Path.Combine(directory, "sunder-contracts.lock.json")));
             VerifyStrictReferenceMetadata(directory);
             return Path.Combine(directory, "bin", BuilderSourceMigrationTests.FixtureConfiguration, "net10.0/ControlledNaturalProviders.dll");
         }
-    }
-
-    private static void EnableControlledRoleClients(string directory, string compiler, string cache)
-    {
-        var path = Path.Combine(directory, "Imported.csproj");
-        var project = XDocument.Load(path);
-        project.Root!.Add(new XElement("UsingTask", new XAttribute("TaskName", "Sunder.Package.Build.Tasks.GenerateSunderRpcBindingsTask"),
-            new XAttribute("AssemblyFile", compiler)));
-        var target = project.Root.Elements("Target").Single(item => (string?)item.Attribute("Name") == "FixtureOperation");
-        target.Element("AgentSourceArtifactTestTask")!.SetAttributeValue("Condition", "'$(Operation)' != 'Generate'");
-        target.Add(new XElement("GenerateSunderRpcBindingsTask",
-            new XAttribute("Condition", "'$(Operation)' == 'Generate'"),
-            new XAttribute("ProjectDirectory", "$(MSBuildProjectDirectory)"),
-            new XAttribute("IntermediateOutputPath", "$(IntermediateOutputPath)"),
-            new XAttribute("AssemblyName", "$(AssemblyName)"), new XAttribute("ProjectIdentity", "Imported.csproj"),
-            new XAttribute("PackageId", "example.agent.controlled"), new XAttribute("PackageVersion", "2.0.0"),
-            new XAttribute("Configuration", "$(Configuration)"), new XAttribute("TargetFramework", "net10.0"),
-            new XAttribute("OutputType", "Library"), new XAttribute("GeneratePackageRoles", "true"),
-            new XAttribute("ContractCacheRoot", cache), new XAttribute("SourceFiles", "@(_Source)"),
-            new XAttribute("ReferencePaths", "@(ReferencePath)"),
-            new XElement("Output", new XAttribute("TaskParameter", "CompileItems"), new XAttribute("ItemName", "Compile"))));
-        target.Add(new XElement("ItemGroup", new XAttribute("Condition", "'$(Operation)' == 'Generate'"),
-            new XElement("Compile", new XAttribute("Include", "$(IntermediateOutputPath)sunder-rpc/roles/worker/service-clients/**/*.cs;$(IntermediateOutputPath)sunder-rpc/roles/worker/service-client-lifetime.g.cs"))));
-        project.Save(path);
     }
 
     private static void VerifyStrictReferenceMetadata(string directory)

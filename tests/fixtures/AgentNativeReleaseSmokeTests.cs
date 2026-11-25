@@ -24,9 +24,7 @@ using Xunit;
 namespace Sunder.Runtime.Host.Tests;
 
 [Collection(RuntimeProcessIntegrationCollection.Name)]
-public sealed partial class AgentNativeReleaseSmokeTests(
-    OfficialRuntimeFixture executionRuntimes)
-    : IClassFixture<OfficialRuntimeFixture>
+public sealed partial class AgentNativeReleaseSmokeTests
 {
     private const string AgentPackageId = "younics.ai.agent";
     private const string BuilderPackageId = "younics.sunder.package.maker";
@@ -65,8 +63,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var runtimeReceipt = await executionRuntimes.EnsureDotNetAsync(WorkerRuntimeVersion);
-        var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var launchResolver, out var appConnection);
+        var runtimeHost = CreateNativeRuntimeHost(paths, out var launchResolver, out var appConnection);
         var provider = runtimeHost.Services;
         var observedProcesses = new HashSet<ExecutionRuntimeProcessObservation>();
         var observedTemporaryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -80,6 +77,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
             var sessionOwner = provider.GetRequiredService<RuntimeSessionOwner>();
             await installedLifecycle.InitializeAsync();
             initialized = true;
+            var runtimeReceipt = await ProvisionWorkerRuntimeAsync(provider);
 
             var subjects = new List<RegistryPackageVersionIdentity>();
             var platforms = new HashSet<RegistryPlatformCatalogIdentity>();
@@ -171,7 +169,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
                 package => CurrentRidRuntimeHostTestSupport.AssertRuntimeLaunch(
                     package.Value,
                     runtimeReceipt,
-                    executionRuntimes));
+                    provider));
             await RecordWorkerMetricsAsync(
                 initialWorkers,
                 installed.ToDictionary(package => package.PackageId, package => paths.GetInstalledPackagePath(package.PackageId, package.Version)),
@@ -271,7 +269,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         }
     }
 
-    private static IHost CreateNativeRuntimeHost(RuntimePackagePaths paths, OfficialRuntimeFixture runtimes,
+    private static IHost CreateNativeRuntimeHost(RuntimePackagePaths paths,
         out CapturingExecutionRuntimeLaunchResolver launchResolver, out RuntimeConnectionInfo appConnection)
     {
         // Use the real Generic Host composition, including its application
@@ -282,13 +280,9 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         RuntimeSupervisedTransport.Configure(builder.WebHost, endpoint);
         var services = builder.Services;
         services.AddRuntimeHostServices(paths, new RuntimeBearerTokenValidator("native-release-smoke-token"));
-        services.AddSingleton(runtimes.Layout);
-        services.AddSingleton(runtimes.Store);
-        services.AddSingleton(runtimes.LocalBindingResolver);
-        services.AddSingleton<IEphemeralExecutionRuntimeBindingResolver>(runtimes.LocalBindingResolver);
-        launchResolver = new CapturingExecutionRuntimeLaunchResolver(runtimes.LaunchResolver);
-        services.AddSingleton<IExecutionRuntimeLaunchResolver>(launchResolver);
-        services.AddSingleton<IExecutionRuntimeRetentionManager>(runtimes.Store);
+        services.AddSingleton<ExecutionRuntimeLaunchResolver>();
+        services.AddSingleton<CapturingExecutionRuntimeLaunchResolver>();
+        services.AddSingleton<IExecutionRuntimeLaunchResolver>(provider => provider.GetRequiredService<CapturingExecutionRuntimeLaunchResolver>());
         services.AddSingleton(new RuntimeLifecyclePolicyOptions
         {
             PackageWorkerStartupTimeout = TimeSpan.FromMinutes(8),
@@ -297,12 +291,25 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         services.AddSingleton(new RuntimeProcessPolicyOptions { StartupTimeout = TimeSpan.FromSeconds(30), ShutdownTimeout = TimeSpan.FromSeconds(15) });
         builder.Host.UseServiceProviderFactory(new DefaultServiceProviderFactory(new ServiceProviderOptions { ValidateOnBuild = true, ValidateScopes = true }));
         var app = builder.Build();
+        launchResolver = app.Services.GetRequiredService<CapturingExecutionRuntimeLaunchResolver>();
         app.UseMiddleware<RuntimeProblemDetailsMiddleware>();
         app.UseMiddleware<RuntimeBearerAuthenticationMiddleware>();
         app.MapRuntimeHandshakeEndpoint();
         app.MapGroup("/api/v1").MapRuntimeRpcEndpoints().MapAppPolicyEndpoints().MapContentTransferEndpoints();
         appConnection = new RuntimeConnectionInfo(RuntimeIpcEndpoint.LogicalRuntimeUrl, "native-release-smoke-token") { IpcEndpoint = endpoint };
         return app;
+    }
+
+    private static async Task<ExecutionRuntimeReceiptV1> ProvisionWorkerRuntimeAsync(IServiceProvider services)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+        var requirement = new RuntimeExecutionRuntimeRequirement(SunderPackageFormat.DotNetExecutionRuntimeId,
+            ">=10.0.0 <11.0.0", SunderPackageFormat.DotNetWorkerModuleAbi);
+        var artifact = await services.GetRequiredService<OfficialRuntimeResolver>().ResolveAsync(
+            requirement, PackageTargetSelection.GetCurrentRuntimeIdentifier(), deadline.Token, WorkerRuntimeVersion);
+        var installed = await services.GetRequiredService<ExecutionRuntimeArtifactDownloader>().DownloadAsync(artifact, deadline.Token);
+        Assert.Equal(WorkerRuntimeVersion, installed.Receipt.Identity.VendorVersion);
+        return installed.Receipt;
     }
 
     private static async Task StartNativeRuntimeHostAsync(IHost host, RuntimeConnectionInfo connection)
@@ -492,7 +499,7 @@ public sealed partial class AgentNativeReleaseSmokeTests(
         return fault?.ToString() ?? "no Worker fault was recorded";
     }
 
-    private sealed class CapturingExecutionRuntimeLaunchResolver(IExecutionRuntimeLaunchResolver inner)
+    private sealed class CapturingExecutionRuntimeLaunchResolver(ExecutionRuntimeLaunchResolver inner)
         : IExecutionRuntimeLaunchResolver
     {
         private readonly ConcurrentDictionary<string, BoundedTextCapture> _standardError =

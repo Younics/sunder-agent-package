@@ -44,7 +44,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.True(!value.TryGetProperty("packageApiImports", out var apis) || apis.GetArrayLength() == 0);
         Assert.True(!value.TryGetProperty("platformImports", out var platforms) || platforms.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         await ExerciseLMStudioWorkerProcess(root, Path.Combine(worker, "bin/worker-projection"), value);
     }
 

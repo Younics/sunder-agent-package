@@ -46,7 +46,6 @@ jobs:
       actions: read
     with:
       packages: ${{ needs.selection.outputs.packages }}
-      package-tests: true
 
   authoring:
     name: Compose without qualification or publication

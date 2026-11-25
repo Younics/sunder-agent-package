@@ -87,12 +87,4 @@ public sealed partial class OpenAiManagementSourceTests
 
 }
 
-internal sealed class OpenAiSourceFactAttribute : FactAttribute
-{
-    public OpenAiSourceFactAttribute()
-    {
-        if (Environment.GetEnvironmentVariable("SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION") == "1") return;
-        if (!File.Exists(Path.GetFullPath(Path.Combine(OpenAiManagementSourceTests.FindRepository(), "../sunder-core/Sunder.Core.slnx"))))
-            Skip = "Requires sibling Core source/tooling. Set SUNDER_REQUIRE_AGENT_SOURCE_MIGRATION=1 to require this lane.";
-    }
-}
+internal sealed class OpenAiSourceFactAttribute : FactAttribute;

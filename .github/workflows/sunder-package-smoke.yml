@@ -11,34 +11,12 @@ on:
         description: Comma-separated package IDs, or all for full validation
         type: string
         default: all
-      package-tests:
-        description: Include locked-package compatibility on the behavior runners
-        type: boolean
-        default: false
   workflow_call:
     inputs:
-      core_commit:
-        description: Existing source-backed test tools resolved by the caller
-        type: string
-        default: ""
-      core_tag:
-        description: Tag of the locked Build package, not a source ref
-        type: string
-        default: ""
-      core_version:
-        type: string
-        default: ""
-      package-tests:
-        type: boolean
-        default: false
       packages:
         description: JSON package IDs selected by the release planner
         type: string
         default: ""
-      native:
-        description: Prepare shared Core tools for all six release platforms
-        type: boolean
-        default: false
     outputs:
       inputs_sha256:
         description: Digest of the one shared exact dependency inventory
@@ -60,9 +38,6 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.behavior }}
       preflight: ${{ steps.matrix.outputs.preflight }}
-      core_commit: ${{ inputs.core_commit || steps.core.outputs.core_commit }}
-      core_tag: ${{ inputs.core_tag || steps.core.outputs.core_tag }}
-      core_version: ${{ inputs.core_version || steps.core.outputs.core_version }}
       native: ${{ steps.matrix.outputs.native }}
       full: ${{ steps.selection.outputs.full }}
       packages: ${{ steps.selection.outputs.packages }}
@@ -89,12 +64,6 @@ jobs:
           else
             python3 -B scripts/ci/version_selection.py --changed-since "$BASE"
           fi
-      - name: Resolve existing source-backed test tools
-        id: core
-        if: steps.selection.outputs.selected_count != '0' && inputs.core_commit == ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 -B scripts/ci/agent_ci.py coordinates
       - name: Verify reviewed historical Windows evidence before starting tests
         id: windows_history
         if: steps.selection.outputs.selected_count != '0'
@@ -114,12 +83,8 @@ jobs:
       - id: matrix
         if: steps.selection.outputs.selected_count != '0'
         env:
-          PACKAGE_TESTS: ${{ inputs.package-tests || steps.selection.outputs.full == 'true' }}
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
-        run: |
-          args=()
-          [[ "$PACKAGE_TESTS" != true ]] || args+=(--package-tests)
-          python3 -B scripts/ci/agent_ci.py matrices "${args[@]}"
+        run: python3 -B scripts/ci/agent_ci.py matrices
 
   preflight:
     name: Check scripts · ${{ matrix.rid }}
@@ -138,12 +103,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
           persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
       - name: Check inventory and dependency-independent scripts
@@ -178,12 +137,6 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
@@ -191,16 +144,15 @@ jobs:
         env:
           PACKAGES: ${{ needs.prepare.outputs.packages }}
         run: python3 -B scripts/ci/version_selection.py --packages "$PACKAGES" --verify-versions
-      - name: Resolve exact selected archives, catalog and Core source
+      - name: Resolve selected archives and platform catalog
         id: inputs
         env:
           GH_TOKEN: ${{ github.token }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           PACKAGES: ${{ needs.prepare.outputs.packages }}
         run: |
           set -euo pipefail
           mkdir -p artifacts/reports
-          python3 -B scripts/ci/agent_ci.py resolve --core ../sunder-core --output "$RUNNER_TEMP/agent-inputs" --packages "$PACKAGES" --test-dependencies --allow-missing 2>&1 | tee artifacts/reports/input-preparation.log
+          python3 -B scripts/ci/agent_ci.py resolve --output "$RUNNER_TEMP/agent-inputs" --packages "$PACKAGES" --test-dependencies --allow-missing 2>&1 | tee artifacts/reports/input-preparation.log
       - name: Retain shared exact dependency bytes
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -220,45 +172,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  tools:
-    name: Prepare Core tools · ${{ matrix.rid }}
-    needs: [prepare, dependency-discovery]
-    if: needs.prepare.outputs.selected_count != '0'
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON((inputs.native || needs.dependency-discovery.outputs.pending != '[]') && needs.prepare.outputs.native || needs.prepare.outputs.preflight) }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - run: python3 -B scripts/ci/agent_ci.py prepare-tools --core ../sunder-core --output "$RUNNER_TEMP/core-tools"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-core-tools-${{ matrix.rid }}
-          path: ${{ runner.temp }}/core-tools
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 90
-
   bootstrap:
     name: Compose unpublished dependency
-    needs: [prepare, dependency-discovery, tools]
+    needs: [prepare, dependency-discovery]
     if: needs.prepare.outputs.selected_count != '0' && needs.dependency-discovery.outputs.pending != '[]'
     strategy:
       fail-fast: false
@@ -269,17 +185,14 @@ jobs:
       operation: native
       bootstrap: true
       package: ${{ matrix.package }}
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
-      core_tag: ${{ needs.prepare.outputs.core_tag }}
-      core_version: ${{ needs.prepare.outputs.core_version }}
       matrix: ${{ needs.prepare.outputs.native }}
 
   dependencies:
     name: Admit exact composed dependencies
-    needs: [prepare, dependency-discovery, tools, bootstrap]
+    needs: [prepare, dependency-discovery, bootstrap]
     if: >-
       always() && !cancelled() && needs.prepare.outputs.selected_count != '0'
-      && needs.dependency-discovery.result == 'success' && needs.tools.result == 'success'
+      && needs.dependency-discovery.result == 'success'
       && ((needs.dependency-discovery.outputs.pending == '[]' && needs.bootstrap.result == 'skipped') || needs.bootstrap.result == 'success')
     runs-on: ubuntu-24.04
     outputs:
@@ -293,12 +206,6 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agent-prepared-dependencies
@@ -311,16 +218,15 @@ jobs:
           path: ${{ runner.temp }}/candidates
       - name: Verify exact owner content identity before any consumer build
         if: needs.dependency-discovery.outputs.pending != '[]'
-        run: python3 -B scripts/ci/agent_ci.py complete-inputs --core ../sunder-core --inputs "$RUNNER_TEMP/agent-inputs" --candidates "$RUNNER_TEMP/candidates"
+        run: python3 -B scripts/ci/agent_ci.py complete-inputs --inputs "$RUNNER_TEMP/agent-inputs" --candidates "$RUNNER_TEMP/candidates"
       - id: inputs
         env:
           PACKAGES: ${{ needs.dependency-discovery.outputs.packages }}
           PENDING: ${{ needs.dependency-discovery.outputs.pending }}
-          CORE_COMMIT: ${{ needs.prepare.outputs.core_commit }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" "$CORE_COMMIT" --packages "$PACKAGES" --prepared
+          python3 -B scripts/release/release_inputs.py fetch "$PWD" "$RUNNER_TEMP/agent-inputs" "$GITHUB_SHA" --packages "$PACKAGES" --prepared
           python3 -B scripts/ci/owner_authoring.py verify-reproduction "$RUNNER_TEMP/agent-inputs" "$PENDING" "$RUNNER_TEMP/owner-reproduction.json"
           echo "sha256=$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -348,7 +254,7 @@ jobs:
 
   components:
     name: Validate component
-    needs: [prepare, dependencies, tools]
+    needs: [prepare, dependencies]
     if: needs.prepare.outputs.selected_count != '0'
     strategy:
       fail-fast: false
@@ -357,7 +263,6 @@ jobs:
     uses: ./.github/workflows/sunder-package-component.yml
     with:
       package: ${{ matrix.package }}
-      core_commit: ${{ needs.prepare.outputs.core_commit }}
       inputs_sha256: ${{ needs.dependencies.outputs.sha256 }}
       matrix: ${{ needs.prepare.outputs.matrix }}
       stress: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
@@ -365,7 +270,7 @@ jobs:
 
   verifier:
     name: Prepare archive verifier
-    needs: [prepare, tools]
+    needs: prepare
     if: needs.prepare.outputs.selected_count != '0'
     runs-on: ubuntu-24.04
     defaults:
@@ -377,20 +282,10 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
         with:
           node: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-core-tools-linux-x64
-          path: ${{ runner.temp }}/core-tools
-      - run: python3 -B scripts/ci/agent_ci.py prepare-verifier --core ../sunder-core --tools "$RUNNER_TEMP/core-tools"
+      - run: python3 -B scripts/ci/agent_ci.py prepare-verifier
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-package-test-binaries
@@ -406,7 +301,7 @@ jobs:
 
   source:
     name: Shared family · ${{ matrix.mode }} · ${{ matrix.rid }}
-    needs: [prepare, dependencies, tools]
+    needs: [prepare, dependencies]
     if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.full == 'true'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
@@ -422,17 +317,7 @@ jobs:
         with:
           path: sunder-agent-package
           persist-credentials: false
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: Younics/sunder-core
-          ref: ${{ needs.prepare.outputs.core_commit }}
-          path: sunder-core
-          persist-credentials: false
       - uses: ./sunder-agent-package/.github/actions/setup
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-core-tools-${{ matrix.rid }}
-          path: ${{ runner.temp }}/core-tools
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: agent-dependency-inputs
@@ -444,16 +329,17 @@ jobs:
         run: |
           set -euo pipefail
           test "$(python3 -B scripts/release/agent_release.py file-sha "$RUNNER_TEMP/agent-inputs/cold-inputs.json")" = "$INPUTS_SHA256"
-      - name: Build and test selected reference mode
+      - name: Build and test shared Agent behavior with the published App
         env:
-          MODE: ${{ matrix.mode }}
-          PACKAGES: ${{ needs.prepare.outputs.packages }}
           STRESS: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
         run: |
-          args=(--mode "$MODE" --shared)
+          set -euo pipefail
+          app_input="$RUNNER_TEMP/agent-app"
+          python3 -B scripts/release/published_app.py "$app_input"
+          app="$(python3 -B -c 'import json,sys; from pathlib import Path; p=Path(sys.argv[1]); print(p / json.loads((p / "app-input.json").read_text())["app"])' "$app_input")"
+          args=(--shared --published-app "$app")
           [[ "$STRESS" != true ]] || args+=(--stress)
-          python3 -B scripts/ci/agent_ci.py validate --core ../sunder-core \
-            --inputs "$RUNNER_TEMP/agent-inputs" --tools "$RUNNER_TEMP/core-tools" "${args[@]}"
+          python3 -B scripts/ci/agent_ci.py validate --inputs "$RUNNER_TEMP/agent-inputs" "${args[@]}"
       - name: Retain CI reports
         if: always() && steps.inputs.outcome != 'skipped' && steps.inputs.outcome != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -471,7 +357,7 @@ jobs:
   summary:
     name: Summary
     if: always()
-    needs: [prepare, preflight, dependency-discovery, tools, bootstrap, dependencies, components, verifier, source]
+    needs: [prepare, preflight, dependency-discovery, bootstrap, dependencies, components, verifier, source]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

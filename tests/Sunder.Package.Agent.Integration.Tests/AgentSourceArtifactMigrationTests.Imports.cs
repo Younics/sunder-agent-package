@@ -140,13 +140,8 @@ public sealed partial class AgentSourceArtifactMigrationTests
 
     private static void CopyMinimalContractFixture(string core, string destination)
     {
-        // Git checkout policy may give this valid text fixture CRLF endings.
-        // Normalize only its disposable copy; production selections and the
-        // independently reviewed Core conformance fixture remain untouched.
-        var source = Path.Combine(core, "specs/rpc/v1/authoring/conformance/valid/minimal-contract-lock.json");
-        var utf8 = new System.Text.UTF8Encoding(false, throwOnInvalidBytes: true);
-        File.WriteAllText(Path.Combine(destination, "sunder-contracts.lock.json"),
-            File.ReadAllText(source, utf8).ReplaceLineEndings("\n"), utf8);
+        File.Copy(Path.Combine(core, "tests/Sunder.Package.Agent.TestProviders/sunder-contracts.lock.json"),
+            Path.Combine(destination, "sunder-contracts.lock.json"));
     }
 
     private static void WriteImportProject(string root, string core, string driver, string cache, string archive, bool provider, string? packageId = null,
@@ -164,16 +159,42 @@ public sealed partial class AgentSourceArtifactMigrationTests
                 {{string.Join("", (domainReferences ?? []).Append(typeof(Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructorAttribute).Assembly.Location).Distinct(StringComparer.Ordinal)
                     .Select(path => $"<Reference Include=\"{Escape(Path.GetFileNameWithoutExtension(path))}\" HintPath=\"{Escape(path)}\" />"))}}
               </ItemGroup>
-              <UsingTask TaskName="Sunder.Package.Build.Tests.AgentSourceArtifactTestTask" AssemblyFile="{{Escape(driver)}}" />
+              <UsingTask TaskName="Sunder.Package.Build.Tasks.ManageSunderPackageApiTask" AssemblyFile="{{Escape(driver)}}" />
+              <UsingTask TaskName="Sunder.Package.Build.Tasks.GenerateSunderRpcBindingsTask" AssemblyFile="{{Escape(driver)}}" />
               <Target Name="FixtureOperation" BeforeTargets="CoreCompile" DependsOnTargets="ResolveReferences;GenerateGlobalUsings">
-                <PropertyGroup><Operation Condition="'$(Operation)' == ''">Generate</Operation><ContractId Condition="'$(Operation)' == 'Implement' and '$(ContractId)' == ''">younics.ai.agent.session.cleaner</ContractId><ProviderKey Condition="'$(ProviderKey)' == ''">cleaner</ProviderKey><Candidate Condition="'$(Candidate)' == ''">{{Escape(archive)}}</Candidate></PropertyGroup>
+                <PropertyGroup>
+                  <Operation Condition="'$(Operation)' == ''">Generate</Operation>
+                  <ContractId Condition="'$(Operation)' == 'Implement' and '$(ContractId)' == ''">younics.ai.agent.session.cleaner</ContractId>
+                  <ProviderKey Condition="'$(ProviderKey)' == ''">cleaner</ProviderKey>
+                  <ApiOperation Condition="'$(Operation)' == 'Add' or '$(Operation)' == 'Implement' or '$(Operation)' == 'Require'">true</ApiOperation>
+                  <Candidate Condition="'$(Candidate)' == '' and '$(Operation)' != 'Require'">{{Escape(archive)}}</Candidate>
+                  <ApiRange Condition="'$(Operation)' != 'Require'">&gt;=2.0.0 &lt;3.0.0</ApiRange>
+                  <ApiOrigin Condition="'$(Operation)' != 'Require'">https://registry.example/</ApiOrigin>
+                  <Presence Condition="'$(Operation)' == 'Add'">required</Presence>
+                  <LocalName Condition="'$(Operation)' == 'Add'">agent</LocalName>
+                  <LocalName Condition="'$(Operation)' == 'Implement'">$(ProviderKey)</LocalName>
+                  <ContractOperation Condition="'$(Operation)' != 'Generate'">$(Operation)</ContractOperation>
+                  <GeneratePackageRoles Condition="'$(GeneratePackageRoles)' == ''">false</GeneratePackageRoles>
+                </PropertyGroup>
                 <ItemGroup><_Source Include="@(Compile)" Condition="'%(Compile.AutoGen)' != 'true'" /></ItemGroup>
-                <AgentSourceArtifactTestTask Operation="$(Operation)" ProjectDirectory="$(MSBuildProjectDirectory)"
+                <ManageSunderPackageApiTask Condition="'$(ApiOperation)' == 'true'" Operation="$(Operation)"
+                    ProjectDirectory="$(MSBuildProjectDirectory)" PackageId="younics.ai.agent" ContractId="$(ContractId)"
+                    VersionRange="$(ApiRange)" RegistryOrigin="$(ApiOrigin)" Candidate="$(Candidate)" Presence="$(Presence)"
+                    LocalName="$(LocalName)" ContractCacheRoot="{{Escape(cache)}}" PackageVersion="2.0.0"
+                    IntermediateOutputPath="$(IntermediateOutputPath)" AssemblyName="$(AssemblyName)" ProjectIdentity="Imported.csproj"
+                    Configuration="$(Configuration)" TargetFramework="$(TargetFramework)" OutputType="Library"
+                    SourceFiles="@(_Source)" ReferencePaths="@(ReferencePath)" />
+                <GenerateSunderRpcBindingsTask Condition="'$(ApiOperation)' != 'true'" ContractOperation="$(ContractOperation)"
+                    ProjectDirectory="$(MSBuildProjectDirectory)"
                     IntermediateOutputPath="$(IntermediateOutputPath)" AssemblyName="$(AssemblyName)" ProjectIdentity="Imported.csproj" OutputType="Library"
-                    PackageId="{{id}}" CacheRoot="{{Escape(cache)}}" Candidate="$(Candidate)" ContractId="$(ContractId)" LocalName="$(ProviderKey)"
+                    Configuration="$(Configuration)" TargetFramework="$(TargetFramework)" PackageId="{{id}}" PackageVersion="2.0.0"
+                    ContractCacheRoot="{{Escape(cache)}}" GeneratePackageRoles="$(GeneratePackageRoles)"
                     SourceFiles="@(_Source)" ReferencePaths="@(ReferencePath)">
                   <Output TaskParameter="CompileItems" ItemName="Compile" />
-                </AgentSourceArtifactTestTask>
+                </GenerateSunderRpcBindingsTask>
+                <ItemGroup Condition="'$(GeneratePackageRoles)' == 'true' and '$(Operation)' == 'Generate'">
+                  <Compile Include="$(IntermediateOutputPath)sunder-rpc/roles/worker/service-clients/**/*.cs;$(IntermediateOutputPath)sunder-rpc/roles/worker/service-client-lifetime.g.cs" />
+                </ItemGroup>
               </Target>
             </Project>
             """);

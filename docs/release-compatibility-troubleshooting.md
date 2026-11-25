@@ -79,7 +79,7 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 
 1. Set an immutable extension version.
 2. Confirm reviewed API/provider locks use the fixed `>=2.0.0 <3.0.0` Agent family range and exact imported contract identities, including the intended prerelease policy.
-3. Restore/build/test in standalone NuGet mode, not only source-reference mode.
+3. Restore, build, and test against the declared public NuGet dependencies.
 4. Inspect generated manifest capabilities and runtime dependencies.
 5. Check/freeze owned public contracts where present, invoke `PackSunderPackage` on the canonical project and validate the exact `.sunderpkg` bytes.
 6. Run clean install/activation, configuration, success/failure, unload/reload, and same-version reinstall smoke.
@@ -91,9 +91,9 @@ Binary compatibility is not the only requirement. Descriptor ids, permission bou
 The first-party release selector publishes only never-published or version-increased
 projects and tests the full fifteen-package family, including retained unchanged
 archives. Mixed versions must satisfy the actual dependency/contract constraints;
-there is no forced family-wide bump or Protocol NuGet. Standalone CI resolves Core
-source from the locked Build-tool release and verifies its tag/provenance; workspace
-CI uses its source checkout. Recovery reuses the same tested bytes.
+there is no forced family-wide bump or Protocol NuGet. Agent CI restores the
+declared public dependencies and qualifies against the published App and bundled
+Host. Recovery reuses the same tested bytes.
 Native, authenticated publication and atomic visibility requirements remain in
 [`RELEASES.md`](RELEASES.md).
 
@@ -107,7 +107,7 @@ Native, authenticated publication and atomic visibility requirements remain in
 | SDK/module types missing | Add the required direct supported SDK references; implementation assemblies are not an SDK substitute. |
 | Manifest/build targets missing | Add `Sunder.Package.Build` with `PrivateAssets="all"`. |
 | Mixed package downgrade/conflict | Inspect reviewed dependency ranges and exact imported contract identities; align the Agent runtime family to 2.x while preserving the supported Core SDK range. |
-| Works only in private workspace | Force standalone/NuGet mode and restore in a clean checkout; remove accidental project/implementation references. |
+| Works only in private workspace | Restore from NuGet.org in a clean checkout; remove accidental project/implementation references. |
 
 Useful commands:
 

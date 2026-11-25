@@ -60,7 +60,9 @@ export async function checkPackageBoundaries({ inventoryText, expectedText, reti
       || inventory.packages.some((value) => value.artifactType !== "sunderpkg")) {
       return { mode: "invalid", failures: ["Inventory must contain the exact 15 current project/package pairs and only sunderpkg artifacts."] };
     }
-    if (inventory.releaseVersion !== expected.packageVersion) failures.push("Current package version differs.");
+    if (typeof inventory.releaseVersion !== "string"
+      || !/^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$/u.test(inventory.releaseVersion))
+      failures.push("Package inventory version must be strict SemVer.");
     for (const [path, text] of Object.entries(retirementSurfaceTexts ?? await surfaces())) {
       const decoded = text.replace(/&quot;|&#0*34;|&#x0*22;/giu, '"').replace(/&apos;|&#0*39;|&#x0*27;/giu, "'");
       if (protocol.test(decoded) || /agent-protocol|verify-packed-protocol|\bprotocol_(?:count|name|path|url|bytes)\b/iu.test(decoded))

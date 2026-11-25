@@ -23,9 +23,6 @@ from agent_release import (Invalid, archive_metadata, authoring_origin, canonica
 from ci_platforms import RIDS
 MANIFEST = "cold-inputs.json"
 MAX_MANIFEST = 262144
-TOOL_FILES = ("Sunder.Package.Build.dll", "Sunder.Package.Build.Editor.dll", "Sunder.Package.Format.dll", "Sunder.Sdk.dll",
-              "Microsoft.CodeAnalysis.dll", "Microsoft.CodeAnalysis.CSharp.dll",
-              "Microsoft.Extensions.DependencyInjection.Abstractions.dll", "Microsoft.Extensions.Logging.Abstractions.dll")
 
 
 def python_version():
@@ -116,19 +113,23 @@ def catalog_requirements(lock):
     return values
 
 
-def validate_manifest(source, value, source_sha, core_sha, packages=None):
-    closed(value, "schemaVersion artifactSourceCommit lockSetSha256 core candidates platformCatalog"
-           + (" packageIds" if value.get("schemaVersion") == 3 else ""))
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] in (1, 2, 3), "Unknown cold-input manifest schema")
+def validate_manifest(source, value, source_sha, core_sha=None, packages=None):
+    schema = value.get("schemaVersion")
+    require(type(schema) is int and schema in (1, 2, 3, 4), "Unknown cold-input manifest schema")
+    closed(value, "schemaVersion artifactSourceCommit lockSetSha256 candidates platformCatalog"
+           + (" core" if schema < 4 else "") + (" packageIds" if schema >= 3 else ""))
     declared = package_scope(source, value.get("packageIds"))
     require(value.get("packageIds", declared) == declared and set(package_scope(source, packages)) <= set(declared),
             "Dependency manifest does not cover the requested package scope")
     require(value["artifactSourceCommit"] == digest(source_sha, 40)
             and value["lockSetSha256"] == locks(source), "Cold inputs do not bind the exact source/production locks")
-    version_field = "sdkVersion" if value["schemaVersion"] == 1 else "buildToolVersion"
-    closed(value["core"], "artifactSourceCommit " + version_field)
-    require(value["core"]["artifactSourceCommit"] == digest(core_sha, 40), "Cold Core source differs")
-    version(value["core"][version_field])
+    if schema < 4:
+        version_field = "sdkVersion" if schema == 1 else "buildToolVersion"
+        closed(value["core"], "artifactSourceCommit " + version_field)
+        require(value["core"]["artifactSourceCommit"] == digest(core_sha, 40), "Historical Core source differs")
+        version(value["core"][version_field])
+    else:
+        require(core_sha is None, "Public-feed inputs do not select a Core checkout")
     require(type(value["candidates"]) is list and len(value["candidates"]) <= 128, "Invalid candidate inventory")
     selected = {}
     platforms = set()
@@ -179,7 +180,7 @@ def input_asset(value, schema, maximum=268435456):
     return value
 
 
-def verify(source, bundle, approved_sha, source_sha, core_sha, packages=None):
+def verify(source, bundle, approved_sha, source_sha, core_sha=None, packages=None):
     bundle = directory(bundle)
     require(file_sha(bundle / MANIFEST) == digest(approved_sha), "Cold manifest differs from its approved hash")
     value = validate_manifest(source, load(bundle / MANIFEST), source_sha, core_sha, packages)
@@ -250,37 +251,44 @@ def verify_selected_files(source, candidates, catalog_path, packages=None):
     return paths
 
 
-def fetch(source, destination, source_sha, core_sha, selected=None, *, packages=None, prepared=False):
+def read_prepared(source, destination, packages=None):
+    value = load(destination / "ci-inputs.json")
+    closed(value, "schemaVersion sourceCommit lockSetSha256 packageIds candidates platformCatalog")
+    scope = package_scope(source, value["packageIds"])
+    require(value["schemaVersion"] == 4 and value["sourceCommit"] == subprocess.check_output(
+        ["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip() and value["lockSetSha256"] == locks(source)
+        and value["packageIds"] == scope and set(package_scope(source, packages)) <= set(scope),
+        "Prepared dependency scope/source differs")
+    for asset in [*value["candidates"], value["platformCatalog"]]:
+        input_asset(asset, value["schemaVersion"])
+        path = regular(destination / asset["name"])
+        require(path.stat().st_size == asset["size"] and file_sha(path) == asset["sha256"], "Prepared dependency bytes changed")
+    verify_selected_files(source, [destination / row["name"] for row in value["candidates"]],
+                          destination / value["platformCatalog"]["name"], scope)
+    return value
+
+
+def fetch(source, destination, source_sha, core_sha=None, selected=None, *, packages=None, prepared=False):
     if selected is None:
         # Dependencies and hashes are discovered/generated, not operator approvals.
         import dependency_inputs
         source, destination = Path(source).resolve(), Path(destination).resolve()
-        core = source.parent / "sunder-core"
-        require(subprocess.check_output(["git", "-C", str(core), "rev-parse", "HEAD"], text=True).strip() == core_sha, "Core checkout differs")
-        resolved = load(destination / "ci-inputs.json") if prepared else dependency_inputs.resolve(source, core, destination, packages=packages)
-        if prepared:
-            closed(resolved, "schemaVersion coreCommit candidates platformCatalog" + (" packageIds" if resolved.get("schemaVersion") == 3 else ""))
-            require(resolved["schemaVersion"] in (2, 3) and resolved["coreCommit"] == core_sha
-                and resolved.get("packageIds", package_scope(source)) == package_scope(source, packages), "Prepared dependency scope or Core differs")
-            for asset in [*resolved["candidates"], resolved["platformCatalog"]]:
-                input_asset(asset, resolved["schemaVersion"])
-                require(dependency_inputs.record(destination / asset["name"]) == asset, "Prepared dependency bytes changed")
-            verify_selected_files(source, [destination / item["name"] for item in resolved["candidates"]],
-                destination / resolved["platformCatalog"]["name"], packages)
-        versions = {release for name, release in dependency_inputs.core_packages(source, packages) if name == "Sunder.Package.Build"}
-        require(len(versions) == 1, "Expected one declared Build tool version")
+        require(core_sha is None, "Use the declared public dependencies, not a Core checkout")
+        if not prepared:
+            dependency_inputs.resolve(source, destination, packages=packages)
+        resolved = read_prepared(source, destination, packages)
+        require(resolved["packageIds"] == package_scope(source, packages) and resolved["sourceCommit"] == source_sha,
+                "Prepared dependency scope or source differs")
         candidates = []
         for asset in resolved["candidates"]:
             manifest, public, public_sha = archive_metadata(destination / asset["name"])
             candidates.append(dict(packageId=manifest["id"], version=manifest["version"], packageContentIdentity=public["packageContentIdentity"],
                 publicInventorySha256=public_sha, asset=asset))
         catalog = load(destination / resolved["platformCatalog"]["name"])
-        value = dict(schemaVersion=2, artifactSourceCommit=source_sha, lockSetSha256=locks(source),
-            core=dict(artifactSourceCommit=core_sha, buildToolVersion=next(iter(versions))), candidates=sorted(candidates, key=lambda item: item["packageId"]),
+        value = dict(schemaVersion=4, artifactSourceCommit=source_sha, lockSetSha256=locks(source),
+            packageIds=resolved["packageIds"], candidates=sorted(candidates, key=lambda item: item["packageId"]),
             platformCatalog=dict(authorityId=catalog["authorityId"], releaseVersion=catalog["releaseVersion"],
                 catalogSha256=resolved["platformCatalog"]["sha256"], asset=resolved["platformCatalog"]))
-        if packages is not None:
-            value.update(schemaVersion=3, packageIds=package_scope(source, packages))
         (destination / "ci-inputs.json").unlink()  # Replace our transient CI index, not a source file.
         (destination / MANIFEST).write_bytes(canonical(value) + b"\n")
         verify(source, destination, file_sha(destination / MANIFEST), source_sha, core_sha, packages)
@@ -303,7 +311,8 @@ def fetch(source, destination, source_sha, core_sha, selected=None, *, packages=
 
 def source_snapshot(source):
     names = {"packages.json"}
-    names.update(name for name in ("Directory.Build.props", "Directory.Build.targets") if (Path(source) / name).exists())
+    names.update(name for name in ("Directory.Build.props", "Directory.Build.targets", "Directory.Packages.props",
+                                  "NuGet.Config", "global.json") if (Path(source) / name).exists())
     for package in inventory(source)["packages"]:
         names.add(package["projectPath"])
         parent = PurePosixPath(package["projectPath"]).parent
@@ -325,14 +334,9 @@ def clean_source(source, source_sha):
             "Cold source/lock/baseline checkout has local changes")
 
 
-def properties(source, mode):
-    require(mode in ("source", "package"), "Unknown source/dependency mode")
-    result = ["-p:Configuration=Release",
-              "-p:ContinuousIntegrationBuild=true", "-p:SunderUseSourceSdk=" + ("true" if mode == "source" else "false"),
-              "-p:UseSharedCompilation=false", "-p:NuGetAudit=false"]
-    if mode == "package":
-        result.append("-p:RestoreLockedMode=true")
-    return result
+def properties():
+    return ["-p:Configuration=Release", "-p:ContinuousIntegrationBuild=true",
+            "-p:UseSharedCompilation=false", "-p:NuGetAudit=false", "-p:RestoreLockedMode=true"]
 
 
 def run(command, env, cwd, capture=False):
@@ -372,6 +376,11 @@ def offline_prefix():
 def isolated_env(home, cache):
     env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
         "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
+    # CI chooses dependencies through NuGet.Config and the committed graph.
+    excluded = {"restoresources", "restoreadditionalprojectsources", "restorefallbackfolders",
+                "restoreadditionalprojectfallbackfolders", "restoreconfigfile"}
+    env = {key: value for key, value in env.items() if key.lower() not in excluded
+           and not key.lower().startswith(("sunderpackagebuildtask", "sunder_native_task_"))}
     env.update(SUNDER_HOME=str(home), SUNDER_CONTRACT_CACHE=str(cache), SunderContractCacheRoot=str(cache),
                MSBUILDDISABLENODEREUSE="1", DOTNET_CLI_USE_MSBUILD_SERVER="0", DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE="true",
                DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", DOTNET_CLI_TELEMETRY_OPTOUT="1", PYTHONDONTWRITEBYTECODE="1")
@@ -388,10 +397,10 @@ def verify_network_denial(prefix, env, source):
         require(answer.returncode == 0 and answer.stdout.strip() == "sunder-network-denied-v1", "Offline launcher did not execute a network-denied child; no fallback is permitted")
 
 
-def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solution=False):
+def prepare(source, bundle, work, source_sha, approved_sha, solution=False):
     source, bundle = directory(source), directory(bundle)
     clean_source(source, source_sha)
-    value = verify(source, bundle, approved_sha, source_sha, core_sha)
+    value = verify(source, bundle, approved_sha, source_sha)
     before = source_snapshot(source)
     work = Path(work).absolute()
     require(not work.exists() and not work.is_symlink() and source not in work.parents, "Cold work/home must be new and outside reviewed source")
@@ -400,7 +409,7 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
     home.mkdir()
     cache = home / "contracts/v1/sha256"
     env = isolated_env(home, cache)
-    common = properties(source, mode)
+    common = properties()
     rows = inventory(source)["packages"]
     prefix = offline_prefix()
     verify_network_denial(prefix, env, source)
@@ -408,26 +417,9 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
         # Never narrow Restore with -r: retain all six declared RID graphs.
         restore_projects = [source / "Sunder.AgentPackage.slnx"] if solution else [source / p["projectPath"] for p in rows]
         for project in restore_projects:
-            args = ["dotnet", "restore", str(project), *common]
-            if mode == "package":
-                args.append("--locked-mode")
-            if os.environ.get("NUGET_SOURCE"):
-                args += ["--source", os.environ["NUGET_SOURCE"]]
+            args = ["dotnet", "restore", str(project), "--configfile", str(source / "NuGet.Config"),
+                    "--locked-mode", "-p:SunderRestoreContracts=false", *common]
             require(run(args, env, source).returncode == 0, "Explicit dependency restore failed")
-        tool = os.environ.get("SUNDER_NATIVE_TASK_ASSEMBLY", "")
-        if mode == "source" and not tool:
-            # Explicit online tooling preparation; no Agent package Build has begun.
-            project = source.parent / "sunder-core/languages/csharp/dotnet/packages/Sunder.Package.Build/Sunder.Package.Build.csproj"
-            require(run(["dotnet", "build", str(project), "-c", "Release", "--no-restore", "-p:ContinuousIntegrationBuild=true", "-p:UseSharedCompilation=false"], env, source).returncode == 0,
-                    "Core tool preparation failed")
-            evaluated = run(["dotnet", "msbuild", str(project), "-p:Configuration=Release", "-p:ContinuousIntegrationBuild=true", "-getProperty:TargetDir"], env, source, capture=True)
-            require(evaluated.returncode == 0, "Could not resolve prepared Core tool output")
-            shutil.copytree(evaluated.stdout.strip(), work / "tools")
-            tool = str(work / "tools/Sunder.Package.Build.dll")
-        if tool:
-            for name in TOOL_FILES:
-                regular(Path(tool).parent / name)
-            common += ["-p:SunderPackageBuildTaskAssembly=" + str(Path(tool).resolve()), "-p:SunderPackageBuildTaskSourceIsImmutable=true"]
         for package in rows:
             evaluated = run(["dotnet", "msbuild", str(source / package["projectPath"]), *common,
                              "-getProperty:Configuration,Version,ContinuousIntegrationBuild,RuntimeIdentifiers,SunderPackageRuntimeIdentifiers,ProjectAssetsFile"], env, source, True)
@@ -464,9 +456,9 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
             if selected or catalog_requirements(lock):
                 require(run(args, env, source).returncode == 0, "Exact cold hydration failed; no online retry is permitted")
             require(source_snapshot(source) == before, "Hydration changed reviewed source/lock/baseline bytes")
-        verify(source, bundle, approved_sha, source_sha, core_sha)
-        state = {"schemaVersion": 1, "source": str(source), "bundle": str(bundle), "manifestSha256": approved_sha,
-                 "sourceSha": source_sha, "coreSha": core_sha, "mode": mode, "home": str(home), "cache": str(cache),
+        verify(source, bundle, approved_sha, source_sha)
+        state = {"schemaVersion": 2, "source": str(source), "bundle": str(bundle), "manifestSha256": approved_sha,
+                 "sourceSha": source_sha, "home": str(home), "cache": str(cache),
                  "properties": common, "sourceInputs": before}
         (work / "cold-state.json").write_bytes(canonical(state) + b"\n")
         print(str(work / "cold-state.json"))
@@ -477,10 +469,10 @@ def prepare(source, bundle, work, mode, source_sha, core_sha, approved_sha, solu
 
 def execute(state_path, command):
     state = load(state_path)
-    closed(state, "schemaVersion source bundle manifestSha256 sourceSha coreSha mode home cache properties sourceInputs")
-    require(state["schemaVersion"] == 1 and source_snapshot(state["source"]) == state["sourceInputs"], "Cold build source/locks changed")
+    closed(state, "schemaVersion source bundle manifestSha256 sourceSha home cache properties sourceInputs")
+    require(state["schemaVersion"] == 2 and source_snapshot(state["source"]) == state["sourceInputs"], "Cold build source/locks changed")
     clean_source(state["source"], state["sourceSha"])
-    verify(state["source"], state["bundle"], state["manifestSha256"], state["sourceSha"], state["coreSha"])
+    verify(state["source"], state["bundle"], state["manifestSha256"], state["sourceSha"])
     require(Path(state["cache"]).is_dir(), "Cold hydration evidence is missing")
     env = isolated_env(state["home"], state["cache"])
     # Fan-in invokes the frozen native helper, which launches its own MSBuild
@@ -500,7 +492,7 @@ def execute(state_path, command):
         return run([*prefix, *command], env, state["source"]).returncode
     finally:
         require(source_snapshot(state["source"]) == state["sourceInputs"], "Offline command changed reviewed lock/baseline bytes")
-        verify(state["source"], state["bundle"], state["manifestSha256"], state["sourceSha"], state["coreSha"])
+        verify(state["source"], state["bundle"], state["manifestSha256"], state["sourceSha"])
         clean_source(state["source"], state["sourceSha"])
 
 

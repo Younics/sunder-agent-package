@@ -1,5 +1,9 @@
 # Current Agent compatibility inputs
 
+Nothing in this directory selects a Core source checkout. Current inventory and
+contract records are independent expectations for the emitted APIs, not release
+pins. Keep them separate from generated run receipts.
+
 `agent-current-inventory.json` is the independently reviewed expectation for the
 current product: **15 package/project pairs, 12 App / 15 Worker roles, 18 public
 APIs, 13 package-private APIs and 64 providers**. Runtime identities use Younics,

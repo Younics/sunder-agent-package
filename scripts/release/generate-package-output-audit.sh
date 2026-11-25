@@ -54,12 +54,13 @@ if [[ "$(jq -r .schemaVersion "$native_evidence")" =~ ^(4|5|6)$ ]]; then
   coordinate="$archive_directory/release-plan.json"
 fi
 agent_commit="$(jq -er '.agentCommit' "$native_evidence")"
-core_tag="$(jq -er '.core.tag' "$native_evidence")"
-core_commit="$(jq -er '.core.commit' "$native_evidence")"
-core_package_version="$(jq -er '.core.packageVersion' "$native_evidence")"
+material=("$coordinate" "$agent_commit")
+if jq -e 'has("core")' "$native_evidence" >/dev/null; then
+  material+=("$(jq -er '.core.tag' "$native_evidence")" "$(jq -er '.core.commit' "$native_evidence")" "$(jq -er '.core.packageVersion' "$native_evidence")")
+fi
 python3 -B "$script_dir/native-family.py" verify \
   "$native_evidence" "$archive_directory" "$repository_root/packages.json" \
-  "$coordinate" "$agent_commit" "$core_tag" "$core_commit" "$core_package_version" >/dev/null
+  "${material[@]}" >/dev/null
 
 packages="$work/packages.jsonl"
 : > "$packages"

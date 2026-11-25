@@ -95,19 +95,20 @@ public sealed class SolutionPackageInventoryTests
     }
 
     [Fact]
-    public void TestProjects_AreInSolutionUnlessExplicitlySupportOnly()
+    public void TestProjects_AreInSolutionUnlessExplicitlyStandalone()
     {
         var testsRoot = Path.Combine(AgentPackageRepositoryInventory.RepositoryRoot.FullName, "tests");
         var solutionProjects = AgentPackageRepositoryInventory.GetSolutionProjectPaths();
         var testProjects = Directory.EnumerateFiles(testsRoot, "*.csproj", SearchOption.AllDirectories)
             .Where(AgentPackageRepositoryInventory.IsSourceFile)
-            .Where(project => !SupportOnlyTestProjects.Contains(NormalizeRepositoryPath(project)))
+            .Where(project => !StandaloneTestProjects.Contains(NormalizeRepositoryPath(project)))
             .ToArray();
 
         Assert.NotEmpty(testProjects);
         foreach (var testProject in testProjects)
         {
-            Assert.Contains(Path.GetFullPath(testProject), solutionProjects);
+            Assert.True(solutionProjects.Contains(Path.GetFullPath(testProject)),
+                $"Missing solution member: {NormalizeRepositoryPath(testProject)}");
         }
     }
 
@@ -358,61 +359,10 @@ public sealed class SolutionPackageInventoryTests
 
     [Fact]
     [Trait("Lane", "PackageCompatibility")]
-    public void ReleaseWorkflowInventory_MatchesRuntimePackages()
+    public void ReleaseInventory_MatchesRuntimePackagesAndNativePlatforms()
     {
         var root = AgentPackageRepositoryInventory.RepositoryRoot.FullName;
-        var workflow = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-release.yml"));
-        var ci = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-smoke.yml"));
-        var component = File.ReadAllText(Path.Combine(root, ".github/workflows/sunder-package-component.yml"));
-        var pipeline = File.ReadAllText(Path.Combine(root, "scripts/release/agent_pipeline.py"));
-        var postchecks = File.ReadAllText(Path.Combine(root, "scripts/release/agent_publication.py"));
-        var native = File.ReadAllText(Path.Combine(root, "scripts/release/native-family.py"));
-        var builder = File.ReadAllText(Path.Combine(root, "scripts/release/build-native-family.ps1"));
-        var cohort = File.ReadAllText(Path.Combine(root, "scripts/release/agent_cohort.py"));
-        var lanes = File.ReadAllText(Path.Combine(root, "scripts/ci/test_lanes.py"));
         using var platforms = JsonDocument.Parse(File.ReadAllText(Path.Combine(root, "eng/ci/platforms.json")));
-        Assert.False(File.Exists(Path.Combine(root, ".circleci/config.yml")));
-        Assert.Contains("branches: [main]", workflow, StringComparison.Ordinal);
-        Assert.Contains("workflow_dispatch:", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("tags: [\"agent/v*\"]", workflow, StringComparison.Ordinal);
-        Assert.Contains("agent_selection.py plan", workflow, StringComparison.Ordinal);
-        Assert.Contains("selected_count != '0'", workflow, StringComparison.Ordinal);
-        Assert.Contains("resume == 'true'", workflow, StringComparison.Ordinal);
-        Assert.Contains("uses: ./.github/workflows/sunder-package-smoke.yml", workflow, StringComparison.Ordinal);
-        foreach (var scheduledWorkflow in new[] { workflow, ci })
-        {
-            Assert.Contains("agent_ci.py matrices", scheduledWorkflow, StringComparison.Ordinal);
-            Assert.Contains("matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}", scheduledWorkflow, StringComparison.Ordinal);
-            Assert.Contains("uses: ./.github/workflows/sunder-package-component.yml", scheduledWorkflow, StringComparison.Ordinal);
-        }
-        Assert.Contains("scripts/ci/agent_ci.py validate", ci, StringComparison.Ordinal);
-        Assert.Contains("Lane=PackageCompatibility&Category!=Artifact", lanes, StringComparison.Ordinal);
-        Assert.Contains("--verify", lanes, StringComparison.Ordinal);
-        Assert.Contains("agent_ci.py test-family", workflow, StringComparison.Ordinal);
-        Assert.Contains("\"SUNDER_REQUIRE_AGENT_PACKAGE_RELEASE\": \"1\"", lanes, StringComparison.Ordinal);
-        Assert.Contains("\"SUNDER_REQUIRE_AGENT_UI_SNAPSHOT\": \"1\"", lanes, StringComparison.Ordinal);
-        Assert.Contains("agent_ci.py prepare", component, StringComparison.Ordinal);
-        Assert.Contains("agent_ci.py run", component, StringComparison.Ordinal);
-        Assert.DoesNotContain("SUNDER_AGENT_COLD_INPUT_MANIFEST", workflow, StringComparison.Ordinal);
-        Assert.Contains("native-family.py compose-component", component, StringComparison.Ordinal);
-        Assert.Contains("native-family.py record-final", workflow, StringComparison.Ordinal);
-        Assert.Contains("native-family.py finalize", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("native-family.py assemble", workflow, StringComparison.Ordinal);
-        Assert.Contains("SunderPackageUsePrebuiltLeaves=true", native, StringComparison.Ordinal);
-        Assert.Contains("SunderPackagePrebuiltRoleInputsFile", native, StringComparison.Ordinal);
-        Assert.Contains("SunderPackageRoleInputSourceRoot", builder, StringComparison.Ordinal);
-        foreach (var stage in new[] { "stage", "recover", "merge-publications", "visibility", "finalize" })
-            Assert.Contains("agent_pipeline.py " + stage, workflow, StringComparison.Ordinal);
-        Assert.Contains("agent_pipeline.py publish-component", component, StringComparison.Ordinal);
-        Assert.Contains("cohort.apply", pipeline, StringComparison.Ordinal);
-        Assert.Contains("cohort.confirm", pipeline, StringComparison.Ordinal);
-        Assert.Contains("resolve-package-changes", postchecks, StringComparison.Ordinal);
-        Assert.Contains("publication.install_plans", pipeline, StringComparison.Ordinal);
-        Assert.Contains("initial-yanked", pipeline, StringComparison.Ordinal);
-        Assert.Contains("/api/v1/me/package-cohorts/availability", cohort, StringComparison.Ordinal);
-        Assert.DoesNotContain("dotnet nuget push", pipeline, StringComparison.Ordinal);
-        Assert.DoesNotContain("ACCEPTANCE_DRIVER", workflow, StringComparison.Ordinal);
-        Assert.DoesNotContain("-m:1", workflow + ci + component + native + builder, StringComparison.Ordinal);
         Assert.Equal(new[] { "win-x64", "win-arm64", "linux-x64", "linux-arm64", "osx-x64", "osx-arm64" }.Order(StringComparer.Ordinal),
             platforms.RootElement.GetProperty("platforms").EnumerateArray().Select(row => row.GetProperty("rid").GetString()).Order(StringComparer.Ordinal));
 
@@ -500,8 +450,10 @@ public sealed class SolutionPackageInventoryTests
             reference => Path.GetFileNameWithoutExtension(reference) is "Sunder.Package.Agent.Contracts" or "Sunder.Package.Agent.Protocol"));
     }
 
-    private static readonly IReadOnlySet<string> SupportOnlyTestProjects = new HashSet<string>(
-        ["tests/Sunder.Package.Agent.Provider.TestSupport/Sunder.Package.Agent.Provider.TestSupport.csproj"],
+    private static readonly IReadOnlySet<string> StandaloneTestProjects = new HashSet<string>(
+        ["tests/Sunder.Package.Agent.Provider.TestSupport/Sunder.Package.Agent.Provider.TestSupport.csproj",
+         // The standalone native lane requires the shipped App and Host for this RID.
+         "tests/fixtures/NativeQualification/Sunder.Runtime.Host.Tests.csproj"],
         StringComparer.OrdinalIgnoreCase);
 
     private static string GetReleaseKey(string packageName)

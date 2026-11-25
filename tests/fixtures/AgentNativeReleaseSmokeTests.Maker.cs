@@ -27,11 +27,10 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var rid = PackageTargetSelection.GetCurrentRuntimeIdentifier();
         var archives = ReadArchives(directory, rid);
         var archive = archives[BuilderPackageId];
-        var receipt = await executionRuntimes.EnsureDotNetAsync(WorkerRuntimeVersion);
         var root = Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sunder-native-maker-" + Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(root);
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var resolver, out var appConnection);
+        var runtimeHost = CreateNativeRuntimeHost(paths, out var resolver, out var appConnection);
         var provider = runtimeHost.Services;
         var owner = provider.GetRequiredService<RuntimeSessionOwner>();
         var lifecycle = provider.GetRequiredService<InstalledPackageLifecycleService>();
@@ -43,6 +42,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             await lifecycle.InitializeAsync();
             initialized = true;
+            var receipt = await ProvisionWorkerRuntimeAsync(provider);
             var folder = Path.Combine(root, "maker-source");
             await PrepareNativeDevelopmentPackageAsync(provider, archive, folder, archives.Values.ToArray());
             var load = await provider.GetRequiredService<PackageSessionLifecycleService>().LoadStartupDevPackagesAsync([folder]);
@@ -51,7 +51,9 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Assert.Equal(BuilderPackageId, Assert.Single(GetWorkers(owner)).Key);
             Assert.Empty(await lifecycle.GetInstalledAsync());
             owner.MarkReady();
-            await VerifyBuilderProjectLifecycleAsync(provider, owner, rid, root, executionRuntimes.GetRuntimeRoot(receipt), metrics, observed, temporary, appConnection);
+            await VerifyStandaloneMakerAsync(provider, owner, rid, root);
+            await VerifyBuilderProjectLifecycleAsync(provider, owner, rid, root,
+                provider.GetRequiredService<ExecutionRuntimeStoreLayout>().GetContentRootPath(receipt.ContentIdentity), metrics, observed, temporary, appConnection);
         }
         finally
         {
@@ -76,6 +78,44 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 }
             }
         }
+    }
+
+    private static async Task VerifyStandaloneMakerAsync(IServiceProvider services, RuntimeSessionOwner owner, string rid, string root)
+    {
+        var package = Assert.Single(services.GetRequiredService<PackageSessionLifecycleService>().GetSessionPackages());
+        Assert.Equal(BuilderPackageId, package.PackageId);
+        Assert.True(package.IsEnabled);
+        Assert.Equal(PackageReadinessState.Ready, package.Readiness);
+        Assert.Equal(BuilderPackageId, Assert.Single(services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid)).PackageId);
+        var catalog = services.GetRequiredService<RuntimeRpcCatalog>();
+        var providers = catalog.GetSnapshot().Providers;
+        Assert.Equal(new[] { "builder.runtime", "maker.permissions", "maker.tools" }, providers.Select(row => row.ProviderId).Order(StringComparer.Ordinal));
+        Assert.All(providers, row =>
+        {
+            Assert.Equal(BuilderPackageId, row.PackageId);
+            Assert.Equal(SunderRpcProviderState.Active, row.State);
+        });
+        var activation = owner.State.ActiveSession.LoadedPackageMap[BuilderPackageId];
+        Assert.True(activation.Source.DevelopmentImports!.IsLocal);
+        Assert.Null(activation.Source.DevelopmentImports.RegistryOrigin);
+        var rpc = new RuntimeRpcClient(services.GetRequiredService<RuntimeRpcBroker>(), new(BuilderPackageId, activation.RuntimeActivationId));
+        var denied = await Assert.ThrowsAsync<SunderRpcException>(() => rpc.DiscoverAsync("younics.ai.agent.tool.source").AsTask());
+        Assert.Equal(SunderRpcErrorKind.PermissionDenied, denied.Error.Kind);
+        var tools = Assert.Single(providers, row => row.ProviderId == "maker.tools");
+        var handler = Assert.Single(activation.RpcProviders.Values, row => row.ProviderId == tools.ProviderId).Handler;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var invocation = new SunderRpcInvocationContext(BuilderPackageId, package.Version, tools, DateTimeOffset.UtcNow.AddSeconds(5), 1, deadline.Token);
+        var description = await handler.InvokeUnaryAsync(invocation, "tool-source", "describe", JsonSerializer.SerializeToElement(new { }), deadline.Token);
+        Assert.Equal("package-maker", description.GetProperty("sourceId").GetString());
+        var rejection = await handler.InvokeUnaryAsync(invocation, "tool-source", "validate-arguments", JsonSerializer.SerializeToElement(new
+        {
+            toolId = "maker_package",
+            argumentsJson = JsonSerializer.Serialize(new { package = Path.Combine(root, "project/app/index.html") }),
+        }), deadline.Token);
+        Assert.True(rejection.GetProperty("isError").GetBoolean());
+        Assert.Equal("maker.invalid-request", rejection.GetProperty("errorCode").GetString());
+        Assert.Equal(tools.Endpoint, Assert.Single(catalog.GetSnapshot().Providers, row => row.ProviderId == tools.ProviderId).Endpoint);
+        Assert.False(activation.Worker.GenerationCompletion.IsCompleted);
     }
 
     private static async Task VerifyBuilderProjectLifecycleAsync(IServiceProvider services, RuntimeSessionOwner owner,

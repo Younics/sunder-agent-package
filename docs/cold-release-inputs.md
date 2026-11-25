@@ -13,10 +13,10 @@ it does not write contract selections, freeze APIs or invent cache receipts.
 
 ```sh
 python3 -B scripts/release/release_inputs.py fetch \
-  "$PWD" /tmp/agent-cold-inputs "$(git rev-parse HEAD)" "$(git -C ../sunder-core rev-parse HEAD)"
+  "$PWD" /tmp/agent-cold-inputs "$(git rev-parse HEAD)"
 ```
 
-Both source identities above come from the actual checkouts, not configuration.
+The source identity above is the Agent checkout.
 `dependency_inputs.py` locates exact published dependencies. Unpublished owners
 are prepared in two phases: `agent_ci.py resolve --allow-missing` retains the
 catalog and available archives in `preparation.json`; six native component jobs
@@ -25,13 +25,13 @@ archive against the unchanged production locks. A single-host seed is insufficie
 Identical coordinator asset copies are valid, conflicting copies are not. The
 output directory must be new and outside the source trees.
 
-The generated [schema-3 input inventory](../scripts/release/cold-inputs.schema.json)
-contains source/lock hashes, Core `buildToolVersion`, exact package content/public
+The generated [input inventory](../scripts/release/cold-inputs.schema.json)
+contains source/lock hashes, exact package content/public
 inventory identities, sorted `packageIds` and the selected Core catalog. The scope
 includes the evaluated dependencies of selected test roots; each consumer may use
 a verified subset. Local file records contain
 `name`, `size` and `sha256`. Those are computed evidence, not operator approvals.
-The schema-2 and numeric-locator schema-1 readers remain for retained cold fixtures;
+Older input readers remain for retained cold fixtures;
 it is not normal CI/release configuration.
 
 Inputs must cover every committed direct and inventory-only contract selection.
@@ -46,12 +46,12 @@ uploaded state, name, length and SHA-256; only completed releases are discovered
 Runners need Python 3.9+, the pinned .NET SDK, Git, `gh` and Bash. Native producers
 also need PowerShell 7. `release_inputs.py prepare`:
 
-1. Checks the actual clean source/Core identities, generated manifest and complete
+1. Checks the clean Agent source, generated manifest and complete
    dependency bytes; snapshots authored project versions, locks and owned baselines.
 2. Requires a new external Sunder home/cache, with both `SUNDER_HOME` and
    `SunderContractCacheRoot` supplied explicitly. It never adopts or clears a warm home.
-3. Restores the full declared RID graph in Release/CI with the selected source/package
-   mode. Package mode is locked. Source tooling is retained before network denial.
+3. Restores the entire declared RID graph in Release/CI from public NuGet, in locked mode,
+   before network denial.
 4. Denies network to the process tree and probes a combined consumer with only the
    catalog. Core must report `contract-cache.entry-missing` and preserve source/cache.
 5. Hydrates exact selected candidates/catalog through `RestoreSunderContracts`,
@@ -85,12 +85,11 @@ from build environments.
 python3 -B scripts/test/release/test_dependency_inputs.py
 python3 -B scripts/test/release/release-inputs.fixture.py
 python3 -B scripts/test/release/native-family.fixture.py
-bash scripts/test/release/native-release.fixture.sh
 python3 -B scripts/test/release/test_agent_pipeline.py
 ```
 
 Mocked fixtures cover discovery, byte/identity tampering, unchanged locks, RID/property
-consistency, cache diagnostics, tool retention and fail-closed isolation. They do not
+consistency, cache diagnostics and fail-closed isolation. They do not
 qualify real native runners or publication.
 
 `real-release-metadata.fixture.py <agent-root> <existing-core-cli.dll>` separately

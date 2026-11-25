@@ -6,11 +6,7 @@
     <SunderSdkWorkerReference>true</SunderSdkWorkerReference>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="$(SunderBuildToolingProject)" Condition="'$(SunderUseSourceSdk)' == 'true'"
-                      ReferenceOutputAssembly="false" Private="false"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-    <PackageReference Include="Sunder.Package.Build" Condition="'$(SunderUseSourceSdk)' == 'false'"
-                      PrivateAssets="all" ExcludeAssets="all" GeneratePathProperty="true" />
+    <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" ExcludeAssets="all" GeneratePathProperty="true" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
   </ItemGroup>
   <ItemGroup>

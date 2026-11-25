@@ -23,7 +23,7 @@ def commands(group):
     else:
         for path in sorted(ROOT.glob("scripts/test/release/test_*.py")):
             if path.name != "test_agent_ci.py": yield [sys.executable, "-B", str(path)]
-        for file in ("agent-release.fixture.py", "native-release.fixture.sh", "publish-registry-package.fixture.sh", "verify-nuget-package.fixture.sh"):
+        for file in ("agent-release.fixture.py", "native-family.fixture.py", "publish-registry-package.fixture.sh"):
             path = "scripts/test/release/" + file
             yield [sys.executable, "-B", path] if file.endswith(".py") else bash_runtime.command(path)
 

@@ -46,7 +46,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
         Assert.Equal(2, value.GetProperty("providerImports").GetArrayLength()); Assert.Single(value.GetProperty("platformImports").EnumerateArray());
         Assert.True(!value.TryGetProperty("packageApiImports", out var apis) || apis.GetArrayLength() == 0);
         Assert.Equal("required", Assert.Single(value.GetProperty("dependsOn").EnumerateArray()).GetProperty("presence").GetString());
-        await ProjectCanonicalWorker(worker, driver);
+        await ProjectCanonicalWorker(worker);
         var workspace = Directory.CreateDirectory(Path.Combine(root, "DockerProcessWorkspace")).FullName;
         await using (var candidate = new PackageWorkerPeer(root, Path.Combine(worker, "bin/worker-projection"), workspace, value))
         { await candidate.Prepare(); await candidate.Shutdown(); }

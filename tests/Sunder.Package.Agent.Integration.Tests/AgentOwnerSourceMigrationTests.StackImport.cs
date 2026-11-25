@@ -13,7 +13,9 @@ public sealed partial class AgentOwnerSourceMigrationTests
     {
         var platform = Assert.Single(receipt.GetProperty("platformImports").EnumerateArray());
         Assert.Equal("sunder.core", platform.GetProperty("authorityId").GetString());
-        Assert.Equal("1.1.0", platform.GetProperty("selectedAuthorityRelease").GetString());
+        using var selected = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(sourceRoot, "sunder-contracts.lock.json")));
+        var lockedPlatform = Assert.Single(selected.RootElement.GetProperty("platformImports").EnumerateObject()).Value;
+        Assert.Equal(lockedPlatform.GetProperty("selectedAuthorityRelease").GetString(), platform.GetProperty("selectedAuthorityRelease").GetString());
         Assert.Equal(new[] { "agent.stack.profiles", "agent.stack.workspaces" }, platform.GetProperty("providerRefs").EnumerateArray().Select(value => value.GetProperty("providerId").GetString()));
         var bundle = Assert.Single(receipt.GetProperty("bundles").EnumerateArray(), value => value.GetProperty("source").GetString() == "imported");
         Assert.Equal("sunder.stack.contributor", bundle.GetProperty("contractKey").GetString());
@@ -33,11 +35,6 @@ public sealed partial class AgentOwnerSourceMigrationTests
         var catalogBytes = File.ReadAllBytes(catalog!);
         Assert.Equal(Convert.ToHexStringLower(SHA256.HashData(catalogBytes)), platform.GetProperty("selectedAuthorityContentIdentity").GetString());
         var repository = RegressionTestRpcDescriptors.RepositoryRoot;
-        var core = Path.GetFullPath(Path.Combine(repository, "../sunder-core"));
-        var producerLocks = Directory.EnumerateFiles(Path.Combine(core, "languages/csharp/dotnet"), "packages.lock.json", SearchOption.AllDirectories)
-            .Where(path => !Path.GetRelativePath(core, path).Split(Path.DirectorySeparatorChar)
-                .Any(part => part is "bin" or "obj" or "artifacts"))
-            .ToDictionary(path => path, File.ReadAllBytes, StringComparer.Ordinal);
         var sandbox = Directory.CreateTempSubdirectory("sunder-agent-canonical-inputs-").FullName;
         // Use one physical identity for the cloned project and its resource
         // inputs; macOS exposes the temporary directory through /var as well.
@@ -49,7 +46,7 @@ public sealed partial class AgentOwnerSourceMigrationTests
             // An unchanged copy of the authored repository topology, not a test
             // project reconstructed from legacy Compile items. Mutations stay here.
             foreach (var file in Directory.EnumerateFiles(repository))
-                if (Path.GetExtension(file) is ".props" or ".targets" or ".config" || Path.GetFileName(file) is "global.json" or ".editorconfig")
+                if (Path.GetExtension(file) is ".props" or ".targets" || Path.GetFileName(file) is "NuGet.Config" or "global.json" or ".editorconfig")
                     File.Copy(file, Path.Combine(sandbox, Path.GetFileName(file)));
             CopySources(Path.Combine(repository, "src"), Path.Combine(sandbox, "src"));
             var projectRoot = Path.Combine(sandbox, "src/Sunder.Package.Agent");
@@ -60,19 +57,11 @@ public sealed partial class AgentOwnerSourceMigrationTests
             var baselinePath = Path.Combine(projectRoot, "sunder-contracts.owned.json");
             var locked = File.ReadAllBytes(lockPath);
             var baseline = File.ReadAllBytes(baselinePath);
-            var taskAssembly = BuilderSourceMigrationTests.CoreBuildTaskAssembly;
             var configuration = CanonicalPackageRoles.Configuration;
             var common = new[]
             {
                 "-p:Configuration=" + configuration, "-p:RuntimeIdentifier=" + RuntimeInformation.RuntimeIdentifier,
-                "-p:SunderContractCacheRoot=" + cache, "-p:SunderUseSourceSdk=true", "-p:BuildProjectReferences=false",
-                "-p:SunderSdkProject=" + Sdk("Sunder.Sdk"), "-p:SunderSdkWorkerProject=" + Sdk("Sunder.Sdk.Worker"),
-                "-p:SunderSdkAvaloniaProject=" + Sdk("Sunder.Sdk.Avalonia"), "-p:SunderSdkStacksProject=" + Sdk("Sunder.Sdk.Stacks"),
-                "-p:SunderPackageBuildTargets=" + Path.Combine(core, "languages/csharp/dotnet/packages/Sunder.Package.Build/build/Sunder.Package.Build.targets"),
-                "-p:SunderPackageBuildTaskAssembly=" + taskAssembly,
-                "-p:SunderPackageBuildTaskSourceIsImmutable=true",
-                "-p:SunderPackageBuildTaskShadowRoot=" + Path.Combine(sandbox, "artifacts/task-shadows"),
-                "-p:SunderPackageBuildTaskShadowStamp=" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(taskAssembly))),
+                "-p:SunderContractCacheRoot=" + cache, "-p:BuildProjectReferences=false", "-p:RestoreLockedMode=true",
                 // A persistent compiler can retain this temporary working directory on Windows.
                 "--disable-build-servers", "-p:UseSharedCompilation=false",
                 "-nodeReuse:false", "-nologo",
@@ -106,7 +95,6 @@ public sealed partial class AgentOwnerSourceMigrationTests
             Assert.Equal(locked, File.ReadAllBytes(lockPath));
             Assert.Equal(baseline, File.ReadAllBytes(baselinePath));
 
-            string Sdk(string name) => Path.Combine(core, "languages/csharp/dotnet/packages", name, name + ".csproj");
             string[] Snapshot() => Directory.GetFiles(generatedRoot, "*", SearchOption.AllDirectories).Order(StringComparer.Ordinal)
                 .Select(path => Path.GetRelativePath(projectRoot, path) + ":" + Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(path)))).ToArray();
             async Task Reject(string expected)
@@ -140,9 +128,6 @@ public sealed partial class AgentOwnerSourceMigrationTests
                 TraceOwnerPhase("stack-evidence:complete:" + command + ":" + process.ExitCode);
                 var diagnostic = $"{start.FileName} {string.Join(" ", start.ArgumentList)}\nWorking directory: {start.WorkingDirectory}\nExit code: {process.ExitCode}\n{text}";
                 lastCommandDiagnostic = diagnostic;
-                foreach (var (path, bytes) in producerLocks)
-                    Assert.True(bytes.AsSpan().SequenceEqual(File.ReadAllBytes(path)),
-                        "Consumer command changed a Core producer lock: " + Path.GetRelativePath(core, path));
                 if (expectedError is null) Assert.True(process.ExitCode == 0, diagnostic);
                 else
                 {

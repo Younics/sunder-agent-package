@@ -90,7 +90,6 @@ class ColdInputsTests(unittest.TestCase):
         self.calls = []
         self.bad_graph = self.bad_diagnostic = self.mutate_lock = False
         self.work = self.root / "cold"
-        self.mode = "package"
 
     def verify(self):
         return inputs.verify(self.source, self.bundle, self.manifest_sha, self.source_sha, self.core_sha)
@@ -105,14 +104,6 @@ class ColdInputsTests(unittest.TestCase):
             command = command[2:]
         else:
             self.assertIn(command[1], ("restore", "msbuild", "build"))
-        if command[1] == "build":
-            self.assertEqual(self.mode, "source")
-            self.assertTrue(command[2].endswith("Sunder.Package.Build.csproj"))
-            tools = Path(command[2]).parent / "bin/Release/future-framework"
-            tools.mkdir(parents=True)
-            for name in inputs.TOOL_FILES:
-                (tools / name).write_bytes(b"mock retained tool bytes")
-            return subprocess.CompletedProcess(command, 0)
         self.assertNotIn("-r", command)
         self.assertIn("-p:Configuration=Release", command)
         self.assertFalse(any(arg.startswith("-p:SunderAgentVersion=") for arg in command))
@@ -120,7 +111,7 @@ class ColdInputsTests(unittest.TestCase):
         if "-getProperty:TargetDir" in command:
             return subprocess.CompletedProcess(command, 0, str(Path(command[2]).parent / "bin/Release/future-framework"))
         if command[1] == "restore":
-            self.assertEqual("--locked-mode" in command, self.mode == "package")
+            self.assertIn("--locked-mode", command)
             return subprocess.CompletedProcess(command, 0)
         if any(arg.startswith("-getProperty:") for arg in command):
             path = self.root / (Path(command[2]).stem + "-assets.json")
@@ -145,7 +136,16 @@ class ColdInputsTests(unittest.TestCase):
                 patch.dict(os.environ, {"GH_TOKEN": "must-not-leak", "SUNDER_REGISTRY_API_KEY": "must-not-leak",
                                         "SUNDER_REGISTRY_PUBLISH_TOKEN": "must-not-leak"}), \
                 patch("sys.stdout", new_callable=io.StringIO):
-            inputs.prepare(self.source, self.bundle, self.work, self.mode, self.source_sha, self.core_sha, self.manifest_sha)
+            self.public_manifest(self.bundle)
+            inputs.prepare(self.source, self.bundle, self.work, self.source_sha, release.file_sha(self.bundle / inputs.MANIFEST))
+
+    def public_manifest(self, destination):
+        value = copy.deepcopy(self.manifest)
+        value.pop("core")
+        value.update(schemaVersion=4, packageIds=inputs.package_scope(self.source))
+        for item in [*value["candidates"], value["platformCatalog"]]:
+            item["asset"] = {key: item["asset"][key] for key in ("name", "size", "sha256")}
+        write(destination / inputs.MANIFEST, value)
 
     def test_exact_numeric_assets_and_complete_local_lock_entries(self):
         self.assertEqual(self.manifest, self.verify())
@@ -253,16 +253,6 @@ class ColdInputsTests(unittest.TestCase):
             self.prepare()
         self.assertFalse(self.calls)
 
-    def test_source_mode_retains_tools_before_offline_hydration(self):
-        self.mode = "source"
-        self.prepare()
-        tool_index = next(i for i, (command, _) in enumerate(self.calls) if command[:2] == ["dotnet", "build"])
-        first_hydration = next(i for i, (command, _) in enumerate(self.calls) if "-t:RestoreSunderContracts" in command)
-        self.assertLess(tool_index, first_hydration)
-        state = release.load(self.work / "cold-state.json")
-        self.assertIn("-p:SunderPackageBuildTaskSourceIsImmutable=true", state["properties"])
-        self.assertTrue(all((self.work / "tools" / name).is_file() for name in inputs.TOOL_FILES))
-
     def test_offline_build_and_fanin_inherit_identical_cache_and_properties(self):
         self.prepare()
         executed = []
@@ -288,7 +278,9 @@ class ColdInputsTests(unittest.TestCase):
                 patch.object(inputs, "verify_network_denial", side_effect=release.Invalid("launcher unavailable")), \
                 patch.object(inputs, "run") as execute:
             with self.assertRaisesRegex(release.Invalid, "launcher unavailable"):
-                inputs.prepare(self.source, self.bundle, self.work, "package", self.source_sha, self.core_sha, self.manifest_sha)
+                self.public_manifest(self.bundle)
+                inputs.prepare(self.source, self.bundle, self.work, self.source_sha,
+                               release.file_sha(self.bundle / inputs.MANIFEST))
             execute.assert_not_called()
 
     def test_authored_version_change_after_hydration_stops_before_build(self):

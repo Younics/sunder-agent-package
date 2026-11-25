@@ -1,25 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Automatically resolved Agent dependency inputs V2/V3",
+  "title": "Automatically resolved Agent artifact and catalog inputs",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "artifactSourceCommit", "lockSetSha256", "core", "candidates", "platformCatalog"],
+  "required": ["schemaVersion", "artifactSourceCommit", "lockSetSha256", "packageIds", "candidates", "platformCatalog"],
   "properties": {
-    "schemaVersion": { "enum": [2, 3] },
+    "schemaVersion": { "const": 4 },
     "packageIds": {
       "type": "array", "minItems": 1, "maxItems": 15, "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" }
     },
     "artifactSourceCommit": { "$ref": "#/$defs/commit" },
     "lockSetSha256": { "$ref": "#/$defs/sha256" },
-    "core": {
-      "type": "object", "additionalProperties": false,
-      "required": ["artifactSourceCommit", "buildToolVersion"],
-      "properties": {
-        "artifactSourceCommit": { "$ref": "#/$defs/commit" },
-        "buildToolVersion": { "$ref": "#/$defs/version" }
-      }
-    },
     "candidates": {
       "type": "array", "maxItems": 128,
       "items": {
@@ -45,9 +37,6 @@
       }
     }
   },
-  "if": { "properties": { "schemaVersion": { "const": 3 } } },
-  "then": { "required": ["packageIds"] },
-  "else": { "not": { "required": ["packageIds"] } },
   "$defs": {
     "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },

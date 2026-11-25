@@ -40,11 +40,7 @@
 
   <!-- Exact emitted-binding tests are tooling consumers. No authored package role
        receives a compile/runtime reference to the build implementation. -->
-  <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderBuildToolingProject)" PrivateAssets="all"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-  </ItemGroup>
-  <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(IsTestProject)' == 'true' and '$(SunderBuildToolingReference)' == 'true'">
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" ExcludeAssets="all" GeneratePathProperty="true" />
     <Reference Include="Sunder.Package.Build">
       <HintPath>$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll</HintPath>
@@ -52,43 +48,23 @@
     </Reference>
   </ItemGroup>
 
-  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkProject)"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-  </ItemGroup>
-
-  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true'">
     <PackageReference Include="Sunder.Sdk" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkStacksProject)"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderSdkStacksReference)' == 'true'">
     <PackageReference Include="Sunder.Sdk.Stacks" ExcludeAssets="buildTransitive" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkAvaloniaProject)"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderSdkAvaloniaReference)' == 'true'">
     <PackageReference Include="Sunder.Sdk.Avalonia" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(SunderSdkWorkerReference)' == 'true' and '$(SunderUseSourceSdk)' == 'true'">
-    <ProjectReference Include="$(SunderSdkWorkerProject)"
-                      GlobalPropertiesToRemove="Version;VersionPrefix;VersionSuffix;PackageVersion;InformationalVersion" />
-  </ItemGroup>
-
-  <ItemGroup Condition="'$(SunderSdkWorkerReference)' == 'true' and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderSdkWorkerReference)' == 'true'">
     <PackageReference Include="Sunder.Sdk.Worker" />
   </ItemGroup>
 
-  <ItemGroup Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false'">
+  <ItemGroup Condition="'$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true'">
     <PackageReference Include="Sunder.Package.Build" PrivateAssets="all" />
   </ItemGroup>
 
@@ -97,35 +73,20 @@
        required; ordinary restore populates the normal user cache. -->
   <PropertyGroup Condition="'$(MSBuildIsRestoring)' == 'true' and '$(SunderPackageProject)' == 'true'">
     <SunderContractInputsRoot Condition="'$(SunderContractInputsRoot)' == ''">$(MSBuildThisFileDirectory).sunder/contract-inputs</SunderContractInputsRoot>
-    <SunderPackageCandidatePath Condition="'$(SunderPackageCandidatePath)' == ''">$(SunderContractInputsRoot)/younics.ai.agent.2.0.0.sunderpkg</SunderPackageCandidatePath>
     <SunderPlatformCatalogPath Condition="'$(SunderPlatformCatalogPath)' == ''">$(SunderContractInputsRoot)/sunder-platform-contracts.v1.json</SunderPlatformCatalogPath>
   </PropertyGroup>
 
-  <Target Name="ValidateSunderSdkMode"
+  <Target Name="ValidateAgentPackageRole"
           BeforeTargets="_GenerateRestoreProjectPathWalk;CollectPackageReferences;PrepareForBuild">
     <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageRole)' != 'test'"
            Text="SunderPackageRole must be unset for canonical package projects or 'test' for test projects, but was '$(SunderPackageRole)'." />
     <Error Condition="'$(SunderPackageRole)' != '' and '$(SunderPackageFamilyId)' == ''"
            Text="SunderPackageFamilyId is required when SunderPackageRole is set." />
-    <Error Condition="'$(SunderUseSourceSdk)' != 'true' and '$(SunderUseSourceSdk)' != 'false'"
-           Text="SunderUseSourceSdk must be 'true' or 'false', but was '$(SunderUseSourceSdk)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderSdkReference)' == 'true') and !Exists('$(SunderSdkProject)')"
-           Text="SunderUseSourceSdk is true, but the Sunder SDK project was not found at '$(SunderSdkProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkStacksReference)' == 'true' and !Exists('$(SunderSdkStacksProject)')"
-            Text="SunderUseSourceSdk is true, but the Sunder Stack SDK project was not found at '$(SunderSdkStacksProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkAvaloniaReference)' == 'true' and !Exists('$(SunderSdkAvaloniaProject)')"
-           Text="SunderUseSourceSdk is true, but the Sunder Avalonia SDK project was not found at '$(SunderSdkAvaloniaProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and '$(SunderSdkWorkerReference)' == 'true' and !Exists('$(SunderSdkWorkerProject)')"
-           Text="SunderUseSourceSdk is true, but the Sunder Worker SDK project was not found at '$(SunderSdkWorkerProject)'." />
-    <Error Condition="'$(SunderUseSourceSdk)' == 'true' and ('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and !Exists('$(SunderPackageBuildTargets)')"
-            Text="SunderUseSourceSdk is true, but the Sunder package build targets were not found at '$(SunderPackageBuildTargets)'." />
   </Target>
 
-  <Import Project="$(SunderPackageBuildTargets)"
-          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'true' and Exists('$(SunderPackageBuildTargets)')" />
   <!-- NuGet excludes PackageReference build imports during restore. Resolve the
        same centrally pinned tooling SDK explicitly on that cold path; ordinary
        warm builds already imported these targets from PackageReference. -->
   <Import Project="../buildTransitive/Sunder.Package.Build.targets" Sdk="Sunder.Package.Build"
-          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(SunderUseSourceSdk)' == 'false' and '$(_SunderPackageBuildTargetsImported)' != 'true'" />
+          Condition="('$(SunderPackageProject)' == 'true' or '$(SunderPackageBuildReference)' == 'true') and '$(_SunderPackageBuildTargetsImported)' != 'true'" />
 </Project>

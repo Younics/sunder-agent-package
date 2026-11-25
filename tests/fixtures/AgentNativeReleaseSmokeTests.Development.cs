@@ -2,11 +2,11 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
-using Sunder.Core.TestSupport;
 using Sunder.Package.Format;
 using Sunder.Runtime.Contracts;
 using Sunder.Runtime.Host.Services;
 using Sunder.Runtime.LocalState;
+using Sunder.Sdk.Rpc;
 using Xunit;
 
 namespace Sunder.Runtime.Host.Tests;
@@ -26,8 +26,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var root = Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sunder-native-development-" + Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var receipt = await executionRuntimes.EnsureDotNetAsync(WorkerRuntimeVersion);
-        var runtimeHost = CreateNativeRuntimeHost(paths, executionRuntimes, out var diagnostics, out var appConnection);
+        var runtimeHost = CreateNativeRuntimeHost(paths, out var diagnostics, out var appConnection);
         var services = runtimeHost.Services;
         var owner = services.GetRequiredService<RuntimeSessionOwner>();
         var sessions = services.GetRequiredService<PackageSessionLifecycleService>();
@@ -40,6 +39,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             await installed.InitializeAsync();
             initialized = true;
+            var receipt = await ProvisionWorkerRuntimeAsync(services);
             var folders = new Dictionary<string, string>(StringComparer.Ordinal);
             var projections = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var (packageId, archive) in archives)
@@ -61,27 +61,48 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 archives.Keys.Select(id => id + ": " + diagnostics.DescribeStandardError(id))));
             Assert.Empty(await installed.GetInstalledAsync());
             AssertSamePackageIds(archives.Keys, GetWorkers(owner).Keys);
+            VerifyActiveFamily(services, rid);
             Assert.All(owner.State.ActiveSession.LoadedPackageMap.Values, package =>
             {
                 Assert.Equal(PackageSourceKind.Dev, package.Source.Kind);
                 Assert.True(package.Source.DevelopmentImports!.IsLocal);
-                CurrentRidRuntimeHostTestSupport.AssertRuntimeLaunch(package, receipt, executionRuntimes);
+                CurrentRidRuntimeHostTestSupport.AssertRuntimeLaunch(package, receipt, services);
             });
             // Observe the staged replacement before activation, preserving the
             // real process-start-to-activation timing boundary used by the budget.
             var initial = CaptureWorkers(owner, observed, temporary);
+            var ui = services.GetRequiredService<RuntimePackageUiService>();
+            var originalSnapshot = Assert.Single(ui.GetActiveSnapshots(rid), item => item.PackageId == AgentPackageId);
+            var snapshotPath = Path.Combine(root, "agent.snapshot");
+            using (var lease = ui.AcquireCurrent(originalSnapshot.SnapshotId))
+            {
+                Assert.NotNull(lease);
+                await using var destination = new FileStream(snapshotPath, FileMode.CreateNew);
+                using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                await lease.Stream.CopyToAsync(destination, deadline.Token);
+            }
+            Assert.Equal(originalSnapshot.ContentHash, Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(snapshotPath))));
             var stage = await sessions.StageAsync(new PackageLifecycleStageRequest(archives.Keys.ToArray()));
             Assert.True(stage.Success, string.Join(Environment.NewLine, stage.Errors));
             var staged = GetWorkers(Assert.IsType<ActivePackageSession>(sessions.GetStagedSession(stage.StageId!)));
             AssertSamePackageIds(archives.Keys, staged.Keys);
+            var oldWorkers = GetWorkers(owner);
+            Assert.All(staged, pair =>
+            {
+                Assert.NotSame(oldWorkers[pair.Key], pair.Value);
+                Assert.False(pair.Value.ActivationCompletion.IsCompleted);
+            });
             var measurements = staged.ToDictionary(pair => pair.Key, pair => CaptureActivationMeasurement(pair.Value));
             var reload = await sessions.CommitStageAsync(stage.StageId!);
             CaptureWorkers(owner, observed, temporary);
             Assert.True(reload.Success, string.Join(Environment.NewLine, reload.Errors));
+            VerifyActiveFamily(services, rid);
+            Assert.All(staged, pair => Assert.Same(pair.Value, GetWorkers(owner)[pair.Key]));
             await AssertWorkersStoppedAsync(initial);
             await RecordWorkerMetricsAsync(GetWorkers(owner), projections, archives, rid, measurements, metrics, observed, temporary);
             VerifyDatabases();
             owner.MarkReady();
+            await VerifySupervisedSnapshotAsync(services, paths, appConnection, originalSnapshot, snapshotPath, rid, metrics, root);
             await VerifyOwnerUnaryAndStreamAsync(services, owner, rid, appConnection, root);
             await VerifyCallbackAndAuthAsync(services, owner);
             var crashed = await VerifyCrashIsolationAsync(owner, observed, temporary);
@@ -94,6 +115,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             CaptureWorkers(owner, observed, temporary);
             Assert.True(recovered.Success, string.Join(Environment.NewLine, recovered.Errors));
             AssertSamePackageIds(archives.Keys, GetWorkers(owner).Keys);
+            VerifyActiveFamily(services, rid);
             AssertReplacementProcess(crashed, GetWorkers(owner)[ShellPackageId]);
             Assert.Empty(await installed.GetInstalledAsync());
             VerifyDatabases();
@@ -126,6 +148,78 @@ public sealed partial class AgentNativeReleaseSmokeTests
         }
     }
 
+    private static void VerifyActiveFamily(IServiceProvider services, string rid)
+    {
+        using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
+            RequiredMakerPath("SUNDER_AGENT_REPOSITORY_ROOT", directory: true), "compatibility/agent-current-inventory.json")));
+        var packages = inventory.RootElement.GetProperty("packages").EnumerateArray().ToArray();
+        AssertSamePackageIds(packages.Where(row => row.GetProperty("hasApp").GetBoolean()).Select(row => row.GetProperty("packageId").GetString()!),
+            services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid).Select(item => item.PackageId));
+        var expected = packages.SelectMany(row => row.GetProperty("providers").EnumerateObject().Select(provider =>
+            (PackageId: row.GetProperty("packageId").GetString()!, ProviderId: provider.Name, ContractId: provider.Value.GetString()!)));
+        var active = services.GetRequiredService<RuntimeRpcCatalog>().GetSnapshot().Providers;
+        Assert.All(active, item => Assert.Equal(SunderRpcProviderState.Active, item.State));
+        Assert.Equal(expected.Order(),
+            active.Select(item => (item.PackageId, item.ProviderId, item.ContractId)).Order());
+    }
+
+    private static async Task VerifySupervisedSnapshotAsync(IServiceProvider services, RuntimePackagePaths paths,
+        RuntimeConnectionInfo connection, PackageUiSnapshotDescriptor original, string snapshotPath, string rid, string metrics, string root)
+    {
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        var snapshot = Assert.Single(services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid),
+            row => row.PackageId == AgentPackageId);
+        Assert.Equal(original.ContentHash, snapshot.ContentHash);
+        Assert.Equal(original.SourceContentIdentity, snapshot.SourceContentIdentity);
+        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(original.Target), JsonSerializer.SerializeToElement(snapshot.Target)));
+        var package = Assert.Single(services.GetRequiredService<PackageSessionLifecycleService>().GetActivePackages(), row => row.PackageId == AgentPackageId);
+        var connectionPath = Path.Combine(root, "snapshot-connection.json");
+        RuntimeConnectionInfoStore.Save(connection, connectionPath);
+        var config = Path.Combine(root, "snapshot-config.json");
+        await File.WriteAllBytesAsync(config, JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            connectionPath, package, snapshot, snapshotPath,
+            sessionRoot = Path.Combine(root, "app-session"),
+            runtimeRoot = paths.RootPath,
+        }, new JsonSerializerOptions(JsonSerializerDefaults.Web)), deadline.Token);
+        var assembly = (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "sunder-agent-native-app-target-path.txt"), deadline.Token)).Trim();
+        var start = CreateNativeAppStartInfo(assembly, root);
+        start.RedirectStandardInput = true;
+        foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("SUNDER_", StringComparison.OrdinalIgnoreCase)
+            || key is "GH_TOKEN" or "GITHUB_TOKEN" || key.StartsWith("DOTNET_STARTUP_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        start.Environment["DOTNET_STARTUP_HOOKS"] = Path.Combine(AppContext.BaseDirectory, "agent-native-app-hook", "Sunder.App.Tests.dll");
+        start.Environment["SUNDER_TEST_AGENT_FAMILY_APP_CONFIG"] = config;
+        start.Environment["SUNDER_APP_STATE_ROOT"] = Path.Combine(root, "snapshot-app-state");
+        start.Environment[RuntimeLocalState.StateRootEnvironmentVariable] = paths.RootPath;
+        start.Environment["DOTNET_DbgEnableMiniDump"] = "0";
+        var logs = Path.Combine(metrics, "apps", "agent-snapshot");
+        await using var child = CapturedProcess.Start(start, 256 * 1024, logs);
+        try
+        {
+            await child.WaitForOutputAsync(output => output.Contains("agent-family-app: materialized-and-activated", StringComparison.Ordinal),
+                TimeSpan.FromSeconds(90), deadline.Token);
+            var policyRoot = Path.Combine(paths.RootPath, RuntimeV1StateDescriptor.AppPolicySessionsDirectory);
+            using (var proof = JsonDocument.Parse(await File.ReadAllBytesAsync(Assert.Single(Directory.GetFiles(policyRoot, "*.json")), deadline.Token)))
+            {
+                Assert.Equal(child.Id, proof.RootElement.GetProperty("process").GetProperty("processId").GetInt32());
+                Assert.Equal(child.Id, proof.RootElement.GetProperty("peer").GetProperty("processId").GetInt32());
+                var loaded = Assert.Single(proof.RootElement.GetProperty("loaded").EnumerateArray());
+                Assert.Equal(AgentPackageId, loaded.GetProperty("package").GetProperty("packageId").GetString());
+                Assert.True(loaded.GetProperty("development").GetBoolean());
+                Assert.True(!loaded.TryGetProperty("registryOrigin", out var origin) || origin.ValueKind == JsonValueKind.Null);
+                Assert.NotEmpty(proof.RootElement.GetProperty("activations").EnumerateArray());
+            }
+            child.Process.StandardInput.Close();
+            var result = await child.EnsureSuccessAsync(TimeSpan.FromSeconds(45), deadline.Token);
+            Assert.Contains("agent-family-app: retired", result.StandardOutput, StringComparison.Ordinal);
+            await services.GetRequiredService<AppProcessPolicySessions>().EnforceAsync(deadline.Token);
+            Assert.Empty(Directory.GetFiles(policyRoot, "*.json"));
+            Assert.Empty(await services.GetRequiredService<InstalledPackageLifecycleService>().GetInstalledAsync(deadline.Token));
+        }
+        finally { await File.WriteAllTextAsync(Path.Combine(logs, "process.txt"), child.Diagnostics); }
+    }
+
     private static async Task VerifyMcpAppJsonHighlightingAsync(string archive, string rid, string metrics)
     {
         var root = Directory.CreateTempSubdirectory("sunder-mcp-app-projection-");
@@ -143,9 +237,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 validation.ContentIndex!, key, deadline.Token);
 
             var assembly = (await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "sunder-agent-native-app-target-path.txt"), deadline.Token)).Trim();
-            var executable = Path.Combine(Path.GetDirectoryName(assembly)!, OperatingSystem.IsWindows() ? "Sunder.App.exe" : "Sunder.App");
             var hook = Path.Combine(AppContext.BaseDirectory, "agent-native-app-hook", "Sunder.App.Tests.dll");
-            var start = new ProcessStartInfo(executable) { UseShellExecute = false, WorkingDirectory = physicalRoot };
+            var start = CreateNativeAppStartInfo(assembly, physicalRoot);
             foreach (var name in start.Environment.Keys.ToArray())
             {
                 if (name.StartsWith("DYLD_", StringComparison.Ordinal) || name.StartsWith("SUNDER_REGISTRY_", StringComparison.Ordinal)

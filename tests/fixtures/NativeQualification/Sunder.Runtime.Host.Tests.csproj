@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+    <!-- The shipped Host exposes its test internals to this assembly. -->
+    <AssemblyName>Sunder.Runtime.Host.Tests</AssemblyName>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <SunderAgentNativeReleaseTestSource>$(MSBuildThisFileDirectory)../AgentNativeReleaseSmokeTests.cs</SunderAgentNativeReleaseTestSource>
+    <SunderAgentNativeAppTargetPath>$(SunderPublishedAppDirectory)/Sunder.App.dll</SunderAgentNativeAppTargetPath>
+    <_QualifiedExecutableExtension Condition="$([MSBuild]::IsOSPlatform('Windows'))">.exe</_QualifiedExecutableExtension>
+    <_QualifiedGuardian>$(SunderPublishedHostDirectory)/Sunder.Runtime.Host$(_QualifiedExecutableExtension)</_QualifiedGuardian>
+    <SunderAgentNativeAppLaunchPath>$(SunderAgentNativeAppTargetPath)</SunderAgentNativeAppLaunchPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <Compile Include="QualifiedNativeSupport.cs;CapturedProcess.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(SunderPublishedHostDirectory)' != '' and '$(SunderPublishedAppDirectory)' != ''">
+    <_QualifiedHost Include="$(SunderPublishedHostDirectory)/Sunder.*.dll" />
+    <_QualifiedApp Include="$(SunderPublishedAppDirectory)/Sunder.*.dll;$(SunderPublishedAppDirectory)/Avalonia*.dll;$(SunderPublishedAppDirectory)/Velopack.dll" />
+    <_QualifiedApp Remove="@(_QualifiedHost->'$(SunderPublishedAppDirectory)/%(Filename)%(Extension)');$(SunderAgentNativeAppTargetPath)" />
+    <Reference Include="@(_QualifiedHost);@(_QualifiedApp)" />
+  </ItemGroup>
+  <Target Name="RequirePublishedQualification" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(SunderAgentNativeAppTargetPath)') or !Exists('$(_QualifiedGuardian)')"
+           Text="Prepare the published native App and its bundled Runtime Host first." />
+  </Target>
+  <Target Name="StageBundledGuardian" AfterTargets="Build">
+    <!-- The Host locates its native guardian next to its own assembly. Only the
+         Host closure is staged here; the signed App bundle is not modified. -->
+    <ItemGroup>
+      <_GuardianPayload Include="$(SunderPublishedHostDirectory)/*"
+                        Exclude="@(_QualifiedHost)" />
+      <_GuardianPayload Remove="@(_GuardianPayload)" Condition="Exists('$(TargetDir)%(_GuardianPayload.Filename)%(_GuardianPayload.Extension)')" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_GuardianPayload)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+  <Import Project="../../../scripts/release/Sunder.Agent.NativeReleaseTests.targets" />
+</Project>

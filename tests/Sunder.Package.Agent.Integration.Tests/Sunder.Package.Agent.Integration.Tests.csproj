@@ -1,11 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <SunderSdkAvaloniaReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkAvaloniaReference>
-    <SunderSdkReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkReference>
-    <SunderSdkStacksReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderSdkStacksReference>
-    <SunderBuildToolingReference Condition="'$(SunderUseSourceSdk)' == 'true'">true</SunderBuildToolingReference>
-    <IsTestProject Condition="'$(SunderUseSourceSdk)' != 'true'">false</IsTestProject>
-    <EnableDefaultCompileItems Condition="'$(SunderUseSourceSdk)' != 'true'">false</EnableDefaultCompileItems>
+    <SunderSdkAvaloniaReference>true</SunderSdkAvaloniaReference>
+    <SunderSdkReference>true</SunderSdkReference>
+    <SunderSdkStacksReference>true</SunderSdkStacksReference>
+    <SunderBuildToolingReference>true</SunderBuildToolingReference>
     <SunderTestOwner>agent-family</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;HTTP;PackageArchive;Process;SQLite;Worker</SunderTestCapabilities>
@@ -14,7 +12,7 @@
     <SunderTestSourceMode>true</SunderTestSourceMode>
     <SunderTestPackageMode>false</SunderTestPackageMode>
   </PropertyGroup>
-  <ItemGroup Condition="'$(SunderUseSourceSdk)' == 'true'">
+  <ItemGroup>
     <None Update="xunit.runner.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../Shared/Repository/*.cs;../Shared/Canonical/*.cs;../Shared/Composition/*.cs;../Shared/Presentation/*.cs;../Shared/Consumers/*.cs;../Shared/Platform/*.cs;../Shared/Execution/GeneratedToolSourceProbe.cs;../Shared/Execution/AgentRoleRunControls.cs"
              Link="TestSupport/%(Filename)%(Extension)" />
@@ -55,7 +53,13 @@
     <PackageReference Include="OpenAI" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" PrivateAssets="all" />
+    <Reference Include="Sunder.Package.Format" HintPath="$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Format.dll" />
   </ItemGroup>
-  <Import Project="../RegressionTestHarness.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
-  <Import Project="../PackageContextFixtures.props" Condition="'$(SunderUseSourceSdk)' == 'true'" />
+  <Import Project="../RegressionTestHarness.props" />
+  <Import Project="../PackageContextFixtures.props" />
+  <Target Name="RecordFixtureToolLocation" AfterTargets="Build">
+    <WriteLinesToFile File="$(TargetDir)sunder-build-task-path.txt"
+                      Lines="$(PkgSunder_Package_Build)/tasks/net10.0/Sunder.Package.Build.dll"
+                      Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
 </Project>

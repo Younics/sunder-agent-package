@@ -101,7 +101,7 @@ class SelectivePipelineTests(unittest.TestCase):
                    for row in sorted(self.records, key=lambda row: row["packageId"])]
         for rid in pipeline.native_execution.RIDS:
             metrics = self.directory / "installed-fixture-metrics" / rid
-            value, documents = native_documents(records, rid, self.env["CORE_COMMIT"], "published", self.plan["registryOrigin"])
+            value, documents = native_documents(records, rid, None, "published", self.plan["registryOrigin"])
             for name, data in documents.items():
                 path = metrics / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -353,7 +353,7 @@ class SelectivePipelineTests(unittest.TestCase):
         value = dict(invocation=dict(releaseId=42), artifacts=self.records)
         proposed = pipeline.cohort_request(self.plan, value, 8)
         path = self.directory / pipeline.REQUEST
-        with patch.dict(os.environ, self.env), patch.object(sys, "argv", ["agent_pipeline.py", "guard", "--core", str(self.directory), "--directory", str(self.directory)]), \
+        with patch.dict(os.environ, self.env), patch.object(sys, "argv", ["agent_pipeline.py", "guard", "--directory", str(self.directory)]), \
              patch.object(selection, "load", return_value=self.plan), \
              patch.object(pipeline, "verified", return_value=(self.targets, [dict(draft=True)], value)):
             for tags in ([], proposed["distTags"][:1], proposed["distTags"]):

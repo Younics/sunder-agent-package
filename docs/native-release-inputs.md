@@ -41,16 +41,13 @@ integrity, roles, and App native dependency closure before the native matrix
 starts. Each native job verifies its inputs match the inspected archive records
 before executing, without downloading a second copy alongside the producer ZIPs.
 It does not call `GetSunderPackageRoleInputs` after Build: that target depends on
-Build. NuGet mode is the default (`SunderUseSourceSdk=false`). `NUGET_SOURCE`, when
-set, selects the explicit producer restore source.
+Build. The only SDK source is the declared public NuGet feed.
 
 The producer invokes `agent_ci.py prepare` before its first Build. It allocates a
 new isolated Sunder home/cache, validates automatically resolved candidates/catalog
-against the committed locks, hydrates through Core, and routes Build through that
-same prepared state. In NuGet mode, preparation selects and hash-binds the complete
-installed Build task set from the locked package, including its analyzer. All six
-producers and composition use those identical published bytes. The platform-specific
-Core handoff supplies the test driver and source-mode tools. No operator manifest locator, source SHA or
+against the committed locks, hydrates through the published Build package, and routes
+Build through that same prepared state. All six producers and composition restore
+the declared packages normally. No operator manifest locator, dependency checkout or
 offline-runner hash is required. A warm cache cannot replace selected input bytes.
 Explicit denied-network diagnostics remain in [cold acceptance](cold-release-inputs.md),
 not in the ordinary production native path.
@@ -132,7 +129,7 @@ bytes but may have tested a current-RID projection.
 
 ### Two-phase execution authority
 
-`run-native-runtime-smoke.sh <core> <archives> <new-results> <core-commit> development`
+`run-native-runtime-smoke.sh <archives> <new-results> development`
 uses supported local development-import preparation for the exact final archives.
 It does not install unpublished packages or fabricate Registry observations. The
 required methods exercise every Worker and Maker's separate create → author
@@ -146,14 +143,14 @@ Worker runtime under test and the installed-size ceiling are pinned in
 [`eng/ci/native-release.json`](../eng/ci/native-release.json), independently of
 package versions and the build SDK.
 
-`prepare_maker_inputs.py` builds an isolated App and exports the selected source
-catalog; development mode also packs and metadata-verifies all six Core authoring
-NuGets at their independently authored versions. Schema-2 `inputs.json` binds the
-App/catalog/feed hashes and exact Core commit. Release qualification requires clean
-Core source. Existing outputs and failed reports are never replaced; use a new
-results directory for a new attempt. Build children receive no GitHub/Registry
-credentials. The test-only RPC hook runs inside the actual App image and retains
-production OS-peer admission, load permits, role permissions and scoped content checks.
+`prepare_maker_inputs.py` stages the published App/Host, the selected platform
+catalog and, in development mode, the authoring packages restored from
+[`maker-nuget.lock.json`](../eng/ci/maker-nuget.lock.json). Maker's template pins
+its own toolset; Agent's Build dependency does not replace it. `inputs.json`
+records the App release asset, catalog and actual Maker test inputs. Existing
+outputs and failed reports are never replaced. The test-only RPC and snapshot hooks
+runs inside the actual native App and retains OS-peer admission, load permits,
+role permissions, and scoped content checks.
 
 Schema 6 adds `execution` to each RID run: exact TRX method identities, development
 scope, archive hashes, Maker jobs/journey and preparation/catalog records. `finalize`
@@ -184,13 +181,12 @@ update and deployed recovery acceptance remain additional gates.
 ## Fan-in prerequisites and execution
 
 Before composing a selected package, `agent_ci.py prepare` explicitly restores its
-canonical project with the same SDK, dependency locks and source mode used by the
+canonical project with the same declared SDK and dependency locks used by the
 producers, including all declared RID graphs. The equivalent NuGet restore is:
 
 ```sh
-dotnet restore <canonical-project.csproj> --locked-mode --source "$NUGET_SOURCE" \
-  -p:Configuration=Release -p:SunderUseSourceSdk=false -p:RestoreLockedMode=true \
-   -p:ContinuousIntegrationBuild=true
+dotnet restore <canonical-project.csproj> --locked-mode --configfile NuGet.Config \
+  -p:Configuration=Release -p:ContinuousIntegrationBuild=true
 ```
 
 Then `compose-component` validates all six retained leaves and packs the package once.
@@ -216,23 +212,6 @@ After all six platforms have smoked the exact final family, `finalize` verifies
 their complete schema-6 handoffs and writes `native-test-evidence.json`. It does
 not Pack again. `verify` rechecks those archives before publication. The retained
 `record`/`assemble` commands support earlier current-RID schema-3/4 callers.
-
-### Explicit immutable tools for workspace callers
-
-For source-workspace operations, set these variables consistently on producers and
-fan-in (and explicitly restore in that same source mode before fan-in):
-
-```sh
-export SUNDER_NATIVE_USE_SOURCE_SDK=true
-export SUNDER_NATIVE_TASK_ASSEMBLY=/retained/core-tasks/Sunder.Package.Build.dll
-```
-
-Build and retain the **complete exact task set separately**, before entering these
-operations. The helper checks the eight managed task/dependency assemblies and
-passes `SunderPackageBuildTaskAssembly` plus
-`SunderPackageBuildTaskSourceIsImmutable=true`. Core checks their actual contents.
-Do not point this at mutable outputs being rebuilt concurrently. Installed NuGet
-toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 
 ### Transport and publication behavior
 
@@ -266,8 +245,8 @@ toolsets are selected by Core normally. Fan-in never bootstraps source tooling.
 The entry points in [releases](RELEASES.md) enforce this ordering:
 
 1. Provision Python 3.9+ on producer and fan-in runners, alongside existing tools.
-2. Use the same reviewed/frozen source, exact restored SDK/tool inputs and reference
-   mode on all native jobs and composition. Prepare Core tools once per platform.
+2. Use the same reviewed Agent source and declared public NuGet dependencies on
+   all native jobs and composition.
 3. Retain `agent-leaf-<package>-<rid>` and `agent-candidate-<package>` artifacts.
    Final smoke uses `sunder-agent-native-<rid>` containing
    `native-leaf-evidence-<rid>.json` and `native-leaves-<rid>.tar.gz`. Merge exactly

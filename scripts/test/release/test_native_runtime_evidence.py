@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
 import native_runtime_evidence as evidence
+import published_app
 
 
 def trx(mode):
@@ -29,14 +30,17 @@ def native_documents(records, rid, core, mode="development", registry="https://r
     from native_release_inputs import digest
     encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
     catalog = b"synthetic catalog transport bytes"
-    inputs = dict(schemaVersion=2, coreCommit=core, workingTreeClean=True,
-                  packages=[dict(name=f"package-{index}.nupkg", sha256=str(index) * 64) for index in range(6)],
+    app = published_app.selection(rid) if core is None else None
+    material = dict(schemaVersion=3, app=dict(rid=rid, artifact=app)) if app else dict(schemaVersion=2, coreCommit=core, workingTreeClean=True)
+    inputs = dict(material, packages=[dict(name=f"package-{index}.nupkg", sha256=str(index) * 64) for index in range(6)],
                   platformCatalog=dict(path="sunder-platform-contracts.v1.json", size=len(catalog), sha256=digest(catalog)))
     scope = dict(schemaVersion=1, rid=rid, profile=evidence.PROFILES[mode], installedAcceptance=mode == "published",
                  registryOrigin=None if mode == "development" else registry, archives=records)
     documents = {"native-family.trx": ET.tostring(trx(mode)), "scope/qualification.json": encode(scope),
                  "maker-inputs/inputs.json": encode(inputs), "maker-inputs/sunder-platform-contracts.v1.json": catalog}
     if mode == "development":
+        if app:
+            documents["apps/agent-snapshot/process.txt"] = b"agent-family-app: materialized-and-activated\nagent-family-app: retired\n"
         owner = next(row for row in records if row["packageId"] == "younics.sunder.package.maker")
         journey = dict(schemaVersion=1, rid=rid, withoutAgent=True, profile=evidence.PROFILES[mode], installedAcceptance=False,
                        callerBoundary="supervised-native-app-rpc", makerViewAcceptance=False, operations=evidence.OPERATIONS,
@@ -58,7 +62,8 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                 archive=row["archive"], archiveBytes=row["size"], capturedAtUtc="2026-11-14T00:00:00Z", currentRidInstalledBytes=1,
                 startupMilliseconds=1.5, workerProcessCount=1, workerRssBytes=1), thresholds=dict(expectedWorkerProcessCount=1,
                 maximumArchiveBytes=row["size"], maximumCurrentRidInstalledBytes=1, maximumStartupMilliseconds=2.0, maximumWorkerRssBytes=1)))
-    receipt = dict(schemaVersion=1, coreCommit=core, rid=rid, profile=scope["profile"], installedAcceptance=scope["installedAcceptance"],
+    identity = dict(schemaVersion=2, appArtifact=app) if app else dict(schemaVersion=1, coreCommit=core)
+    receipt = dict(identity, rid=rid, profile=scope["profile"], installedAcceptance=scope["installedAcceptance"],
                    registryOrigin=scope["registryOrigin"], archives=records, tests=evidence.tests(mode),
                    reports=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(documents.items())])
     return receipt, documents
@@ -103,27 +108,27 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
             handoff = root / "handoff"
             for rid in evidence.RIDS:
                 metrics = root / rid
-                receipt, documents = native_documents(records, rid, "c" * 40, "published")
+                receipt, documents = native_documents(records, rid, None, "published")
                 for name, data in documents.items():
                     path = metrics / name
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(data)
                 (metrics / evidence.RECEIPT).write_bytes(compact(receipt))
                 evidence.export_installed(metrics, handoff / ("native-installed-" + rid + ".tar.gz"))
-            result = evidence.installed_set(handoff, records, "c" * 40, "https://registry.example")
-            self.assertEqual(6, len(result["nativeRuns"]))
-            for records_input, core, registry in (([], "c" * 40, "https://registry.example"),
-                (records, "b" * 40, "https://registry.example"), (records, "c" * 40, "https://other.example")):
+            result = evidence.installed_set(handoff, records, None, "https://registry.example")
+            self.assertEqual(set(evidence.RIDS), {row["rid"] for row in result["nativeRuns"]})
+            for records_input, core, registry in (([], None, "https://registry.example"),
+                (records, "b" * 40, "https://registry.example"), (records, None, "https://other.example")):
                 with self.assertRaises(ValueError): evidence.installed_set(handoff, records_input, core, registry)
             path = handoff / ("native-installed-" + evidence.RIDS[0] + ".json")
             original = path.read_bytes()
             path.unlink()
-            with self.assertRaises(ValueError): evidence.installed_set(handoff, records, "c" * 40, "https://registry.example")
+            with self.assertRaises(ValueError): evidence.installed_set(handoff, records, None, "https://registry.example")
             path.write_bytes(original)
             value = json.loads(original)
             value["profile"] = evidence.PROFILES["development"]
             path.write_bytes(compact(value))
-            with self.assertRaises(ValueError): evidence.installed_set(handoff, records, "c" * 40, "https://registry.example")
+            with self.assertRaises(ValueError): evidence.installed_set(handoff, records, None, "https://registry.example")
 
     def test_receipts_bind_original_reports_and_cannot_relabel_prior_evidence(self):
         records = [dict(packageId="younics.sunder.package.maker", archive="maker.sunderpkg", size=1, sha256="a" * 64)]

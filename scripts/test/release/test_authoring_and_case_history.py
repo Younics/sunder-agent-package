@@ -62,15 +62,7 @@ class OwnerAuthoringTests(unittest.TestCase):
     def setUp(self):
         fixture_setup(self)
         self.owner = self.rows[0]["packageId"]
-        self.core = self.root / "sunder-core"
-        self.core.mkdir()
-        git(self.core, "init", "-q")
-        (self.core / "fixture").write_text("published source")
-        self.core_sha = commit(self.core, "Core source")
         git(self.source, "init", "-q")
-        lock = (self.source / self.rows[0]["projectPath"]).with_name("packages.release.lock.json")
-        lock.write_text(json.dumps(dict(dependencies={"future-framework": {"Sunder.Package.Build": dict(
-            type="Direct", resolved="4.5.6", contentHash="fixture-hash")}})))
         self.source_sha = commit(self.source, "Source with an import-free project")
         self.output = self.root / "authoring"
         evaluated = patch.object(author.agent_selection, "evaluated_packages")
@@ -81,7 +73,7 @@ class OwnerAuthoringTests(unittest.TestCase):
         self.addCleanup(graph.stop)
 
     def prepare(self, package=None):
-        return author.prepare(self.source, package or self.owner, self.source_sha, self.core_sha, self.output)
+        return author.prepare(self.source, package or self.owner, self.source_sha, self.output)
 
     def test_owner_authoring_uses_only_the_published_catalog_and_exact_scoped_locks(self):
         with patch.object(author.dependency_inputs, "releases") as releases, \
@@ -89,16 +81,15 @@ class OwnerAuthoringTests(unittest.TestCase):
                  redirect_stdout(io.StringIO()):
             result = self.prepare()
         self.assertEqual(self.owner, result["package"])
-        value = inputs.verify(self.source, self.output, result["sha256"], self.source_sha, self.core_sha, [self.owner])
+        value = inputs.verify(self.source, self.output, result["sha256"], self.source_sha, packages=[self.owner])
         self.assertEqual([], value["candidates"])
-        self.assertEqual("4.5.6", value["core"]["buildToolVersion"])
         self.assertEqual([self.owner], value["packageIds"])
         self.assertEqual([self.rows[0]["projectPath"]], self.graph.call_args.args[1])
         self.evaluated.assert_called_once_with(self.source.resolve(), [self.owner])
         releases.assert_not_called()
         catalog.assert_called_once()
         with self.assertRaisesRegex(ValueError, "does not cover"):
-            inputs.verify(self.source, self.output, result["sha256"], self.source_sha, self.core_sha, [history.OWNER])
+            inputs.verify(self.source, self.output, result["sha256"], self.source_sha, packages=[history.OWNER])
 
     def test_cannot_use_consumer_or_build_an_unpublished_catalog_to_author(self):
         with patch.object(author.dependency_inputs, "releases", return_value=[]) as releases, \

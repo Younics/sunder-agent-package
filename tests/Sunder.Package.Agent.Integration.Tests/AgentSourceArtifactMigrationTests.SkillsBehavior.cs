@@ -68,8 +68,7 @@ public sealed partial class AgentSourceArtifactMigrationTests
             foreach (var provider in options.Providers)
             {
                 var descriptor = provider.ProviderId == "skills.management" ? CurrentPrivateRpcDescriptors.Get("younics.ai.agent.skills.owner")
-                    : provider.ProviderId == "skills.stack" ? SunderRpcContractDescriptor.Parse(File.ReadAllBytes(Path.Combine(
-                        BuilderSourceMigrationTests.FindRepository(), "../sunder-core/languages/csharp/dotnet/packages/Sunder.Sdk.Stacks/Contracts/sunder.stack.contributor.rpc.json")))
+                    : provider.ProviderId == "skills.stack" ? StackContributorDescriptor()
                     : CurrentPublicRpcDescriptors.Get(provider.ContractId);
                 ISunderRpcServiceHandler handler = provider.ProviderId == "skills.selectable.capabilities"
                     ? selectableProbe = new(provider.Handler) : provider.Handler;
