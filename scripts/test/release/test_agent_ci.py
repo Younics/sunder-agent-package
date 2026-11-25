@@ -458,6 +458,19 @@ class AgentCiTests(unittest.TestCase):
             self.assertIn("--no-build", command)
             self.assertIn("--no-restore", command)
 
+    def test_windows_arm_provisioning_retry_keeps_the_same_sdk_pin_and_fails_closed(self):
+        setup = (SCRIPTS.parent / ".github/actions/setup/action.yml").read_text()
+        primary = setup.split("    - name: Install the pinned .NET SDK\n", 1)[1]
+        primary, retry = primary.split("    - name: Retry pinned .NET SDK provisioning once on Windows ARM64\n", 1)
+        retry = retry.split("\n    - ", 1)[0]
+        arm = "runner.os == 'Windows' && runner.arch == 'ARM64'"
+        self.assertIn("id: dotnet", primary)
+        self.assertIn("continue-on-error: ${{ " + arm + " }}", primary)
+        self.assertIn("if: " + arm + " && steps.dotnet.outcome == 'failure'", retry)
+        self.assertNotIn("continue-on-error", retry)
+        self.assertEqual(primary.partition("      uses: ")[2].strip(), retry.partition("      uses: ")[2].strip())
+        self.assertIn("global-json-file: sunder-agent-package/global.json", retry)
+
     def test_platform_matrices_preserve_native_coverage_and_validate_runner_overrides(self):
         value = ci_platforms.matrices({"SUNDER_AGENT_RUNNER_LINUX_ARM64": '["self-hosted","linux","ARM64"]'})
         self.assertEqual(set(ci_platforms.RIDS), {row["rid"] for row in value["native"]["include"]})

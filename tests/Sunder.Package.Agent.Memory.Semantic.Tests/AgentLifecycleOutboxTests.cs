@@ -717,13 +717,13 @@ public sealed class AgentLifecycleOutboxTests
     public async Task SessionDeletion_ErasesHistoricalPayloadBeforeOrderedTombstoneReplay()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Session erasure workspace");
         var session = store.CreateSession(
             "Session erasure source",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        var fixture = InsertSensitiveLifecycleEvent(store, workspace, session, "session-delete");
+        var fixture = await InsertSensitiveLifecycleEventAsync(store, workspace, session, "session-delete");
         var knownObserver = new RecordingObserver("known-session-erasure-observer");
         store.ReconcileLifecycleSubscription(CreateSubscription(knownObserver.ObserverId), DateTimeOffset.UtcNow);
 
@@ -733,7 +733,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(2, events.Count);
         AssertErasedRecord(events[0], fixture.OriginalPayloadHash);
         Assert.Equal(AgentLifecycleEventKind.SessionDeleted, events[1].Kind);
-        AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
+        await AssertDatabaseHasNoCanariesAsync(store, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, knownObserver);
@@ -764,13 +764,13 @@ public sealed class AgentLifecycleOutboxTests
     public async Task WorkspaceDeletion_ErasesAllCurrentIncarnationPayloadsBeforeTombstoneReplay()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Workspace erasure source");
         var session = store.CreateSession(
             "Workspace erasure session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        var fixture = InsertSensitiveLifecycleEvent(store, workspace, session, "workspace-delete");
+        var fixture = await InsertSensitiveLifecycleEventAsync(store, workspace, session, "workspace-delete");
         var observer = new RecordingObserver("known-workspace-erasure-observer");
         store.ReconcileLifecycleSubscription(CreateSubscription(observer.ObserverId), DateTimeOffset.UtcNow);
 
@@ -780,7 +780,7 @@ public sealed class AgentLifecycleOutboxTests
         Assert.Equal(2, events.Count);
         AssertErasedRecord(events[0], fixture.OriginalPayloadHash);
         Assert.Equal(AgentLifecycleEventKind.WorkspaceDeleted, events[1].Kind);
-        AssertDatabaseHasNoCanaries(store.DatabasePath, fixture.Canaries);
+        await AssertDatabaseHasNoCanariesAsync(store, fixture.Canaries);
 
         var catalog = new RegressionTestExtensionCatalog();
         catalog.AddProvider(RegressionTestBindings.DurableLifecycleObservers, observer);
@@ -795,16 +795,16 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void SessionDeletion_ErasureKeepsPoisonRetryAsTheTombstoneOrderingBarrier()
+    public async Task SessionDeletion_ErasureKeepsPoisonRetryAsTheTombstoneOrderingBarrier()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Poison erasure workspace");
         var session = store.CreateSession(
             "Poison erasure session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "poison-delete");
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "poison-delete");
         var subscription = CreateSubscription("poison-erasure-observer");
         var now = DateTimeOffset.UtcNow;
         store.ReconcileLifecycleSubscription(subscription, now);
@@ -839,16 +839,16 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void SessionDeletion_RearmsDeliveredAndMissingReceiptsAndRejectsStaleInflightCompletion()
+    public async Task SessionDeletion_RearmsDeliveredAndMissingReceiptsAndRejectsStaleInflightCompletion()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Delivery-version workspace");
         var session = store.CreateSession(
             "Delivery-version session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "delivery-version");
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "delivery-version");
         var now = DateTimeOffset.UtcNow;
         var deliveredSubscription = CreateSubscription("delivered-erasure-observer");
         var inflightSubscription = CreateSubscription("inflight-erasure-observer");
@@ -897,16 +897,16 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void ErasureReplayEligibility_UsesMonotonicMembershipInsteadOfWallClock()
+    public async Task ErasureReplayEligibility_UsesMonotonicMembershipInsteadOfWallClock()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Generation workspace");
         var session = store.CreateSession(
             "Generation session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "generation");
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "generation");
         var existing = CreateSubscription("generation-existing-observer");
         store.ReconcileLifecycleSubscription(existing, DateTimeOffset.Parse("2099-01-01T00:00:00Z"));
 
@@ -927,16 +927,16 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void RetiredSubscription_ReactivationGetsNewMembershipAndSkipsPriorErasure()
+    public async Task RetiredSubscription_ReactivationGetsNewMembershipAndSkipsPriorErasure()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Reactivation workspace");
         var session = store.CreateSession(
             "Reactivation session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "reactivation");
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "reactivation");
         var subscription = CreateSubscription("reactivated-observer");
         var now = DateTimeOffset.UtcNow;
         store.ReconcileLifecycleSubscription(subscription, now);
@@ -967,16 +967,16 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void LifecycleOutbox_DirectSqlRejectsMalformedOrInsertedErasureState()
+    public async Task LifecycleOutbox_DirectSqlRejectsMalformedOrInsertedErasureState()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Constraint workspace");
         var session = store.CreateSession(
             "Constraint session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "constraints");
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "constraints");
         using var connection = Open(store.DatabasePath);
 
         using (var malformedUpdate = connection.CreateCommand())
@@ -1049,17 +1049,17 @@ public sealed class AgentLifecycleOutboxTests
     }
 
     [Fact]
-    public void LifecycleCompaction_IgnoresRetiredSubscriptionButNeverDeletesLiveSessionHistory()
+    public async Task LifecycleCompaction_IgnoresRetiredSubscriptionButNeverDeletesLiveSessionHistory()
     {
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         var workspace = new AgentWorkspaceService(store).CreateWorkspace("Compaction workspace");
         var session = store.CreateSession(
             "Compaction session",
             profileId: "profile.lifecycle",
             workspaceId: workspace.WorkspaceId);
         var old = DateTimeOffset.UtcNow.AddDays(-60);
-        InsertSensitiveLifecycleEvent(store, workspace, session, "compaction", old);
+        await InsertSensitiveLifecycleEventAsync(store, workspace, session, "compaction", old);
         var active = CreateSubscription("compaction-active-observer");
         var retiring = CreateSubscription("compaction-retired-observer");
         var now = DateTimeOffset.UtcNow;
@@ -1210,7 +1210,7 @@ public sealed class AgentLifecycleOutboxTests
     {
         const string secretCanary = "observer-secret-canary-never-persist-or-log";
         using var scope = RegressionTestPackageScope.Create();
-        var store = new AgentLocalStore(scope.Context);
+        await using var store = new AgentLocalStore(scope.Context);
         CreateStartedRun(store);
         var observer = new RecordingObserver("redacted-failure-observer")
         {
@@ -1242,10 +1242,8 @@ public sealed class AgentLifecycleOutboxTests
             Assert.All(entry.Attributes.Values, value =>
                 Assert.DoesNotContain(secretCanary, value?.ToString() ?? string.Empty, StringComparison.Ordinal));
         });
-        Assert.DoesNotContain(
-            secretCanary,
-            Encoding.UTF8.GetString(File.ReadAllBytes(store.DatabasePath)),
-            StringComparison.Ordinal);
+        await WaitForWalMaintenanceAsync(store);
+        AssertDatabaseFilesHaveNoCanaries(store.DatabasePath, [secretCanary]);
     }
 
     [Fact]
@@ -1415,7 +1413,7 @@ public sealed class AgentLifecycleOutboxTests
         return connection;
     }
 
-    private static SensitiveLifecycleFixture InsertSensitiveLifecycleEvent(
+    private static async Task<SensitiveLifecycleFixture> InsertSensitiveLifecycleEventAsync(
         AgentLocalStore store,
         AgentWorkspaceRecord workspace,
         AgentSessionRecord session,
@@ -1514,6 +1512,9 @@ public sealed class AgentLifecycleOutboxTests
         AssertNoMissingCanaries(payloadJson, canaries);
         var payloadHash = ComputeHash(payloadJson);
         var sourceKey = $"test-sensitive:{prefix}:{token}";
+        // Finish the startup checkpoint before the fixture writes and inspects
+        // the original canaries in the database and its sidecars.
+        await WaitForWalMaintenanceAsync(store);
         using var connection = Open(store.DatabasePath);
         using var command = connection.CreateCommand();
         command.CommandText = """
@@ -1642,15 +1643,23 @@ public sealed class AgentLifecycleOutboxTests
         }
     }
 
-    private static void AssertDatabaseHasNoCanaries(string databasePath, IReadOnlyList<string> canaries)
+    private static async Task AssertDatabaseHasNoCanariesAsync(AgentLocalStore store, IReadOnlyList<string> canaries)
     {
-        using (var connection = Open(databasePath))
+        using (var connection = Open(store.DatabasePath))
         using (var command = connection.CreateCommand())
         {
             command.CommandText = "SELECT group_concat(PayloadJson, '') FROM AgentLifecycleOutbox;";
             AssertNoCanaries(command.ExecuteScalar() as string ?? string.Empty, canaries);
         }
 
+        // The logical erasure is committed above. Inspect raw files only after
+        // the store's post-commit checkpoint has finished and closed its handle.
+        await WaitForWalMaintenanceAsync(store);
+        AssertDatabaseFilesHaveNoCanaries(store.DatabasePath, canaries);
+    }
+
+    private static void AssertDatabaseFilesHaveNoCanaries(string databasePath, IReadOnlyList<string> canaries)
+    {
         var databaseFiles = ReadSqliteDataFiles(databasePath);
         foreach (var canary in canaries)
         {
@@ -1659,9 +1668,16 @@ public sealed class AgentLifecycleOutboxTests
         }
     }
 
+    private static async Task WaitForWalMaintenanceAsync(AgentLocalStore store)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await store.WaitForWalCheckpointIdleAsync(timeout.Token);
+    }
+
     private static IReadOnlyList<byte[]> ReadSqliteDataFiles(string databasePath)
-        => new[] { databasePath, databasePath + "-wal", databasePath + "-journal" }
+        => new[] { databasePath + "-wal", databasePath + "-journal" }
             .Where(File.Exists)
+            .Prepend(databasePath)
             .Select(TestSqliteFiles.ReadAllBytes)
             .ToArray();
 
