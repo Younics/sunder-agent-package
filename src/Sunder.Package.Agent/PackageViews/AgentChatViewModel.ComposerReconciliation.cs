@@ -112,15 +112,30 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private async Task<bool> CompleteOrRestoreComposerSubmissionAsync(
+    private Task<bool> CompleteOrRestoreComposerSubmissionAsync(
         AgentSessionListItemViewModel submittedSession,
         AgentComposerSubmission submission,
         bool restoreWhenMissing = true)
+        // Admission can outlive cancellation of the originating send command.
+        => ReconcileComposerSubmissionAsync(
+            submittedSession, submission, restoreWhenMissing, _lifetimeCancellation.Token);
+
+    private async Task<bool> ReconcileComposerSubmissionAsync(
+        AgentSessionListItemViewModel submittedSession,
+        AgentComposerSubmission submission,
+        bool restoreWhenMissing,
+        CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_disposed)
+        {
+            return false;
+        }
+
         if (submission.IsCommitted)
         {
             await submission.AuthoritativeReconciliation
-                .WaitAsync(_lifetimeCancellation.Token)
+                .WaitAsync(cancellationToken)
                 .ConfigureAwait(false);
             return true;
         }
@@ -129,13 +144,18 @@ public sealed partial class AgentChatViewModel
             && submission.Matches(cachedTurn))
         {
             var reconciled = await EnqueueTranscriptBoundaryAsync(() =>
-                ReconcileAuthoritativeSubmissionTurn(cachedTurn, submission)).ConfigureAwait(false);
+                ReconcileAuthoritativeSubmissionTurn(cachedTurn, submission), cancellationToken).ConfigureAwait(false);
             if (reconciled)
             {
-                await submission.AuthoritativeReconciliation.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
+                await submission.AuthoritativeReconciliation.WaitAsync(cancellationToken).ConfigureAwait(false);
                 return true;
             }
         }
+        if (_disposed)
+        {
+            return false;
+        }
+
         var transcriptRequest = new AgentTranscriptPageRequest(
             submission.SessionId,
             AgentTranscriptPageDirection.Turn,
@@ -143,17 +163,17 @@ public sealed partial class AgentChatViewModel
             AnchorTurnId: submission.UserTurnId);
         var transcript = await LoadTranscriptPageAsync(
             transcriptRequest,
-            _lifetimeCancellation.Token);
+            cancellationToken).ConfigureAwait(false);
         var authoritativeTurn = transcript.Turns.FirstOrDefault(submission.Matches);
         if (authoritativeTurn is not null)
         {
             var committed = await EnqueueTranscriptBoundaryAsync(() =>
-                    ReconcileAuthoritativeSubmissionTurn(authoritativeTurn, submission))
+                    ReconcileAuthoritativeSubmissionTurn(authoritativeTurn, submission), cancellationToken)
                 .ConfigureAwait(false);
             if (committed)
             {
                 await submission.AuthoritativeReconciliation
-                    .WaitAsync(_lifetimeCancellation.Token)
+                    .WaitAsync(cancellationToken)
                     .ConfigureAwait(false);
             }
             return committed;
@@ -163,10 +183,19 @@ public sealed partial class AgentChatViewModel
             return false;
         }
 
-        await InvokeOnUiThreadAsync(() =>
-            RestoreUncommittedComposerState(submittedSession, submission));
+        await InvokeComposerReconciliationAsync(() =>
+            RestoreUncommittedComposerState(submittedSession, submission), cancellationToken).ConfigureAwait(false);
         return true;
     }
+
+    private Task InvokeComposerReconciliationAsync(Action action, CancellationToken cancellationToken)
+        => _uiDispatcher.InvokeAsync(() =>
+        {
+            if (!_disposed)
+            {
+                action();
+            }
+        }, cancellationToken);
 
     private void ScheduleCompletedSubmissionReconciliation()
     {
@@ -184,7 +213,7 @@ public sealed partial class AgentChatViewModel
         try
         {
             var retryDelay = TimeSpan.FromMilliseconds(100);
-            while (true)
+            while (!_disposed)
             {
                 var submissions = _composer.GetCompletedUncommittedSubmissions();
                 if (submissions.Count == 0)
@@ -196,11 +225,15 @@ public sealed partial class AgentChatViewModel
                 foreach (var submission in submissions)
                 {
                     AgentSessionListItemViewModel? submittedSession = null;
-                    await InvokeOnUiThreadAsync(() =>
+                    await InvokeComposerReconciliationAsync(() =>
                         submittedSession = Sessions.FirstOrDefault(item => item.SessionId == submission.SessionId)
                                            ?? (SelectedSession?.SessionId == submission.SessionId
-                                               ? SelectedSession
-                                               : null));
+                                                ? SelectedSession
+                                                : null), cancellationToken).ConfigureAwait(false);
+                    if (_disposed)
+                    {
+                        return;
+                    }
                     if (submittedSession is null)
                     {
                         hasUnresolvedSubmission = true;
@@ -209,13 +242,21 @@ public sealed partial class AgentChatViewModel
 
                     try
                     {
-                        if (await CompleteOrRestoreComposerSubmissionAsync(
+                        // The scope observes only cancellation by its own token,
+                        // not cancellation by the view's separate lifetime.
+                        if (await ReconcileComposerSubmissionAsync(
                                 submittedSession,
                                 submission,
-                                restoreWhenMissing: false).ConfigureAwait(false))
+                                restoreWhenMissing: false,
+                                cancellationToken).ConfigureAwait(false))
                         {
-                            await InvokeOnUiThreadAsync(() => EndPendingSend(submission));
+                            await InvokeComposerReconciliationAsync(() =>
+                                EndPendingSend(submission), cancellationToken).ConfigureAwait(false);
                             continue;
+                        }
+                        if (_disposed)
+                        {
+                            return;
                         }
 
                         var commandStatus = _runCommandStatusGateway is null
@@ -226,23 +267,23 @@ public sealed partial class AgentChatViewModel
                                 cancellationToken).ConfigureAwait(false);
                         if (commandStatus == AgentRunCommandStatus.Absent)
                         {
-                            await InvokeOnUiThreadAsync(() =>
+                            await InvokeComposerReconciliationAsync(() =>
                             {
                                 RestoreUncommittedComposerState(submittedSession, submission);
                                 EndPendingSend(submission);
-                            });
+                            }, cancellationToken).ConfigureAwait(false);
                             continue;
                         }
                         if (commandStatus == AgentRunCommandStatus.Committed)
                         {
-                            await InvokeOnUiThreadAsync(() =>
+                            await InvokeComposerReconciliationAsync(() =>
                             {
                                 submission.Commit();
                                 CompleteAuthoritativeComposerReconciliation(
                                     submittedSession,
                                     submission);
                                 EndPendingSend(submission);
-                            });
+                            }, cancellationToken).ConfigureAwait(false);
                             continue;
                         }
 

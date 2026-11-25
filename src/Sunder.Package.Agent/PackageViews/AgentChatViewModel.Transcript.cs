@@ -361,21 +361,36 @@ public sealed partial class AgentChatViewModel
         }
     }
 
-    private Task<T> EnqueueTranscriptBoundaryAsync<T>(Func<T> action)
+    private Task<bool> EnqueueTranscriptBoundaryAsync(Func<bool> action, CancellationToken cancellationToken)
     {
-        var completion = new TaskCompletionSource<T>(
+        var completion = new TaskCompletionSource<bool>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         var scheduleDrain = false;
         lock (_turnMutationQueueLock)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return Task.FromCanceled<bool>(cancellationToken);
+            }
             if (_disposed)
             {
-                return Task.FromCanceled<T>(new CancellationToken(canceled: true));
+                return Task.FromResult(false);
             }
 
             _openTurnMutationBatch = null;
             _transcriptWorkQueue.Enqueue(() =>
             {
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    completion.TrySetCanceled(cancellationToken);
+                    return;
+                }
+                if (_disposed)
+                {
+                    completion.TrySetResult(false);
+                    return;
+                }
+
                 try
                 {
                     completion.TrySetResult(action());
@@ -394,7 +409,7 @@ public sealed partial class AgentChatViewModel
             ScheduleTranscriptWorkDrain();
         }
 
-        return completion.Task.WaitAsync(_lifetimeCancellation.Token);
+        return completion.Task.WaitAsync(cancellationToken);
     }
 
     private bool MarkTranscriptWorkDrainScheduled()
