@@ -190,19 +190,38 @@ public sealed class AgentChatToolExpansionTests
 
         async Task Settle()
         {
-            await WaitForPendingCoordinatorOperationsAsync(view).WaitAsync(TimeSpan.FromSeconds(5));
+            // The coordinator cannot complete its expansion while the Markdown
+            // revision still needs layout. Drive headless layout during both
+            // waits, not only after the coordinator and renderer have drained.
+            await AwaitWithHeadlessLayoutAsync(WaitForPendingCoordinatorOperationsAsync(view));
             for (var pass = 0; pass < 100; pass++)
             {
-                var presenters = view.GetVisualDescendants().OfType<AgentApp::Sunder.Package.Agent.Shared.PackageViews.StreamingMarkdownPresenter>()
+                var presenters = view.GetVisualDescendants().OfType<StreamingMarkdownPresenter>()
                     .Where(presenter => presenter.IsEffectivelyVisible).ToArray();
-                await Task.WhenAll(presenters.Select(presenter => presenter.PendingRenderOperations)).WaitAsync(TimeSpan.FromSeconds(5));
-                await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
-                await Dispatcher.UIThread.InvokeAsync(() => { }, DispatcherPriority.Background);
-                if (view.GetVisualDescendants().OfType<AgentApp::Sunder.Package.Agent.Shared.PackageViews.StreamingMarkdownPresenter>()
+                await AwaitWithHeadlessLayoutAsync(Task.WhenAll(presenters.Select(presenter => presenter.PendingRenderOperations))
+                    .WaitAsync(TimeSpan.FromSeconds(5)));
+                await LayoutPassAsync();
+                if (view.GetVisualDescendants().OfType<StreamingMarkdownPresenter>()
                     .Where(presenter => presenter.IsEffectivelyVisible).All(presenter => !presenter.IsRenderPending)) return;
                 await Task.Delay(5);
             }
             Assert.Fail("Live transcript Markdown did not settle within the bounded preparation budget.");
+        }
+
+        async Task AwaitWithHeadlessLayoutAsync(Task boundedOperation)
+        {
+            while (!boundedOperation.IsCompleted)
+            {
+                await LayoutPassAsync();
+                await Task.WhenAny(boundedOperation, Task.Delay(5));
+            }
+            await boundedOperation;
+        }
+
+        async Task LayoutPassAsync()
+        {
+            await Dispatcher.UIThread.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+            await Dispatcher.UIThread.InvokeAsync(static () => { }, DispatcherPriority.Background);
         }
     }
 
