@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import runpy
 import shutil
@@ -159,6 +160,17 @@ class WindowsHistoryTests(unittest.TestCase):
         (self.source / worker / "Worker.cs").write_text("changed Worker")
         commit(self.source, "Behavioral input change")
         self.assertFalse(history.same_case_scope(self.source, self.source_sha, self.row, worker.as_posix()))
+
+    def test_direct_cli_works_without_a_preloaded_module_search_path(self):
+        output, destination = self.root / "output", self.root / "history-for-unselected-component"
+        env = {key: value for key, value in os.environ.items() if key != "PYTHONPATH"}
+        env["GITHUB_OUTPUT"] = str(output)
+        result = subprocess.run([sys.executable, "-B", str(SCRIPTS / "ci/windows_case_history.py"),
+                                 "--packages", json.dumps([history.AGENT]), "--prepare", str(destination)],
+                                cwd=SCRIPTS.parent, env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("sha256=\n", output.read_text())
+        self.assertFalse(destination.exists())
 
     def test_only_windows_source_local_discovery_and_execution_get_the_exclusion(self):
         inventory = self.source / "artifacts/reports/test-inventory.json"

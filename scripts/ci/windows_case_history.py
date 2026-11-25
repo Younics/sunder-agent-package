@@ -5,10 +5,12 @@ import copy
 import os
 from pathlib import Path
 import subprocess
+import sys
 from urllib.parse import quote
 import xml.etree.ElementTree as ET
 from zipfile import ZipFile
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "release"))
 import hosted_evidence as hosted
 import required_test_evidence as evidence
 import release_inputs as inputs
