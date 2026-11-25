@@ -64,42 +64,58 @@ public sealed class AgentCatalogSourceMigrationTests
                     _ => throw new InvalidOperationException("Unrecognized provider role probe: " + family),
                 });
             }
+            else if (family == "Memory.Semantic")
+            {
+                // The copied SQLite image can outlive a collectible context's
+                // Unload() on Windows. This parent owns and deletes the snapshot
+                // only after the process that exercised it has exited.
+                var diagnostics = await BuilderSourceMigrationTests.Run(root, TimeSpan.FromMinutes(14), "exec",
+                    typeof(FrozenMemoryProbeProgram).Assembly.Location, FrozenMemoryProbeProgram.Argument);
+                Assert.Contains(FrozenMemoryProbeProgram.Completion, diagnostics, StringComparison.Ordinal);
+            }
             else
             {
-                using var roles = new CanonicalPackageRoles();
-                var runtime = roles.Load(family, "worker", snapshot);
-                Assembly? semanticProbes = null;
-                string? semanticProbePath = null;
-                byte[]? semanticProbeBytes = null;
-                if (family == "Memory.Semantic")
-                {
-                    semanticProbes = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime,
-                        "MemoryRoleLocalProbes.cs.txt", output: output);
-                    semanticProbePath = Path.Combine(root, family + "Probes/bin", BuilderSourceMigrationTests.FixtureConfiguration,
-                        "net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll");
-                    semanticProbeBytes = File.ReadAllBytes(semanticProbePath);
-                }
-                var probe = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime, fixture,
-                    Directory.GetFiles(output, "*.dll"), assemblyName: "Sunder.Package.Agent.Tests", output: output, controlledComposition: true);
-                Assert.NotNull(probe.GetType("Sunder.Tests.Generated.Package.WorkerEntryPoint"));
-                Assert.Contains(probe.GetReferencedAssemblies(), reference => reference.Name == runtime.GetName().Name);
-                Assert.DoesNotContain(probe.GetReferencedAssemblies(), reference => reference.Name!.EndsWith(".Protocol", StringComparison.Ordinal));
-                if (family == "Memory.Semantic")
-                {
-                    Assert.Equal(semanticProbeBytes, File.ReadAllBytes(semanticProbePath!));
-                    await AgentSourceArtifactMigrationTests.ExerciseMemoryConsumers(runtime);
-                    var owner = roles.Load("Agent", "worker");
-                    await AgentSourceArtifactMigrationTests.VerifyAgentProfileCapabilities(owner, runtime, semanticProbes!);
-                    await AgentSourceArtifactMigrationTests.VerifyAgentCleanupConsumers(owner, runtime, semanticProbes!);
-                }
-                else if (family == "Subagents")
-                {
-                    await AgentSourceArtifactMigrationTests.VerifySubagentRuntimeConsumers(runtime, roles.Load("Agent", "worker"));
-                }
+                await VerifyFrozenWorkerProbeAsync(root, family, fixture);
             }
             Assert.Equal(entryBytes, File.ReadAllBytes(entry));
         }
         finally { Directory.Delete(root, recursive: true); }
+    }
+
+    internal static async Task VerifyFrozenWorkerProbeAsync(string root, string family, string? fixture)
+    {
+        var snapshot = Path.Combine(root, family);
+        var output = CanonicalPackageRoles.Output(snapshot, "worker");
+        using var roles = new CanonicalPackageRoles();
+        var runtime = roles.Load(family, "worker", snapshot);
+        Assembly? semanticProbes = null;
+        string? semanticProbePath = null;
+        byte[]? semanticProbeBytes = null;
+        if (family == "Memory.Semantic")
+        {
+            semanticProbes = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime,
+                "MemoryRoleLocalProbes.cs.txt", output: output);
+            semanticProbePath = Path.Combine(root, family + "Probes/bin", BuilderSourceMigrationTests.FixtureConfiguration,
+                "net10.0/Sunder.Package.Agent.Memory.Semantic.SemanticProbes.dll");
+            semanticProbeBytes = File.ReadAllBytes(semanticProbePath);
+        }
+        var probe = await AgentSourceArtifactMigrationTests.BuildRoleProbes(snapshot, runtime, fixture,
+            Directory.GetFiles(output, "*.dll"), assemblyName: "Sunder.Package.Agent.Tests", output: output, controlledComposition: true);
+        Assert.NotNull(probe.GetType("Sunder.Tests.Generated.Package.WorkerEntryPoint"));
+        Assert.Contains(probe.GetReferencedAssemblies(), reference => reference.Name == runtime.GetName().Name);
+        Assert.DoesNotContain(probe.GetReferencedAssemblies(), reference => reference.Name!.EndsWith(".Protocol", StringComparison.Ordinal));
+        if (family == "Memory.Semantic")
+        {
+            Assert.Equal(semanticProbeBytes, File.ReadAllBytes(semanticProbePath!));
+            await AgentSourceArtifactMigrationTests.ExerciseMemoryConsumers(runtime);
+            var owner = roles.Load("Agent", "worker");
+            await AgentSourceArtifactMigrationTests.VerifyAgentProfileCapabilities(owner, runtime, semanticProbes!);
+            await AgentSourceArtifactMigrationTests.VerifyAgentCleanupConsumers(owner, runtime, semanticProbes!);
+        }
+        else if (family == "Subagents")
+        {
+            await AgentSourceArtifactMigrationTests.VerifySubagentRuntimeConsumers(runtime, roles.Load("Agent", "worker"));
+        }
     }
 
     [AgentPublicSourceMigrationFact]

@@ -4,6 +4,8 @@
     <SunderSdkReference>true</SunderSdkReference>
     <SunderSdkStacksReference>true</SunderSdkStacksReference>
     <SunderBuildToolingReference>true</SunderBuildToolingReference>
+    <!-- Keep the SDK's test executable, with a child entry point for the native snapshot probe. -->
+    <GenerateProgramFile>false</GenerateProgramFile>
     <SunderTestOwner>agent-family</SunderTestOwner>
     <SunderTestCategory>Conformance</SunderTestCategory>
     <SunderTestCapabilities>Filesystem;HTTP;PackageArchive;Process;SQLite;Worker</SunderTestCapabilities>

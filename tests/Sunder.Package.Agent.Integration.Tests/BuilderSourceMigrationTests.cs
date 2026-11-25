@@ -61,8 +61,11 @@ public sealed partial class BuilderSourceMigrationTests
             start.ArgumentList.Add("--configuration");
             start.ArgumentList.Add(FixtureConfiguration);
         }
-        start.ArgumentList.Add("-p:Configuration=" + FixtureConfiguration);
-        start.ArgumentList.Add("-v:minimal");
+        if (arguments[0] != "exec")
+        {
+            start.ArgumentList.Add("-p:Configuration=" + FixtureConfiguration);
+            start.ArgumentList.Add("-v:minimal");
+        }
         foreach (var argument in arguments.Skip(1)) start.ArgumentList.Add(argument);
         if (arguments[0] != "restore") DenyNetwork(start);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("dotnet did not start.");
