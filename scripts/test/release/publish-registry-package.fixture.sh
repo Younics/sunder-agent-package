@@ -23,54 +23,25 @@ hash_file() {
   fi
 }
 
-hash_stream() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum | cut -d ' ' -f 1
-  else
-    shasum -a 256 | cut -d ' ' -f 1
-  fi
-}
-
 file_size() {
   wc -c < "$1" | tr -d '[:space:]'
 }
 
-write_uint32_be() {
-  local value="$1"
-  local encoded
-  printf -v encoded '\\0%03o\\0%03o\\0%03o\\0%03o' \
-    "$((value / 16777216 % 256))" \
-    "$((value / 65536 % 256))" \
-    "$((value / 256 % 256))" \
-    "$((value % 256))"
-  printf '%b' "$encoded"
-}
-
-append_identity_value() {
-  local value="$1"
-  write_uint32_be "${#value}"
-  printf '%s' "$value"
-}
-
 compute_projection_identity() {
-  local kind="$1"
-  local rid="$2"
-  local content_index_path="$3"
-  {
-    append_identity_value 'sunder-registry-projection-v1'
-    append_identity_value '1'
-    append_identity_value 'fixture.package'
-    append_identity_value '1.2.3'
-    append_identity_value "$canonical_sha"
-    append_identity_value "$kind"
-    if [[ -n "$rid" ]]; then
-      append_identity_value "$rid"
-    else
-      printf '%b' '\0377\0377\0377\0377'
-    fi
-    append_identity_value "$manifest_sha"
-    command cat "$content_index_path"
-  } | hash_stream
+  # Independent V1 byte oracle: frame every field, including the exact index
+  # bytes (which may end in a newline). The legacy vector intentionally omits its length.
+  python3 - "$canonical_sha" "$manifest_sha" "$@" <<'PY'
+import hashlib, struct, sys
+from pathlib import Path
+source, manifest, kind, rid, path, mode = sys.argv[1:]
+def frame(value):
+    return struct.pack(">i", -1) if value is None else struct.pack(">i", len(value)) + value
+fields = ("sunder-registry-projection-v1", "1", "fixture.package", "1.2.3", source, kind, rid or None, manifest)
+prefix = b"".join(frame(v.encode("utf-8") if v is not None else None) for v in fields)
+index = Path(path).read_bytes()
+assert mode in ("v1", "unframed")
+print(hashlib.sha256(prefix + (frame(index) if mode == "v1" else index)).hexdigest())
+PY
 }
 
 temp_root="${TMPDIR:-/tmp}"
@@ -156,7 +127,7 @@ write_projection() {
   local rid="$3"
   local actual_content="$4"
   local indexed_content="${5:-$actual_content}"
-  local forced_identity="${6:-}"
+  local identity_mode="${6:-v1}"
   local root
   local payload_relative
   local indexed_payload="$fixture_dir/indexed-payload"
@@ -190,8 +161,7 @@ write_projection() {
     --argjson size "$payload_size" \
     '{schemaVersion: 1, files: [{path: $path, sha256: $sha, size: $size}]}' \
     > "$root/manifest/content-index.json"
-  identity="$(compute_projection_identity "$kind" "$rid" "$root/manifest/content-index.json")"
-  [[ -z "$forced_identity" ]] || identity="$forced_identity"
+  identity="$(compute_projection_identity "$kind" "$rid" "$root/manifest/content-index.json" "$identity_mode")"
   jq -cn \
     --arg package_id fixture.package \
     --arg version 1.2.3 \
@@ -237,7 +207,7 @@ write_projection \
   'different indexed projection bytes'
 write_projection \
   "$projection_wrong_identity" shared '' \
-  'shared projection bytes' 'shared projection bytes' "$(printf '%064d' 8)"
+  'shared projection bytes' 'shared projection bytes' unframed
 printf 'not a projection archive\n' > "$projection_malformed"
 shared_identity="$(unzip -p "$projection_shared" manifest/sunder-projection.json | jq -r '.projectionSha256')"
 runtime_identity="$(unzip -p "$projection_runtime" manifest/sunder-projection.json | jq -r '.projectionSha256')"
@@ -663,7 +633,7 @@ write_details \
   "$(hash_file "$projection_wrong_identity")" \
   "$canonical_sha" \
   "$manifest_sha" \
-  "$(printf '%064d' 8)"
+  "$(unzip -p "$projection_wrong_identity" manifest/sunder-projection.json | jq -r '.projectionSha256')"
 if run_publisher > "$fixture_dir/wrong-projection-identity.log" 2>&1; then
   printf 'Registry verification trusted a coordinated wrong projection content identity.\n' >&2
   exit 1

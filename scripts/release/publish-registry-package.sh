@@ -159,6 +159,7 @@ compute_projection_identity() {
       printf '%b' '\0377\0377\0377\0377'
     fi
     append_identity_value "$expected_manifest_sha"
+    write_uint32_be "$(file_size "$content_index_path")"
     command cat "$content_index_path"
   } | hash_stream
 }
