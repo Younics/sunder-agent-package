@@ -729,6 +729,37 @@ retain_publication() {
   fi
 }
 
+summarize_publish_response() {
+  # Only fixed, public Registry vocabulary may reach a workflow log. The body
+  # (including unknown codes, errors, ProblemDetails and parse errors) is private.
+  jq -ers --arg http "$publish_status" --arg id "$package_id" --arg version "$version" '
+    select(length == 1) | .[0] | objects |
+    if ($http | startswith("2")) and .success == true and .packageId == $id and .version == $version then
+      "confirmed"
+    else
+      (.errorCode // .code) as $code |
+      (first(("registry.v1.resource.conflict", "registry.v1.package.version_exists",
+        "registry.v1.contract.descriptor_conflict", "package-api.candidate-authority-unconfirmed",
+        "package.identity-reservation-required", "contract-version.history-unavailable",
+        "contract-version.bump-required", "contract-authority.revoked", "package.security-blocked",
+        "registry.v1.package.requirement_unsatisfied", "registry.v1.auth.unauthorized",
+        "registry.v1.auth.forbidden", "registry.v1.request.invalid", "registry.v1.request.too_large",
+        "registry.v1.request.rate_limited", "registry.v1.internal") | select(. == $code)) // "unrecognized") as $safe_code |
+      (.errors | if type == "array" then . else [] end) as $errors |
+      (first(("Reserve the exact package identity before first publication.",
+        "The package reservation is expired or cancelled.", "A public contract reservation is expired or cancelled.",
+        "A reservation expired before commit.", "Publication could not acquire its required authority.",
+        "The immutable package version already exists.",
+        "The exact restore-selected artifact has not been accepted by this Registry.",
+        "The selected artifact content, reviewed range or complete public inventory does not match.",
+        "Restore authority constraints must match the entire immutable selected inventory.",
+        "An imported platform contract requires a catalog accepted by this Registry.",
+        "Platform descriptor or catalog identity differs from Registry publication evidence.") as $known |
+        $errors[] | select(. == $known) | $known) // "unrecognized") as $reason |
+      "errorCode=\($safe_code); reason=\($reason)"
+    end' "$publish_body" 2>/dev/null
+}
+
 fetch_version_details
 case "$details_status" in
   200)
@@ -761,26 +792,33 @@ if [[ -n "$expected_publication_input" ]]; then
   publication_form+=(-F 'initialAvailability=Yanked')
 fi
 
-publish_confirmed=false
 # The private temporary directory is removed by the existing exit trap. Keep the
 # bearer value out of argv, even on runners where process arguments are observable.
 authorization_file="$temp_dir/authorization.headers"
 (umask 077; printf 'Authorization: Bearer %s\n' "$registry_api_key" > "$authorization_file")
 unset registry_api_key
-if publish_response="$(curl --fail-with-body -sS \
+publish_body="$temp_dir/publish-response.json"
+response_limit=65536
+curl_exit=0
+publish_status="$(curl --disable -s --max-filesize "$response_limit" -o "$publish_body" -w '%{http_code}' \
   -H "@$authorization_file" \
   -H "X-Sunder-Expected-Resource-Id: $package_id" \
   -H 'X-Sunder-Set-Latest: false' \
   -F "package=@$archive" \
   "${publication_form[@]}" \
-  "$registry_api/api/v1/packages/publish")" \
-  && jq -e --arg package_id "$package_id" --arg version "$version" \
-  '.success == true and .packageId == $package_id and .version == $version' \
-  <<< "$publish_response" >/dev/null; then
-  publish_confirmed=true
-elif [[ -z "$expected_publication_input" ]]; then
-  printf "Registry publication failed or was rejected for package '%s' %s.\n" "$package_id" "$version" >&2
-  exit 1
+  "$registry_api/api/v1/packages/publish")" || curl_exit=$?
+[[ "$publish_status" =~ ^[0-9]{3}$ ]] || publish_status=unknown
+unknown='errorCode=unrecognized; reason=unrecognized'
+publish_summary="$unknown"
+if [[ "$curl_exit" == 0 && -f "$publish_body" ]] && [[ "$(file_size "$publish_body")" -le "$response_limit" ]]; then
+  publish_summary="$(summarize_publish_response)" || publish_summary="$unknown"
+fi
+if [[ "$publish_summary" != confirmed ]]; then
+  printf "Registry publish POST for '%s' %s: HTTP %s (curl %d); %s\n" \
+    "$package_id" "$version" "$publish_status" "$curl_exit" "$publish_summary" >&2
+  if [[ -z "$expected_publication_input" ]]; then
+    exit 1
+  fi
 fi
 
 # An unknown initial-Yanked upload outcome is reconciled by one exact readback,
@@ -793,7 +831,7 @@ fetch_version_details
 }
 verify_version_details
 retain_publication
-if [[ "$publish_confirmed" != true ]]; then
+if [[ "$publish_summary" != confirmed ]]; then
   printf "Recovered exact initial-Yanked publication for package '%s' %s after an ambiguous response.\n" \
     "$package_id" "$version"
   exit 0

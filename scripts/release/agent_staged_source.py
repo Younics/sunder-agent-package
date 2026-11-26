@@ -22,7 +22,7 @@ CONTROL_FILES = frozenset({
     "scripts/ci/package_release.py", "scripts/release/agent_selection.py",
     "scripts/release/agent_pipeline.py", "scripts/release/agent_staged_source.py",
     "scripts/release/publish-registry-package.sh", "scripts/test/release/test_agent_staged_source.py",
-    "docs/RELEASES.md",
+    "scripts/test/release/publish-registry-package.fixture.sh", "docs/RELEASES.md",
 })
 
 

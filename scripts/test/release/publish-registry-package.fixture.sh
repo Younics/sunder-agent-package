@@ -248,6 +248,7 @@ noncanonical_content_identity="$(unzip -p "$projection_noncanonical_content" man
 export MOCK_REGISTRY_STATE="$fixture_dir/registry-state"
 export MOCK_REGISTRY_CALLS="$fixture_dir/registry-calls"
 export MOCK_REGISTRY_DETAILS="$fixture_dir/version-details.json"
+export MOCK_PUBLISH_REJECTION="$fixture_dir/publish-rejection.json"
 export MOCK_CANONICAL_ARCHIVE="$archive"
 export MOCK_SHARED_PROJECTION="$projection_shared"
 export MOCK_RUNTIME_PROJECTION="$projection_runtime"
@@ -342,8 +343,14 @@ set_latest_header=''
 package_form=''
 set_latest_form=''
 initial_availability_form=''
+first_option="$1"
+response_limit=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --max-filesize)
+      response_limit="$2"
+      shift 2
+      ;;
     -o)
       output="$2"
       shift 2
@@ -374,7 +381,7 @@ while [[ $# -gt 0 ]]; do
       esac
       shift 2
       ;;
-    --fail-with-body|-sS)
+    --disable|--fail-with-body|-sS|-s)
       shift
       ;;
     http://*|https://*)
@@ -389,6 +396,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n "$url" ]] || { printf 'Mock curl did not receive a URL.\n' >&2; exit 2; }
+[[ "$method" == POST || -z "$authorization" ]] || { printf 'Readback unexpectedly received an authorization token.\n' >&2; exit 2; }
 details_suffix="/api/v1/packages/$MOCK_EXPECTED_PACKAGE_ID/versions/$MOCK_EXPECTED_VERSION"
 if [[ "$method" == GET && "$url" == *"$details_suffix" ]]; then
   printf 'DETAILS\n' >> "$MOCK_REGISTRY_CALLS"
@@ -407,6 +415,8 @@ fi
 
 if [[ "$method" == POST && "$url" == */api/v1/packages/publish ]]; then
   printf 'PUBLISH\n' >> "$MOCK_REGISTRY_CALLS"
+  [[ "$first_option" == --disable && "$write_out" == '%{http_code}' && -n "$output" && "$response_limit" == 65536 ]] \
+    || { printf 'Publish requires a single bounded response and a separate HTTP status.\n' >&2; exit 2; }
   [[ "$authorization" == "$MOCK_EXPECTED_PUBLISH_TOKEN" ]] \
     || { printf 'Publish request did not use the scoped publish token.\n' >&2; exit 2; }
   [[ "$expected_resource" == "$MOCK_EXPECTED_PACKAGE_ID" ]] \
@@ -424,11 +434,20 @@ if [[ "$method" == POST && "$url" == */api/v1/packages/publish ]]; then
     [[ -z "$initial_availability_form" ]] \
       || { printf 'Legacy publication unexpectedly changed its availability mode.\n' >&2; exit 2; }
   fi
-  [[ "${MOCK_UPLOAD_OUTCOME:-success}" != fail-before-commit ]] || exit 28
+  case "${MOCK_UPLOAD_OUTCOME:-success}" in
+    fail-before-commit) printf '000'; exit 28 ;;
+    http-conflict|http-conflict-after-commit)
+      if [[ "$MOCK_UPLOAD_OUTCOME" == http-conflict-after-commit ]]; then printf 'published\n' > "$MOCK_REGISTRY_STATE"; fi
+      printf '409'
+      [[ "$(wc -c < "$MOCK_PUBLISH_REJECTION")" -le "$response_limit" ]] || exit 63
+      cp "$MOCK_PUBLISH_REJECTION" "$output"
+      exit 0
+      ;;
+  esac
   printf 'published\n' > "$MOCK_REGISTRY_STATE"
   case "${MOCK_UPLOAD_OUTCOME:-success}" in
-    fail-after-commit) exit 28 ;;
-    malformed-after-commit) printf '{incomplete response\n'; exit 0 ;;
+    fail-after-commit) printf '000'; exit 28 ;;
+    malformed-after-commit) printf '{incomplete response\n' > "$output"; printf '200'; exit 0 ;;
     conflict-after-commit)
       jq '.publication.ownerPrincipalId = ("4" * 32)' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
       mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
@@ -436,11 +455,11 @@ if [[ "$method" == POST && "$url" == */api/v1/packages/publish ]]; then
       ;;
   esac
   jq -cn --arg package_id "$MOCK_EXPECTED_PACKAGE_ID" --arg version "$MOCK_EXPECTED_VERSION" \
-    '{success: true, packageId: $package_id, version: $version}'
+    '{success: true, packageId: $package_id, version: $version}' > "$output"
+  printf '200'
   exit 0
 fi
 
-[[ -z "$authorization" ]] || { printf 'Download unexpectedly received an authorization token.\n' >&2; exit 2; }
 case "$url" in
   *"$details_suffix/canonical")
     printf 'CANONICAL\n' >> "$MOCK_REGISTRY_CALLS"
@@ -496,7 +515,7 @@ write_yanked_details() {
 }
 
 run_yanked_publisher() {
-  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$expected_publication" \
+  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$expected_publication" "$@" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
@@ -691,7 +710,43 @@ write_yanked_details
 run_yanked_verifier > "$fixture_dir/initial-yanked-verify.log"
 assert_no_publication
 
-for outcome in fail-after-commit malformed-after-commit; do
+# Several admission rules share HTTP 409. Log only reviewed decision strings,
+# never reflected credentials, server text, parser diagnostics or workflow commands.
+for decision in reservation expired descriptor unknown malformed oversize; do
+  reset_fixture absent
+  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME=http-conflict
+  code=registry.v1.resource.conflict
+  reason=unrecognized
+  case "$decision" in
+    reservation) reason='Reserve the exact package identity before first publication.' ;;
+    expired) reason='The package reservation is expired or cancelled.' ;;
+    descriptor) code=registry.v1.contract.descriptor_conflict; reason='An imported platform contract requires a catalog accepted by this Registry.' ;;
+    malformed|oversize) code=registry.v1.package.version_exists; reason='The immutable package version already exists.' ;;
+    *) code=unrecognized ;;
+  esac
+  jq -cn --arg code "$code" --arg reason "$reason" '
+    {success:false, errorCode:(if $code == "unrecognized" then env.MOCK_EXPECTED_PUBLISH_TOKEN else $code end),
+     detail:env.MOCK_EXPECTED_PUBLISH_TOKEN, errors:["::error::PRIVATE-SENTINEL\n" + env.MOCK_EXPECTED_PUBLISH_TOKEN, $reason]}
+  ' > "$MOCK_PUBLISH_REJECTION"
+  if [[ "$decision" == malformed ]]; then printf 'PRIVATE-SENTINEL\n' >> "$MOCK_PUBLISH_REJECTION"; fi
+  if [[ "$decision" == oversize ]]; then jq -nr '"PRIVATE-SENTINEL" * 6000' >> "$MOCK_PUBLISH_REJECTION"; fi
+  case "$decision" in malformed|oversize) code=unrecognized; reason=unrecognized ;; esac
+  log="$fixture_dir/http-conflict-$decision.log"
+  output="$fixture_dir/http-conflict-$decision.json"
+  if run_yanked_publisher --publication-output "$output" > "$log" 2>&1; then
+    printf 'A rejected POST and absent readback produced a publication.\n' >&2; exit 1
+  fi
+  grep -Fq 'HTTP 409' "$log"
+  grep -Fq "errorCode=$code; reason=$reason" "$log"
+  grep -Fq 'HTTP 404 after publication' "$log"
+  [[ ! -e "$output" && "$(< "$MOCK_REGISTRY_CALLS")" == $'DETAILS\nPUBLISH\nDETAILS' ]]
+  if grep -Fq -e "$MOCK_EXPECTED_PUBLISH_TOKEN" -e 'PRIVATE-SENTINEL' -e '::error::' "$log"; then
+    printf 'Publication diagnostic disclosed untrusted response data.\n' >&2; exit 1
+  fi
+done
+
+printf '%s\n' '{"errorCode":"registry.v1.package.version_exists","errors":["The immutable package version already exists."]}' > "$MOCK_PUBLISH_REJECTION"
+for outcome in fail-after-commit malformed-after-commit http-conflict-after-commit; do
   reset_fixture absent
   write_yanked_details
   export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
@@ -699,6 +754,7 @@ for outcome in fail-after-commit malformed-after-commit; do
   grep -Fq 'Recovered exact initial-Yanked publication' "$fixture_dir/$outcome.log"
   [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
   [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
+  [[ "$(grep -c '^CANONICAL$' "$MOCK_REGISTRY_CALLS")" -eq 1 && "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
   : > "$MOCK_REGISTRY_CALLS"
   run_yanked_publisher > "$fixture_dir/$outcome-retry.log"
   assert_no_publication
@@ -874,4 +930,4 @@ if PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectat
 fi
 [[ ! -s "$MOCK_REGISTRY_CALLS" && "$before" == "$(hash_file "$observed")" ]]
 
-printf 'Registry publication fixture passed: canonical/projection/security checks, artifact-only first publication, Registry-derived ownership, retained-owner drift rejection, lost-response recovery and immutable retries; no implicit promotion.\n'
+printf 'Registry publication fixture passed: canonical/projection/security checks, artifact-only first publication, Registry-derived ownership, retained-owner drift rejection, bounded conflict diagnostics, lost-response recovery and immutable retries; no implicit promotion.\n'
