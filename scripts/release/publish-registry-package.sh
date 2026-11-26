@@ -7,7 +7,7 @@ unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_PUBLISH_TOKE
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  printf 'Usage: publish-registry-package.sh [--verify-only] [--initial-yanked <expected-publication.json>] [--publication-output <new-evidence.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
+  printf 'Usage: publish-registry-package.sh [--verify-only] [--expected-publication <expected-publication.json>] [--publication-output <new-evidence.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
 }
 
 check_credential() {
@@ -25,7 +25,7 @@ fi
 verify_only=false
 expected_publication_input=''
 publication_output=''
-current_availability=Yanked
+current_availability=Listed
 current_availability_supplied=false
 expected_published_at=''
 while [[ $# -gt 0 ]]; do
@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
       verify_only=true
       shift
       ;;
-    --initial-yanked)
+    --expected-publication)
       [[ $# -ge 2 && -n "$2" && -z "$expected_publication_input" ]] || { usage; exit 2; }
       expected_publication_input="$2"
       shift 2
@@ -63,7 +63,7 @@ done
 
 if [[ -n "$publication_output" ]]; then
   [[ -n "$expected_publication_input" && ! -e "$publication_output" && ! -L "$publication_output" ]] \
-    || { printf 'Publication output requires initial-Yanked verification and a new evidence path.\n' >&2; exit 2; }
+    || { printf 'Publication output requires verified publication fields and a new evidence path.\n' >&2; exit 2; }
 fi
 
 if [[ -n "$expected_published_at" ]]; then
@@ -233,7 +233,7 @@ if [[ -n "$expected_publication_input" ]]; then
   [[ -f "$expected_publication_input" && ! -L "$expected_publication_input" ]] \
     || { printf 'Expected publication evidence must be a regular non-link JSON file.\n' >&2; exit 1; }
   command -v python3 >/dev/null 2>&1 \
-    || { printf 'python3 is required to validate initial-Yanked publication evidence.\n' >&2; exit 127; }
+    || { printf 'python3 is required to validate publication evidence.\n' >&2; exit 127; }
   # First publication expects only artifact-derived fields. Retained Registry
   # evidence also pins the server-returned owner for exact retry/readback checks.
   python3 - "$expected_publication_input" "$expected_publication_path" <<'PY'
@@ -256,11 +256,11 @@ value = json.loads(data.decode("utf-8"), object_pairs_hook=unique_object)
 with open(sys.argv[2], "w", encoding="utf-8") as stream:
     json.dump(value, stream, ensure_ascii=True, allow_nan=False)
 PY
-  jq -e --arg package_id "$package_id" --arg version "$version" '
+  jq -e --arg package_id "$package_id" --arg version "$version" --argjson read_only "$verify_only" '
     type == "object"
     and (keys == ["initialAvailability","package","publicInventorySha256"]
       or keys == ["initialAvailability","ownerPrincipalId","package","publicInventorySha256"])
-    and .initialAvailability == "Yanked"
+    and (.initialAvailability == "Listed" or ($read_only and .initialAvailability == "Yanked"))
     and (if has("ownerPrincipalId") then
       (.ownerPrincipalId | type == "string" and test("^[0-9a-f]{32}$") and . != "00000000000000000000000000000000")
       else true end)
@@ -269,7 +269,7 @@ PY
     and .package.packageId == $package_id and .package.version == $version
     and (.package.packageContentIdentity | type == "string" and test("^[0-9a-f]{64}$"))
   ' "$expected_publication_path" >/dev/null \
-    || { printf 'Expected initial-Yanked publication evidence has an invalid identity or schema.\n' >&2; exit 1; }
+    || { printf 'Expected publication evidence has an invalid identity, initial availability or schema.\n' >&2; exit 1; }
 fi
 
 if ! unzip -tqq "$archive" >/dev/null 2>&1 \
@@ -788,10 +788,7 @@ case "$details_status" in
     ;;
 esac
 
-publication_form=(-F 'setLatest=false')
-if [[ -n "$expected_publication_input" ]]; then
-  publication_form+=(-F 'initialAvailability=Yanked')
-fi
+publication_form=(-F 'setLatest=false' -F 'initialAvailability=Listed')
 
 # The private temporary directory is removed by the existing exit trap. Keep the
 # bearer value out of argv, even on runners where process arguments are observable.
@@ -822,7 +819,7 @@ if [[ "$publish_summary" != confirmed ]]; then
   fi
 fi
 
-# An unknown initial-Yanked upload outcome is reconciled by one exact readback,
+# An unknown upload outcome is reconciled by one exact readback,
 # never a second upload, tag mutation, unyank or compensating operation.
 fetch_version_details
 [[ "$details_status" == "200" ]] || {
@@ -833,7 +830,7 @@ fetch_version_details
 verify_version_details
 retain_publication
 if [[ "$publish_summary" != confirmed ]]; then
-  printf "Recovered exact initial-Yanked publication for package '%s' %s after an ambiguous response.\n" \
+  printf "Recovered exact Listed publication for package '%s' %s after an ambiguous response.\n" \
     "$package_id" "$version"
   exit 0
 fi

@@ -111,7 +111,7 @@ def main(args):
         run([*native, "finalize", "artifacts/native", family, plan_path, commit, ROOT])
         shutil.copyfile(plan_path, family / selection.PLAN)
         import bash_runtime
-        run(bash_runtime.command(ROOT / "scripts/release/generate-package-output-audit.sh", family,
+        run(bash_runtime.audit_command(ROOT / "scripts/release/generate-package-output-audit.sh", family,
                                 family / "native-test-evidence.json", ROOT, family / "package-output-audit.json"))
         release.verify_family(ROOT, family, plan["registryOrigin"])
         run(["dotnet", "vstest", "artifacts/package-test-binaries/Sunder.Package.Agent.Archive.Tests.dll",

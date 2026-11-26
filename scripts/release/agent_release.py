@@ -496,9 +496,10 @@ def artifact_records(source, assets):
     return sorted(result, key=lambda r: r["path"])
 
 
-def publication(record, owner=None):
+def publication(record, owner=None, *, initial="Listed"):
+    require(initial in ("Listed", "Yanked"), "Unknown initial publication availability")
     value = {"package": {k: record[k] for k in ("packageId", "version", "packageContentIdentity")},
-             "publicInventorySha256": record["publicInventorySha256"], "initialAvailability": "Yanked"}
+             "publicInventorySha256": record["publicInventorySha256"], "initialAvailability": initial}
     if owner is not None:
         digest(owner, 32)
         require(owner != "0" * 32, "Missing Registry publication owner")
@@ -508,7 +509,8 @@ def publication(record, owner=None):
 
 def publication_evidence(value, record):
     closed(value, "package ownerPrincipalId publicInventorySha256 initialAvailability")
-    require(value == publication(record, value["ownerPrincipalId"]), "Registry publication evidence differs from the tested artifact")
+    require(value == publication(record, value["ownerPrincipalId"], initial=value["initialAvailability"]),
+            "Registry publication evidence differs from the tested artifact")
     return value
 
 
@@ -838,10 +840,10 @@ def main():
         value = load(provenance)
         records = [r for r in value["artifacts"] if r["packageId"] == package_id]
         require(len(records) == 1, "Missing exact primary artifact")
-        if value["schemaVersion"] == 3:
+        if value["schemaVersion"] in (3, 4):
             expected = read_publications(Path(provenance).parent, value["artifacts"], required=True)[package_id]
         else:
-            expected = publication(records[0], value["publication"]["ownerPrincipalId"])
+            expected = publication(records[0], value["publication"]["ownerPrincipalId"], initial="Yanked")
         print(encoded(expected).decode())
     elif command == "publication-time":
         source, commit, package_id = args

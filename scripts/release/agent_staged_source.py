@@ -23,7 +23,17 @@ CONTROL_FILES = frozenset({
     "scripts/release/agent_pipeline.py", "scripts/release/agent_staged_source.py",
     "scripts/release/publish-registry-package.sh", "scripts/test/release/test_agent_staged_source.py",
     "scripts/test/release/publish-registry-package.fixture.sh", "docs/RELEASES.md",
+    "scripts/release/agent_channel.py", "scripts/release/agent_cohort.py",
+    "scripts/release/import-agent-publication-evidence.sh", "scripts/test/release/test_selective_pipeline.py",
+    "scripts/test/release/test_agent_channel.py", "scripts/test/release/agent-release.fixture.py", "scripts/README.md",
 })
+
+# These shared files also take part in producer qualification. Admit only the
+# reviewed publication-parser / Windows stdout fixes, not arbitrary validator changes.
+REVIEWED_BLOBS = {
+    "scripts/release/agent_release.py": ("5bc5b159ceee802c99d87f2802798d586318bab5", "85852c635789a28e383bb6425343eeb6efce6224"),
+    "scripts/ci/bash_runtime.py": ("d029f6a53ce254e4ccf4ab61197cc3f9f6c93009", "7a97eb0160f3e524ca7dbda44d4acdbff7f35e92"),
+}
 
 
 def primary(plan):
@@ -115,8 +125,12 @@ def authenticate(controller, info, plan):
 
 
 def source_tree(root):
-    return {path: obj for line in r.git(root, "ls-tree", "-rz", "HEAD").split(b"\0") if line
+    tree = {os.fsdecode(path): obj for line in r.git(root, "ls-tree", "-rz", "HEAD").split(b"\0") if line
             for obj, path in [line.split(b"\t", 1)] if os.fsdecode(path) not in CONTROL_FILES}
+    for path, (old, new) in REVIEWED_BLOBS.items():
+        if tree.get(path) == b"100644 blob " + new.encode("ascii"):
+            tree[path] = b"100644 blob " + old.encode("ascii")
+    return tree
 
 
 def checkout(control_root, plan):

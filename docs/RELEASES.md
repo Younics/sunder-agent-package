@@ -26,11 +26,13 @@ published owner can still ship.
    installed-size budgets. Create this package's `<inventory-key>/v<version>` tag
    and GitHub draft only after qualification. The draft retains the tested
    archive, original execution reports, source, checksums, SBOM and recovery plan.
-3. **Publish to Hub.** Upload this exact version initially **Yanked**. Each
-   native runner downloads it anonymously from Hub, installs it under real
-   Registry policy and exercises its lifecycle. Retain all six installed
-   receipts, list just this version and advance its channel tag in one
-   revision-fenced operation, then announce the GitHub release. The dependency
+3. **Publish to Hub.** Upload this exact version **Listed**, with `setLatest=false`.
+   Users can select the version immediately. Each native runner installs from
+   Hub under real Registry policy and exercises its lifecycle. After retaining
+   all six installed receipts, use a revision-fenced dist-tag PUT to advance
+   `latest` or `preview`, then announce the GitHub release. Preserve a newer
+   channel without changing it. An existing version's initial availability in
+   its immutable receipt is independent of whether it is Listed today. The dependency
    is verified read-only. The Hub writer is queued because policy revisions are
    shared; a failed writer does not cancel the other packages.
 
@@ -88,7 +90,7 @@ The protected `sunder-agent-release-promotion` environment controls staging
 and visibility. Configure `SUNDER_REGISTRY_API_URL` for the intended HTTPS Hub
 and its `SUNDER_REGISTRY_API_KEY` with `package:publish` and `package:release`
 on the exact IDs. Hub checks the publishing identity and grants when the
-workflow uploads and lists each version. If Hub rejects a package, use its
+workflow uploads each version and later promotes its channel. If Hub rejects a package, use its
 response to resolve that package's authorization or version conflict.
 Both calls to the reusable shipping workflow must explicitly pass that named
 secret. The staging job checks its presence and format before creating a tag.

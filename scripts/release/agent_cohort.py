@@ -158,12 +158,14 @@ def store(path, value):
             staged.unlink()
 
 
-def http(registry, route, payload=None, token=None):
+def http(registry, route, payload=None, token=None, *, method="POST", headers=()):
     registry = origin(registry)
     command = ["curl", "--disable", "--silent", "--show-error", "--proto", "=https", "--tlsv1.2",
                "--max-redirs", "0", "--max-time", "60", "--max-filesize", "1048576", "--write-out", "\n%{http_code}"]
     if payload is not None:
-        command += ["--request", "POST", "--header", "Content-Type: application/json", "--data-binary", "@-"]
+        command += ["--request", method, "--header", "Content-Type: application/json", "--data-binary", "@-"]
+    for header in headers:
+        command += ["--header", header]
     command.append(registry + route)
     clean = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
         "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
@@ -230,11 +232,20 @@ def confirm(registry, request_path, result_path, archives):
     committed = result(load(result_path), proposed)
     verify_current(registry, proposed, committed)
     token = mutation_credential(proposed)
-    nonce = secrets.token_hex(16)
-    minimum = committed["packagePolicy"]
+    subjects = [change["package"] for change in proposed["versions"]]
+    confirm_listed(registry, subjects, archives, committed["packagePolicy"])
+    for attempt in range(2):
+        status, body, transport = http(registry, "/api/v1/me/package-cohorts/availability", request_bytes(proposed), token)
+        if not transport and status == 200:
+            require(result(decode(body), proposed) == committed, "Registry retained result differs from accepted cohort evidence")
+            return
+        require(attempt == 0 and (transport or status >= 500), "Registry did not confirm the exact retained cohort; no announcement")
+
+
+def confirm_listed(registry, subjects, archives, minimum):
+    """Fresh policy for these exact installed subjects and all their platform authorities."""
     platforms = {}
-    for change in proposed["versions"]:
-        package = change["package"]
+    for package in subjects:
         manifest, public, _ = archive_metadata(Path(archives) / f"{package['packageId']}.{package['version']}.sunderpkg")
         require(public["packageContentIdentity"] == package["packageContentIdentity"], "Policy input archive identity differs")
         authorities = [*manifest.get("platformImports", []), *manifest.get("contractBundles", [])]
@@ -247,8 +258,8 @@ def confirm(registry, request_path, result_path, archives):
                 require(item["authorityId"] == "sunder.core", "Unknown platform authority")
                 version(item["releaseVersion"])
                 platforms[tuple(item.values())] = item
-    subjects = sorted([v["package"] for v in proposed["versions"]], key=lambda p: (p["packageId"], p["version"], p["packageContentIdentity"]))
-    synchronization = {"nonce": nonce, "packages": subjects,
+    subjects = sorted(subjects, key=lambda p: (p["packageId"], p["version"], p["packageContentIdentity"]))
+    synchronization = {"nonce": secrets.token_hex(16), "packages": subjects,
                        "platformCatalogs": [platforms[key] for key in sorted(platforms)], "minimumPackagePolicy": minimum}
     status, body, transport = http(registry, "/api/v1/policy/synchronize", encoded(synchronization))
     require(not transport and status == 200, "Fresh cohort policy synchronization failed")
@@ -260,12 +271,7 @@ def confirm(registry, request_path, result_path, archives):
     require(all(p["lifecycleState"] == "Supported" and p["disposition"] == "Allowed"
                     and p["errorCode"] is None and p["revokedAtUtc"] is None for p in current["platformCatalogs"]),
             "Fresh policy does not allow the complete platform catalog set")
-    for attempt in range(2):
-        status, body, transport = http(registry, "/api/v1/me/package-cohorts/availability", request_bytes(proposed), token)
-        if not transport and status == 200:
-            require(result(decode(body), proposed) == committed, "Registry retained result differs from accepted cohort evidence")
-            return
-        require(attempt == 0 and (transport or status >= 500), "Registry did not confirm the exact retained cohort; no announcement")
+    return current["packagePolicy"]
 
 
 def guard():
