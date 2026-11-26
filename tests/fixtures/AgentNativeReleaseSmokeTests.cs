@@ -69,7 +69,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var observedTemporaryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var initialized = false;
 
-        try
+        await RunWithNativeCleanupAsync(async () =>
         {
             await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             var installedLifecycle = provider.GetRequiredService<InstalledPackageLifecycleService>();
@@ -236,34 +236,25 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 schemaVersion = 2, registryOrigin, archiveDownloadAuthentication = "anonymous",
                 downloads, policies = policyEvidence,
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
-        }
-        finally
+        }, async () =>
         {
-            if (initialized)
-            {
-                try
-                {
-                    await provider.GetRequiredService<InstalledPackageLifecycleService>()
-                        .ShutdownAsync(provider.GetRequiredService<PackageSessionLifecycleService>());
-                }
-                catch
-                {
-                    // Preserve the primary test failure; process and directory assertions below still run.
-                }
-            }
             try
             {
-                await runtimeHost.StopAsync(CancellationToken.None);
+                if (initialized)
+                    await provider.GetRequiredService<InstalledPackageLifecycleService>()
+                        .ShutdownAsync(provider.GetRequiredService<PackageSessionLifecycleService>());
             }
-            finally { await DisposeRuntimeHostAsync(runtimeHost, appConnection); }
-            await AssertProcessesStoppedAsync(observedProcesses);
-            Assert.All(observedTemporaryPaths, path => Assert.False(
-                Directory.Exists(path),
-                $"Worker temporary directory survived Runtime Host lifecycle: {path}"));
-            MakeTreeWritable(root);
-            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
-            Assert.False(Directory.Exists(root));
-        }
+            finally
+            {
+                try { await runtimeHost.StopAsync(CancellationToken.None); }
+                finally { await DisposeRuntimeHostAsync(runtimeHost, appConnection); }
+                await AssertProcessesStoppedAsync(observedProcesses);
+                Assert.All(observedTemporaryPaths, path => Assert.False(
+                    Directory.Exists(path),
+                    $"Worker temporary directory survived Runtime Host lifecycle: {path}"));
+                DeleteNativeFixtureRoot(root);
+            }
+        });
     }
 
     private static IHost CreateNativeRuntimeHost(RuntimePackagePaths paths,
@@ -329,27 +320,30 @@ public sealed partial class AgentNativeReleaseSmokeTests
         }
     }
 
-    private static void MakeTreeWritable(string root)
+    private static async Task RunWithNativeCleanupAsync(Func<Task> qualify, Func<Task> cleanup)
     {
-        if (!Directory.Exists(root)) return;
-        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        try
         {
-            File.SetAttributes(file, FileAttributes.Normal);
-            if (!OperatingSystem.IsWindows())
+            await qualify();
+        }
+        catch (Exception failure)
+        {
+            try { await cleanup(); }
+            catch (Exception cleanupFailure)
             {
-                File.SetUnixFileMode(file, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                throw new AggregateException("Native qualification and cleanup both failed.", failure, cleanupFailure);
             }
+            throw;
         }
-        if (OperatingSystem.IsWindows()) return;
-        foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories))
-        {
-            File.SetUnixFileMode(
-                directory,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-        File.SetUnixFileMode(
-            root,
-            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        await cleanup();
+    }
+
+    private static void DeleteNativeFixtureRoot(string root)
+    {
+        // The installed execution runtime is sealed, including directory ACLs on
+        // Windows. Reclaim only this test's owned tree after checking process exit.
+        ExecutionRuntimeRootFileSystem.DeleteOwnedTree(root);
+        Assert.False(Directory.Exists(root));
     }
 
     private static string? ReleasePackage => Environment.GetEnvironmentVariable("SUNDER_AGENT_RELEASE_PACKAGE");

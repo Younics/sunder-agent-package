@@ -54,6 +54,11 @@ native_path() {
 
 builder_sdk_version="${SUNDER_AGENT_BUILDER_SDK_VERSION:-$(dotnet --version)}"
 builder_dotnet_path="$(command -v dotnet)"
+# Git Bash may omit the executable suffix even though native Windows clients
+# need the real file name (including for Maker's selected SDK).
+if command -v cygpath >/dev/null 2>&1 && [[ "$builder_dotnet_path" != *.exe ]]; then
+  builder_dotnet_path="$builder_dotnet_path.exe"
+fi
 [[ "$builder_sdk_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
   || { printf 'The selected Builder SDK version must be an exact stable three-part version.\n' >&2; exit 1; }
 [[ -f "$builder_dotnet_path" ]] \
@@ -81,6 +86,21 @@ SunderPublishedHostDirectory="$(distribution_property host)"
 # path stamp, hook, or copied Host launcher from a previous qualification.
 test_build="$(mktemp -d "$metrics_directory/../agent-native-test.XXXXXXXX")"
 test_artifacts=(--artifacts-path "$(native_path "$test_build")")
+# Keep VSTest's framework-dependent host on the selected SDK. On Windows x64
+# its default testhost.exe otherwise finds the bundled guardian's app-local
+# hostfxr next to the test assembly, where no shared framework is installed.
+test_settings="$(native_path "$test_build/sdk-testhost.runsettings")"
+python3 -B - "$test_settings" "$(native_path "$builder_dotnet_path")" <<'PY'
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+muxer = Path(sys.argv[2]).resolve(strict=True)
+settings = ET.Element("RunSettings")
+ET.SubElement(ET.SubElement(settings, "RunConfiguration"), "DotNetHostPath").text = str(muxer)
+with Path(sys.argv[1]).open("xb") as output:
+    ET.ElementTree(settings).write(output, encoding="utf-8", xml_declaration=True)
+PY
 dotnet restore "$test_project" --configfile "$script_dir/../../NuGet.Config" --locked-mode \
   "${test_artifacts[@]}" -p:Configuration=Release
 
@@ -92,7 +112,7 @@ if [[ "$mode" == published ]]; then
   test_fqn='Sunder.Runtime.Host.Tests.AgentNativeReleaseSmokeTests.PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost'
   test_filter="FullyQualifiedName=$test_fqn"
 fi
-discovered="$(dotnet test "$test_project" "${test_artifacts[@]}" -c Release --no-restore --list-tests --filter "$test_filter" | sed $'s/\r$//')"
+discovered="$(dotnet test "$test_project" "${test_artifacts[@]}" -c Release --no-restore --settings "$test_settings" --list-tests --filter "$test_filter" | sed $'s/\r$//')"
 grep -Fqx "    $test_fqn" <<< "$discovered" \
   || { printf 'Missing native Agent release smoke.\n' >&2; exit 1; }
 if [[ "$mode" == development && ( -z "$subject" || "$subject" == younics.sunder.package.maker ) ]]; then
@@ -109,7 +129,7 @@ SUNDER_AGENT_BUILDER_SDK_VERSION="$builder_sdk_version" \
 SUNDER_AGENT_BUILDER_DOTNET_PATH="$(native_path "$builder_dotnet_path")" \
 SUNDER_AGENT_BUILDER_NUGET_FEED="$(native_path "$metrics_directory/maker-inputs/feed")" \
   dotnet test "$test_project" "${test_artifacts[@]}" -c Release --no-build --no-restore \
-    --filter "$test_filter" \
+    --settings "$test_settings" --filter "$test_filter" \
     --logger 'trx;LogFileName=native-family.trx' --results-directory "$(native_path "$metrics_directory")"
 
 record_args=("$mode" "$metrics_directory" "$archive_directory")

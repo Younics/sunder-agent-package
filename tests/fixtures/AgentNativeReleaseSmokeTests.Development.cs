@@ -34,7 +34,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var observed = new HashSet<ExecutionRuntimeProcessObservation>();
         var temporary = new HashSet<string>(StringComparer.Ordinal);
         var initialized = false;
-        try
+        await RunWithNativeCleanupAsync(async () =>
         {
             await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             await installed.InitializeAsync();
@@ -138,8 +138,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 if (TestsPackage(SemanticMemoryPackageId))
                     VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"), "MemorySchemaMigrations", projections[SemanticMemoryPackageId]);
             }
-        }
-        finally
+        }, async () =>
         {
             CaptureWorkers(owner, observed, temporary);
             try { if (initialized) await installed.ShutdownAsync(sessions); }
@@ -151,11 +150,10 @@ public sealed partial class AgentNativeReleaseSmokeTests
                     await DisposeRuntimeHostAsync(runtimeHost, appConnection);
                     await AssertProcessesStoppedAsync(observed);
                     Assert.All(temporary, path => Assert.False(Directory.Exists(path), "Native Worker temporary directory survived cleanup: " + path));
-                    MakeTreeWritable(root);
-                    if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+                    DeleteNativeFixtureRoot(root);
                 }
             }
-        }
+        });
     }
 
     private static void VerifyActiveFamily(IServiceProvider services, string rid)

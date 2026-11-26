@@ -37,7 +37,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var observed = new HashSet<ExecutionRuntimeProcessObservation>();
         var temporary = new HashSet<string>(StringComparer.Ordinal);
         var initialized = false;
-        try
+        await RunWithNativeCleanupAsync(async () =>
         {
             await StartNativeRuntimeHostAsync(runtimeHost, appConnection);
             await lifecycle.InitializeAsync();
@@ -54,8 +54,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await VerifyStandaloneMakerAsync(provider, owner, rid, root);
             await VerifyBuilderProjectLifecycleAsync(provider, owner, rid, root,
                 provider.GetRequiredService<ExecutionRuntimeStoreLayout>().GetContentRootPath(receipt.ContentIdentity), metrics, observed, temporary, appConnection);
-        }
-        finally
+        }, async () =>
         {
             CaptureWorkers(owner, observed, temporary);
             try
@@ -73,11 +72,10 @@ public sealed partial class AgentNativeReleaseSmokeTests
                     await DisposeRuntimeHostAsync(runtimeHost, appConnection);
                     await AssertProcessesStoppedAsync(observed);
                     Assert.All(temporary, path => Assert.False(Directory.Exists(path), "Maker Worker temporary directory survived cleanup: " + path));
-                    MakeTreeWritable(root);
-                    if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+                    DeleteNativeFixtureRoot(root);
                 }
             }
-        }
+        });
     }
 
     private static async Task VerifyStandaloneMakerAsync(IServiceProvider services, RuntimeSessionOwner owner, string rid, string root)
