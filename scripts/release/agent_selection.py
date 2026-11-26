@@ -15,6 +15,7 @@ import release_inputs as inputs
 
 REPOSITORY = "Younics/sunder-agent-package"
 PLAN = "release-plan.json"
+OWNER = "younics.ai.agent"
 
 
 def evaluated_packages(source, package_ids=None):
@@ -22,9 +23,7 @@ def evaluated_packages(source, package_ids=None):
     if package_ids is not None:
         r.require(set(package_ids) <= {row["packageId"] for row in rows}, "Unknown version validation selection")
         rows = [row for row in rows if row["packageId"] in package_ids]
-    env = {key: value for key, value in os.environ.items() if key not in
-        ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN", "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN",
-         "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
+    env = inputs.without_credentials()
     for row in rows:
         project = r.source_file(source, row["projectPath"])
         result = subprocess.check_output(["dotnet", "msbuild", str(project), "-p:Configuration=Release",
@@ -81,10 +80,10 @@ def registry_version(registry, row):
 
 def validate(plan, source, source_sha=None):
     r.require(type(plan) is dict and type(plan.get("schemaVersion")) is int
-              and plan["schemaVersion"] in (1, 2) and plan.get("repository") == REPOSITORY,
+              and plan["schemaVersion"] in (1, 2, 3) and plan.get("repository") == REPOSITORY,
               "Unknown release selection")
     r.closed(plan, "schemaVersion repository artifactSourceCommit lockSetSha256 registryOrigin packages"
-             + (" ownerPrincipalId" if plan["schemaVersion"] == 1 else ""))
+             + (" ownerPrincipalId" if plan["schemaVersion"] == 1 else " releasePackage cutoverPlan" if plan["schemaVersion"] == 3 else ""))
     if plan["schemaVersion"] == 1:
         # Historical plans retain their original identity assertion byte-for-byte.
         r.digest(plan["ownerPrincipalId"], 32)
@@ -95,7 +94,24 @@ def validate(plan, source, source_sha=None):
     r.origin(plan["registryOrigin"])
     expected = sorted(r.inventory(source)["packages"], key=lambda row: row["packageId"])
     rows = plan["packages"]
-    r.require(type(rows) is list and len(rows) == len(expected), "Release selection must cover all fifteen packages")
+    if plan["schemaVersion"] == 3:
+        subject = plan["releasePackage"]
+        target = next((row for row in expected if row["packageId"] == subject), None)
+        r.require(target is not None, "Unknown independent release subject")
+        dependencies = locked_dependencies(source, target)
+        expected = [row for row in expected if row["packageId"] == subject or row["packageId"] in dependencies]
+        r.require(type(rows) is list and [row["packageId"] for row in selected(plan)] == [subject],
+                  "A package release can write only its own version")
+        for row in rows:
+            if row["packageId"] != subject:
+                r.require(dependencies.get(row["packageId"]) == row["version"], "Dependency is not the locked version")
+        if plan["cutoverPlan"] is not None:
+            from agent_cutover_200 import applies
+            initial = plan["cutoverPlan"]
+            r.require(initial.get("schemaVersion") == 2 and target["version"] == "2.0.0"
+                      and applies(validate(initial, source)) and initial["registryOrigin"] == plan["registryOrigin"],
+                      "Invalid original Windows cutover selection")
+    r.require(type(rows) is list and len(rows) == len(expected), "Release selection differs from the required package set")
     for row, authored in zip(rows, expected):
         r.closed(row, "key packageId projectPath version tag selected retainedArchive retainedEvidence")
         r.require(all(row[key] == authored[key] for key in ("key", "packageId", "projectPath"))
@@ -124,6 +140,77 @@ def archive_name(row):
 
 def selected(plan):
     return [row for row in plan["packages"] if row["selected"]]
+
+
+def locked_dependencies(source, row):
+    lock = r.load(r.source_file(source, str(Path(row["projectPath"]).with_name("sunder-contracts.lock.json").as_posix())))
+    dependencies = {key: item["selectedPackageVersion"] for key, item in lock["packageArtifacts"].items()}
+    r.require(set(dependencies) == (set() if row["packageId"] == OWNER else {OWNER}),
+              "Package release dependency graph changed; review the publication ordering")
+    return dependencies
+
+
+def new_version(row, remote):
+    prefix = row["key"] + "/v"
+    authored = r.version(row["version"])
+    versions = []
+    for release in remote:
+        if not release["tag_name"].startswith(prefix):
+            continue
+        version = r.version(release["tag_name"][len(prefix):])
+        r.require(release["prerelease"] is (not version[1]), "Published channel differs from SemVer")
+        if not release["draft"] and version[0][0] == authored[0][0]:
+            versions.append(version)
+    return not versions or authored > max(versions)
+
+
+def package_plan(source, source_sha, registry, subject, remote):
+    """Select just this package. A sibling's draft or Registry status is irrelevant."""
+    registry = r.origin(registry)
+    rows = {row["packageId"]: row for row in r.inventory(source)["packages"]}
+    r.require(subject in rows, "Unknown package release")
+    row = rows[subject]
+    tag = row["key"] + "/v" + row["version"]
+    existing = next((release for release in remote if release["tag_name"] == tag), None)
+    if existing and existing["draft"]:
+        r.require(existing["target_commitish"] == source_sha, "Recover this package on its original source")
+        locator = asset_locator(existing, PLAN)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / PLAN
+            inputs.download(locator, path)
+            value = load(path, source, source_sha)
+        r.require(value.get("releasePackage") == subject and value["registryOrigin"] == registry,
+                  "Draft belongs to another publication; use its original workflow")
+        return value, True
+    if not new_version(row, remote):
+        return None, False
+    r.require(registry_version(registry, row) is None,
+              "Existing Registry version without its original release; reconcile, do not rebuild")
+    # A tag with no draft can be the result of interrupted staging. Only the
+    # original failed staging job still has authority over its inspected bytes.
+    refs = inputs.gh_json(f"repos/{REPOSITORY}/git/matching-refs/tags/" + quote(tag, safe=""))
+    r.require(isinstance(refs, list) and all(item["ref"] != "refs/tags/" + tag for item in refs),
+              "Tag already exists; recover the original staged bytes")
+    def entry(package, version, archived=None):
+        identity = dict(package, version=version)
+        return {key: identity[key] for key in ("key", "packageId", "projectPath", "version")} | dict(
+            tag=package["key"] + "/v" + version, selected=archived is None,
+            retainedArchive=archive_locator(archived, identity) if archived else None,
+            retainedEvidence=asset_locator(archived, "native-test-evidence.json") if archived else None)
+    result = [entry(row, row["version"])]
+    for dep, version in locked_dependencies(source, row).items():
+        owner = rows[dep]
+        release = next((item for item in remote if item["tag_name"] == owner["key"] + "/v" + version and not item["draft"]), None)
+        r.require(release is not None, f"{subject} requires the published {dep}@{version}")
+        dependency = entry(owner, version, release)
+        observed = registry_version(registry, dependency)
+        r.require(observed and observed.get("isYanked") is False and
+                  observed["canonicalArtifact"]["sha256"] == dependency["retainedArchive"]["sha256"],
+                  "Locked dependency is not Listed with the exact GitHub archive bytes")
+        result.append(dependency)
+    value = dict(schemaVersion=3, repository=REPOSITORY, artifactSourceCommit=source_sha, lockSetSha256=r.locks(source),
+                 registryOrigin=registry, releasePackage=subject, cutoverPlan=None, packages=sorted(result, key=lambda item: item["packageId"]))
+    return validate(value, source, source_sha), False
 
 
 def plan(source, source_sha, registry, published=None):
@@ -269,14 +356,72 @@ def retained_role_uses(plan, directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("plan", "retain", "rows"))
+    parser.add_argument("action", choices=("dispatch", "package", "plan", "retain", "rows"))
+    parser.add_argument("--package")
+    parser.add_argument("--cutover-selection", type=Path)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("--plan", type=Path, required=True)
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--evidence-only", action="store_true", help="Archives already travel in the inspected family")
     args = parser.parse_args()
     source = args.source.resolve()
-    if args.action == "plan":
+    if args.action == "dispatch":
+        import agent_cutover_200 as cutover
+        remote = releases()
+        rows = r.inventory(source)["packages"]
+        work = []
+        for row in rows:
+            # Reconciliation errors belong to the owning package job, not to
+            # unrelated packages. A listed older major is not a completed bump.
+            try:
+                needed = new_version(row, remote) or any(
+                    item["tag_name"] == row["key"] + "/v" + row["version"] and item["draft"] for item in remote)
+            except ValueError:
+                needed = True
+            if needed: work.append(row["packageId"])
+        initial = ""
+        if set(work) == set(r.FAMILY_PACKAGE_IDS) and all(row["version"] == "2.0.0" for row in rows) and not any(
+                item["tag_name"] in {row["key"] + "/v2.0.0" for row in rows} for item in remote):
+            # Audit the original all-new selection for the Windows cutover only.
+            # No package stage, publication or recovery consumes this batch plan.
+            initial_plan = dict(schemaVersion=2, repository=REPOSITORY, artifactSourceCommit=os.environ["GITHUB_SHA"],
+                lockSetSha256=r.locks(source), registryOrigin=r.origin(os.environ["REGISTRY_API_URL"]),
+                packages=[{k: row[k] for k in ("key", "packageId", "projectPath", "version")} | dict(
+                    tag=row["key"] + "/v2.0.0", selected=True, retainedArchive=None, retainedEvidence=None)
+                    for row in sorted(rows, key=lambda row: row["packageId"])])
+            if cutover.applies(validate(initial_plan, source, os.environ["GITHUB_SHA"])):
+                args.plan.parent.mkdir(parents=True, exist_ok=True)
+                with args.plan.open("xb") as stream: stream.write(r.canonical(initial_plan) + b"\n")
+                initial = r.file_sha(args.plan)
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"owner={str(OWNER in work).lower()}\ncutover_sha={initial}\n")
+            output.write("registry_origin=" + r.origin(os.environ["REGISTRY_API_URL"]) + "\n")
+            output.write("extensions=" + r.canonical(sorted(set(work) - {OWNER})).decode() + "\n")
+        print("Versions pending: " + (", ".join(work) or "none"))
+    elif args.action == "package":
+        remote = releases()
+        value, resume = package_plan(source, os.environ["GITHUB_SHA"], os.environ["REGISTRY_API_URL"], args.package, remote)
+        r.require(value is not None, "Package is already published; do not stage another release")
+        if not resume and args.cutover_selection:
+            value["cutoverPlan"] = load(args.cutover_selection, source, os.environ["GITHUB_SHA"])
+        elif not resume and args.package == "younics.ai.agent.execution.local" and selected(value)[0]["version"] == "2.0.0":
+            # If a sibling already shipped, take the original all-new cutover
+            # selection from the exact, published owner. Never load a test report.
+            owner = next((release for release in remote if release["tag_name"] == "agent/v2.0.0" and not release["draft"]), None)
+            r.require(owner is not None, "Cannot establish the original Windows cutover selection")
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / PLAN
+                inputs.download(asset_locator(owner, PLAN), path)
+                original = r.load(path)
+            r.require(original.get("releasePackage") == OWNER and original["artifactSourceCommit"] == owner["target_commitish"]
+                      and original.get("cutoverPlan") is not None, "Published owner has no original cutover selection")
+            value["cutoverPlan"] = original["cutoverPlan"]
+        validate(value, source, os.environ["GITHUB_SHA"])
+        args.plan.parent.mkdir(parents=True, exist_ok=True)
+        with args.plan.open("xb") as stream: stream.write(r.canonical(value) + b"\n")
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"plan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n")
+    elif args.action == "plan":
         remote = releases()
         value = plan(source, os.environ["GITHUB_SHA"], os.environ["REGISTRY_API_URL"], remote)
         r.require(not args.plan.exists(), "Release plan destination already exists")

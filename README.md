@@ -155,10 +155,10 @@ missing required inputs fail those lanes. See [testing](docs/testing-extensions.
 Each canonical project owns its `<Version>`. Protected-main/manual release CI selects
 only versions newer than their published GitHub releases and creates package-key tags
 automatically, such as `agent-provider-openai/v2.1.0`. No newer version means no release.
-Unchanged archives are reused exactly; all fifteen Workers still run on all six RIDs.
-Release CI requires immutable Core SDK provenance, exact dependency locks and qualified
-schema-4 native inputs for no-rebuild fan-in. Selected versions publish Yanked, then
-become Listed in one retained atomic cohort. [Releases](docs/RELEASES.md) owns the full sequence.
+Agent ships first. Each extension tests, stages and publishes independently using
+its exact published Agent dependency. Its six native jobs exercise the composed
+archive; six installed receipts are required before that version is listed on
+Hub. A sibling's failed tests do not block it. See [Releases](docs/RELEASES.md).
 
 ## Contributing And License
 

@@ -373,9 +373,13 @@ def offline_prefix():
     raise Invalid("Provision SUNDER_AGENT_OFFLINE_RUNNER and its reviewed SHA-256 for process-tree network denial on this OS")
 
 
-def isolated_env(home, cache):
-    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
+def without_credentials():
+    return {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GITHUB_TOKEN", "SUNDER_REGISTRY_CLI_TOKEN",
         "SUNDER_REGISTRY_API_KEY", "SUNDER_REGISTRY_PUBLISH_TOKEN", "SUNDER_REGISTRY_NATIVE_READ_TOKEN", "SUNDER_AGENT_NATIVE_REGISTRY_TOKEN")}
+
+
+def isolated_env(home, cache):
+    env = without_credentials()
     # CI chooses dependencies through NuGet.Config and the committed graph.
     excluded = {"restoresources", "restoreadditionalprojectsources", "restorefallbackfolders",
                 "restoreadditionalprojectfallbackfolders", "restoreconfigfile"}

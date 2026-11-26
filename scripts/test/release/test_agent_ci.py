@@ -147,15 +147,6 @@ class AgentCiTests(unittest.TestCase):
             tests.assert_not_called()
         self.assertFalse(work[0].exists())
 
-    def test_release_plan_path_is_not_exported_as_an_msbuild_version(self):
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
-        for job, following in (("smoke", "fan-in"), ("fan-in", "stage")):
-            with self.subTest(job=job):
-                section = workflow.split(f"\n  {job}:\n", 1)[1].split(f"\n  {following}:", 1)[0]
-                self.assertNotRegex(section, r"(?im)^\s+VERSION:|\$(?:VERSION\b|\{VERSION\})")
-                self.assertIn("SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json", section)
-                self.assertIn('file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH"', section)
-
     def test_native_smoke_passes_exact_preparation_arguments_under_bash_nounset(self):
         launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()
         self.assertIn("\nset -euo pipefail\n", launcher)
@@ -163,25 +154,29 @@ class AgentCiTests(unittest.TestCase):
         script = textwrap.dedent("""\
             set -euo pipefail
             mode="$1"
+            subject="$2"
             script_dir="agent source/scripts/release"
             metrics_directory="native metrics"
             native_path() { printf '%s' "$1"; }
             python3() { printf '%s\\n' "$@"; }
             """) + preparation
-        for mode in ("development", "published"):
-            with self.subTest(mode=mode):
-                result = subprocess.run(bash_runtime.command("-c", script, "--", mode, self.core_sha),
+        for mode, subject, requires_feed in (("development", "", True), ("published", "", False),
+                                             ("development", "younics.ai.agent", False),
+                                             ("development", "younics.sunder.package.maker", True)):
+            with self.subTest(mode=mode, subject=subject):
+                result = subprocess.run(bash_runtime.command("-c", script, "--", mode, subject),
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
                 expected = ["-B", "agent source/scripts/release/prepare_maker_inputs.py", "native metrics/maker-inputs"]
-                self.assertEqual(expected + (["--host-only"] if mode == "published" else []), result.stdout.splitlines())
+                self.assertEqual(expected + ([] if requires_feed else ["--host-only"]), result.stdout.splitlines())
 
     def test_publication_api_key_keeps_its_environment_secret_name_through_component_calls(self):
         workflows = SCRIPTS.parent / ".github/workflows"
-        workflow = (workflows / "sunder-package-release.yml").read_text()
-        publish = workflow.split("\n  publish:\n")[1].split("\n  installed-native:")[0]
+        workflow = (workflows / "sunder-package-ship.yml").read_text()
+        publish = workflow.split("\n  publish:\n", 1)[1].split("\n  installed:", 1)[0]
         self.assertIn("environment: sunder-agent-release-promotion", publish)
-        self.assertIn("SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}", publish)
+        self.assertIn("secrets.SUNDER_REGISTRY_API_KEY", publish)
+        self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY", workflow.split("\n  publish:\n")[0])
         self.assertNotIn("SUNDER_REGISTRY_API_KEY", (workflows / "sunder-package-component.yml").read_text())
         for path in workflows.glob("*.yml"):
             text = path.read_text()
@@ -191,19 +186,16 @@ class AgentCiTests(unittest.TestCase):
         self.assertIn("reverse_agent_cohort.py plan", rollback)
         self.assertNotIn("reverse_agent_cohort.py apply", rollback)
 
-    def test_published_native_acceptance_is_mandatory_after_publication_and_before_visibility(self):
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-release.yml").read_text()
-        installed = workflow.split("  installed-native:\n")[1].split("\n  release:")[0]
-        release = workflow.split("  release:\n")[1].split("\n  summary:")[0]
+    def test_installed_acceptance_has_no_publication_credentials(self):
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-ship.yml").read_text()
+        installed = workflow.split("  installed:\n")[1].split("\n  release:")[0]
+        release = workflow.split("  release:\n")[1]
         self.assertIn("needs: [prepare, publish]", installed)
-        self.assertIn('artifacts/installed-native-metrics/$RID" published', installed)
         self.assertNotIn("secrets.", installed)
-        self.assertIn("REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}", installed)
         self.assertNotIn("--resume-staging", installed)
-        self.assertIn("needs: [prepare, installed-native]", release)
+        self.assertIn("needs: [prepare, installed]", release)
         self.assertLess(release.index("retain-installed-native"), release.index("agent_pipeline.py finalize"))
         self.assertNotIn("agent_pipeline.py visibility", release)
-        self.assertIn("installed-native", workflow.split("  summary:\n")[1])
         launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()
         self.assertIn("SUNDER_REGISTRY_API_KEY", launcher.split("unset ", 1)[1])
         self.assertNotIn("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN=", launcher)
@@ -226,20 +218,6 @@ class AgentCiTests(unittest.TestCase):
         self.assertNotIn("request.Headers.Authorization =", fixture)
         self.assertNotIn("SUNDER_AGENT_NATIVE_REGISTRY_TOKEN", fixture)
         self.assertIn('archiveDownloadAuthentication = "anonymous"', fixture)
-        section = installed.split("      - name: Download anonymously and exercise exact published archives before visibility\n", 1)[1].split("\n      - name:", 1)[0]
-        script = textwrap.dedent(section.split("        run: |\n", 1)[1]).split("bash scripts/release/run-native-runtime-smoke.sh", 1)[0]
-        script += 'printf "%s" "$SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN" > launcher-reached\n'
-        for name, plan in (("malformed", "{not-json"), ("missing-origin", "{}"),
-                           ("valid", '{"registryOrigin":"https://registry.test"}')):
-            with self.subTest(plan=name):
-                directory = self.root / ("origin-read-" + name)
-                (directory / "artifacts/release").mkdir(parents=True)
-                (directory / "artifacts/release/release-plan.json").write_text(plan)
-                result = subprocess.run(bash_runtime.command("-c", script), cwd=directory, text=True, capture_output=True,
-                                        env={**os.environ, "SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN": "https://stale.test"})
-                self.assertEqual(name == "valid", result.returncode == 0, result.stdout + result.stderr)
-                self.assertEqual(name == "valid", (directory / "launcher-reached").exists())
-                if name == "valid": self.assertEqual("https://registry.test", (directory / "launcher-reached").read_text())
 
     def prepare(self):
         self.work = self.root / "ordinary-ci"

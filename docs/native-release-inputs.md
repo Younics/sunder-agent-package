@@ -16,6 +16,16 @@ it does not replace that qualification or generate receipts.
 
 ## Producer and native test handoff
 
+Protected-main releases qualify one package at a time. Its owned tests produce
+the six native leaves and `compose-component` packs them once. Execution covers
+the subject alone for Agent, or the subject and its locked published Agent for
+an extension. Schema-3 execution receipts bind that subject; a receipt for a
+sibling or the historical full-family scope is not interchangeable. The scoped
+selection is schema 3 and the final native provenance remains schema 6.
+The all-family descriptions and PowerShell examples below cover full integration,
+lock authoring and historical handoffs. [Releases](RELEASES.md) describes the
+current package workflow.
+
 Requirements: PowerShell 7, Python 3.9+, Bash, and the pinned .NET SDK. Review and
 freeze **all** owned baselines before the first native Build. The producer verifies
 their frozen/published state; it does not refresh locks or freeze contracts. Keep

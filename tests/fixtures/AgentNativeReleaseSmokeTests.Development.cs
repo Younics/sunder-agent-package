@@ -22,7 +22,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         var archives = ReadArchives(RequiredMakerPath("SUNDER_AGENT_NATIVE_ARCHIVE_DIR", directory: true), PackageTargetSelection.GetCurrentRuntimeIdentifier());
         var metrics = RequiredMakerPath("SUNDER_AGENT_NATIVE_METRICS_DIR", directory: true);
         var rid = PackageTargetSelection.GetCurrentRuntimeIdentifier();
-        await VerifyMcpAppJsonHighlightingAsync(archives[McpPackageId], rid, metrics);
+        if (TestsPackage(McpPackageId)) await VerifyMcpAppJsonHighlightingAsync(archives[McpPackageId], rid, metrics);
         var root = Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sunder-native-development-" + Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
@@ -72,16 +72,20 @@ public sealed partial class AgentNativeReleaseSmokeTests
             // real process-start-to-activation timing boundary used by the budget.
             var initial = CaptureWorkers(owner, observed, temporary);
             var ui = services.GetRequiredService<RuntimePackageUiService>();
-            var originalSnapshot = Assert.Single(ui.GetActiveSnapshots(rid), item => item.PackageId == AgentPackageId);
+            var originalSnapshot = TestsPackage(AgentPackageId)
+                ? Assert.Single(ui.GetActiveSnapshots(rid), item => item.PackageId == AgentPackageId) : null;
             var snapshotPath = Path.Combine(root, "agent.snapshot");
-            using (var lease = ui.AcquireCurrent(originalSnapshot.SnapshotId))
+            if (originalSnapshot is not null)
             {
+                using var lease = ui.AcquireCurrent(originalSnapshot.SnapshotId);
                 Assert.NotNull(lease);
-                await using var destination = new FileStream(snapshotPath, FileMode.CreateNew);
-                using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-                await lease.Stream.CopyToAsync(destination, deadline.Token);
+                await using (var destination = new FileStream(snapshotPath, FileMode.CreateNew))
+                {
+                    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+                    await lease.Stream.CopyToAsync(destination, deadline.Token);
+                }
+                Assert.Equal(originalSnapshot.ContentHash, Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(snapshotPath))));
             }
-            Assert.Equal(originalSnapshot.ContentHash, Convert.ToHexStringLower(SHA256.HashData(await File.ReadAllBytesAsync(snapshotPath))));
             var stage = await sessions.StageAsync(new PackageLifecycleStageRequest(archives.Keys.ToArray()));
             Assert.True(stage.Success, string.Join(Environment.NewLine, stage.Errors));
             var staged = GetWorkers(Assert.IsType<ActivePackageSession>(sessions.GetStagedSession(stage.StageId!)));
@@ -102,10 +106,14 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await RecordWorkerMetricsAsync(GetWorkers(owner), projections, archives, rid, measurements, metrics, observed, temporary);
             VerifyDatabases();
             owner.MarkReady();
-            await VerifySupervisedSnapshotAsync(services, paths, appConnection, originalSnapshot, snapshotPath, rid, metrics, root);
-            await VerifyOwnerUnaryAndStreamAsync(services, owner, rid, appConnection, root);
-            await VerifyCallbackAndAuthAsync(services, owner);
-            var crashed = await VerifyCrashIsolationAsync(owner, observed, temporary);
+            if (originalSnapshot is not null)
+            {
+                await VerifySupervisedSnapshotAsync(services, paths, appConnection, originalSnapshot, snapshotPath, rid, metrics, root);
+                await VerifyOwnerUnaryAndStreamAsync(services, owner, rid, appConnection, root);
+            }
+            if (TestsPackage(McpPackageId)) await VerifyMcpCallbackAsync(services, owner);
+            if (TestsPackage(OpenAiPackageId)) await VerifyOpenAiAuthAsync(services);
+            ExecutionRuntimeProcessObservation? crashed = TestsPackage(ShellPackageId) ? await VerifyCrashIsolationAsync(owner, observed, temporary) : null;
             var beforeUnload = CaptureWorkers(owner, observed, temporary);
             var unload = await sessions.LoadStartupDevPackagesAsync([]);
             Assert.True(unload.Success, string.Join(Environment.NewLine, unload.Errors));
@@ -116,7 +124,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Assert.True(recovered.Success, string.Join(Environment.NewLine, recovered.Errors));
             AssertSamePackageIds(archives.Keys, GetWorkers(owner).Keys);
             VerifyActiveFamily(services, rid);
-            AssertReplacementProcess(crashed, GetWorkers(owner)[ShellPackageId]);
+            if (crashed is { } retired) AssertReplacementProcess(retired, GetWorkers(owner)[ShellPackageId]);
             Assert.Empty(await installed.GetInstalledAsync());
             VerifyDatabases();
             await installed.ShutdownAsync(sessions);
@@ -125,8 +133,10 @@ public sealed partial class AgentNativeReleaseSmokeTests
 
             void VerifyDatabases()
             {
-                VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"), "SchemaMigrations", projections[AgentPackageId]);
-                VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"), "MemorySchemaMigrations", projections[SemanticMemoryPackageId]);
+                if (TestsPackage(AgentPackageId))
+                    VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"), "SchemaMigrations", projections[AgentPackageId]);
+                if (TestsPackage(SemanticMemoryPackageId))
+                    VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"), "MemorySchemaMigrations", projections[SemanticMemoryPackageId]);
             }
         }
         finally
@@ -152,7 +162,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
     {
         using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
             RequiredMakerPath("SUNDER_AGENT_REPOSITORY_ROOT", directory: true), "compatibility/agent-current-inventory.json")));
-        var packages = inventory.RootElement.GetProperty("packages").EnumerateArray().ToArray();
+        var packages = inventory.RootElement.GetProperty("packages").EnumerateArray()
+            .Where(row => row.GetProperty("packageId").GetString() is { } id && (TestsPackage(id) || id == AgentPackageId)).ToArray();
         AssertSamePackageIds(packages.Where(row => row.GetProperty("hasApp").GetBoolean()).Select(row => row.GetProperty("packageId").GetString()!),
             services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid).Select(item => item.PackageId));
         var expected = packages.SelectMany(row => row.GetProperty("providers").EnumerateObject().Select(provider =>

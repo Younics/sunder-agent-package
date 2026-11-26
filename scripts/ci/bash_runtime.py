@@ -2,7 +2,7 @@
 """Bind nested script processes to native Bash, including Git Bash on Windows."""
 from functools import lru_cache
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
 import shutil
 import subprocess
 import sys
@@ -45,7 +45,9 @@ def executable():
 
 
 def command(*arguments):
-    return [executable(), "--noprofile", "--norc", *map(str, arguments)]
+    # Git Bash utilities (notably dirname "$BASH_SOURCE") need forward slashes.
+    return [executable(), "--noprofile", "--norc",
+            *(arg.as_posix() if isinstance(arg, PurePath) else str(arg) for arg in arguments)]
 
 
 if __name__ == "__main__":

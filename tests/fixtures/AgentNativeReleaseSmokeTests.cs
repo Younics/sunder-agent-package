@@ -180,21 +180,14 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 observedProcesses,
                 observedTemporaryPaths);
 
-            VerifySqliteDatabase(
-                Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"),
-                "SchemaMigrations",
-                GetInstalledPackagePath(paths, installed, AgentPackageId));
-            VerifySqliteDatabase(
-                Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"),
-                "MemorySchemaMigrations",
-                GetInstalledPackagePath(paths, installed, SemanticMemoryPackageId));
+            VerifyDatabases();
             sessionOwner.MarkReady();
-            await VerifyOwnerUnaryAndStreamAsync(provider, sessionOwner, rid, appConnection, root);
-            await VerifyCallbackAndAuthAsync(provider, sessionOwner);
-            var crashedShellProcess = await VerifyCrashIsolationAsync(
-                sessionOwner,
-                observedProcesses,
-                observedTemporaryPaths);
+            if (TestsPackage(AgentPackageId))
+                await VerifyOwnerUnaryAndStreamAsync(provider, sessionOwner, rid, appConnection, root);
+            if (TestsPackage(McpPackageId)) await VerifyMcpCallbackAsync(provider, sessionOwner);
+            if (TestsPackage(OpenAiPackageId)) await VerifyOpenAiAuthAsync(provider);
+            ExecutionRuntimeProcessObservation? crashedShellProcess = TestsPackage(ShellPackageId)
+                ? await VerifyCrashIsolationAsync(sessionOwner, observedProcesses, observedTemporaryPaths) : null;
 
             var beforeDisable = CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
             var disable = await installedLifecycle.ExecutePreparedMutationsAsync(installed
@@ -205,9 +198,10 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Assert.Empty(sessionOwner.State.ActiveSession.LoadedPackageMap);
             await AssertWorkersStoppedAsync(beforeDisable);
 
+            var reinstallId = ReleasePackage ?? ShellPackageId;
             var reinstall = await installedLifecycle.UpgradeFromRuntimePathAsync(
-                ShellPackageId,
-                archives[ShellPackageId],
+                reinstallId,
+                archives[reinstallId],
                 reinstall: true,
                 cancellationToken: CancellationToken.None);
             Assert.True(reinstall.Success, string.Join(Environment.NewLine, reinstall.Errors));
@@ -220,16 +214,19 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Assert.True(enable.Success, string.Join(Environment.NewLine, enable.Errors));
             var recoveredWorkers = GetWorkers(sessionOwner);
             AssertSamePackageIds(archives.Keys, recoveredWorkers.Keys);
-            AssertReplacementProcess(crashedShellProcess, recoveredWorkers[ShellPackageId]);
+            if (crashedShellProcess is { } retired) AssertReplacementProcess(retired, recoveredWorkers[ShellPackageId]);
             CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
-            VerifySqliteDatabase(
-                Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"),
-                "SchemaMigrations",
-                GetInstalledPackagePath(paths, installed, AgentPackageId));
-            VerifySqliteDatabase(
-                Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"),
-                "MemorySchemaMigrations",
-                GetInstalledPackagePath(paths, installed, SemanticMemoryPackageId));
+            VerifyDatabases();
+
+            void VerifyDatabases()
+            {
+                if (TestsPackage(AgentPackageId))
+                    VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db"),
+                        "SchemaMigrations", GetInstalledPackagePath(paths, installed, AgentPackageId));
+                if (TestsPackage(SemanticMemoryPackageId))
+                    VerifySqliteDatabase(Path.Combine(paths.PackageDataRootPath, SemanticMemoryPackageId, "workspace", "memory", "agent-memory.db"),
+                        "MemorySchemaMigrations", GetInstalledPackagePath(paths, installed, SemanticMemoryPackageId));
+            }
 
             await installedLifecycle.ShutdownAsync(sessionLifecycle);
             initialized = false;
@@ -355,6 +352,9 @@ public sealed partial class AgentNativeReleaseSmokeTests
             UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
 
+    private static string? ReleasePackage => Environment.GetEnvironmentVariable("SUNDER_AGENT_RELEASE_PACKAGE");
+    private static bool TestsPackage(string id) => ReleasePackage is null || ReleasePackage == id;
+
     private static Dictionary<string, string> ReadArchives(string archiveDirectory, string rid)
     {
         var result = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -383,7 +383,11 @@ public sealed partial class AgentNativeReleaseSmokeTests
             }
             Assert.True(result.TryAdd(packageId!, archivePath), $"Duplicate native archive for '{packageId}'.");
         }
-        Assert.NotEmpty(result);
+        using var inventory = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(
+            RequiredMakerPath("SUNDER_AGENT_REPOSITORY_ROOT", directory: true), "compatibility/agent-current-inventory.json")));
+        var known = inventory.RootElement.GetProperty("packages").EnumerateArray().Select(row => row.GetProperty("packageId").GetString()!).ToArray();
+        if (ReleasePackage is { } subject) Assert.Contains(subject, known);
+        AssertSamePackageIds(known.Where(id => TestsPackage(id) || id == AgentPackageId), result.Keys);
         return result;
     }
 
@@ -877,7 +881,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
         return current;
     }
 
-    private static async Task VerifyCallbackAndAuthAsync(
+    private static async Task VerifyMcpCallbackAsync(
         IServiceProvider services,
         RuntimeSessionOwner owner)
     {
@@ -893,6 +897,12 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Assert.IsType<ProcessWorkerContributionException>(callbackFailure).Code);
         Assert.Equal(PackageReadinessState.Ready, owner.State.GetSessionPackage(McpPackageId)!.Readiness);
 
+    }
+
+    private static async Task VerifyOpenAiAuthAsync(IServiceProvider services)
+    {
+        var callbackAccess = services.GetRequiredService<PackageCallbackAccessService>();
+        var callbackServer = services.GetRequiredService<PackageCallbackServer>();
         var auth = services.GetRequiredService<PackageAuthAccessService>();
         var authStatus = await auth.GetStatusAsync(OpenAiPackageId);
         Assert.NotNull(authStatus);

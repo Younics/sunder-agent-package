@@ -72,11 +72,37 @@ public sealed class WorkspaceEditorFailureContainmentTests
             Assert.False(busy);
 
             await host.ViewModel.SaveWorkspaceCommand.ExecuteAsync(null);
-            edited.EnqueueDiscovery(_ => ValueTask.FromResult<IReadOnlyList<AgentEditorSection>>([TextSection("external change after save")]));
-            host.Catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors,
-                new ScriptedWorkspaceEditorContributor("other-target", "after-save", "Irrelevant settings"));
-            await WaitUntilAsync(() => host.ViewModel.EditorSections.Single(section => section.SectionId == "edited")
-                .Fields.OfType<AgentEditorTextFieldViewModel>().Single().Value == "external change after save");
+            using var afterSaveDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            var beforeExternalChange = host.ViewModel.CurrentEditorSectionRefresh;
+            await beforeExternalChange.WaitAsync(afterSaveDeadline.Token);
+            var externalDiscoveryEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var releaseExternalDiscovery = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            edited.EnqueueDiscovery(async cancellationToken =>
+            {
+                externalDiscoveryEntered.TrySetResult();
+                await releaseExternalDiscovery.Task.WaitAsync(cancellationToken);
+                return [TextSection("external change after save")];
+            });
+            try
+            {
+                host.Catalog.AddProvider(RegressionTestAppBindings.WorkspaceEditors,
+                    new ScriptedWorkspaceEditorContributor("other-target", "after-save", "Irrelevant settings"));
+                await externalDiscoveryEntered.Task.WaitAsync(afterSaveDeadline.Token);
+                // Capture this refresh while the provider is blocked, then read
+                // the observable collection only after reconciliation completes.
+                var externalRefresh = host.ViewModel.CurrentEditorSectionRefresh;
+                while (ReferenceEquals(beforeExternalChange, externalRefresh))
+                {
+                    await Task.Delay(10, afterSaveDeadline.Token);
+                    externalRefresh = host.ViewModel.CurrentEditorSectionRefresh;
+                }
+                releaseExternalDiscovery.TrySetResult();
+                await externalRefresh.WaitAsync(afterSaveDeadline.Token);
+                var updatedSection = Assert.Single(host.ViewModel.EditorSections, section => section.SectionId == "edited");
+                var updatedText = Assert.Single(updatedSection.Fields.OfType<AgentEditorTextFieldViewModel>());
+                Assert.Equal("external change after save", updatedText.Value);
+            }
+            finally { releaseExternalDiscovery.TrySetResult(); }
         }
         finally { release.TrySetResult(); }
     }

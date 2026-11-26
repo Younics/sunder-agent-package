@@ -93,7 +93,7 @@ def test_dependency_scope(source, selected):
     source = Path(source).resolve(strict=True)
     inventory = inputs.load(generate_inventory(source, selected))
     roots = project_scope.projects(source, selected, inventory, "source")
-    return project_scope.packages(source, roots, {"Configuration": "Release"}, os.environ)
+    return project_scope.packages(source, roots, {"Configuration": "Release"}, inputs.without_credentials())
 
 
 def arguments(properties):
@@ -274,7 +274,8 @@ def generate_inventory(source, selected=None, mode="source"):
     started = time.monotonic()
     try:
         command = bash_runtime.command("scripts/test/generate-test-inventory.sh")
-        result = subprocess.run(command, cwd=source, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        result = subprocess.run(command, cwd=source, env=inputs.without_credentials(),
+                                capture_output=True, text=True, encoding="utf-8", errors="replace")
         result.check_returncode()
         inventory = json.loads(result.stdout)
         inputs.require(isinstance(inventory, dict) and inventory.get("schemaVersion") == 2
@@ -326,6 +327,16 @@ def validate(args):
     source = Path(args.source).resolve()
     packages = getattr(args, "packages", None)
     selected = None if packages is None else version_selection.package_ids(source, json.loads(packages))
+    leaf = getattr(args, "release_leaf", None)
+    if leaf:
+        inputs.require(selected and len(selected) == 1 and args.mode == "source"
+                       and not args.shared and not args.builder_diagnostics, "One owned source job produces one release leaf")
+        import runpy
+        native = runpy.run_path(str(source / "scripts/release/native-family.py"))
+        package, = selected
+        row, = [item for item in inputs.inventory(source)["packages"] if item["packageId"] == package]
+        native["frozen_baselines"](source, [row], row["version"])
+        expected = native["component_identity"](source, package, head(source))
     if selected == []:
         print("No packages selected; validation skipped.")
         return
@@ -388,9 +399,22 @@ def validate(args):
             schemaVersion=1, projects=prepared["projects"], buildProject=build_project,
             sha256=prepared["inputHashes"][build_project])) + b"\n")
         command = ["dotnet", "build", build_project, "-c", "Release", "--no-restore"]
+        if leaf:
+            # This fence belongs to the production build, not to scratch
+            # projects that Maker/authoring tests create outside the checkout.
+            command.append("-p:SunderPackageRoleInputSourceRoot=" + str(source))
         status = execute(state, command, log=reports / "build.log")
         if status: raise subprocess.CalledProcessError(status, command)
-        test_lanes.validate(state, args.mode, args.stress, rid=getattr(args, "rid", None))
+        if leaf:
+            def tested_input():
+                selection = native["select_native"](source, package, args.rid, expected["version"])
+                return inputs.file_sha(selection)
+            before = tested_input()
+            test_lanes.validate(state, args.mode, args.stress, rid=args.rid, pack_source=False)
+            inputs.require(tested_input() == before, "Qualified role inputs changed during owned tests")
+            native["collect_component"](source, leaf, args.rid, expected)
+        else:
+            test_lanes.validate(state, args.mode, args.stress, rid=getattr(args, "rid", None))
 
 
 def main():
@@ -439,6 +463,7 @@ def main():
     validate_parser.add_argument("--shared", action="store_true", help="Run shared family behavior and authoring")
     validate_parser.add_argument("--rid", help="Verify this native job's required test cases")
     validate_parser.add_argument("--cutover-200-plan", type=Path, help=argparse.SUPPRESS)
+    validate_parser.add_argument("--release-leaf", type=Path, help="Retain this package's tested native leaf for one prebuilt composition")
     validate_parser.add_argument("--packages", help="JSON version-selected package IDs; omitted means full validation")
     validate_parser.add_argument("--published-app", help="Prepared published App directory for hosted presentation tests")
     run_parser = commands.add_parser("run")

@@ -189,6 +189,15 @@ public sealed partial class BuilderToolchainService : IDisposable
     public async Task<IReadOnlyList<BuilderToolchainInstallation>> ListInstalledAsync(BuilderProjectKind kind,
         CancellationToken cancellationToken = default)
     {
+        var result = await ListManagedAsync(kind, cancellationToken).ConfigureAwait(false);
+        result.AddRange(await DiscoverAsync(kind, executableCandidates(kind), cancellationToken).ConfigureAwait(false));
+        return result.DistinctBy(item => (item.Version, item.ExecutablePath))
+            .OrderByDescending(item => Version.Parse(item.Version)).ThenByDescending(item => item.IsManaged).ToArray();
+    }
+
+    private async Task<List<BuilderToolchainInstallation>> ListManagedAsync(BuilderProjectKind kind,
+        CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
         var result = new List<BuilderToolchainInstallation>();
         var parent = InstallParent(kind);
@@ -207,9 +216,7 @@ public sealed partial class BuilderToolchainService : IDisposable
                 finally { release(); }
             }
         }
-        result.AddRange(await DiscoverAsync(kind, executableCandidates(kind), cancellationToken).ConfigureAwait(false));
-        return result.DistinctBy(item => (item.Version, item.ExecutablePath))
-            .OrderByDescending(item => Version.Parse(item.Version)).ThenByDescending(item => item.IsManaged).ToArray();
+        return result;
     }
 
     public async Task<BuilderToolchainInstallation> RepairAsync(BuilderToolchainInstallation installation,

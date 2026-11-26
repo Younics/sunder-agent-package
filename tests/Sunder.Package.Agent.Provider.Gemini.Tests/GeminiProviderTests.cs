@@ -14,6 +14,38 @@ namespace Sunder.Package.Agent.Provider.Gemini.Tests;
 public sealed class GeminiProviderTests
 {
     [Fact]
+    [Trait("Lane", "PackageCompatibility")]
+    public async Task ProviderStream_PassesExactBinary32OptionsToTheChatClientOnce()
+    {
+        var temperature = float.BitIncrement(0.5f);
+        var topP = float.BitDecrement(1f);
+        var request = new AgentChatStreamRequest
+        {
+            ProviderId = "gemini", ModelId = "gemini/test", Messages = [],
+            Options = new()
+            {
+                Instructions = null, ConversationId = null, ModelId = null, MaxOutputTokens = null, TopK = null,
+                Temperature = temperature, TopP = topP, FrequencyPenalty = -0.75f, PresencePenalty = 2f,
+                Seed = null, AllowMultipleToolCalls = null, ReasoningEffort = null, Tools = [],
+                AdditionalProperties = null, ContinuationHandle = null,
+            },
+        };
+        var client = new Sunder.Package.Agent.Tests.OptionCaptureChatClient();
+        await foreach (var _ in ProviderChatStream.ReadAsync((_, _) => ValueTask.FromResult<Microsoft.Extensions.AI.IChatClient>(client),
+                           request, CancellationToken.None)) { }
+
+        Assert.Equal(1, client.CallCount);
+        var options = Assert.IsType<Microsoft.Extensions.AI.ChatOptions>(client.ObservedOptions);
+        AssertBits(temperature, options.Temperature);
+        AssertBits(topP, options.TopP);
+        AssertBits(-0.75f, options.FrequencyPenalty);
+        AssertBits(2f, options.PresencePenalty);
+
+        static void AssertBits(float expected, float? actual) =>
+            Assert.Equal(BitConverter.SingleToInt32Bits(expected), BitConverter.SingleToInt32Bits(Assert.IsType<float>(actual)));
+    }
+
+    [Fact]
     public async Task EmbeddingReadiness_UsesCanonicalApiKeySecret()
     {
         var context = new ProviderTestPackageContext(

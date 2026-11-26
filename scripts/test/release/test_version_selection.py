@@ -142,16 +142,6 @@ class VersionSelectionTests(unittest.TestCase):
             jobs["prepare"]["outputs"] = dict(selected_count=str(count))
             jobs["dependencies"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])
             audit(jobs, "validate")
-        for count, resume, production in ((0, False, 0), (1, False, 1), (1, False, 0),
-                                          (family_size, False, family_size - 1), (1, True, 0)):
-            active, build = count > 0, count > 0 and not resume
-            required = dict(prepare=True, validation=build, native=build and production > 0,
-                 archive=build, smoke=build, stage=active, release=active)
-            required.update({"fan-in": build, "publish": active, "installed-native": active})
-            jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
-            jobs["prepare"]["outputs"] = dict(selected_count=str(count), resume=str(resume).lower())
-            jobs["validation"]["outputs"]["production_packages"] = json.dumps(["fixture"] * production)
-            audit(jobs, "release")
 
 
 if __name__ == "__main__": unittest.main()

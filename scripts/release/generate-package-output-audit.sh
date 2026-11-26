@@ -47,7 +47,7 @@ policy="$(python3 -B "$script_dir/family_policy.py")"
 rid_policy="$(jq -ce '.rids' <<< "$policy")"
 rids=()
 while IFS= read -r rid; do rids+=("$rid"); done < <(jq -r '.[]' <<< "$rid_policy")
-family_count="$(jq '.packageIds | length' <<< "$policy")"
+package_ids="$(jq -c '.packageIds | sort' <<< "$policy")"
 version="$(jq -r '.version // empty' "$native_evidence")"
 coordinate="$version"
 if [[ "$(jq -r .schemaVersion "$native_evidence")" =~ ^(4|5|6)$ ]]; then
@@ -61,6 +61,10 @@ fi
 python3 -B "$script_dir/native-family.py" verify \
   "$native_evidence" "$archive_directory" "$repository_root/packages.json" \
   "${material[@]}" >/dev/null
+if jq -e 'has("releasePackage")' "$native_evidence" >/dev/null; then
+  package_ids="$(jq -ce '.familyVersions|keys' "$native_evidence")"
+fi
+family_count="$(jq length <<< "$package_ids")"
 
 packages="$work/packages.jsonl"
 : > "$packages"
@@ -255,7 +259,7 @@ while IFS= read -r package_id; do
        contractBundles: ([$manifest[0].contractBundles[]? | {contractId, version, descriptorPath, descriptorSha256, abiSha256}] | sort_by(.contractId, .version)),
        rids: $rids}
     ' >> "$packages"
-done < <(jq -r '.packages | map(select(.artifactType == "sunderpkg")) | sort_by(.packageId)[] | .packageId' "$repository_root/packages.json")
+done < <(jq -r '.[]' <<< "$package_ids")
 
 [[ "$(jq -s 'length' "$packages")" == "$family_count" ]] \
   || { printf 'Package output audit requires the complete reviewed family archive set.\n' >&2; exit 1; }

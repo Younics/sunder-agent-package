@@ -14,10 +14,6 @@ using Xunit;
 
 namespace Sunder.Package.Agent.Tests;
 
-extern alias SubagentsWorker;
-using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
-
 public sealed class HistorySearchTests
 {
     [Fact]
@@ -404,21 +400,6 @@ public sealed class HistorySearchTests
         Assert.Equal(rootTurn.TurnId, around.AnchorTurnId);
         Assert.Equal(2, around.Turns.Count);
         Assert.True(around.HasNewer);
-
-        extensionCatalog.AddRuntimeCatalog(provider.GetRequiredService<AgentRuntimeCatalog>());
-        var runtime = Assert.Single((await extensionCatalog.Subagents()
-            .Providers<IRuntimeCatalogService>()
-            .ListAsync()).Providers).Service;
-        var childAround = await SubsessionTranscriptReader.AroundAsync(
-                runtime,
-                child.SessionId,
-                childTurn.TurnId,
-                childTurn.CreatedAtUtc,
-                childTurn.Items[0].ItemId,
-                beforeLimit: 20,
-                afterLimit: 20,
-                CancellationToken.None);
-        Assert.Equal(childTurn.TurnId, Assert.Single(childAround.Turns).TurnId);
 
         await sessions.DeleteSessionAsync(child.SessionId);
         Assert.Empty((await search.SearchAsync(new HistorySearchRequest("child-only"))).Results);

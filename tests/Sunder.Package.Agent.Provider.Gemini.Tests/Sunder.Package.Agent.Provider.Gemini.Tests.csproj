@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="../fixtures/OptionCaptureChatClient.cs" Link="TestSupport/OptionCaptureChatClient.cs" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,GeminiWorker" />
     <ProjectReference Include="..\..\src\Sunder.Package.Agent.Provider.Gemini\Sunder.Package.Agent.Provider.Gemini.csproj"

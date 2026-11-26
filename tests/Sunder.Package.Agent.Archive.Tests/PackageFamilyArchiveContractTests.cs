@@ -941,13 +941,19 @@ public sealed class PackageFamilyArchiveContractTests
         using var plan = !string.IsNullOrEmpty(planPath) ? JsonDocument.Parse(File.ReadAllBytes(planPath)) : null;
         var planRows = plan?.RootElement.GetProperty("packages").EnumerateArray()
             .ToDictionary(row => RequiredString(row, "packageId"), StringComparer.Ordinal);
+        var subject = plan is not null && plan.RootElement.TryGetProperty("releasePackage", out var idElement)
+            ? idElement.GetString() : null;
+        if (subject is not null)
+            Assert.Contains(CurrentContractInventory.Packages, package => package.PackageId == subject);
         if (planRows is not null)
-            Assert.Equal(CurrentContractInventory.Packages.Select(package => package.PackageId).Order(StringComparer.Ordinal),
+            Assert.Equal(CurrentContractInventory.Packages.Select(package => package.PackageId)
+                    .Where(id => subject == null || id == subject || id == "younics.ai.agent").Order(StringComparer.Ordinal),
                 planRows.Keys.Order(StringComparer.Ordinal));
         var framework = XDocument.Load(Path.Combine(source, "Directory.Build.props"))
             .Root!.Elements("PropertyGroup").Elements("TargetFramework").Single().Value;
         var packages = root.GetProperty("packages").EnumerateArray()
             .Where(static package => RequiredString(package, "artifactType") == "sunderpkg")
+            .Where(package => planRows is null || planRows.ContainsKey(RequiredString(package, "packageId")))
             .Select(package =>
             {
                 var projectPath = RequiredString(package, "projectPath");
@@ -975,7 +981,7 @@ public sealed class PackageFamilyArchiveContractTests
         foreach (var expected in CurrentContractInventory.Contracts)
         {
             var descriptor = CurrentContractRecords.Get(expected.ContractId);
-            if (planRows is not null && expected.Exposure == "package")
+            if (planRows is not null && planRows.ContainsKey(expected.PackageId) && expected.Exposure == "package")
             {
                 var version = RequiredString(planRows[expected.PackageId], "version");
                 if (descriptor.Version != version)

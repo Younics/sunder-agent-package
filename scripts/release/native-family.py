@@ -81,6 +81,9 @@ def identity(version, agent_commit, *historical, repository=None, package_ids=No
             retainedSourceRoleUses=retained_role_uses(plan, os.environ.get("SUNDER_AGENT_RETAINED_ARCHIVE_DIR", "")),
             retainedArtifacts=[dict(path=row["retainedArchive"]["name"], size=row["retainedArchive"]["size"],
                 sha256=row["retainedArchive"]["sha256"]) for row in plan["packages"] if row["retainedArchive"] is not None])
+        if plan["schemaVersion"] == 3:
+            from agent_selection import validate
+            result["releasePackage"] = validate(plan, repository, agent_commit)["releasePackage"]
         if not historical:
             result["nuget"] = sdk_materials(repository, result["packageVersions"])
     return result
@@ -206,6 +209,8 @@ def validate_run(run, expected, rows):
             record_shape(test["testedArchive"], test["packageId"] + "." + expected["familyVersions"][test["packageId"]] + ".sunderpkg")
             sha(test["metricsSha256"]); integer(test["metricsSize"], MAX_DOCUMENT, 1)
             validate_metrics(test, rid)
+            if "releasePackage" in expected:
+                runtime_evidence.check_installed_size(test["packageId"], test["metrics"]["measurement"]["currentRidInstalledBytes"])
             if test["packageId"] in expected["packageVersions"]:
                 package = next(package for package in run["packages"] if package["packageId"] == test["packageId"])
                 require(all(package[field] == test[field] for field in test), "Selected native metric differs from the full-family smoke test")
@@ -215,7 +220,8 @@ def validate_run(run, expected, rows):
         records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"],
                         size=test["testedArchive"]["size"], sha256=test["testedArchive"]["sha256"])
                    for test in sorted(run["familyTests"], key=lambda row: row["packageId"])]
-        runtime_evidence.validate_receipt(run["execution"], "development", records, runtime_material(expected, rid), rid)
+        runtime_evidence.validate_receipt(run["execution"], "development", records, runtime_material(expected, rid), rid,
+                                          package=expected.get("releasePackage"))
 
 
 def transport(run, bundle, destination=None):
@@ -270,9 +276,9 @@ def transport(run, bundle, destination=None):
     scan_tar(bundle, expected, consume, destination, metadata)
     if "execution" in run:
         runtime_evidence.verify_reports(run["execution"], execution_reports.__getitem__)
-    return execution_reports
     require(roles == manifests, "Incomplete/mixed native App role closure")
     require(file_record(bundle, run["bundle"]["path"], MAX_RUN) == run["bundle"], "Native bundle changed during validation")
+    return execution_reports
 
 
 def native_root(repository, project, rid):
@@ -550,6 +556,8 @@ def gather_candidates(repository, candidates, output, expected):
     records, leaves = [], {rid: {} for rid in RIDS}
     for row in inventory(repository):
         package_id = row["packageId"]
+        if package_id not in expected["familyVersions"]:
+            continue
         if package_id in expected["packageVersions"]:
             component = selected_component(repository, package_id, expected)
             require(component["version"] == expected["packageVersions"][package_id], "Candidate version differs from release selection")
@@ -631,7 +639,8 @@ def record_final(repository, leaves, archives, metrics, output, rid, expected, a
             execution = json_file(metrics / runtime_evidence.RECEIPT)
             records = [dict(packageId=test["packageId"], archive=test["testedArchive"]["path"], size=test["testedArchive"]["size"],
                             sha256=test["testedArchive"]["sha256"]) for test in sorted(tests, key=lambda test: test["packageId"])]
-            runtime_evidence.validate_receipt(execution, "development", records, runtime_material(expected, rid), rid)
+            runtime_evidence.validate_receipt(execution, "development", records, runtime_material(expected, rid), rid,
+                                              package=expected.get("releasePackage"))
             runtime_evidence.verify_reports(execution, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
             for report in execution["reports"]:
                 destination = work / "execution" / rid / report["path"]

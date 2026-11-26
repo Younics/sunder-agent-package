@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 2 || $# -gt 3 ]]; then
-  printf 'Usage: run-native-runtime-smoke.sh <archive-directory> <new-metrics-directory> [development|published]\n' >&2
+if [[ $# -lt 2 || $# -gt 4 ]]; then
+  printf 'Usage: run-native-runtime-smoke.sh <archive-directory> <new-metrics-directory> [development|published] [package-id]\n' >&2
   exit 2
 fi
 
 archive_directory="$(cd "$1" && pwd)"
 metrics_directory="$2"
 mode="${3:-development}"
+unset SUNDER_AGENT_RELEASE_PACKAGE
+subject="${4:-}"
+if [[ -n "$subject" ]]; then export SUNDER_AGENT_RELEASE_PACKAGE="$subject"; fi
 [[ "$mode" == development || "$mode" == published ]] \
   || { printf 'Select development or published native qualification explicitly.\n' >&2; exit 2; }
 unset GH_TOKEN GITHUB_TOKEN SUNDER_REGISTRY_API_KEY SUNDER_REGISTRY_CLI_TOKEN SUNDER_REGISTRY_PUBLISH_TOKEN \
@@ -59,7 +62,7 @@ builder_dotnet_path="$(command -v dotnet)"
 # local-feed selection. Do not rewrite the template's toolset pins.
 # Keep the array nonempty under nounset on macOS system Bash (3.2).
 preparation_args=("$(native_path "$metrics_directory/maker-inputs")")
-if [[ "$mode" == published ]]; then preparation_args+=(--host-only); fi
+if [[ "$mode" == published || ( -n "$subject" && "$subject" != younics.sunder.package.maker ) ]]; then preparation_args+=(--host-only); fi
 python3 -B "$script_dir/prepare_maker_inputs.py" "${preparation_args[@]}"
 distribution="$(native_path "$metrics_directory/maker-inputs/distribution")"
 distribution_property() {
@@ -84,14 +87,15 @@ dotnet restore "$test_project" --configfile "$script_dir/../../NuGet.Config" --l
 test_fqn='Sunder.Runtime.Host.Tests.AgentNativeReleaseSmokeTests.CurrentRidArchives_ExerciseEveryNativeWorkerThroughRuntimeHost'
 maker_fqn='Sunder.Runtime.Host.Tests.AgentNativeReleaseSmokeTests.MakerArchive_CurrentRidCreatesBuildsPacksAndInvokesWithoutAgent'
 test_filter="FullyQualifiedName=$test_fqn|FullyQualifiedName=$maker_fqn"
+if [[ -n "$subject" && "$subject" != younics.sunder.package.maker ]]; then test_filter="FullyQualifiedName=$test_fqn"; fi
 if [[ "$mode" == published ]]; then
   test_fqn='Sunder.Runtime.Host.Tests.AgentNativeReleaseSmokeTests.PublishedArchives_InstallActivateAndExerciseEveryNativeWorkerThroughRuntimeHost'
   test_filter="FullyQualifiedName=$test_fqn"
 fi
-discovered="$(dotnet test "$test_project" "${test_artifacts[@]}" -c Release --no-restore --list-tests --filter "$test_filter")"
+discovered="$(dotnet test "$test_project" "${test_artifacts[@]}" -c Release --no-restore --list-tests --filter "$test_filter" | sed $'s/\r$//')"
 grep -Fqx "    $test_fqn" <<< "$discovered" \
   || { printf 'Missing native Agent release smoke.\n' >&2; exit 1; }
-if [[ "$mode" == development ]]; then
+if [[ "$mode" == development && ( -z "$subject" || "$subject" == younics.sunder.package.maker ) ]]; then
   grep -Fqx "    $maker_fqn" <<< "$discovered" \
     || { printf 'Missing native standalone Maker journey.\n' >&2; exit 1; }
 fi
@@ -108,27 +112,30 @@ SUNDER_AGENT_BUILDER_NUGET_FEED="$(native_path "$metrics_directory/maker-inputs/
     --filter "$test_filter" \
     --logger 'trx;LogFileName=native-family.trx' --results-directory "$(native_path "$metrics_directory")"
 
-python3 -B "$script_dir/native_runtime_evidence.py" "$mode" "$metrics_directory" "$archive_directory"
-python3 -B - "$script_dir" "$metrics_directory" <<'PY'
+record_args=("$mode" "$metrics_directory" "$archive_directory")
+if [[ -n "$subject" ]]; then record_args+=(--package "$subject"); fi
+python3 -B "$script_dir/native_runtime_evidence.py" "${record_args[@]}"
+python3 -B - "$script_dir" "$metrics_directory" "$subject" <<'PY'
 from pathlib import Path
 import sys
 sys.path.insert(0, sys.argv[1])
-from family_policy import FAMILY_PACKAGE_IDS
+from native_runtime_evidence import execution_ids
 from native_release_inputs import json_file, require
 from agent_release import version
 metrics = [json_file(path)["measurement"] for path in Path(sys.argv[2]).glob('*.json') if path.name != 'native-runtime-qualification.json']
-require(len(metrics) == len(FAMILY_PACKAGE_IDS), 'Missing/extra native family metrics')
+expected = execution_ids(sys.argv[3] or None)
+require(len(metrics) == len(expected), 'Missing/extra native package metrics')
 observed = []
 for item in metrics:
     matches = []
-    for key in FAMILY_PACKAGE_IDS:
+    for key in expected:
         if not item['archive'].startswith(key + '.') or not item['archive'].endswith('.sunderpkg'): continue
         try: version(item['archive'][len(key) + 1:-len('.sunderpkg')])
         except ValueError: continue
         matches.append(key)
     require(len(matches) == 1, 'Unknown/ambiguous native metric archive')
     observed.extend(matches)
-require(set(observed) == set(FAMILY_PACKAGE_IDS), 'Native metrics must cover every reviewed package exactly once')
+require(set(observed) == expected, 'Native metrics must cover every selected package exactly once')
 require(len({item['rid'] for item in metrics}) == 1, 'Mixed native metric platforms')
 print(f'Exercised all {len(metrics)} native family workers; qualification scope is retained explicitly, not inferred as installed acceptance.')
 PY

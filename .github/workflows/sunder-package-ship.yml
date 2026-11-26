@@ -1,0 +1,350 @@
+name: Test, release and publish one package
+on:
+  workflow_call:
+    inputs:
+      package: { type: string, required: true }
+      registry: { type: string, required: true }
+      platforms: { type: string, required: true }
+      cutover: { type: string, default: '' }
+permissions:
+  contents: read
+env:
+  PACKAGE: ${{ inputs.package }}
+  REGISTRY_API_URL: ${{ inputs.registry }}
+  MSBUILDDISABLENODEREUSE: '1'
+  SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
+  SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
+defaults:
+  run:
+    shell: bash
+    working-directory: sunder-agent-package
+
+jobs:
+  prepare:
+    name: Resolve package and locked dependencies
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # Read existing drafts to distinguish recovery from a new release.
+    outputs:
+      plan: ${{ steps.plan.outputs.plan_sha256 }}
+      resume: ${{ steps.plan.outputs.resume }}
+      deps: ${{ steps.inputs.outputs.inputs_sha256 }}
+      context: ${{ steps.context.outputs.artifact-id }}
+    steps:
+      - &checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { path: sunder-agent-package, persist-credentials: false }
+      - if: inputs.cutover != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with: { name: initial-200-selection, path: '${{ runner.temp }}/initial' }
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CUTOVER_SHA: ${{ inputs.cutover }}
+        run: |
+          args=(--package "$PACKAGE" --plan "$RUNNER_TEMP/context/release-plan.json")
+          if [[ -n "$CUTOVER_SHA" ]]; then
+            file="$RUNNER_TEMP/initial/release-plan.json"
+            test "$(python3 -B scripts/release/agent_release.py file-sha "$file")" = "$CUTOVER_SHA"
+            args+=(--cutover-selection "$file")
+          fi
+          python3 -B scripts/release/agent_selection.py package "${args[@]}"
+      - if: steps.plan.outputs.resume == 'false'
+        uses: ./sunder-agent-package/.github/actions/setup
+        with: { node: 'false' }
+      - id: inputs
+        if: steps.plan.outputs.resume == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_SHA: ${{ steps.plan.outputs.plan_sha256 }}
+        run: python3 -B scripts/ci/package_release.py inputs
+      - id: context
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: context-${{ inputs.package }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/context
+          if-no-files-found: error
+          compression-level: 0
+
+  test:
+    name: Owned tests · ${{ matrix.rid }}
+    needs: prepare
+    if: needs.prepare.outputs.resume == 'false'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy: &six
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.platforms) }}
+    env:
+      RID: ${{ matrix.rid }}
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      INPUTS_SHA: ${{ needs.prepare.outputs.deps }}
+    steps:
+      - *checkout
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with: { node: "${{ inputs.package == 'younics.sunder.package.maker' && 'true' || 'false' }}" }
+      - &context
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.context }}
+          merge-multiple: true # The pinned v4 action otherwise nests even a single numeric ID.
+          path: ${{ runner.temp }}/context
+      - run: python3 -B scripts/ci/package_release.py leaf
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tests-${{ inputs.package }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/reports
+            sunder-agent-package/artifacts/test-results
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: tested-leaf-${{ inputs.package }}-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/leaf
+          if-no-files-found: error
+          compression-level: 0
+
+  compose:
+    name: Compose and inspect archive
+    needs: [prepare, test]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions: { contents: read, actions: read }
+    env:
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      INPUTS_SHA: ${{ needs.prepare.outputs.deps }}
+    outputs:
+      index: ${{ steps.compose.outputs.index_sha256 }}
+      archive: ${{ steps.archive.outputs.artifact-id }}
+      verifier: ${{ steps.verifier.outputs.artifact-id }}
+    steps:
+      - *checkout
+      - &dotnet
+        uses: ./sunder-agent-package/.github/actions/setup
+        with: { node: 'false' }
+      - *context
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: tested-leaf-${{ inputs.package }}-*
+          path: sunder-agent-package/artifacts/leaves
+          merge-multiple: true
+      - id: compose
+        run: python3 -B scripts/ci/package_release.py compose
+      - if: inputs.package == 'younics.ai.agent'
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: python3 -B scripts/ci/package_release.py verify-owner
+      - id: verifier
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verifier-${{ inputs.package }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/package-test-binaries
+          if-no-files-found: error
+      - id: archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: inspected-${{ inputs.package }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/release/
+          if-no-files-found: error
+          compression-level: 0
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: inspection-${{ inputs.package }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/archive-results
+            sunder-agent-package/artifacts/owner-reproduction.json
+          if-no-files-found: ignore
+
+  runtime:
+    name: Exercise composed archive · ${{ matrix.rid }}
+    needs: [prepare, compose]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy: *six
+    env:
+      RID: ${{ matrix.rid }}
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      INDEX_SHA: ${{ needs.compose.outputs.index }}
+    steps:
+      - *checkout
+      - *dotnet
+      - *context
+      - &inspected
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.compose.outputs.archive }}
+          merge-multiple: true
+          path: sunder-agent-package/artifacts/release
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tested-leaf-${{ inputs.package }}-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/leaves
+      - run: python3 -B scripts/ci/package_release.py development
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-${{ inputs.package }}-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/native
+          if-no-files-found: error
+          compression-level: 0
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: runtime-diagnostics-${{ inputs.package }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/native-metrics
+            !**/maker-inputs/distribution/**
+            !**/maker-inputs/nuget/**
+
+  qualify:
+    name: Verify six native receipts
+    needs: [prepare, compose, runtime]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      INDEX_SHA: ${{ needs.compose.outputs.index }}
+    outputs:
+      archive: ${{ steps.qualified.outputs.artifact-id }}
+    steps:
+      - *checkout
+      - *dotnet
+      - *context
+      - *inspected
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.compose.outputs.verifier }}
+          merge-multiple: true
+          path: sunder-agent-package/artifacts/package-test-binaries
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: runtime-${{ inputs.package }}-*
+          path: sunder-agent-package/artifacts/native
+          merge-multiple: true
+      - run: python3 -B scripts/ci/package_release.py assemble
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: budget-${{ inputs.package }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/budget-results
+          if-no-files-found: ignore
+      - id: qualified
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qualified-${{ inputs.package }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/release/*
+            !sunder-agent-package/artifacts/release/archive-set.json
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  publish:
+    name: Stage release and upload to Hub
+    needs: [prepare, qualify]
+    if: >-
+      !cancelled() && needs.prepare.result == 'success' &&
+      (needs.qualify.result == 'success' || (needs.prepare.outputs.resume == 'true' && needs.qualify.result == 'skipped'))
+    environment: sunder-agent-release-promotion
+    concurrency: &writer
+      group: sunder-agent-hub-writer
+      queue: max
+    permissions: { contents: write }
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+    steps:
+      - *checkout
+      - *dotnet
+      - *context
+      - if: needs.prepare.outputs.resume != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ needs.qualify.outputs.archive }}
+          merge-multiple: true
+          path: sunder-agent-package/artifacts/release
+      - name: Stage or recover the original tested release
+        env: { RESUME: '${{ needs.prepare.outputs.resume }}' }
+        run: |
+          plan="$RUNNER_TEMP/context/release-plan.json"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$plan")" = "$PLAN_SHA"
+          mkdir -p artifacts/release
+          if [[ "$RESUME" == true ]]; then
+            cp "$plan" artifacts/release/release-plan.json
+            python3 -B scripts/release/agent_pipeline.py recover --resume-staging --directory artifacts/release
+          else
+            cmp "$plan" artifacts/release/release-plan.json
+            python3 -B scripts/release/agent_selection.py retain --plan "$plan" --directory artifacts/release
+            python3 -B scripts/release/agent_pipeline.py stage --directory artifacts/release
+          fi
+      - name: Upload only this version, initially unlisted
+        env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
+        run: python3 -B scripts/release/agent_pipeline.py publish --directory artifacts/release
+
+  installed:
+    name: Install from Hub · ${{ matrix.rid }}
+    needs: [prepare, publish]
+    if: ${{ !cancelled() && needs.publish.result == 'success' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    permissions: { contents: write } # GitHub's draft-read permission.
+    strategy: *six
+    env:
+      RID: ${{ matrix.rid }}
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+    steps:
+      - *checkout
+      - *dotnet
+      - *context
+      - &recover
+        name: Recover the exact staged bytes (read only)
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          plan="$RUNNER_TEMP/context/release-plan.json"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$plan")" = "$PLAN_SHA"
+          mkdir -p artifacts/release
+          cp "$plan" artifacts/release/release-plan.json
+          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
+      - run: python3 -B scripts/ci/package_release.py installed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-${{ inputs.package }}-${{ matrix.rid }}
+          path: sunder-agent-package/artifacts/installed-native
+          if-no-files-found: error
+          retention-days: 90
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-diagnostics-${{ inputs.package }}-${{ matrix.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/installed-metrics
+            !**/maker-inputs/distribution/**
+
+  release:
+    name: List on Hub and announce
+    needs: [prepare, installed]
+    if: ${{ !cancelled() && needs.installed.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    environment: sunder-agent-release-promotion
+    permissions: { contents: write }
+    concurrency: *writer
+    env:
+      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      GH_TOKEN: ${{ github.token }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+    steps:
+      - *checkout
+      - *context
+      - *recover
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: installed-${{ inputs.package }}-*
+          path: sunder-agent-package/artifacts/installed-native
+          merge-multiple: true
+      - run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --directory artifacts/release --receipts artifacts/installed-native
+      - env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
+        run: python3 -B scripts/release/agent_pipeline.py finalize --directory artifacts/release

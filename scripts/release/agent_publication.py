@@ -177,8 +177,8 @@ def remote_tag(store, source):
     raise r.Invalid("Excessive tag indirection")
 
 
-def install_plans(directory, provenance):
-    """Exercise every exact family package and role on all six supported RIDs."""
+def install_plans(directory, provenance, *, package=None):
+    """Ask Hub to resolve the exact release closure on all six supported RIDs."""
     manifests = {item["packageId"]: r.archive_metadata(Path(directory) / item["path"])[0] for item in provenance["artifacts"]}
     identities = {(item["packageId"], item["version"], item["packageContentIdentity"]) for item in provenance["artifacts"]}
     # This postcheck asks the Registry for the tested artifacts' requirements.
@@ -195,7 +195,8 @@ def install_plans(directory, provenance):
                      avaloniaVersion=avalonia or None)
                 for (role, kind, framework, avalonia), capabilities in sorted(requirements.items())]
     from ci_platforms import RIDS
-    r.require(set(manifests) == set(r.FAMILY_PACKAGE_IDS) and len(identities) == len(manifests), "Incomplete/duplicate family install-plan input")
+    from native_runtime_evidence import execution_ids
+    r.require(set(manifests) == execution_ids(package) and len(identities) == len(manifests), "Incomplete/duplicate install-plan input")
     for rid in RIDS:
         targets = {key: [dict(role=t["role"], rid=rid) for t in manifest["targets"] if t["rid"] == rid] for key, manifest in manifests.items()}
         payload = dict(packages=[dict(packageId=key, version=manifest["version"], desiredTargets=targets[key]) for key, manifest in sorted(manifests.items())],

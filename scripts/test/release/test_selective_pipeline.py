@@ -207,6 +207,32 @@ class SelectivePipelineTests(unittest.TestCase):
             self.assertTrue(all("--verify-only" in call for call in calls))
             self.assertEqual(before, (self.directory / r.PUBLICATIONS).read_bytes())
 
+    def test_independent_lane_writes_exactly_one_package_and_never_republishes_agent(self):
+        owner, subject = self.plan["packages"][:2]
+        self.plan.update(schemaVersion=3, releasePackage=subject["packageId"], cutoverPlan=None, packages=[owner, subject])
+        (self.directory / selection.PLAN).write_bytes(r.canonical(self.plan) + b"\n")
+        self.records = self.records[:2]
+        self.publications = self.publications[:2]
+        self.targets = [(subject, MemoryRelease(subject, 42))]
+        with self.mocks():
+            self.stage()
+            calls = []
+            with patch.object(pipeline.subprocess, "run", side_effect=self.publisher(calls)):
+                pipeline.publish_versions(self.core, self.directory, self.plan)
+                pipeline.publish_versions(self.core, self.directory, self.plan)
+            self.assertEqual([owner["packageId"], subject["packageId"]], [call[-2] for call in calls])
+            self.assertIn("--verify-only", calls[0])
+            self.assertIn("Listed", calls[0])
+            self.assertNotIn("--verify-only", calls[1])
+            store = self.targets[0][1]
+            self.assertEqual([selection.archive_name(subject)], [name for name in store.data if name.endswith(".sunderpkg")])
+            value = r.decode(store.data["release-provenance.json"])
+            proposed = pipeline.cohort_request(self.plan, value, 17)
+            self.assertEqual([subject["packageId"]], [item["package"]["packageId"] for item in proposed["versions"]])
+            with patch.object(pipeline.cohort, "apply") as mutation, self.assertRaisesRegex(ValueError, "six-RID installed"):
+                pipeline.visibility(self.core, self.directory, self.plan)
+            mutation.assert_not_called()
+
     def test_partial_upload_retry_captures_only_a_complete_verified_publication_batch(self):
         with self.mocks():
             self.stage()

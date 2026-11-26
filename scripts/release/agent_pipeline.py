@@ -143,7 +143,8 @@ def files_for(directory, plan, row, coordinator=False):
 def installed_native_value(directory, plan, family, *, exact_directory=False):
     records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
                for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
-    value = native_execution.installed_set(directory, records, None, plan["registryOrigin"], exact_directory=exact_directory)
+    value = native_execution.installed_set(directory, records, None, plan["registryOrigin"], exact_directory=exact_directory,
+                                          package=plan.get("releasePackage"))
     return dict(value, artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
 
 
@@ -151,7 +152,7 @@ def retain_installed_native(core, directory, plan, receipts_directory):
     targets, infos, family = verified(core, directory, plan)
     records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
                for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
-    value = native_execution.installed_set(receipts_directory, records, None, plan["registryOrigin"])
+    value = native_execution.installed_set(receipts_directory, records, None, plan["registryOrigin"], package=plan.get("releasePackage"))
     value.update(artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
     for record in value["bundles"]:
         persist(directory / record["path"], (Path(receipts_directory) / record["path"]).read_bytes())
@@ -265,7 +266,7 @@ def registry_versions(directory, plan, value, availability=None):
     selected_ids = {row["packageId"] for row in selection.selected(plan)}
     order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
     records = {item["packageId"]: item for item in value["artifacts"]}
-    retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2 and availability is not None)
+    retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] >= 2 and availability is not None)
     observed = []
     for package_id in order:
         record = records[package_id]
@@ -332,7 +333,7 @@ def advancing_tags(proposed, observed):
 
 def visibility(core, directory, plan):
     targets, infos, value = verified(core, directory, plan)
-    r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] == 2)
+    r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] >= 2)
     require_installed_native(directory, plan, value)
     _, store = targets[0]
     info = infos[0]
@@ -381,7 +382,7 @@ def visibility(core, directory, plan):
 def finalize(core, directory, plan):
     visibility(core, directory, plan)
     targets, infos, value = verified(core, directory, plan)
-    publication.install_plans(directory, value)  # all fifteen exact tuples, every RID
+    publication.install_plans(directory, value, package=plan.get("releasePackage"))
     # Keep the coordinator draft until the other package announcements finish.
     for index in [*range(1, len(targets)), 0]:
         row, store = targets[index]

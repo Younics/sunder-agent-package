@@ -39,14 +39,19 @@ public sealed partial class BuilderToolchainTests
     }
 
     [Fact]
-    public async Task UpdateDoesNotInstallOptionalDevelopmentToolsForTheFirstTime()
+    public async Task EmptyManagedUpdateDoesNotProbeExternalToolsOrInstallAnything()
     {
         using var fixture = new Fixture();
-        using var service = fixture.Service();
+        var discoveries = new List<BuilderProjectKind>();
+        using var service = fixture.Service(candidates: kind => { discoveries.Add(kind); return []; });
         await service.UpgradeManagedAsync(BuilderProjectKind.Dotnet);
         await service.UpgradeManagedAsync(BuilderProjectKind.Node);
+        Assert.Empty(discoveries);
         Assert.Equal(0, fixture.CatalogCalls);
         Assert.Equal(0, fixture.Downloads);
+
+        await service.ListInstalledAsync(BuilderProjectKind.Dotnet);
+        Assert.Equal([BuilderProjectKind.Dotnet], discoveries);
     }
 
     [Fact]

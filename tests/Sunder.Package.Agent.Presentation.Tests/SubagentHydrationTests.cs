@@ -1,4 +1,5 @@
 using Avalonia.Headless.XUnit;
+using System.Collections.Specialized;
 using Microsoft.Extensions.AI;
 using Sunder.Package.Agent.Contracts;
 using Sunder.Package.Agent.Contracts.Contracts;
@@ -11,6 +12,95 @@ namespace Sunder.Package.Agent.Presentation.Tests;
 
 public sealed class SubagentHydrationTests
 {
+    [AvaloniaFact]
+    public async Task SubagentsViewModel_SaveAndDelete_CompactLayout_ReturnToListAndClearSelection()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var extensions = new RegressionTestExtensionCatalog();
+        var provider = new DelayedChatProvider();
+        provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        var subagent = service.CreateSubagent("Alpha Subagent");
+        await using var gateway = new WorkerBackedSubagentManagementGateway(service, extensions);
+        using var viewModel = new SubagentsViewModel(gateway) { IsCompactLayout = true };
+        await viewModel.InitializeAsync();
+        await OpenReadyEditorAsync();
+        viewModel.Description = "Handles focused tasks.";
+        Assert.True(viewModel.SaveSubagentCommand.CanExecute(null));
+        await viewModel.SaveSubagentCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedSubagent);
+        Assert.Empty(viewModel.StatusText);
+        Assert.False(viewModel.HasStatusText);
+        Assert.Equal("Handles focused tasks.", service.GetSubagent(subagent.SubagentId)?.Description);
+
+        await OpenReadyEditorAsync();
+        Assert.True(viewModel.DeleteSubagentCommand.CanExecute(null));
+        await viewModel.DeleteSubagentCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Null(viewModel.SelectedSubagent);
+        Assert.Empty(viewModel.Subagents);
+        Assert.Null(service.GetSubagent(subagent.SubagentId));
+
+        async Task OpenReadyEditorAsync()
+        {
+            viewModel.ActivateSubagent(viewModel.Subagents.Single(item => item.SubagentId == subagent.SubagentId));
+            Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+            Assert.True(viewModel.ShowCompactEditor);
+            // Row activation navigates immediately; the bound editor cannot accept input until hydration finishes.
+            await RenderedViewWaits.WaitUntilAsync(() => viewModel.IsEditorEnabled && !viewModel.IsBusy,
+                () => $"Hydrating: {viewModel.IsHydrating}; status: {viewModel.StatusText}");
+            Assert.False(viewModel.IsStatusError, viewModel.StatusText);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task SubagentsViewModel_Save_WideLayout_KeepsEditorLoadedAndAutoClearsSuccess()
+    {
+        using var scope = RegressionTestPackageScope.Create();
+        await using var extensions = new RegressionTestExtensionCatalog();
+        var provider = new DelayedChatProvider();
+        provider.Models.SetResult([new AgentModelDescriptor("model", "Model", 16_000, 2_000)]);
+        extensions.AddProvider(RegressionTestBindings.ChatProviders, provider);
+        var service = new SubagentService(new SubagentStore(scope.Context));
+        var subagent = service.CreateSubagent("Alpha Subagent");
+        await using var gateway = new WorkerBackedSubagentManagementGateway(service, extensions);
+        using var viewModel = new SubagentsViewModel(gateway);
+        await viewModel.InitializeAsync();
+        Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+        viewModel.Subagents.CollectionChanged += (_, args) =>
+        {
+            if (args.Action == NotifyCollectionChangedAction.Reset)
+                viewModel.SelectedSubagent = null;
+        };
+        viewModel.Description = "Handles focused tasks.";
+
+        await viewModel.SaveSubagentCommand.ExecuteAsync(null);
+
+        Assert.False(viewModel.IsEditorActive);
+        Assert.Equal(subagent.SubagentId, viewModel.SelectedSubagent?.SubagentId);
+        Assert.Equal("Handles focused tasks.", viewModel.Description);
+        Assert.Equal("Handles focused tasks.", service.GetSubagent(subagent.SubagentId)?.Description);
+        Assert.Equal("Subagent saved.", viewModel.StatusText);
+        Assert.True(viewModel.HasStatusText);
+        Assert.True(viewModel.IsStatusSuccess);
+        Assert.False(viewModel.IsStatusWarning);
+        Assert.False(viewModel.IsStatusError);
+
+        var cleared = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(viewModel.HasStatusText) && !viewModel.HasStatusText)
+                cleared.TrySetResult();
+        };
+        await cleared.Task.WaitAsync(TimeSpan.FromSeconds(4), TestContext.Current.CancellationToken);
+        Assert.Empty(viewModel.StatusText);
+        Assert.Equal(SubagentStatusKind.None, viewModel.StatusKind);
+    }
+
     [AvaloniaFact]
     public async Task HydrationDisablesSaveAndNeverMarksConcurrentEditClean()
     {

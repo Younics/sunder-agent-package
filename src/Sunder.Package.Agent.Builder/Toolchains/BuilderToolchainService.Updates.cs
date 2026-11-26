@@ -6,9 +6,11 @@ public sealed partial class BuilderToolchainService
     public async Task UpgradeManagedAsync(BuilderProjectKind kind, IProgress<string>? progress = null,
         CancellationToken cancellationToken = default)
     {
-        var installed = await ListInstalledAsync(kind, cancellationToken).ConfigureAwait(false);
-        if (!installed.Any(item => item.IsManaged && !IsCurrent(item))) return;
-        foreach (var installation in installed.Where(item => item.IsManaged && !IsCurrent(item) && item.Version == RequiredVersion(kind)))
+        // Startup only upgrades Maker-owned installations. Discovering tools on
+        // PATH launches SDK processes and cannot reveal a managed installation.
+        var installed = await ListManagedAsync(kind, cancellationToken).ConfigureAwait(false);
+        if (!installed.Any(item => !IsCurrent(item))) return;
+        foreach (var installation in installed.Where(item => !IsCurrent(item) && item.Version == RequiredVersion(kind)))
         {
             progress?.Report($"Waiting for active {kind} {installation.Version} users before replacing its npm tools.");
             // An npm-only update replaces the same Node directory. Wait for its users

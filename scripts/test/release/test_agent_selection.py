@@ -61,6 +61,34 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual([], selection.selected(plan))
         self.assertTrue(all(row["retainedArchive"] is not None for row in plan["packages"]))
 
+    def test_independent_release_ignores_broken_sibling_and_binds_only_its_published_owner(self):
+        owner = next(row for row in self.rows if row["packageId"] == selection.OWNER)
+        target = next(row for row in self.rows if row["key"] == "agent-tools-web")
+        sibling = next(row for row in self.rows if row["key"] == "agent-provider-openai")
+        for row, deps in ((owner, {}), (target, {selection.OWNER: {"selectedPackageVersion": "2.0.0"}})):
+            (self.source / row["projectPath"]).with_name("sunder-contracts.lock.json").write_bytes(r.canonical(dict(packageArtifacts=deps)))
+        remote = [self.release(sibling, draft=True)]  # Another commit, unfinished; never a barrier.
+        read = lambda _, row: self.registry.get(row["packageId"])
+        with patch.object(selection.inputs, "gh_json", return_value=[]), patch.object(selection, "registry_version", side_effect=read):
+            first, _ = selection.package_plan(self.source, "a"*40, "https://registry.test", selection.OWNER, remote)
+            self.assertEqual([selection.OWNER], [row["packageId"] for row in first["packages"]])
+            with self.assertRaisesRegex(r.Invalid, "requires the published"):
+                selection.package_plan(self.source, "a"*40, "https://registry.test", target["packageId"], remote)
+            remote.append(self.release(owner))
+            self.registry[selection.OWNER] = dict(isYanked=False, canonicalArtifact=dict(sha256="c"*64))
+            for version in ("2.0.1", "2.3.0", "3.0.0", "3.0.0-rc.2"):
+                (self.source / target["projectPath"]).write_text(f"<Project><PropertyGroup><Version>{version}</Version></PropertyGroup></Project>")
+                plan, resume = selection.package_plan(self.source, "a"*40, "https://registry.test", target["packageId"], remote)
+                self.assertFalse(resume)
+                self.assertEqual([(target["packageId"], version)], [(row["packageId"], row["version"]) for row in selection.selected(plan)])
+                self.assertEqual([selection.OWNER, target["packageId"]], [row["packageId"] for row in plan["packages"]])
+                foreign = copy.deepcopy(plan)
+                foreign["packages"][0]["selected"] = True
+                with self.assertRaises(r.Invalid): selection.validate(foreign, self.source)
+            self.registry[selection.OWNER]["isYanked"] = True
+            with self.assertRaisesRegex(r.Invalid, "not Listed"):
+                selection.package_plan(self.source, "a"*40, "https://registry.test", target["packageId"], remote)
+
     def test_cli_plans_first_release_and_noop_with_only_source_and_registry_configuration(self):
         for published in (False, True):
             with self.subTest(published=published):

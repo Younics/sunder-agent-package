@@ -290,6 +290,51 @@ class NativeFamilyFixture(unittest.TestCase):
         self.assertTrue(all(row["installedProjection"]["bytes"] == 150000 and row["meetsInstalledProjectionGate"]
             for row in report["family"]["rids"]))
 
+    def test_owner_fanin_needs_no_sibling_inputs_and_binds_all_six_executions(self):
+        import agent_release as release
+        import agent_selection as selection
+        rows = family.inventory(self.repository)
+        write(self.repository / "packages.json", dict(releaseVersion=VERSION, packages=rows))
+        for row in rows:
+            project = self.repository / row["projectPath"]
+            project.write_text(f"<Project><PropertyGroup><Version>{VERSION}</Version></PropertyGroup></Project>")
+            write(project.with_name("packages.release.lock.json"), {"dependencies": {}})
+        owner = next(row for row in rows if row["packageId"] == selection.OWNER)
+        project = self.repository / owner["projectPath"]
+        write(project.with_name("sunder-contracts.lock.json"), dict(packageArtifacts={}))
+        plan = dict(schemaVersion=3, repository=selection.REPOSITORY, artifactSourceCommit=VERSIONS[1],
+            lockSetSha256=release.locks(self.repository), registryOrigin="https://registry.test", cutoverPlan=None,
+            releasePackage=selection.OWNER, packages=[{key: owner[key] for key in ("key", "packageId", "projectPath")} |
+                dict(version=VERSION, tag=owner["key"]+"/v"+VERSION, selected=True, retainedArchive=None, retainedEvidence=None)])
+        plan_path = self.work / "release-plan.json"
+        write(plan_path, plan)
+        relative = Path(owner["projectPath"]).parent / "bin"
+        shutil.copytree(self.template / "native checkout" / relative, self.repository / relative)
+        leaves, candidates, archives, smoke = (self.work / name for name in ("leaves", "composed", "archives", "smoke"))
+        with patch.dict(os.environ, self.env):
+            component = family.component_identity(self.repository, selection.OWNER, VERSIONS[1])
+            for rid in inputs.RIDS: family.collect_component(self.repository, leaves, rid, component)
+            family.compose_component(self.repository, leaves, candidates, component)
+            expected = dict(family.identity(str(plan_path), VERSIONS[1], repository=self.repository), schemaVersion=6)
+            record, = family.gather_candidates(self.repository, candidates, archives, expected)
+            index_sha = release.file_sha(archives / family.ARCHIVE_SET)
+            records = [dict(packageId=selection.OWNER, archive=record["path"], size=record["size"], sha256=record["sha256"])]
+            for rid in inputs.RIDS:
+                metrics = self.work / "owner-metrics" / rid
+                name = selection.OWNER+"."+rid+".json"
+                metric = json.loads((self.work / "metrics" / rid / name).read_bytes())
+                metric["measurement"]["archiveBytes"] = record["size"]
+                write(metrics / name, metric)
+                receipt, documents = native_documents(records, rid, None, package=selection.OWNER)
+                for name, data in documents.items(): write(metrics / name, data)
+                write(metrics / family.runtime_evidence.RECEIPT, receipt)
+                family.record_final(self.repository, leaves, archives, metrics, smoke, rid, expected, index_sha)
+            family.finalize_candidates(self.repository, smoke, archives, expected)
+        final = json.loads((archives / "native-test-evidence.json").read_bytes())
+        self.assertEqual([record], final["finalArtifacts"])
+        self.assertEqual(set(inputs.RIDS), {run["rid"] for run in final["nativeRuns"]})
+        self.assertEqual(1, len(self.log.read_text().splitlines()), "The owner must compose exactly once")
+
     def test_selective_mixed_version_fanin_packs_two_but_tests_and_retains_all_fifteen(self):
         self.assemble()
         old_evidence = self.output / "native-test-evidence.json"

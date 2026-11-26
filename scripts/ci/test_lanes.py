@@ -228,7 +228,7 @@ def source_artifacts(state_path):
     (output / "source-artifact-evidence.json").write_bytes(native.compact(evidence) + b"\n")
 
 
-def validate(state_path, mode, stress=False, *, rid=None):
+def validate(state_path, mode, stress=False, *, rid=None, pack_source=True):
     import agent_ci
     state, environment = agent_ci.context(state_path)
     source = Path(state["source"])
@@ -268,7 +268,7 @@ def validate(state_path, mode, stress=False, *, rid=None):
                                 cwd=source, env=environment)
                         tests(state_path, "required-linux")
                     if stress: tests(state_path, "stress")
-                if state.get("selectedPackages") is not None:
+                if state.get("selectedPackages") is not None and pack_source:
                     source_artifacts(state_path)
         except BaseException as error:
             try:

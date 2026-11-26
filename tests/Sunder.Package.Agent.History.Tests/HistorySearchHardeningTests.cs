@@ -25,10 +25,6 @@ using IAgentTranscriptAnchorGateway = AgentCore::Sunder.Package.Agent.Runtime.IA
 
 namespace Sunder.Package.Agent.Tests;
 
-extern alias SubagentsWorker;
-using SubagentsWorker::Sunder.Package.Agent.Subagents.Runtime;
-using IRuntimeCatalogService = SubagentsWorker::Sunder.Generated.Packages.Younics_Ai_Agent_Services.CYounics_Ai_Agent_Runtime_Catalog.IRuntimeCatalogService;
-
 public sealed class HistorySearchHardeningTests
 {
     [Fact]
@@ -1974,25 +1970,11 @@ public sealed class HistorySearchHardeningTests
         var sessions = services.GetRequiredService<AgentSessionService>();
         var root = sessions.CreateSession("Root", workspaceId: workspace.WorkspaceId);
         var child = sessions.CreateSession("Child", root.SessionId, root.SessionId, workspaceId: workspace.WorkspaceId);
-        var rootTurn = sessions.AppendTextTurn(root.SessionId, AgentMessageRole.User, "root");
         var childTurn = sessions.AppendTextTurn(child.SessionId, AgentMessageRole.User, "child");
         var handler = services.GetRequiredService<AgentTranscriptAroundTurnHandler>();
 
         await Assert.ThrowsAsync<AgentOwnerOperationException>(async () => await handler.HandleAsync(
             new AgentTranscriptAroundTurnRequest(child.SessionId, childTurn.TurnId)).AsTask());
-        var runtime = services.GetRequiredService<AgentRuntimeCatalog>();
-        catalog.AddRuntimeCatalog(runtime);
-        await using var receiver = new GeneratedServiceTestScope(catalog.RpcForCaller("younics.ai.agent.subagents"));
-        var runtimeClient = Assert.Single((await receiver.Providers<IRuntimeCatalogService>().ListAsync()).Providers).Service;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => SubsessionTranscriptReader.AroundAsync(
-            runtimeClient,
-            root.SessionId,
-            rootTurn.TurnId,
-            rootTurn.CreatedAtUtc,
-            rootTurn.Items[0].ItemId,
-            10,
-            10,
-            CancellationToken.None).AsTask());
     }
 
     [Fact]

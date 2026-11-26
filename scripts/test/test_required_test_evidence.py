@@ -75,22 +75,31 @@ class RequiredCasesTests(unittest.TestCase):
         source = "a" * 40
         objects = [f"{i:040x}".encode() for i in range(1, len(cutover.SCOPE) + 1)]
         fingerprint = cutover.hashlib.sha256(b"".join(objects)).hexdigest()
+        maker = [b"f" * 40, *objects[1:]]
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "release-plan.json"
             path.write_text("{}")
             with patch.object(selection, "load", return_value=plan()) as load, \
-                 patch.object(cutover, "SCOPE_SHA256", fingerprint):
-                def git(dirty=b"", changed=False):
-                    return [source.encode(), b"\n".join(objects[::-1] if changed else objects), dirty]
+                 patch.object(cutover, "SCOPE_SHA256", fingerprint), \
+                 patch.object(cutover, "MAKER_UPDATER_SCOPE_SHA256", cutover.hashlib.sha256(b"".join(maker)).hexdigest()):
+                def git(tree=objects, dirty=b""):
+                    return [source.encode(), b"\n".join(tree), dirty]
 
                 with patch.object(cutover.r, "git", side_effect=git()):
                     result = cutover.disposition(ROOT, path, "win-arm64", [cutover.OWNER], "source")
                 self.assertEqual(dict(className=cutover.CLASS, caseCount=34, rid="win-arm64",
                                       status="not-selected", planSha256=cutover.r.file_sha(path)), result)
                 load.assert_called_once_with(path, ROOT, source)
-                for steps in (git(dirty=b" M dirty"), git(changed=True)):
+                for rid in cutover.RIDS:
+                    with patch.object(cutover.r, "git", side_effect=git(maker)):
+                        disposition = cutover.disposition(ROOT, path, rid, [cutover.OWNER], "source")
+                    self.assertEqual(dict(result, rid=rid), disposition)
+                for steps in (git(dirty=b" M dirty"), git(objects[::-1]), git(maker, dirty=b"?? extra"), git([*maker[:-1], b"e"*40])):
                     with patch.object(cutover.r, "git", side_effect=steps), self.assertRaisesRegex(ValueError, "scope changed"):
                         cutover.disposition(ROOT, path, "win-x64", [cutover.OWNER], "source")
+                with patch.object(selection, "load", return_value=dict(plan(), lockSetSha256="a"*64)), \
+                     patch.object(cutover.r, "git", side_effect=git(maker)), self.assertRaisesRegex(ValueError, "scope changed"):
+                    cutover.disposition(ROOT, path, "win-x64", [cutover.OWNER], "source")
                 for rid, packages, mode in (("win-x64", ["younics.ai.agent"], "source"),
                                             ("osx-arm64", [cutover.OWNER], "source"),
                                             ("win-x64", [cutover.OWNER], "package")):

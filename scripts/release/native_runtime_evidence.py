@@ -18,6 +18,24 @@ PROFILES = {"development": "unpublished-development-import", "published": "publi
 OPERATIONS = ["create", "author", "build", "archive", "validate-extract", "activate-development", "invoke", "unload-development", "worker-stopped"]
 RECEIPT = "native-runtime-qualification.json"
 INSTALLED = "installed-native-test-evidence.json"
+OWNER = "younics.ai.agent"
+MAKER_ID = "younics.sunder.package.maker"
+
+
+def execution_ids(package=None):
+    require(package is None or package in FAMILY_PACKAGE_IDS, "Unknown package under test")
+    return set(FAMILY_PACKAGE_IDS) if package is None else {OWNER, package}
+
+
+def check_installed_size(package, size):
+    # Independent release ceilings must still fit the existing whole-family budget.
+    import json
+    policy = json.loads((Path(__file__).resolve().parents[2] / "eng/ci/native-release.json").read_bytes())
+    budgets = policy["installedBudgetMiB"]
+    require(set(budgets) == set(FAMILY_PACKAGE_IDS) and all(type(v) is int and v > 0 for v in budgets.values())
+            and sum(budgets.values()) * 1024**2 <= policy["installedProjectionGate"]["maximumBytes"],
+            "Independent installed budgets exceed the family ceiling")
+    require(0 < size <= budgets[package] * 1024**2, "Installed-size budget exceeded for " + package)
 
 
 def validate_metrics(package, rid):
@@ -43,26 +61,31 @@ def validate_metrics(package, rid):
                 and math.isfinite(maximum) and 0 < actual <= maximum, "Core native metric budget failed: " + field)
 
 
-def report_names(mode, rid=None, *, published_app=False):
+def report_names(mode, rid=None, *, published_app=False, package=None):
     names = ["native-family.trx", "scope/qualification.json", "maker-inputs/inputs.json", "maker-inputs/sunder-platform-contracts.v1.json"]
     if mode == "development":
-        names += ["maker/journey.json", "maker/create.json", "maker/build.json", "maker/archive.json"]
-        if published_app:
+        if package in (None, MAKER_ID):
+            names += ["maker/journey.json", "maker/create.json", "maker/build.json", "maker/archive.json"]
+        if published_app and package in (None, OWNER):
             names.append("apps/agent-snapshot/process.txt")
     else:
         names.append("scope/published-registry.json")
-        names += [package_id + "." + rid + ".json" for package_id in FAMILY_PACKAGE_IDS]
+        names += [package_id + "." + rid + ".json" for package_id in execution_ids(package)]
     return sorted(names)
 
 
-def validate_receipt(value, mode, records, material, rid):
+def validate_receipt(value, mode, records, material, rid, *, package=None):
     historical = isinstance(material, str)
     field = "coreCommit" if historical else "appArtifact"
-    keys(value, f"schemaVersion {field} rid profile installedAcceptance registryOrigin archives tests reports")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == (1 if historical else 2) and value[field] == material
+    keys(value, f"schemaVersion {field} rid profile installedAcceptance registryOrigin archives tests reports" + (" releasePackage" if package else ""))
+    if package is not None:
+        require(not historical and value["releasePackage"] == package
+                and sorted(row["packageId"] for row in records) == sorted(execution_ids(package)),
+                "Package smoke must cover exactly its subject and Agent dependency")
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == (3 if package else 1 if historical else 2) and value[field] == material
         and value["rid"] == rid and value["profile"] == PROFILES[mode] and value["installedAcceptance"] is (mode == "published")
-        and value["archives"] == records and value["tests"] == tests(mode), "Native execution receipt differs from its exact source, archives or phase")
-    require(type(value["reports"]) is list and [row["path"] for row in value["reports"]] == report_names(mode, rid, published_app=not historical),
+        and value["archives"] == records and value["tests"] == tests(mode, package), "Native execution receipt differs from its exact source, archives or phase")
+    require(type(value["reports"]) is list and [row["path"] for row in value["reports"]] == report_names(mode, rid, published_app=not historical, package=package),
             "Native execution receipt lacks its exact original reports")
     for row in value["reports"]:
         keys(row, "path size sha256")
@@ -78,7 +101,8 @@ def verify_reports(value, loader):
         data = loader(row["path"])
         require(len(data) == row["size"] and digest(data) == row["sha256"], "Native execution report bytes differ from the retained receipt")
         documents[row["path"]] = data
-    validate_trx(documents["native-family.trx"], mode)
+    package = value.get("releasePackage")
+    validate_trx(documents["native-family.trx"], mode, package)
     validate_scope(parse(documents["scope/qualification.json"]), mode, value["archives"], value["rid"])
     inputs = parse(documents["maker-inputs/inputs.json"])
     if value["schemaVersion"] == 1:
@@ -91,13 +115,14 @@ def verify_reports(value, loader):
     require(inputs["platformCatalog"]["sha256"] == digest(catalog) and inputs["platformCatalog"]["size"] == len(catalog),
             "Native execution used a different platform catalog")
     if mode == "development":
-        if value["schemaVersion"] == 2:
+        if value["schemaVersion"] >= 2 and package in (None, OWNER):
             log = documents["apps/agent-snapshot/process.txt"]
             require(b"agent-family-app: materialized-and-activated" in log and b"agent-family-app: retired" in log,
                     "Agent App snapshot activation/retirement evidence is missing")
-        validate_maker(parse(documents["maker/journey.json"]), inputs, value["archives"], value["rid"])
-        for operation in ("create", "build", "archive"):
-            require(parse(documents["maker/" + operation + ".json"])["state"] == "succeeded", "Maker job did not complete")
+        if package in (None, MAKER_ID):
+            validate_maker(parse(documents["maker/journey.json"]), inputs, value["archives"], value["rid"])
+            for operation in ("create", "build", "archive"):
+                require(parse(documents["maker/" + operation + ".json"])["state"] == "succeeded", "Maker job did not complete")
     else:
         proof = parse(documents["scope/published-registry.json"])
         keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies")
@@ -133,14 +158,17 @@ def verify_reports(value, loader):
         for archive in value["archives"]:
             metric = parse(documents[archive["packageId"] + "." + value["rid"] + ".json"])
             validate_metrics(dict(metrics=metric, testedArchive=dict(path=archive["archive"], size=archive["size"])), value["rid"])
+            if package is not None:
+                check_installed_size(archive["packageId"], metric["measurement"]["currentRidInstalledBytes"])
 
 
-def tests(mode):
+def tests(mode, package=None):
     require(mode in PROFILES, "Unknown native execution mode")
-    return [CLASS + "." + method for method in ([DEVELOPMENT, MAKER] if mode == "development" else [PUBLISHED])]
+    return [CLASS + "." + method for method in (
+        ([DEVELOPMENT, MAKER] if package in (None, MAKER_ID) else [DEVELOPMENT]) if mode == "development" else [PUBLISHED])]
 
 
-def validate_trx(data, mode):
+def validate_trx(data, mode, package=None):
     require(len(data) <= 32 * 1024 * 1024, "Oversized native TRX")
     text = data.decode("utf-8-sig")
     require("<!DOCTYPE" not in text.upper() and "<!ENTITY" not in text.upper(), "Unsafe native TRX")
@@ -152,7 +180,7 @@ def validate_trx(data, mode):
         require(definition.get("id") not in definitions, "Duplicate native test definition")
         definitions[definition.get("id")] = identity
     results = root.findall(".//{*}UnitTestResult")
-    selected = tests(mode)
+    selected = tests(mode, package)
     require(len(results) == len(selected) and all(result.get("outcome") == "Passed" for result in results)
         and sorted(definitions.get(result.get("testId"), "") for result in results) == sorted(selected),
         "Missing, duplicate, skipped or nonpassing native test identities")
@@ -168,14 +196,14 @@ def validate_trx(data, mode):
     require(not root.findall(".//{*}RunInfo") and not root.findall(".//{*}ErrorInfo"), "Native test run contains runner errors")
 
 
-def archive_records(directory):
+def archive_records(directory, package=None):
     records = []
     for path in sorted(Path(directory).glob("*.sunderpkg")):
         manifest, *_ = archive_metadata(path)
         records.append(dict(packageId=manifest["id"], archive=path.name, size=path.stat().st_size,
                             sha256=file_record(path)["sha256"]))
-    require(len(records) == len(FAMILY_PACKAGE_IDS) and {record["packageId"] for record in records} == set(FAMILY_PACKAGE_IDS),
-            "Native execution requires exactly the complete family")
+    require(sorted(record["packageId"] for record in records) == sorted(execution_ids(package)),
+            "Native execution archive set differs from the required scope")
     return sorted(records, key=lambda row: row["packageId"])
 
 
@@ -204,16 +232,16 @@ def validate_maker(journey, inputs, records, rid):
         sha(journey[field])
 
 
-def record(metrics, archives, mode):
+def record(metrics, archives, mode, package=None):
     metrics = Path(metrics).resolve(strict=True)
     require(mode in PROFILES, "Unknown native execution mode")
     destination = metrics / RECEIPT
     require(not destination.exists(), "Native execution receipts are immutable; use a new result directory")
-    records = archive_records(archives)
+    records = archive_records(archives, package)
     scope = json_file(metrics / "scope/qualification.json")
     rid = scope["rid"]
     validate_scope(scope, mode, records, rid)
-    validate_trx(read_bytes(metrics / "native-family.trx", 32 * 1024 * 1024), mode)
+    validate_trx(read_bytes(metrics / "native-family.trx", 32 * 1024 * 1024), mode, package)
     input_root = metrics / "maker-inputs"
     inputs = json_file(input_root / "inputs.json")
     from published_app import selection
@@ -224,8 +252,8 @@ def record(metrics, archives, mode):
     require(file_record(archive, maximum=384 * 1024**2) ==
             {key: app[value] for key, value in (("path", "name"), ("size", "size"), ("sha256", "sha256"))},
             "Native App distribution changed after preparation")
-    reports = report_names(mode, rid, published_app=True)
-    if mode == "development":
+    reports = report_names(mode, rid, published_app=True, package=package)
+    if mode == "development" and package in (None, MAKER_ID):
         journey = json_file(metrics / "maker/journey.json")
         validate_maker(journey, inputs, records, rid)
         for row in inputs["packages"]:
@@ -235,8 +263,9 @@ def record(metrics, archives, mode):
             require(json_file(metrics / "maker" / (operation + ".json"))["state"] == "succeeded", "Maker job did not complete")
     value = dict(schemaVersion=2, appArtifact=app, rid=rid, profile=PROFILES[mode],
         installedAcceptance=mode == "published", registryOrigin=scope["registryOrigin"], archives=records,
-        tests=tests(mode), reports=[file_record(metrics / name, name) for name in sorted(reports)])
-    validate_receipt(value, mode, records, app, rid)
+        tests=tests(mode, package), reports=[file_record(metrics / name, name) for name in sorted(reports)])
+    if package is not None: value.update(schemaVersion=3, releasePackage=package)
+    validate_receipt(value, mode, records, app, rid, package=package)
     verify_reports(value, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
     destination.write_bytes(compact(value))
     return value
@@ -246,7 +275,7 @@ def export_installed(metrics, destination):
     metrics, destination = Path(metrics).resolve(strict=True), Path(destination).absolute()
     value = json_file(metrics / RECEIPT)
     from published_app import selection
-    validate_receipt(value, "published", value["archives"], selection(value["rid"]), value["rid"])
+    validate_receipt(value, "published", value["archives"], selection(value["rid"]), value["rid"], package=value.get("releasePackage"))
     verify_reports(value, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
     require(not destination.exists() and destination.name == "native-installed-" + value["rid"] + ".tar.gz", "Installed native handoff must be new and exact-RID")
     sidecar = destination.with_name("native-installed-" + value["rid"] + ".json")
@@ -257,11 +286,11 @@ def export_installed(metrics, destination):
     with sidecar.open("xb") as stream: stream.write(compact(value))
 
 
-def read_installed_bundle(path, records, core, rid, registry):
+def read_installed_bundle(path, records, core, rid, registry, *, package=None):
     # The bounded sidecar supplies the expected membership before the strict raw
     # tar scan. Never let tarfile expand untrusted PAX/link metadata first.
     value = json_file(Path(path).with_name("native-installed-" + rid + ".json"), 1024 * 1024)
-    validate_receipt(value, "published", records, core, rid)
+    validate_receipt(value, "published", records, core, rid, package=package)
     require(value["registryOrigin"] == registry, "Installed native Registry differs from the selected publication")
     verify_bundle(path, value)
     return value
@@ -275,14 +304,14 @@ def verify_bundle(path, value):
     verify_reports(value, lambda name: reports["reports/" + name])
 
 
-def installed_set(directory, records, core, registry, *, exact_directory=True):
+def installed_set(directory, records, core, registry, *, exact_directory=True, package=None):
     directory = Path(directory).resolve(strict=True)
     names = {"native-installed-" + rid + suffix for rid in RIDS for suffix in (".json", ".tar.gz")}
     observed = {path.name for path in directory.iterdir() if exact_directory or path.name.startswith("native-installed-")}
     require(observed == names, "Installed acceptance requires exactly six native RID handoffs")
     from published_app import selection
     runs = [read_installed_bundle(directory / ("native-installed-" + rid + ".tar.gz"), records,
-                                  core if core is not None else selection(rid), rid, registry) for rid in RIDS]
+                                   core if core is not None else selection(rid), rid, registry, package=package) for rid in RIDS]
     release = dict(schemaVersion=1, coreCommit=core) if core is not None else dict(schemaVersion=2)
     return dict(release, registryOrigin=registry, archives=records, nativeRuns=runs,
                 bundles=[file_record(directory / name) for name in sorted(names)])
@@ -297,6 +326,7 @@ if __name__ == "__main__":
     parser.add_argument("mode", choices=PROFILES)
     parser.add_argument("metrics", type=Path)
     parser.add_argument("archives", type=Path)
+    parser.add_argument("--package", choices=FAMILY_PACKAGE_IDS)
     args = parser.parse_args()
-    value = record(args.metrics, args.archives, args.mode)
+    value = record(args.metrics, args.archives, args.mode, args.package)
     print(f"Qualified {len(value['archives'])} exact {value['rid']} archives in {value['profile']} scope; installedAcceptance={value['installedAcceptance']}.")

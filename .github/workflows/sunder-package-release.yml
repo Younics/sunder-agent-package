@@ -1,536 +1,80 @@
 name: Release
-
 on:
   push:
     branches: [main]
   workflow_dispatch:
-
 permissions: {}
 concurrency:
   group: sunder-agent-family
-  cancel-in-progress: false
-env:
-  NUGET_SOURCE: https://api.nuget.org/v3/index.json
+  queue: max
 
 jobs:
-  prepare:
+  select:
     name: Select versions
-    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/main'
+    if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/main' && github.ref_protected
     runs-on: ubuntu-24.04
     environment: sunder-agent-release-promotion
     permissions:
-      # GitHub exposes drafts only with push access. Planning itself is read-only,
-      # and no toolchain or build executes in this job.
-      contents: write
+      contents: write # GitHub requires push access to see drafts. Selection only reads.
     outputs:
-      selected_count: ${{ steps.selection.outputs.selected_count }}
-      resume: ${{ steps.selection.outputs.resume }}
-      packages: ${{ steps.selection.outputs.packages }}
-      plan_sha256: ${{ steps.selection.outputs.plan_sha256 }}
-      cutover_200_plan_sha256: ${{ steps.selection.outputs.cutover_200_plan_sha256 }}
-      matrix: ${{ steps.matrix.outputs.native }}
+      owner: ${{ steps.work.outputs.owner }}
+      extensions: ${{ steps.work.outputs.extensions }}
+      cutover: ${{ steps.work.outputs.cutover_sha }}
+      registry: ${{ steps.work.outputs.registry_origin }}
+      platforms: ${{ steps.platforms.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - id: matrix
+      - id: platforms
         env:
           RUNNER_VARIABLES: ${{ toJSON(vars) }}
         run: python3 -B scripts/ci/agent_ci.py matrices
-      - name: Compare authored versions against published releases
-        id: selection
+      - id: work
         env:
           GH_TOKEN: ${{ github.token }}
           REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-        run: python3 -B scripts/release/agent_selection.py plan --plan artifacts/release-plan.json
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-release-selection
-          path: artifacts/release-plan.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Require the exact protected workflow source
-        if: steps.selection.outputs.selected_count != '0'
         run: |
-          set -euo pipefail
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
-          test "$GITHUB_REF_PROTECTED" = true
+          python3 -B scripts/release/agent_selection.py dispatch --plan artifacts/cutover/release-plan.json
+      - if: steps.work.outputs.cutover_sha != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: initial-200-selection
+          path: artifacts/cutover/release-plan.json
+          if-no-files-found: error
 
-  validation:
-    name: Validate selected packages
-    needs: prepare
-    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
-    uses: ./.github/workflows/sunder-package-smoke.yml
+  owner:
+    name: Main Agent
+    needs: select
+    if: needs.select.outputs.owner == 'true'
+    uses: ./.github/workflows/sunder-package-ship.yml
     permissions:
-      contents: read
+      contents: write
       actions: read
     with:
-      packages: ${{ needs.prepare.outputs.packages }}
-      cutover_200_plan_sha256: ${{ needs.prepare.outputs.cutover_200_plan_sha256 }}
+      package: younics.ai.agent
+      registry: ${{ needs.select.outputs.registry }}
+      platforms: ${{ needs.select.outputs.platforms }}
+      cutover: ${{ needs.select.outputs.cutover }}
 
-  native:
-    name: Produce component
-    needs: [prepare, validation]
-    if: needs.validation.outputs.production_packages != '' && needs.validation.outputs.production_packages != '[]'
+  extensions:
+    name: ${{ matrix.package }}
+    needs: [select, owner]
+    # A failed new Agent stops only extensions that actually need that version.
+    # Each lane resolves its own exact published owner before building.
+    if: >-
+      !cancelled() && needs.select.result == 'success' && needs.select.outputs.extensions != '[]'
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.validation.outputs.production_packages) }}
-    uses: ./.github/workflows/sunder-package-component.yml
+        package: ${{ fromJSON(needs.select.outputs.extensions) }}
+    uses: ./.github/workflows/sunder-package-ship.yml
     permissions:
-      contents: read
+      contents: write
+      actions: read
     with:
       package: ${{ matrix.package }}
-      inputs_sha256: ${{ needs.validation.outputs.inputs_sha256 }}
-      matrix: ${{ needs.prepare.outputs.matrix }}
-
-  archive:
-    name: Verify the immutable archive set before native smoke
-    needs: [prepare, validation, native]
-    if: >-
-      !cancelled() && needs.validation.result == 'success'
-      && (needs.native.result == 'success' || (needs.validation.outputs.production_packages == '[]' && needs.native.result == 'skipped'))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    outputs:
-      artifact_id: ${{ steps.candidate.outputs.artifact-id }}
-      archive_set_sha256: ${{ steps.gather.outputs.archive_set_sha256 }}
-    env:
-      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/artifacts/release-plan.json
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/retained-agent-archives
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          global-json-file: global.json
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: artifacts
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: agent-candidate-*
-          merge-multiple: true
-          path: artifacts/candidates
-      - name: Gather selected and retained bytes against the exact plan
-        id: gather
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
-        run: |
-          set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "$PLAN_SHA256"
-          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
-          python3 -B scripts/release/native-family.py gather artifacts/candidates artifacts/family \
-            "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$PWD"
-          echo "archive_set_sha256=$(python3 -B scripts/release/agent_release.py file-sha artifacts/family/archive-set.json)" >> "$GITHUB_OUTPUT"
-      - name: Build the archive verifier
-        run: python3 -B scripts/ci/agent_ci.py prepare-verifier
-      - name: Inspect the archive integrity and dependency closure
-        id: archive_tests
-        env:
-          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
-          SUNDER_AGENT_REPOSITORY_ROOT: ${{ github.workspace }}
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/family
-        run: >-
-          dotnet vstest artifacts/package-test-binaries/Sunder.Package.Agent.Archive.Tests.dll
-          '--TestCaseFilter:(FullyQualifiedName~PackageFamilyArchiveContractTests|FullyQualifiedName~AppNativeAssetContractTests)&FullyQualifiedName!~MeetInstalledProjectionBudget'
-          --Logger:trx --ResultsDirectory:artifacts/archive-results
-      - name: Require executed archive assertions
-        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure')
-        run: python3 -B scripts/test/generate-test-duration-report.py artifacts/archive-results --expected-skips 0
-      - name: Retain archive test results
-        if: always() && (steps.archive_tests.outcome == 'success' || steps.archive_tests.outcome == 'failure' || steps.archive_tests.outcome == 'cancelled')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-archive-results-${{ github.run_attempt }}
-          path: |
-            artifacts/archive-results
-            artifacts/verifier-results
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-package-test-binaries
-          path: artifacts/package-test-binaries
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        id: candidate
-        with:
-          name: agent-inspected-archives-${{ github.run_attempt }}
-          path: |
-            artifacts/family/*.sunderpkg
-            artifacts/family/archive-set.json
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-
-  smoke:
-    name: Test final archives · ${{ matrix.rid }}
-    needs: [prepare, archive]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    env:
-      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-        shell: bash
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: sunder-agent-package/artifacts
-      - name: Download exact retained provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR" --evidence-only
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.archive.outputs.artifact_id }}
-          path: sunder-agent-package/artifacts/family
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: agent-leaf-*-${{ matrix.rid }}
-          merge-multiple: true
-          path: sunder-agent-package/artifacts/leaves
-      - name: Exercise the selected family from the inspected archives
-        id: native_smoke
-        env:
-          RID: ${{ matrix.rid }}
-          ARCHIVE_SET_SHA256: ${{ needs.archive.outputs.archive_set_sha256 }}
-        run: |
-          set -euo pipefail
-          python3 -B scripts/release/native-family.py verify-archive-set artifacts/family "$ARCHIVE_SET_SHA256"
-          bash scripts/release/run-native-runtime-smoke.sh artifacts/family "artifacts/native-metrics/$RID"
-          python3 -B scripts/release/native-family.py record-final "$RID" "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" \
-            artifacts/leaves artifacts/family "artifacts/native-metrics/$RID" "artifacts/native/$RID" "$PWD" "$ARCHIVE_SET_SHA256"
-      - name: Retain native smoke and Maker diagnostics
-        if: always() && steps.native_smoke.outcome != 'skipped' && steps.native_smoke.outcome != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-native-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: |
-            sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/
-            !sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/maker-inputs/distribution/
-            !sunder-agent-package/artifacts/native-metrics/${{ matrix.rid }}/maker-inputs/nuget/
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunder-agent-native-${{ matrix.rid }}
-          path: sunder-agent-package/artifacts/native/${{ matrix.rid }}/*
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-
-  fan-in:
-    name: Assemble and verify family
-    needs: [prepare, archive, smoke]
-    if: needs.prepare.outputs.selected_count != '0' && needs.prepare.outputs.resume != 'true'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 180
-    permissions:
-      contents: read
-    env:
-      SUNDER_AGENT_RELEASE_PLAN_PATH: ${{ github.workspace }}/sunder-agent-package/artifacts/release-plan.json
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/retained-agent-archives
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-        shell: bash
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: sunder-agent-native-*
-          path: native-input
-          merge-multiple: true
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: sunder-agent-package/artifacts
-      - name: Verify the release selection and retain unchanged versions
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha "$SUNDER_AGENT_RELEASE_PLAN_PATH")" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_selection.py retain --plan "$SUNDER_AGENT_RELEASE_PLAN_PATH" --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR" --evidence-only
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          artifact-ids: ${{ needs.archive.outputs.artifact_id }}
-          path: sunder-agent-package/artifacts/family
-      - name: Verify complete final-archive smoke evidence without repacking
-        run: |
-          set -euo pipefail
-          python3 -B scripts/release/native-family.py finalize ../native-input artifacts/family "$SUNDER_AGENT_RELEASE_PLAN_PATH" "$GITHUB_SHA" "$PWD"
-          cp "$SUNDER_AGENT_RELEASE_PLAN_PATH" artifacts/family/release-plan.json
-          bash scripts/release/generate-package-output-audit.sh artifacts/family artifacts/family/native-test-evidence.json "$PWD" artifacts/family/package-output-audit.json
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-package-test-binaries
-          path: sunder-agent-package/artifacts/package-test-binaries
-      - name: Check the measured installed projection budget
-        id: budget_tests
-        env:
-          SUNDER_REQUIRE_TEST_PREREQUISITES: "1"
-          SUNDER_AGENT_REPOSITORY_ROOT: ${{ github.workspace }}/sunder-agent-package
-          SUNDER_AGENT_PACKAGE_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/family
-          SUNDER_AGENT_PACKAGE_OUTPUT_AUDIT_REQUIRED: "1"
-        run: >-
-          dotnet vstest artifacts/package-test-binaries/Sunder.Package.Agent.Archive.Tests.dll
-          --TestCaseFilter:FullyQualifiedName~MeetInstalledProjectionBudget --Logger:trx --ResultsDirectory:artifacts/family-results/agent
-      - name: Require the executed budget check
-        if: always() && (steps.budget_tests.outcome == 'success' || steps.budget_tests.outcome == 'failure')
-        run: python3 scripts/test/generate-test-duration-report.py artifacts/family-results/agent --expected-skips 0
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sunder-agent-family-release
-          path: |
-            sunder-agent-package/artifacts/family/*
-            !sunder-agent-package/artifacts/family/archive-set.json
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-      - name: Retain family test results
-        if: always() && (steps.budget_tests.outcome == 'success' || steps.budget_tests.outcome == 'failure' || steps.budget_tests.outcome == 'cancelled')
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-family-results-${{ github.run_attempt }}
-          path: sunder-agent-package/artifacts/family-results
-          if-no-files-found: error
-
-  stage:
-    name: Stage immutable selected versions
-    needs: [prepare, fan-in]
-    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.selected_count != '0' && (needs.fan-in.result == 'success' || needs.prepare.outputs.resume == 'true')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    environment: sunder-agent-release-promotion
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        if: needs.prepare.outputs.resume != 'true'
-        with:
-          name: sunder-agent-family-release
-          path: sunder-agent-package/artifacts/release
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: sunder-agent-package/artifacts/release
-      - name: Reuse unchanged archives and authenticate the selection
-        run: |
-          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_selection.py retain --plan artifacts/release/release-plan.json --directory "$SUNDER_AGENT_RETAINED_ARCHIVE_DIR"
-      - name: Recover original tested bytes without rebuilding
-        if: needs.prepare.outputs.resume == 'true'
-        run: python3 -B scripts/release/agent_pipeline.py recover --resume-staging --directory artifacts/release
-      - name: Automatically tag and stage selected package releases
-        if: needs.prepare.outputs.resume != 'true'
-        run: python3 -B scripts/release/agent_pipeline.py stage --directory artifacts/release
-  publish:
-    name: Upload immutable selected versions (not listed)
-    needs: [prepare, stage]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    environment: sunder-agent-release-promotion
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/artifacts/release
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: artifacts/release
-      - name: Recover exact staged bytes without writing
-        env:
-          PLAN_SHA256: ${{ needs.prepare.outputs.plan_sha256 }}
-        run: |
-          set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "$PLAN_SHA256"
-          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
-      - name: Upload in dependency order and retain the publication receipt
-        env:
-          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
-        run: python3 -B scripts/release/agent_pipeline.py publish --directory artifacts/release
-
-  installed-native:
-    name: Published installed acceptance · ${{ matrix.rid }}
-    needs: [prepare, publish]
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    environment: sunder-agent-release-promotion
-    permissions:
-      contents: write # Required to read the exact coordinator draft, not to repack or publish.
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    env:
-      GH_TOKEN: ${{ github.token }}
-      RID: ${{ matrix.rid }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-        shell: bash
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: sunder-agent-package/artifacts/release
-      - name: Recover exact published inputs or original installed evidence
-        id: recovery
-        run: |
-          set -euo pipefail
-          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
-          mkdir -p artifacts/installed-native
-          if [[ -f artifacts/release/installed-native-test-evidence.json ]]; then
-            for suffix in .json .tar.gz; do
-              cp "artifacts/release/native-installed-$RID$suffix" artifacts/installed-native/
-            done
-            echo 'retained=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'retained=false' >> "$GITHUB_OUTPUT"
-          fi
-      - name: Download anonymously and exercise exact published archives before visibility
-        id: installed_smoke
-        if: steps.recovery.outputs.retained != 'true'
-        run: |
-          set -euo pipefail
-          SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN="$(python3 -B -c 'import json; print(json.load(open("artifacts/release/release-plan.json"))["registryOrigin"])')"
-          export SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN
-          bash scripts/release/run-native-runtime-smoke.sh artifacts/release "artifacts/installed-native-metrics/$RID" published
-          python3 -B scripts/release/native_runtime_evidence.py export-installed "artifacts/installed-native-metrics/$RID" "artifacts/installed-native/native-installed-$RID.tar.gz"
-      - name: Retain published installed diagnostics
-        if: always() && steps.installed_smoke.outcome != 'skipped' && steps.installed_smoke.outcome != ''
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-installed-diagnostics-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: |
-            sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/
-            !sunder-agent-package/artifacts/installed-native-metrics/${{ matrix.rid }}/maker-inputs/distribution/
-          if-no-files-found: error
-          retention-days: 90
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: agent-installed-native-${{ matrix.rid }}
-          path: sunder-agent-package/artifacts/installed-native/*
-          if-no-files-found: error
-          retention-days: 90
-          compression-level: 0
-
-  release:
-    name: Activate family and announce
-    needs: [prepare, installed-native]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    environment: sunder-agent-release-promotion
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-      SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
-      SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
-    defaults:
-      run:
-        working-directory: sunder-agent-package
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          path: sunder-agent-package
-          persist-credentials: false
-      - uses: ./sunder-agent-package/.github/actions/setup
-        with:
-          node: 'false'
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: agent-release-selection
-          path: sunder-agent-package/artifacts/release
-      - name: Download and verify the exact retained package releases
-        run: |
-          test "$(python3 -B scripts/release/agent_release.py file-sha artifacts/release/release-plan.json)" = "${{ needs.prepare.outputs.plan_sha256 }}"
-          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: agent-installed-native-*
-          merge-multiple: true
-          path: sunder-agent-package/artifacts/installed-native
-      - name: Durably retain all six installed native receipts before visibility
-        run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --directory artifacts/release --receipts artifacts/installed-native
-      - name: Confirm one atomic visibility transition and announce
-        env:
-          SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
-        run: python3 -B scripts/release/agent_pipeline.py finalize --directory artifacts/release
-
-  summary:
-    name: Summary
-    if: always()
-    needs: [prepare, validation, native, archive, smoke, fan-in, stage, publish, installed-native, release]
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-      - name: Require all selected release jobs
-        env:
-          JOB_RESULTS: ${{ toJSON(needs) }}
-        run: python3 -B scripts/ci/workflow_summary.py release
+      registry: ${{ needs.select.outputs.registry }}
+      platforms: ${{ needs.select.outputs.platforms }}
+      cutover: ${{ needs.select.outputs.cutover }}

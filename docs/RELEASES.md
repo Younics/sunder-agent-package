@@ -1,437 +1,101 @@
-# AI Agent Family Releases
+# Agent package releases
 
-AI Agent releases select version-bumped `.sunderpkg` entries from the fifteen-package
-`packages.json` inventory. Each canonical `.csproj` owns its literal `<Version>`;
-there is no implicit family-wide version override in CI. `packages.json.releaseVersion`
-remains a legacy compatibility/default-contract marker, not the release selector.
-There is no Protocol NuGet or Agent NuGet publishing credential.
+**The unit of release is one package.** Each of the 15 projects in
+`packages.json` owns its literal `<Version>`. A protected `main` push starts
+[Release](../.github/workflows/sunder-package-release.yml). It compares each
+project against published releases in its own major. An unchanged version
+doesn't build, create a tag or publish. Stable versions use `latest`; prereleases
+use `preview`. Releasing a maintained major must not move either tag backwards.
 
-The owner `younics.ai.agent` publishes first. The explicit family includes
-`younics.sunder.package.maker` (Sunder Package Maker) alongside the AI Agent
-extensions; a shared runtime-ID prefix is not the family inventory. Release
-workflow uses **Release**. It runs on protected `main` pushes or
-manual dispatch on `main`, compares authored literal versions with paginated
-**published GitHub releases**, and automatically creates `<inventory-key>/v<version>`
-tags/releases only for newer versions (for example `agent-provider-openai/v2.1.0`).
-Tags without a published release do not count as completed publication. A run with
-no newer versions succeeds without SDK setup, dependency preparation, component
-validation/tests, builds, packaging or publication. Comparison is within each
-package's authored major, so supported-major maintenance can coexist with newer
-majors. A lower/equal version within that major reuses exact published bytes.
-GitHub hides draft releases from callers without push access, so the protected
-planning job needs `contents:write` to discover interrupted drafts. The planner
-issues only reads and invokes no build tooling. Selected versions are subsequently
-checked against evaluated Release/CI properties in the dependency-preparation job,
-with GitHub/Registry credentials removed from MSBuild's environment.
+### Test → release → publish
 
-`packages.json` records the predicted package-wide capability union. Local
-Execution drops `background-services.v1` and `runtime-generations.v1`; Files,
-Shell and Web drop `logging.v1`. Removing the explicit extended-deadline
-declarations from Agent, MCP and Subagents narrows role requirements while retaining
-that capability in the affected package unions. Qualify each actual role and union from newly generated
-manifests at the artifact checkpoint.
+The main Agent (`younics.ai.agent`) goes first if selected. Each extension then
+runs [the same package workflow](../.github/workflows/sunder-package-ship.yml)
+independently. Its plan contains the extension and the exact published Agent
+version in its contract lock. The owner plan contains only Agent. A failing
+extension leaves the owner and passing siblings alone. A new owner failure blocks
+an extension that needs that new version; an extension pinned to an already
+published owner can still ship.
 
-## Local Development Boundary
+1. **Test.** Run the package's `SunderTestOwner` suites on the six native targets.
+   Keep discovery, TRX and required-platform case checks with their job. Retain
+   the qualified role bytes from that build after the tests pass. Compose them
+   once into a `.sunderpkg`, inspect it, and exercise that exact archive through
+   the shipped App and its bundled Host on all six RIDs.
+2. **Stage the release.** Verify the six receipts, locked dependencies and
+   installed-size budgets. Create this package's `<inventory-key>/v<version>` tag
+   and GitHub draft only after qualification. The draft retains the tested
+   archive, original execution reports, source, checksums, SBOM and recovery plan.
+3. **Publish to Hub.** Upload this exact version initially **Yanked**. Each
+   native runner downloads it anonymously from Hub, installs it under real
+   Registry policy and exercises its lifecycle. Retain all six installed
+   receipts, list just this version and advance its channel tag in one
+   revision-fenced operation, then announce the GitHub release. The dependency
+   is verified read-only. The Hub writer is queued because policy revisions are
+   shared; a failed writer does not cancel the other packages.
 
-Unpublished family development uses exact local owner candidates and a local Core
-catalog. It needs no Registry or production approval. Local selections omit
-`registryOrigin`; published selections pin an explicit Registry. Builds never
-silently replace selected candidates or rewrite locks to match a new archive.
+MCP tests its projected native library; OpenAI tests its auth flow; Memory
+tests SQLite; Shell tests process fault isolation; Agent tests its App snapshot
+and RPC stream. Maker uses its own template toolset and also creates, builds
+and activates a package with Agent **absent**. Those belong to their respective
+packages. Full-family integration, authoring and stress remain in
+[Validate](../.github/workflows/sunder-package-smoke.yml) on PRs, merge queues
+and scheduled/manual integration runs.
 
-## Active Release Boundaries
+### Ordinary CI inputs
 
-The GitHub entry points are:
+Build with the SDK in `global.json`, locked public NuGet dependencies, and the
+Node/npm versions in `.node-version` and `.npm-version`. No sibling Core
+checkout is required. `eng/ci/app-release.json` selects the shipped DMG,
+AppImage or Windows full archive. NuGet owns SDK integrity; Agent owns the
+package locks, payload checks, native behavior and release receipts. The
+active install-size budgets in `eng/ci/native-release.json` together fit the
+existing family ceiling.
 
-- `sunder-package-smoke.yml` (**Validate**): PR/merge-queue versions compare against
-  the immutable event base before toolchain setup; weekly/manual full source and
-  stress validation remains available. Releases supply their exact selected IDs
-  to the same validation. Manual dispatch accepts comma-separated `packages` or
-  `all`. Each test runs once against its declared public SDKs.
-- `sunder-package-qualify.yml` (**Author a package lock input**): produces an
-  import-free archive for lock authoring only. It never qualifies or publishes a
-  release. Use **Validate** for manual qualification.
-- `sunder-package-release.yml` (**Release**): the version-selected protected-main pipeline from validation
-  through six-RID native capture, no-rebuild fan-in, publication, visibility and announcement.
-- `sunder-agent-cohort-rollback.yml`: validates and retains a reviewed reverse plan for
-  an unannounced cohort without Registry mutation, sharing the release concurrency group.
-
-The native producer `sunder-package-component.yml` only builds and composes.
-Validation runs component and family test jobs directly. Validation and Release
-each end with a single summary that rejects a failed, cancelled or unexpectedly
-skipped selected job. Interrupted publication recovers the retained plan and bytes
-without building again. A completed same-source publication becomes a no-op.
-
-Test ownership comes from `SunderTestOwner`. Component jobs select exactly their
-owned suites and evaluate their real project-reference closure for restore and
-contract hydration. Selected roots restore/build as one ordinary graph over the
-authored solution; generated providers and dependencies are not bypassed.
-Shared `agent-family` assertions run once per native platform during full
-validation, including the separate all-fifteen authoring test selection in the
-same build. Linux retains the owning filesystem and real-Docker cases.
-
-Each native job checks its own reports. Test discovery, completed TRX results,
-expected platform skips, and required cases are checked together. Required cases
-must execute once with their exact identities/counts on each declared RID, with no
-failures or skips. No summary downloads previous reports to validate the job.
-
-After owned source tests and any required/stress cases pass, each selected canonical
-project runs `PackSunderPackage`. Its archive payload must match the existing role
-outputs used by those tests, and packing must leave those outputs unchanged. The
-scoped archives, payload inventories, pack logs and hash/size receipt are retained
-under `artifacts/source-components`. The full-family lane additionally exercises
-the combined behavioral probes and requires all fifteen archives.
-
-`PackageCompatibility` cases that examine SDK, package or consumer behavior run in
-the ordinary suites against the same locked public dependencies. Final-archive
-assertions run against the inspected universal archives. A second source/package
-reference matrix is unnecessary because both used the same public dependencies.
-
-Agent CircleCI and the separate acceptance/promotion dispatch workflows are retired.
-Native byte qualification, exact input validation, package/platform policy and
-immutable retries remain required. See [native inputs](native-release-inputs.md)
-and [cold release inputs](cold-release-inputs.md).
-
-## Ordinary CI Inputs
-
-Workflow configuration has these owners:
-
-- `global.json` and Agent's Node/npm policy supply toolchains through
-  `.github/actions/setup/action.yml`. The action also binds native Bash for nested
-  Python script calls through `SUNDER_BASH_EXECUTABLE` (Git Bash on Windows).
-- `eng/ci/platforms.json` supplies the native build and behavior runner targets.
-  Behavior is required on all six OS/architecture targets, not only Windows/Linux x64.
-  Native runner overrides retain the existing `SUNDER_AGENT_RUNNER_<RID>` variables
-  for tools, preflight and behavior alike; retained reports are RID-labelled.
-- `scripts/test/ci-scenarios.json` owns required test selections; `agent_ci.py test`
-  and `report` execute/check them. `run-ci-checks.py source|release` discovers script checks.
-- `compatibility/agent-current-inventory.json` remains the independently reviewed
-  family expectation. Release helpers derive membership/counts from it and still
-  require every package and native RID. Produced archives cannot redefine that policy.
-
-Tool and verifier paths come from evaluated project outputs; native inputs are
-discovered from Core's qualified role bundles and ambiguous outputs fail. Workflows
-own ordering, permissions, protected credentials, artifact transport and action pins.
-
-`scripts/ci/agent_ci.py` shares the release input owner's complete byte/lock
-validator. It uses an isolated contract cache and runs normal parallel builds.
-Generated test providers are a
-project dependency built with the tests; discovery and execution retain per-run
-evidence. It does not write approval or cold-release receipts.
-Verified candidate/catalog paths are supplied to the initial ordinary NuGet restore,
-where Core also hydrates missing contracts. These restore-only byte sources are not
-inherited by test/build children. The import-free owner supplies only its exact
-catalog, without an empty candidate override or a runner-local input seed.
-Each project restores its declared NuGet dependencies, including the Build tasks.
-`dependency_inputs.py` resolves the selected Agent archives and platform catalog,
-not the SDK release or repository. Published archives are located from their actual identities;
-identical coordinator copies are allowed, conflicting copies are rejected.
-
-If an exact selected owner was never published, discovery retains its exact catalog
-and schedules six native package/RID leaves against locked NuGet dependencies.
-One composition job verifies all six qualified leaves and produces the immutable
-owner candidate. Admission checks full content identities, public inventories and
-descriptor/ABI tuples against the committed locks before any consumer build.
-It never silently selects another
-version, substitutes mismatched bytes or rewrites a lock. Missing published bytes
-without matching authored source are a genuine dependency error, not a request for
-an operator-supplied SHA or asset locator.
-
-When an unpublished owner's rebuilt bytes require lock reselection, use
-**Author a package lock input** once on the exact non-main commit after its Build
-is published and verified. Select the branch and enter one canonical package ID;
-the workflow records its own event commit.
-This read-only operation checks only the import-free package project and its
-published catalog, then produces all six native leaves and composes them without
-rebuilding. It does not run component tests, admit old consumer locks, or grant
-qualification or publication. Retain the run, candidate artifact ID and ZIP
-digest, original leaves, and the actual archive SHA-256 and size.
-
-Use `UpdateSunderPackageApi` to reselect the composed owner in the consumer
-locks. For an unpublished dependency, the shared input job locates the
-successful first-party compose job for that package and verifies that the
-admitted archive reproduces its raw bytes. The generated run receipt records
-the authoring artifact and its digest. Authoring bytes cannot substitute for
-the candidate rebuilt by the validating run.
-
-Actions resolves dependencies once on Linux and seals `agent-dependency-inputs`
-directly when all are published. Only a missing owner needs the intermediate
-`agent-prepared-dependencies` artifact and a separate reproduction job.
-The `cold-inputs.json` SHA-256 is passed to behavior and native jobs.
-Each consumer checks that digest,
-the source commit, locks and candidate/catalog bytes before hydration. Runners
-never independently regenerate the selected owner archive. A failed identity check
-retains the rejected bytes and original log and stops downstream work.
-
-Portable script checks run once on Linux. Windows transport checks run with the
-Windows family jobs; filesystem prerequisites are exercised by their owning native
-suites. Empty selection installs no toolchain. Behavior jobs retain inventory,
-build and execution diagnostics from their actual checkout.
-
-This bundle is dependency evidence, not native release qualification. Final family
-verification still requires the composed native owner identity to equal every
-committed dependent selection. A missing/mismatched selected archive requires
-restoring its exact bytes or explicit authoring-tool selection review before a
-release can succeed; the pipeline does not rewrite locks or substitute merely
-descriptor-compatible archives.
-
-The original [failed 2.0.0 release](https://github.com/Younics/sunder-agent-package/actions/runs/45150131370/attempts/3)
-and its Windows reports remain historical. The unfinished cutover stays on its
-original source and bytes once staged. If it fails before staging, the corrected
-initial `2.0.0` plan omits only the 34 already-run Windows Local cases on each ABI,
-and only with the reviewed source and lock scope unchanged. They are recorded as
-not selected, never as current passes. All other tests and the six final-archive
-and installed gates still run. Ordinary validation and later releases require
-live containment cases in their owning jobs and never consult old runs for credit.
-
-CI package builds normalize generated-role compiler paths and omit debug symbols
-and commit-dependent assembly/Source Link metadata. This makes unchanged payloads
-reproducible across checkout locations and lock-only commits; the exact source
-commit remains bound by release provenance and qualified native inputs. The
-repository's LF checkout policy preserves source bytes across operating systems.
-Use a clean checkout, or `dotnet clean` before switching an existing output tree
-to these CI settings, so stale portable symbols cannot enter the archive.
-
-The local resolver generates `ci-inputs.json` with local `{name,size,sha256}` records.
-The shared Actions producer binds those records to the Agent source and locks in
-`cold-inputs.json`; the same verifier also accepts historical durable input bundles.
-No `SUNDER_AGENT_CI_INPUTS`, approval reference or per-release input manifest needs
-configuration. Ordinary CI and production native preparation use normal prepared
-execution; explicit denied-network/cold acceptance remains a separate profile.
-
-For local validation:
+For one package locally, after its selected dependencies are published:
 
 ```sh
-python3 -B scripts/ci/agent_ci.py preflight
-python3 -B scripts/ci/agent_ci.py resolve --output /tmp/agent-inputs
-python3 -B scripts/ci/agent_ci.py prepare --inputs /tmp/agent-inputs --work /tmp/agent-ci
-python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
-  dotnet build Sunder.AgentPackage.slnx -c Release --no-restore
-python3 -B scripts/ci/agent_ci.py run --state /tmp/agent-ci/ci-state.json -- \
-  dotnet test Sunder.AgentPackage.slnx -c Release --no-build --no-restore
+package='["younics.ai.agent.provider.openai"]'
+work=$(mktemp -d)
+python3 -B scripts/ci/agent_ci.py resolve --test-dependencies --packages "$package" --output "$work/inputs"
+python3 -B scripts/ci/agent_ci.py validate --packages "$package" --inputs "$work/inputs"
 ```
 
-Use a fresh temporary work directory. On macOS, use physical paths consistently
-when invoking package projects beneath `/var` (`/private/var`). No baseline or lock
-selection is updated by these commands. Explicit `--candidate` and `--catalog`
-files remain available for local authoring checks; their identities are checked too.
+For the initial unpublished owner, **Validate** builds six native leaves and
+checks its composed bytes against the separately authenticated lock-authoring
+archive before consumer builds. Release likewise reproduces the lock-selected
+owner before publication. The authoring archive is a reference for comparison.
+Do not substitute it for a build, rewrite a lock during CI, or credit an
+emulated run as native qualification. See [native inputs](native-release-inputs.md)
+and [cold acceptance](cold-release-inputs.md).
 
-For selected local behavior validation, add
-`--packages '["younics.ai.agent.provider.openai"]'` to `agent_ci.py validate`.
-`--packages '[]'` stops before SDK/dependency work; omitting the option runs the full
-profile. Temporary authoring probes invoke the tasks from the restored Build package.
+### Initial `2.0.0` cutover
 
-## Public-feed builds and qualification
+Only for the original all-new 15-package cutover and unchanged reviewed
+Windows Local sources and locks, record the 34 original Windows Local cases per
+ABI as `not-selected`. Two exact source fingerprints qualify: the reviewed
+cutover and its two-file Maker managed-updater fix. The second changes none of
+the 733 authored inputs compiled by Windows Local on either ABI. The package
+plan carries that original selection across independent releases. No old
+Windows reports are loaded or counted. Ordinary
+validation and later releases run the live cases. **`2.0.1` remains on hold**
+until installed `2.0.0` ↔ `2.0.1` works in both directions on all six RIDs.
 
-Builds restore the declared SDK packages from NuGet.org in locked mode. The
-catalog is read from the public Sunder Registry; the Agent artifact dependencies
-remain bound to their authored selections. A sibling checkout cannot change
-the build.
+### Recovery and configuration
 
-Hosted presentation and native release tests use the published App and its
-bundled Host from [`app-release.json`](../eng/ci/app-release.json). macOS uses
-the signed, notarized DMG, not a reconstructed updater bundle; Linux extracts
-the shipped AppImage without installing it, and Windows uses the full updater
-archive. The native
-smoke runs Agent tests against that distribution; product builds do not consume
-it. Maker's local authoring test feed is seeded by normal NuGet restore of the
-template's declared toolset, independently of Agent's build dependencies.
-Development execution and installed acceptance remain separate gates.
+The read-only planner uses GitHub's draft-read permission (`contents: write`).
+The protected `sunder-agent-release-promotion` environment controls staging
+and visibility. Configure `SUNDER_REGISTRY_API_URL` for the intended HTTPS Hub
+and its `SUNDER_REGISTRY_API_KEY` with `package:publish` and `package:release`
+on the exact IDs. Hub checks the publishing identity and grants when the
+workflow uploads and lists each version. If Hub rejects a package, use its
+response to resolve that package's authorization or version conflict.
 
-Local `scripts/dev/refresh-release-locks.sh` is explicit preparation,
-not a release-time fallback. Source baseline publication evidence remains a separate
-authoring operation; the immutable artifact-source tag and frozen histories never move.
-
-## Native Build Boundary
-
-Each native job builds only selected canonical projects for its actual `win-x64`,
-`win-arm64`, `linux-x64`, `linux-arm64`, `osx-x64` or `osx-arm64` architecture.
-Workers are framework-dependent, untrimmed .NET10 modules with no bundled runtime,
-apphost, SDK or toolchain. Generated App roles are retained where authored.
-
-Unchanged packages are downloaded from exact numeric published-release assets,
-with their original hash/size and six-RID native evidence. They are not rebuilt or
-repacked. Every native phase still exercises **all fifteen** packages: the exact
-final selected archives plus unchanged universal archives. Pre-publication execution
-uses supported development imports; post-publication execution installs authenticated
-published bytes under genuine Registry policy. Mixed
-package versions are expected. The final output audit and Runtime/App gates still
-inspect all fifteen archives. Exact reviewed dependency candidates/catalogs remain
-separate dependency inputs; changing a version never regenerates a dependency lock.
-
-Release restore preserves the complete six-RID graph. One package × RID job selects
-its native RID after locked restore and explicit contract hydration. Each package
-is composed once from all six Core-qualified leaves with
-`SunderPackageUsePrebuiltLeaves=true`, `BuildProjectReferences=false` and an explicit
-`SunderPackagePrebuiltRoleInputsFile`; they never rebuild captured role bytes.
-
-`native-family.py collect-component`, `compose-component`, `gather`, `record-final`
-and `finalize` own bounded transport and exact module/runtimeconfig/deps/shared/App
-byte comparisons. Each smoke job downloads the inspected archive artifact by ID;
-the checked index binds its byte hashes and its RID's original leaf receipts.
-Schema 6 binds every native smoke record to the final archive
-hash/size, exact execution methods, phase scope and original Maker/preparation reports;
-fan-in verifies and copies those bytes without another Pack. The schema-3/4/5 readers
-remain for retained evidence, not new release staging. Native smoke exercises real
-official .NET installation, every Worker lifecycle, domain RPC/auth/SQLite behavior,
-crash recovery, cleanup and Builder's separate SDK path. Core metric budgets and
-the current-RID projection-size gate remain enforced. The native development lane
-admits the exact universal family locally using the shipped Host. A separate App
-process materializes a hash-bound Host snapshot, activates the Agent Chat module,
-and retires its policy session. Fan-in verifies those original reports without
-repacking. The snapshot hook does not exercise ordinary desktop startup or the
-installed lifecycle. Installed evidence is separate and must cover all six RIDs;
-before releasing `2.0.1`, prove installed compatibility with `2.0.0` in both
-directions on all six.
-
-## Stable Boundary
-
-Pack requires source-matched frozen public contracts, exact locks and qualified
-role inputs. Private-only baseline absence and historical private records remain
-inputs too. Do not Accept/Freeze, regenerate a historical oracle, change source,
-or rebuild native inputs during fan-in or publication.
-
-## Publication Order
-
-`agent_selection.py` owns read-only planning. `agent_pipeline.py` is the single
-publication pipeline; `agent_publication.py` owns bounded numeric GitHub transport
-and public install-plan postchecks. The pipeline:
-
-1. Verifies the canonical selection, clean protected-main source/lock
-   coordinates and full-family native evidence before any tag/release write.
-2. Creates per-selected-package tags and numeric drafts. The first selected package
-   is the coordinator and retains all selected tested archives for recovery; other
-   drafts retain their own archive. Each retains the plan, full-family reports,
-   source/material/byte provenance, checksums, SBOM and original toolchain record.
-3. One protected writer publishes the selected owner first, then the selected
-   consumers in dependency order through `publish-registry-package.sh --initial-yanked`.
-   Unchanged versions are verified read-only as Listed. The coordinator retains
-   `registry-publications.json`: the Registry-returned publication evidence for
-   every tested package, including its actual owner. Retries and later readback
-   compare that immutable evidence before visibility changes or announcement.
-4. Runs published-installed acceptance on all six native RIDs, anonymously downloading
-   the exact immutable family over HTTPS and checking genuine policy. A single writer durably retains
-   `installed-native-test-evidence.json` and all twelve RID receipt/bundle assets on
-   the coordinator. No development-import result can satisfy this gate.
-5. Retains one complete cohort request with its idempotency key and current policy
-   revision on the draft **before** any availability mutation.
-6. Commits the selected-batch Yanked→Listed transition and its dist tags in
-   one Registry operation; preserves its exact request/result for recovery.
-7. Confirms the committed result against fresh policy and the owner's retained
-   operation, rechecks public package/projection bytes and six-RID install plans,
-   then finalizes those drafts with `make_latest=false`, coordinator last.
-
-Forward publication and visibility use the same scoped API key. Set
-`SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE=api-key` for forward cohort operations;
-there is no human CLI credential fallback in that mode. No per-package
-visibility loop, automatic compensation or new request after an ambiguous result
-is permitted. The metadata/provenance and native hashes continue to bind the same
-source and bytes throughout the pipeline.
-
-## Promotion
-
-One job confirms the atomic visibility transition and announces in the main workflow.
-Stable releases advance Registry `latest`; prereleases advance `preview`. Publishing
-an older supported major lists its exact version while preserving any newer channel
-target. The chosen tag subset is retained with the original atomic request and
-replayed unchanged. Forward visibility cannot downgrade a tag. A fresh policy fence can fail if another operation changed
-the Registry; an unknown outcome must retain the original request/key/revision.
-
-Synchronization uses a fresh nonce, the pinned HTTPS Registry origin and the complete
-exact package/platform subject set. Initial visibility requests `minimumPackagePolicy=null`;
-confirmation supplies the retained committed revision/fingerprint and rejects older or
-same-revision conflicting identities. Responses require a valid policy fingerprint and
-the fixed 24-hour UTC observation interval. The confirmation check additionally requires
-Allowed Listed packages and Supported platform catalogs before exact release-API-key result
-readback. PostgreSQL is authoritative: this retained floor checks client consistency and
-does not independently prove absence of database rollback. Checkpoint/topology fields and
-external policy stores are absent from the current release protocol.
-
-`agent-family-cohort-<request-sha256>.json` is a schema2 receipt containing
-`registryOrigin`, `artifactSourceCommit`, numeric `releaseId`, `request` and the
-actual Registry `result`. Numeric asset readback checks its canonical bytes and
-release/source binding. It is not a synthetic production acceptance certificate.
-
-Use **Re-run failed jobs** on the original workflow/source. Do not rebuild successful
-native jobs or replace their artifacts. A later dispatch of the same protected source
-recovers the original plan and tested bytes from the coordinator, skipping native
-builds. Ordinary recovery is read-only; only the protected staging job may resume
-interrupted draft creation. If staging stopped before retaining all selected archives, rerun the original
-failed job with its existing tested artifact; no rebuild fallback is allowed.
-Retained candidate/native Actions artifacts last 90 days; release assets are durable.
-An unfinished draft from another source blocks adoption. A GitHub/Registry mismatch
-requires reconciliation, not an automatic overwrite or an inferred successful tag.
-After a visibility failure, inspect/reconcile the retained operation before deciding
-whether administrator recovery or a reviewed reverse is needed. Missing or conflicting
-immutable bytes require investigation and a new version, not clobbering an old one.
-
-### Reviewed Non-Security Reverse
-
-The explicit rollback-plan workflow uses a new reviewed idempotency key and current
-policy revision, requires an unannounced numeric draft and the exact forward
-receipt, then validates a request to restore the captured prior tag map and Yank the
-cohort atomically. CI retains that request but never applies it or receives human
-Registry credentials. Execution is a separate authenticated operator recovery task,
-not an API-key privilege or an automatic release action.
-Supply `release_id`, `expected_package_policy_revision`, `idempotency_key` and
-`confirmation=reverse-unannounced-cohort`. The protected-main resolver derives the
-source commit, tag and forward-receipt digest from that draft and rejects missing
-or ambiguous receipts. Those coordinates are not manually maintained inputs.
-It cannot reverse a published announcement or overwrite concurrent tag changes.
-Security revocation and database recovery remain administrator operations. Service or
-transport failures retry only the exact retained request; an unresolved outcome retains
-its evidence for reconciliation and cannot trigger an automatic reverse.
-
-## Production Acceptance Evidence
-
-Native tests and checked-in post-publication checks replace external scenario-driver
-dispatch plumbing. Their results describe only the exercised scope. Deployed
-database recovery, performance budgets, native App acceptance and clean-source
-qualification retain their owning product release requirements. Mocked transport
-or metadata tests do not prove those qualifications passed.
-
-## Shell Fixture Scope
-
-Run the release input/native/cohort Python fixtures, `test_agent_ci.py`,
-`test_agent_pipeline.py`, `test_agent_selection.py`, `test_selective_pipeline.py`,
-`test_dependency_inputs.py`,
-`native-release.fixture.sh`, and the existing Registry
-publish/NuGet signature/version fixtures. They cover input tampering, preserved
-native bytes, exact retries, policy fences, public projection checks and reviewed
-reverse behavior without publishing. The actual six native runners remain a
-separate execution result.
-
-## Repository Configuration
-
-- Protected `main` and a main-only `sunder-agent-release-promotion` environment. Allow the
-  release job's `contents:write` token to create the automatic package-key tags;
-  tags do not trigger a second publication workflow. No manually created tag needed.
-- Environment variable `SUNDER_REGISTRY_API_URL`: the Registry HTTPS origin, without an `/api/v1` suffix.
-  Source/lock hashes and dependency locations are derived, never per-release settings.
-- One environment secret `SUNDER_REGISTRY_API_KEY`, created at Registry
-  **Dashboard → API keys**, with `package:publish` and `package:release` for all
-  fifteen exact package IDs. The Registry derives the publisher from the key and
-  enforces package ownership/maintainer permissions; no owner ID is configured in
-  GitHub. First publication requires the publisher's package reservation, updates
-  preserve the existing owner, and atomic cohort release requires that owner's key.
-  `package:promote-latest` is unnecessary for staged atomic releases. API keys support
-  a 1–90 day lifetime or **Never**; rotate expiring keys before their selected expiry.
-  The same secret name is preserved through reusable-workflow calls and resolved
-  in the protected publication job. Agent scripts never fall back to the legacy
-  `SUNDER_REGISTRY_PUBLISH_TOKEN` name; the released Core CLI retains that separate
-  environment interface for its `--credential-source environment` option.
-- No human CLI login token or native-read secret belongs in CI. Exact-version
-  canonical downloads, including staged `Yanked` versions, are anonymous Registry
-  operations; `Yanked` controls selection, not confidentiality. Installed-native
-  jobs require the pinned HTTPS origin, exact downloaded hashes/lengths and real
-  policy observations, not `/api/v1/me`. They still fail on missing, changed or
-  denied bytes without a development fallback. Publication keys remain confined
-  to publication/forward visibility steps and are stripped from build, validation,
-  HTTP-child and App-proxy environments, together with legacy credential names.
-- The separate reviewed reverse workflow produces a plan only. Release API keys
-  intentionally cannot roll back; no workflow accepts a human recovery token.
-- Optional `SUNDER_AGENT_RUNNER_<RID>` JSON label arrays.
-  RID suffixes use uppercase underscores. Defaults use native Windows2022/Windows11ARM,
-  Ubuntu24x64/ARM and macOS15Intel/ARM runners.
-
-Historical release/tag deletion is not part of this workflow. Require successful
-replacement publication and explicit confirmation of cleanup scope first.
+For an interrupted stage, rerun the original failed job with its original
+tested artifact. Once its draft is complete, recover that package's retained
+source, bytes and receipts; never rebuild a tagged package, overwrite an
+immutable asset or issue a different visibility request on an ambiguous
+reply. A conflicting tag, draft or Registry identity requires reconciliation
+for that package alone. A historical batch draft must use its original
+workflow at its original source. The [reverse workflow](../.github/workflows/sunder-agent-cohort-rollback.yml)
+prepares a reviewed reverse request and does not apply it.

@@ -9,6 +9,7 @@ using Sunder.Package.Agent.Contracts.Contracts;
 using Sunder.Package.Agent.Contracts.Models;
 using Sunder.Package.Agent.Protocol;
 using Sunder.Package.Agent.Runtime;
+using Sunder.Package.Agent.Services;
 using Sunder.Sdk.Rpc;
 using Xunit;
 using AgentServices = Sunder.Generated.Packages.Younics_Ai_Agent_Services;
@@ -528,7 +529,7 @@ public sealed class AgentRpcWireCompatibilityTests
             Guid.NewGuid(), 1, 1, new(endpoint), 1, SunderRpcProviderState.Active);
     }
 
-    private sealed class ChatProviderProbe : IAgentChatProvider
+    private sealed class ChatProviderProbe : AgentServices.IChatProviderService
     {
         public OptionCaptureChatClient Client { get; } = new();
 
@@ -539,7 +540,10 @@ public sealed class AgentRpcWireCompatibilityTests
             SupportsStreaming: true,
             SupportsInterruptibleRuns: true);
 
-        public ValueTask<IReadOnlyList<AgentModelDescriptor>> GetAvailableModelsAsync(
+        public ValueTask<AgentProviderDescriptor> DescribeAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult(Descriptor);
+
+        public ValueTask<IReadOnlyList<AgentModelDescriptor>> ListModelsAsync(
             CancellationToken cancellationToken = default)
             => ValueTask.FromResult<IReadOnlyList<AgentModelDescriptor>>(
             [
@@ -556,44 +560,21 @@ public sealed class AgentRpcWireCompatibilityTests
                 AgentProviderReadinessStatus.Ready,
                 "Ready."));
 
-        public ValueTask<AgentProviderRunCapabilities> GetRunCapabilitiesAsync(
+        public ValueTask<AgentProviderRunCapabilities> GetCapabilitiesAsync(
             string? modelId,
             CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
-        public ValueTask<IChatClient> CreateChatClientAsync(
-            AgentChatClientContext context,
-            CancellationToken cancellationToken = default)
-            => ValueTask.FromResult<IChatClient>(Client);
-    }
+        public ValueTask<string?> ResolveUtilityModelAsync(CancellationToken cancellationToken = default)
+            => ValueTask.FromResult<string?>(null);
 
-    private sealed class OptionCaptureChatClient : IChatClient
-    {
-        public int CallCount { get; private set; }
-        public ChatOptions? ObservedOptions { get; private set; }
-
-        public Task<ChatResponse> GetResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
-            CancellationToken cancellationToken = default)
-            => throw new NotSupportedException();
-
-        public async IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
-            IEnumerable<ChatMessage> messages,
-            ChatOptions? options = null,
+        public async IAsyncEnumerable<AgentChatStreamEvent> StreamChatAsync(AgentChatStreamRequest request,
             [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            CallCount++;
-            ObservedOptions = options;
-            await Task.CompletedTask;
-            yield break;
-        }
-
-        public object? GetService(Type serviceType, object? serviceKey = null) => null;
-
-        public void Dispose()
-        {
+            using var client = Client;
+            var messages = await AgentChatMapper.ToChatMessagesAsync(request.Messages, cancellationToken);
+            await foreach (var update in client.GetStreamingResponseAsync(messages, AgentChatMapper.ToChatOptions(request.Options), cancellationToken))
+                yield return AgentChatMapper.FromUpdate(update);
         }
     }
 

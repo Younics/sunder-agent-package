@@ -12,20 +12,21 @@ import native_runtime_evidence as evidence
 import published_app
 
 
-def trx(mode):
+def trx(mode, package=None):
     root = ET.Element("TestRun")
     definitions, results = ET.SubElement(root, "TestDefinitions"), ET.SubElement(root, "Results")
-    for index, name in enumerate(evidence.tests(mode)):
+    methods = evidence.tests(mode, package)
+    for index, name in enumerate(methods):
         definition = ET.SubElement(definitions, "UnitTest", id=str(index))
         ET.SubElement(definition, "TestMethod", className=name.rsplit(".", 1)[0], name=name.rsplit(".", 1)[1])
         ET.SubElement(results, "UnitTestResult", testId=str(index), testName="untrusted display name", outcome="Passed")
     summary = ET.SubElement(root, "ResultSummary", outcome="Completed")
-    ET.SubElement(summary, "Counters", total=str(len(evidence.tests(mode))), executed=str(len(evidence.tests(mode))),
-                  passed=str(len(evidence.tests(mode))), failed="0", error="0", notExecuted="0", aborted="0")
+    ET.SubElement(summary, "Counters", total=str(len(methods)), executed=str(len(methods)),
+                  passed=str(len(methods)), failed="0", error="0", notExecuted="0", aborted="0")
     return root
 
 
-def native_documents(records, rid, core, mode="development", registry="https://registry.example"):
+def native_documents(records, rid, core, mode="development", registry="https://registry.example", package=None):
     """Synthetic transport documents only, never an execution/preparation claim."""
     from native_release_inputs import digest
     encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
@@ -36,11 +37,12 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                   platformCatalog=dict(path="sunder-platform-contracts.v1.json", size=len(catalog), sha256=digest(catalog)))
     scope = dict(schemaVersion=1, rid=rid, profile=evidence.PROFILES[mode], installedAcceptance=mode == "published",
                  registryOrigin=None if mode == "development" else registry, archives=records)
-    documents = {"native-family.trx": ET.tostring(trx(mode)), "scope/qualification.json": encode(scope),
+    documents = {"native-family.trx": ET.tostring(trx(mode, package)), "scope/qualification.json": encode(scope),
                  "maker-inputs/inputs.json": encode(inputs), "maker-inputs/sunder-platform-contracts.v1.json": catalog}
     if mode == "development":
-        if app:
+        if app and package in (None, evidence.OWNER):
             documents["apps/agent-snapshot/process.txt"] = b"agent-family-app: materialized-and-activated\nagent-family-app: retired\n"
+    if mode == "development" and package in (None, evidence.MAKER_ID):
         owner = next(row for row in records if row["packageId"] == "younics.sunder.package.maker")
         journey = dict(schemaVersion=1, rid=rid, withoutAgent=True, profile=evidence.PROFILES[mode], installedAcceptance=False,
                        callerBoundary="supervised-native-app-rpc", makerViewAcceptance=False, operations=evidence.OPERATIONS,
@@ -48,7 +50,7 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                        nuget={row["name"]: row["sha256"] for row in inputs["packages"]})
         documents["maker/journey.json"] = encode(journey)
         documents.update({"maker/" + operation + ".json": encode(dict(state="succeeded")) for operation in ("create", "build", "archive")})
-    else:
+    elif mode == "published":
         documents["scope/published-registry.json"] = encode(dict(schemaVersion=2, registryOrigin=scope["registryOrigin"],
             archiveDownloadAuthentication="anonymous",
             downloads=[dict(packageId=row["packageId"], version="2.0.0", archiveSha256=row["sha256"], size=row["size"]) for row in records],
@@ -56,20 +58,38 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                 lease=dict(state="valid", errorCode=None, responseNonce="a" * 32, responseSha256="b" * 64,
                     watermark=dict(registryOrigin=registry, packagePolicyRevision=1, packagePolicyFingerprint="d" * 64),
                     observedAtUtc="2026-11-14T00:00:00Z", validUntilUtc="2026-11-15T00:00:00Z", clock={})) for row in records]))
-        documents.update({package_id + "." + rid + ".json": encode(dict(syntheticTransportFixture=True)) for package_id in evidence.FAMILY_PACKAGE_IDS})
+        documents.update({package_id + "." + rid + ".json": encode(dict(syntheticTransportFixture=True)) for package_id in evidence.execution_ids(package)})
         for row in records:
             documents[row["packageId"] + "." + rid + ".json"] = encode(dict(measurement=dict(formatVersion=1, profile="dotnetWorker", rid=rid,
                 archive=row["archive"], archiveBytes=row["size"], capturedAtUtc="2026-11-14T00:00:00Z", currentRidInstalledBytes=1,
                 startupMilliseconds=1.5, workerProcessCount=1, workerRssBytes=1), thresholds=dict(expectedWorkerProcessCount=1,
                 maximumArchiveBytes=row["size"], maximumCurrentRidInstalledBytes=1, maximumStartupMilliseconds=2.0, maximumWorkerRssBytes=1)))
     identity = dict(schemaVersion=2, appArtifact=app) if app else dict(schemaVersion=1, coreCommit=core)
+    if package is not None: identity.update(schemaVersion=3, releasePackage=package)
     receipt = dict(identity, rid=rid, profile=scope["profile"], installedAcceptance=scope["installedAcceptance"],
-                   registryOrigin=scope["registryOrigin"], archives=records, tests=evidence.tests(mode),
+                   registryOrigin=scope["registryOrigin"], archives=records, tests=evidence.tests(mode, package),
                    reports=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(documents.items())])
     return receipt, documents
 
 
 class NativeRuntimeEvidenceTests(unittest.TestCase):
+    def test_scoped_installed_receipts_cannot_be_reused_for_a_sibling_or_a_full_family(self):
+        package = "younics.ai.agent.mcp"
+        records = [dict(packageId=key, archive=key + ".2.0.0.sunderpkg", size=1, sha256="a" * 64)
+                   for key in sorted(evidence.execution_ids(package))]
+        rid = "linux-arm64"
+        value, documents = native_documents(records, rid, None, "published", package=package)
+        app = published_app.selection(rid)
+        evidence.validate_receipt(value, "published", records, app, rid, package=package)
+        evidence.verify_reports(value, documents.__getitem__)
+        for subject, inputs in ((None, records), ("younics.ai.agent.skills", records), (package, records[:1])):
+            with self.subTest(subject=subject), self.assertRaises(ValueError):
+                evidence.validate_receipt(value, "published", inputs, app, rid, package=subject)
+        self.assertIn(evidence.CLASS + "." + evidence.MAKER, evidence.tests("development", evidence.MAKER_ID))
+        self.assertNotIn(evidence.CLASS + "." + evidence.MAKER, evidence.tests("development", evidence.OWNER))
+        with self.assertRaisesRegex(ValueError, "Installed-size budget"):
+            evidence.check_installed_size(evidence.OWNER, 360003313)
+
     def test_published_proof_rejects_rehashed_wrong_nonce_authority_versions_and_metrics(self):
         from native_release_inputs import digest
         records = [dict(packageId="younics.sunder.package.maker", archive="maker.sunderpkg", size=1, sha256="a" * 64)]

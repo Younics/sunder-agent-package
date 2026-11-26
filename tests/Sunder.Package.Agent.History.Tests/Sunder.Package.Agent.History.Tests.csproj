@@ -16,10 +16,8 @@
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="global,AgentWorker" />
     <ProjectReference Include="../../src/Sunder.Package.Agent/Sunder.Package.Agent.csproj"
                       Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=app" Aliases="AgentCore,AgentApp" />
-    <ProjectReference Include="../../src/Sunder.Package.Agent.Subagents/Sunder.Package.Agent.Subagents.csproj"
-                      Targets="GetSunderPackageRoleReference" AdditionalProperties="SunderPackageReferenceRole=worker" Aliases="SubagentsWorker" />
     <ProjectReference Include="../Sunder.Package.Agent.TestSupport/Sunder.Package.Agent.TestSupport.csproj" />
-    <Compile Include="../Shared/Presentation/RegressionTestRuntime.cs;../Shared/Consumers/RegressionTestFamilyConsumers.Subagents.cs"
+    <Compile Include="../Shared/Presentation/RegressionTestRuntime.cs"
              Link="TestSupport/%(Filename)%(Extension)" />
   </ItemGroup>
 

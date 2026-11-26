@@ -32,12 +32,6 @@ def verify(jobs, mode):
         pending = json.loads(jobs["dependencies"]["outputs"]["pending"]) if active else []
         expected = {"checks": active, "dependencies": active, "bootstrap": active and bool(pending),
                     "admit-owner": active and bool(pending), "behavior": active}
-    elif mode == "release":
-        build = active and outputs["resume"] != "true"
-        production = json.loads(jobs["validation"]["outputs"]["production_packages"]) if build else []
-        expected = {"validation": build, "native": build and bool(production),
-             "archive": build, "smoke": build, "fan-in": build, "stage": active,
-             "publish": active, "installed-native": active, "release": active}
     else:
         raise ValueError("Unknown workflow summary")
     outcomes(jobs, dict(prepare=True, **expected))

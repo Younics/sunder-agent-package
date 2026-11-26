@@ -475,10 +475,12 @@ def artifact_records(source, assets):
     family = inventory(source)
     plan_path = Path(assets) / "release-plan.json"
     from agent_selection import load as load_plan
-    retained = {row["packageId"]: row for row in load_plan(plan_path, source)["packages"] if not row["selected"]} if plan_path.exists() else {}
+    planned = {row["packageId"]: row for row in load_plan(plan_path, source)["packages"]} if plan_path.exists() else None
     result = []
     for package in family["packages"]:
-        row = retained.get(package["packageId"])
+        if planned is not None and package["packageId"] not in planned: continue
+        row = planned.get(package["packageId"]) if planned is not None else None
+        if row and row["selected"]: row = None
         package = dict(package, version=row["version"] if row else package["version"])
         name = f"{package['packageId']}.{package['version']}.sunderpkg"
         path = Path(assets) / name
@@ -570,6 +572,7 @@ def verify_family(source, assets, registry=None, *, source_role_uses=None):
     graph = {}
     for package in family["packages"]:
         package_id = package["packageId"]
+        if package_id not in metadata: continue
         manifest, _, _ = metadata[package_id]
         dependencies = manifest.get("dependsOn", [])
         graph[package_id] = {d["packageId"] for d in dependencies}

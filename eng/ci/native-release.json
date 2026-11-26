@@ -4,5 +4,22 @@
     "phase0BaselineBytes": 1440013254,
     "requiredReductionPercent": 75,
     "maximumBytes": 360003313
+  },
+  "installedBudgetMiB": {
+    "younics.ai.agent": 49,
+    "younics.ai.agent.execution.docker": 8,
+    "younics.ai.agent.execution.local": 7,
+    "younics.ai.agent.mcp": 40,
+    "younics.ai.agent.memory.semantic": 26,
+    "younics.ai.agent.provider.anthropic": 25,
+    "younics.ai.agent.provider.gemini": 15,
+    "younics.ai.agent.provider.lmstudio": 17,
+    "younics.ai.agent.provider.openai": 18,
+    "younics.ai.agent.skills": 19,
+    "younics.ai.agent.subagents": 38,
+    "younics.ai.agent.tools.files": 11,
+    "younics.ai.agent.tools.shell": 10,
+    "younics.ai.agent.tools.web": 5,
+    "younics.sunder.package.maker": 55
   }
 }
