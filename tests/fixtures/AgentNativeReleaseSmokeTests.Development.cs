@@ -108,7 +108,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             owner.MarkReady();
             if (originalSnapshot is not null)
             {
-                await VerifySupervisedSnapshotAsync(services, paths, appConnection, originalSnapshot, snapshotPath, rid, metrics, root);
+                await VerifySupervisedSnapshotAsync(services, paths, appConnection, rid, metrics, root, originalSnapshot, snapshotPath);
                 await VerifyOwnerUnaryAndStreamAsync(services, owner, rid, appConnection, root);
             }
             if (TestsPackage(McpPackageId)) await VerifyMcpCallbackAsync(services, owner);
@@ -173,21 +173,28 @@ public sealed partial class AgentNativeReleaseSmokeTests
     }
 
     private static async Task VerifySupervisedSnapshotAsync(IServiceProvider services, RuntimePackagePaths paths,
-        RuntimeConnectionInfo connection, PackageUiSnapshotDescriptor original, string snapshotPath, string rid, string metrics, string root)
+        RuntimeConnectionInfo connection, string rid, string metrics, string root,
+        PackageUiSnapshotDescriptor? original = null, string? snapshotPath = null, string? registryOrigin = null)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10));
         var snapshot = Assert.Single(services.GetRequiredService<RuntimePackageUiService>().GetActiveSnapshots(rid),
             row => row.PackageId == AgentPackageId);
-        Assert.Equal(original.ContentHash, snapshot.ContentHash);
-        Assert.Equal(original.SourceContentIdentity, snapshot.SourceContentIdentity);
-        Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(original.Target), JsonSerializer.SerializeToElement(snapshot.Target)));
+        var uninstall = registryOrigin is not null;
+        Assert.Equal(uninstall ? PackageSourceKind.Installed : PackageSourceKind.Dev, snapshot.SourceKind);
+        if (!uninstall)
+        {
+            Assert.NotNull(original);
+            Assert.Equal(original.ContentHash, snapshot.ContentHash);
+            Assert.Equal(original.SourceContentIdentity, snapshot.SourceContentIdentity);
+            Assert.True(JsonElement.DeepEquals(JsonSerializer.SerializeToElement(original.Target), JsonSerializer.SerializeToElement(snapshot.Target)));
+        }
         var package = Assert.Single(services.GetRequiredService<PackageSessionLifecycleService>().GetActivePackages(), row => row.PackageId == AgentPackageId);
         var connectionPath = Path.Combine(root, "snapshot-connection.json");
         RuntimeConnectionInfoStore.Save(connection, connectionPath);
         var config = Path.Combine(root, "snapshot-config.json");
         await File.WriteAllBytesAsync(config, JsonSerializer.SerializeToUtf8Bytes(new
         {
-            connectionPath, package, snapshot, snapshotPath,
+            connectionPath, package, snapshot, snapshotPath, uninstall,
             sessionRoot = Path.Combine(root, "app-session"),
             runtimeRoot = paths.RootPath,
         }, new JsonSerializerOptions(JsonSerializerDefaults.Web)), deadline.Token);
@@ -202,7 +209,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
         start.Environment["SUNDER_APP_STATE_ROOT"] = Path.Combine(root, "snapshot-app-state");
         start.Environment[RuntimeLocalState.StateRootEnvironmentVariable] = paths.RootPath;
         start.Environment["DOTNET_DbgEnableMiniDump"] = "0";
-        var logs = Path.Combine(metrics, "apps", "agent-snapshot");
+        var logs = Path.Combine(metrics, "apps", uninstall ? "agent-uninstall" : "agent-snapshot");
+        await services.GetRequiredService<AppProcessPolicySessions>().EnforceAsync(deadline.Token);
         await using var child = CapturedProcess.Start(start, 256 * 1024, logs);
         try
         {
@@ -215,13 +223,14 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 Assert.Equal(child.Id, proof.RootElement.GetProperty("peer").GetProperty("processId").GetInt32());
                 var loaded = Assert.Single(proof.RootElement.GetProperty("loaded").EnumerateArray());
                 Assert.Equal(AgentPackageId, loaded.GetProperty("package").GetProperty("packageId").GetString());
-                Assert.True(loaded.GetProperty("development").GetBoolean());
-                Assert.True(!loaded.TryGetProperty("registryOrigin", out var origin) || origin.ValueKind == JsonValueKind.Null);
-                Assert.NotEmpty(proof.RootElement.GetProperty("activations").EnumerateArray());
+                Assert.Equal(!uninstall, loaded.GetProperty("development").GetBoolean());
+                Assert.Equal(registryOrigin, loaded.TryGetProperty("registryOrigin", out var origin) ? origin.GetString() : null);
+                Assert.Equal("active", Assert.Single(proof.RootElement.GetProperty("activations").EnumerateArray()).GetProperty("state").GetString());
             }
             child.Process.StandardInput.Close();
             var result = await child.EnsureSuccessAsync(TimeSpan.FromSeconds(45), deadline.Token);
             Assert.Contains("agent-family-app: retired", result.StandardOutput, StringComparison.Ordinal);
+            if (uninstall) Assert.Contains("agent-family-app: uninstall-applied", result.StandardOutput, StringComparison.Ordinal);
             await services.GetRequiredService<AppProcessPolicySessions>().EnforceAsync(deadline.Token);
             Assert.Empty(Directory.GetFiles(policyRoot, "*.json"));
             Assert.Empty(await services.GetRequiredService<InstalledPackageLifecycleService>().GetInstalledAsync(deadline.Token));

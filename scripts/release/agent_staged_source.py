@@ -39,11 +39,13 @@ REVIEWED_BLOBS = {
     ".github/workflows/sunder-package-smoke.yml": ("5a672a6223c7207270f49924e07d1a77694b80eb", "ed1367add50cb59e74431121ddb62740598f05e1"),
     "scripts/ci/workflow_summary.py": ("6e3aec1b8af1177dfccd0824adbe586caae30cae", "27e42a226254abfe14a2629e1ce996eb81e526c8"),
     "scripts/release/Sunder.Agent.NativeReleaseTests.targets": ("e67e53d54c4862e990a8889f858df8d8cf81ee9d", "cbd262b82ee23167afeabeb132c04ab7ef9130c6"),
-    "scripts/release/native_runtime_evidence.py": ("2bfb601ff398f14dcf73ca4057cf9757eca831e0", "c05c8361faf59f94fd0fe047699d6cc09647b7bd"),
+    "scripts/release/native_runtime_evidence.py": ("2bfb601ff398f14dcf73ca4057cf9757eca831e0", "21fdd0b581701f1953fa10698efe70c5c7c9ec93"),
     "scripts/release/prepare_maker_inputs.py": ("9e62de05eed793a1ccdb4191fb7c9439c559bbe8", "9e2a365c2dee4cc14e45b445c114ffcd378325d8"),
     "scripts/release/published_app.py": ("76f020db857e8b18b272b0025680e477814222da", "6f4da11f27b3c4419a24f89af3a3d196d1ae77f3"),
     "scripts/release/run-native-runtime-smoke.sh": ("fbf8d805a202d12159d91fd0393dc4258f42a5c6", "aee580a51abfae77c962d6a8a003f8481c543ff4"),
-    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "51c719d6dd55b6be2255b56804dd3abab1c572a8"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "f9a2109e7d2b59e847c6867ec1e500fa1651d66d"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.Development.cs": ("9a13ce2eded4ff84ee4d8993b81eec9fda3ebf57", "cdd4c321d98a192d4db019f630e6a499fbc5b9c9"),
+    "tests/fixtures/NativeAppSnapshotProbe.cs": ("9ead5daab3f8efade26c1a1f4ab2575540f3596e", "e203a3c0264ae254e6a0e1c0325ece89612a9b16"),
     "tests/fixtures/AgentNativeReleaseSmokeTests.Hub.cs": (None, "78259be19599a8c39810d1d38be06b9d413be08b"),
     "scripts/release/hub_install_evidence.py": (None, "5e806a61eba6cd978046fff6862c674a0ac2be0d"),
 }
@@ -122,7 +124,8 @@ def authenticate(controller, info, plan):
         jobs = {j["name"]: j for j in hosted.attempt_jobs(run_id, attempt)
                 if j["run_id"] == run_id and j["run_attempt"] == attempt and j["head_sha"] == producer}
         qualified = jobs[prefix + "Verify six native receipts"]
-        staging = jobs[prefix + "Stage release and upload to Hub"]
+        staging, = [jobs[prefix + name] for name in ("Store the tested archive in its GitHub release", "Stage release and upload to Hub")
+                    if prefix + name in jobs]
         r.require(qualified["conclusion"] == "success" and all(
             jobs[prefix + phase + rid]["conclusion"] == "success" for phase in ("Owned tests · ", "Exercise composed archive · ")
             for rid in native.RIDS) and any(s["name"] == "Stage or recover the original tested release" and s["conclusion"] == "success"

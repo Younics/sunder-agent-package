@@ -109,7 +109,7 @@ class StagedSourceTests(unittest.TestCase):
         self.assertEqual(self.plan["registryOrigin"], run.call_args.kwargs["env"]["SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN"])
         export.assert_called_once()
 
-    def test_pre_tag_credential_check_never_prints_a_value_or_contacts_hub(self):
+    def test_publication_credential_check_never_prints_a_value_or_contacts_hub(self):
         script=ROOT/"scripts/release/publish-registry-package.sh"
         import bash_runtime
         for value,expected in (("",1),("wrong-format",1),("sunder_pub_v1_"+"X"*43,0)):
@@ -118,7 +118,7 @@ class StagedSourceTests(unittest.TestCase):
             self.assertEqual(expected,process.returncode)
             if value:self.assertNotIn(value,process.stderr+process.stdout)
 
-    def test_both_calls_pass_the_named_environment_secret_and_stage_checks_it_first(self):
+    def test_hub_writer_recovers_github_release_bytes_before_publication(self):
         workflows=ROOT/".github/workflows"
         caller=(workflows/"sunder-package-release.yml").read_text()
         callee=(workflows/"sunder-package-ship.yml").read_text()
@@ -128,8 +128,12 @@ class StagedSourceTests(unittest.TestCase):
             self.assertIn("    secrets:\n      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}",section)
             self.assertNotIn("secrets: inherit",section)
         self.assertIn("    secrets:\n      SUNDER_REGISTRY_API_KEY: { required: true }",callee.split("permissions:",1)[0])
-        stage=callee.split("\n  publish:\n",1)[1].split("\n  installed:\n",1)[0]
-        self.assertLess(stage.index("--check-credential"),stage.index("agent_pipeline.py stage"))
+        stage=callee.split("\n  stage:\n",1)[1].split("\n  publish:\n",1)[0]
+        self.assertIn("agent_pipeline.py stage",stage)
+        publish=callee.split("\n  publish:\n",1)[1].split("\n  installed:\n",1)[0]
+        self.assertIn("needs: [prepare, stage]",publish)
+        self.assertLess(publish.index("--check-credential"),publish.index("agent_pipeline.py publish"))
+        self.assertLess(publish.index("agent_pipeline.py recover"),publish.index("agent_pipeline.py publish"))
         self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY",callee.split("\n  publish:\n",1)[0])
         self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY",callee.split("\n  installed:\n",1)[1].split("\n  release:\n",1)[0])
 

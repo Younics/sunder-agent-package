@@ -51,6 +51,9 @@ def native_documents(records, rid, core, mode="development", registry="https://r
         documents["maker/journey.json"] = encode(journey)
         documents.update({"maker/" + operation + ".json": encode(dict(state="succeeded")) for operation in ("create", "build", "archive")})
     elif mode == "published":
+        if package == evidence.OWNER:
+            documents["apps/agent-uninstall/process.txt"] = (
+                b"agent-family-app: materialized-and-activated\nagent-family-app: uninstall-applied\nagent-family-app: retired\n")
         proof = dict(schemaVersion=2, registryOrigin=scope["registryOrigin"],
             archiveDownloadAuthentication="anonymous",
             downloads=[dict(packageId=row["packageId"], version="2.0.0", archiveSha256=row["sha256"], size=row["size"]) for row in records],
@@ -111,6 +114,13 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
         key = evidence.OWNER
         records = [dict(packageId=key, archive=key + ".2.0.0.sunderpkg", size=7, sha256="b"*64)]
         value, docs = native_documents(records, "osx-arm64", None, "published", package=key)
+        evidence.verify_reports(value, docs.__getitem__)
+        log = "apps/agent-uninstall/process.txt"
+        stopped = docs[log].replace(b"agent-family-app: uninstall-applied\n", b"")
+        incomplete = copy.deepcopy(value)
+        next(row for row in incomplete["reports"] if row["path"] == log).update(size=len(stopped), sha256=digest(stopped))
+        with self.assertRaisesRegex(ValueError, "uninstall evidence"):
+            evidence.verify_reports(incomplete, {**docs, log: stopped}.__getitem__)
         name = "scope/published-registry.json"
         for change in (
             lambda p: (p.pop("reinstall"), p.pop("install"), p.update(schemaVersion=2)),

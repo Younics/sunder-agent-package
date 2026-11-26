@@ -193,8 +193,15 @@ public sealed partial class AgentNativeReleaseSmokeTests
             var recoveredWorkers = GetWorkers(sessionOwner);
             AssertSamePackageIds(archives.Keys, recoveredWorkers.Keys);
             if (crashedShellProcess is { } retired) AssertReplacementProcess(retired, recoveredWorkers[ShellPackageId]);
-            CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
+            var afterEnable = CaptureWorkers(sessionOwner, observedProcesses, observedTemporaryPaths);
             VerifyDatabases();
+            if (ReleasePackage == AgentPackageId)
+            {
+                await VerifySupervisedSnapshotAsync(provider, paths, appConnection, rid, metricsDirectory, root, registryOrigin: registryOrigin);
+                Assert.Empty(sessionOwner.State.ActiveSession.LoadedPackageMap);
+                await AssertWorkersStoppedAsync(afterEnable);
+                Assert.True(File.Exists(Path.Combine(paths.PackageDataRootPath, AgentPackageId, "workspace", "agent", "agent.db")));
+            }
 
             void VerifyDatabases()
             {
@@ -263,7 +270,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
         app.UseMiddleware<RuntimeProblemDetailsMiddleware>();
         app.UseMiddleware<RuntimeBearerAuthenticationMiddleware>();
         app.MapRuntimeHandshakeEndpoint();
-        app.MapGroup("/api/v1").MapRuntimeRpcEndpoints().MapAppPolicyEndpoints().MapContentTransferEndpoints();
+        app.MapGroup("/api/v1").MapRuntimeRpcEndpoints().MapAppPolicyEndpoints().MapContentTransferEndpoints()
+            .MapPackageSessionEndpoints().MapInstalledPackageEndpoints();
         appConnection = new RuntimeConnectionInfo(RuntimeIpcEndpoint.LogicalRuntimeUrl, "native-release-smoke-token") { IpcEndpoint = endpoint };
         return app;
     }

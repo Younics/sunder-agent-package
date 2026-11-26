@@ -26,7 +26,8 @@ published owner can still ship.
    installed-size budgets. Create this package's `<inventory-key>/v<version>` tag
    and GitHub draft only after qualification. The draft retains the tested
    archive, original execution reports, source, checksums, SBOM and recovery plan.
-3. **Publish to Hub.** Upload this exact version **Listed**, with `setLatest=false`.
+3. **Publish to Hub.** A separate job downloads and verifies the tested archive
+   from the GitHub release, then uploads that exact version **Listed**, with `setLatest=false`.
    Users can select the version immediately. Each native runner installs from
    Hub under real Registry policy and exercises its lifecycle. After retaining
    all six installed receipts, use a revision-fenced dist-tag PUT to advance
@@ -37,8 +38,8 @@ published owner can still ship.
    shared; a failed writer does not cancel the other packages.
 
 MCP tests its projected native library; OpenAI tests its auth flow; Memory
-tests SQLite; Shell tests process fault isolation; Agent tests its App snapshot
-and RPC stream. Maker uses its own template toolset and also creates, builds
+tests SQLite; Shell tests process fault isolation; Agent tests its App snapshot,
+RPC stream and uninstall with Agent Chat active. Maker uses its own template toolset and also creates, builds
 and activates a package with Agent **absent**. Those belong to their respective
 packages. Full-family integration, authoring and stress remain in
 [Validate](../.github/workflows/sunder-package-smoke.yml) on PRs, merge queues
@@ -93,7 +94,7 @@ on the exact IDs. Hub checks the publishing identity and grants when the
 workflow uploads each version and later promotes its channel. If Hub rejects a package, use its
 response to resolve that package's authorization or version conflict.
 Both calls to the reusable shipping workflow must explicitly pass that named
-secret. The staging job checks its presence and format before creating a tag.
+secret. The Hub job checks its presence and format after the release assets are durable.
 
 For an interrupted stage, rerun the original failed job with its original
 tested artifact. Once its draft is complete, recover that package's retained

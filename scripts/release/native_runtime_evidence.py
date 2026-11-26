@@ -70,6 +70,8 @@ def report_names(mode, rid=None, *, published_app=False, package=None):
             names.append("apps/agent-snapshot/process.txt")
     else:
         names.append("scope/published-registry.json")
+        if package == OWNER:
+            names.append("apps/agent-uninstall/process.txt")
         names += [package_id + "." + rid + ".json" for package_id in execution_ids(package)]
     return sorted(names)
 
@@ -131,6 +133,11 @@ def verify_reports(value, loader):
             for operation in ("create", "build", "archive"):
                 require(parse(documents["maker/" + operation + ".json"])["state"] == "succeeded", "Maker job did not complete")
     else:
+        if package == OWNER:
+            log = documents["apps/agent-uninstall/process.txt"]
+            require(all(b"agent-family-app: " + marker in log for marker in
+                        (b"materialized-and-activated", b"uninstall-applied", b"retired")),
+                    "Standalone Agent lacks live App uninstall evidence")
         proof = parse(documents["scope/published-registry.json"])
         plans = proof.get("schemaVersion") == 3
         keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies" + (" install reinstall" if plans else ""))
