@@ -134,7 +134,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(self.ids[0], value["order"][0])
         self.assertIn("younics.sunder.package.maker", value["order"])
         self.assertLess(value["order"].index(self.ids[-1]), value["order"].index(self.ids[1]))
-        self.assertTrue(all(p["initialAvailability"] == "Yanked" for p in value["publications"]))
+        self.assertTrue(all(p["initialAvailability"] == "Listed" for p in value["publications"]))
 
     def test_release_family_is_explicit_and_matches_the_current_inventory(self):
         repository = Path(__file__).resolve().parents[3]

@@ -12,6 +12,7 @@ import tempfile
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
 import bash_runtime
+import agent_channel as channel
 import agent_cohort as cohort
 import agent_cohort_receipt as receipts
 import agent_publication as publication
@@ -76,7 +77,7 @@ def verify_primary(core, directory, plan):
         plan["artifactSourceCommit"]], check=True, env=selection.inputs.without_credentials())
     with tempfile.TemporaryDirectory() as temporary:
         audit = Path(temporary) / "audit.json"
-        subprocess.run(bash_runtime.command(producer / "scripts/release/generate-package-output-audit.sh", directory,
+        subprocess.run(bash_runtime.audit_command(producer / "scripts/release/generate-package-output-audit.sh", directory,
             directory / "native-test-evidence.json", producer, audit), check=True, env=selection.inputs.without_credentials())
         r.require(audit.read_bytes() == (directory / "package-output-audit.json").read_bytes(), "Native output audit changed")
     return r.verify_family(producer, directory, plan["registryOrigin"])
@@ -136,6 +137,10 @@ def files_for(directory, plan, row, coordinator=False):
         receipt = "agent-family-cohort-" + cohort.request_hash(proposed) + ".json"
         if (directory / receipt).exists():
             files[receipt] = directory / receipt
+    if coordinator and plan["schemaVersion"] == 3:
+        for name in (channel.REQUEST, channel.RECEIPT):
+            if (directory / name).exists():
+                files[name] = directory / name
     if coordinator and (directory / native_execution.INSTALLED).exists():
         files[native_execution.INSTALLED] = directory / native_execution.INSTALLED
         for rid in native_execution.RIDS:
@@ -192,7 +197,7 @@ def stage(core, directory, plan, *, family=None):
         info = store.create(plan["artifactSourceCommit"], row["tag"])
         if index == 0:
             old = {asset["name"]: asset for asset in info["assets"]}
-            for name in ("release-provenance.json", "toolchain.txt", r.PUBLICATIONS, REQUEST):
+            for name in ("release-provenance.json", "toolchain.txt", r.PUBLICATIONS, REQUEST, channel.REQUEST, channel.RECEIPT):
                 if name in old:
                     store.download(old[name], directory / name)
             if REQUEST in old:
@@ -275,9 +280,31 @@ def registry_version(directory, plan, record, expected, availability=None):
         command = bash_runtime.command(ROOT / "scripts/release/publish-registry-package.sh")
         if availability:
             command += ["--verify-only", "--current-availability", availability]
-        subprocess.run([*command, "--initial-yanked", str(expectation), "--publication-output", str(result),
+        subprocess.run([*command, "--expected-publication", str(expectation), "--publication-output", str(result),
             plan["registryOrigin"], str(directory / record["path"]), record["packageId"], record["version"]], check=True)
-        return r.publication_evidence(r.load(result), record)
+        observed = r.publication_evidence(r.load(result), record)
+        r.require(all(observed[k] == v for k, v in expected.items()), "Verified publication differs from expectation")
+        return observed
+
+
+def dependency_publication(row, record):
+    """Read the immutable receipt from the same announced release as the tested dependency."""
+    archive = row["retainedArchive"]
+    store = publication.GitHubRelease(selection.REPOSITORY, row["tag"])
+    info = store.get(archive["releaseId"])
+    r.require(not info["draft"] and selection.asset_locator(info, record["path"]) == archive,
+              "Locked dependency release or archive changed")
+    receipt = selection.asset_locator(info, r.PUBLICATIONS)
+    r.require(receipt["size"] <= 1024 * 1024, "Oversized dependency publication receipt")
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / r.PUBLICATIONS
+        store.download(next(a for a in info["assets"] if a["id"] == receipt["assetId"]), path)
+        values = r.load(path)
+        r.require(type(values) is list and len(values) <= len(r.FAMILY_PACKAGE_IDS)
+                  and r.canonical(values) + b"\n" == path.read_bytes(), "Invalid dependency publication evidence")
+        matches = [v for v in values if v["package"]["packageId"] == record["packageId"]]
+        r.require(len(matches) == 1, "Missing or ambiguous dependency publication")
+        return r.publication_evidence(matches[0], record)
 
 
 def registry_versions(directory, plan, value, availability=None):
@@ -301,8 +328,13 @@ def publish_versions(core, directory, plan):
     # after a durable publication inventory (including a visibility retry).
     family = verify_primary(core, directory, plan)
     targets, infos, value = verified(core, directory, plan, family=family)
-    retained = r.read_publications(directory, value["artifacts"], required=(directory / REQUEST).exists())
+    retained = r.read_publications(directory, value["artifacts"], required=(directory / REQUEST).exists() or (directory / channel.REQUEST).exists())
     if retained:
+        if plan["schemaVersion"] == 3 and not (directory / REQUEST).exists():
+            # A recovered draft already has a historical publication. Reconcile
+            # its *current* Listed state and exact bytes before scheduling installs.
+            for record in value["artifacts"]:
+                registry_version(directory, plan, record, retained[record["packageId"]], "Listed")
         return
     r.require(all(info["draft"] for info in infos), "New immutable publication requires drafts")
     records = {item["packageId"]: item for item in value["artifacts"]}
@@ -315,9 +347,12 @@ def publish_versions(core, directory, plan):
     if owner in selected_ids:
         order = [owner, *(key for key in order if key != owner)]
     observed = []
+    rows = {row["packageId"]: row for row in plan["packages"]}
     for key in order:
         record = records[key]
-        observed.append(registry_version(directory, plan, record, r.publication(record, plan.get("ownerPrincipalId")),
+        expected = (dependency_publication(rows[key], record) if key not in selected_ids and plan["schemaVersion"] == 3
+                    else r.publication(record, plan.get("ownerPrincipalId")))
+        observed.append(registry_version(directory, plan, record, expected,
                                          None if key in selected_ids else "Listed"))
     persist(directory / r.PUBLICATIONS, r.canonical(sorted(observed, key=lambda item: item["package"]["packageId"])) + b"\n")
     row, store = targets[0]
@@ -355,6 +390,21 @@ def visibility(core, directory, plan):
     require_installed_native(directory, plan, value)
     _, store = targets[0]
     info = infos[0]
+    if plan["schemaVersion"] == 3 and not (directory / REQUEST).exists():
+        # Read history exactly as published; the current version must be Listed.
+        registry_versions(directory, plan, value, "Listed")
+
+        def guard_channel():
+            _, current, provenance_value = verified(core, directory, plan)
+            require_installed_native(directory, plan, provenance_value)
+            r.require(current[0]["id"] == info["id"] and current[0]["draft"], "Channel write requires its original draft")
+        channel.promote(plan, value, directory, info, store, guard_channel)
+        store.verify(info["id"], files_for(directory, plan, targets[0][0], True))
+        return
+    # Historical releases may already have durable, revision-bound cohort requests.
+    # Only those requests (and historical family-plan schemas) use availability transitions.
+    r.require(not (directory / channel.REQUEST).exists() and not (directory / channel.RECEIPT).exists(),
+              "Conflicting channel and availability operations")
     path = directory / REQUEST
     if not path.exists():
         r.require(all(info["draft"] for info in infos), "An announcement has no retained cohort request")

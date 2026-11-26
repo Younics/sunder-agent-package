@@ -13,7 +13,7 @@ assets="$(cd "$2" && pwd)"
 registry="${3%/}"
 provenance="$assets/release-provenance.json"
 selective=false
-if [[ "$(jq -r .schemaVersion "$provenance")" =~ ^(2|3)$ ]]; then
+if [[ "$(jq -r .schemaVersion "$provenance")" =~ ^(2|3|4)$ ]]; then
   selective=true
   python3 -B "$script_dir/agent_selection.py" retain --source "$source_directory" --plan "$assets/release-plan.json" --directory "$assets"
 fi
@@ -37,10 +37,10 @@ while IFS=$'\t' read -r package_id project; do
   version="$(jq -er --arg id "$package_id" '.artifacts[] | select(.packageId == $id) | .version' "$provenance")"
   archive="$assets/$package_id.$version.sunderpkg"
   python3 -B "$script_dir/agent_release.py" expected-publication "$provenance" "$package_id" > "$work/expected.json"
-  availability=()
+  availability=(--current-availability Yanked)
   if [[ "$selective" == true ]]; then availability=(--current-availability Listed); fi
   env -u SUNDER_REGISTRY_API_KEY -u SUNDER_REGISTRY_PUBLISH_TOKEN -u SUNDER_REGISTRY_CLI_TOKEN \
-    bash "$script_dir/publish-registry-package.sh" --verify-only "${availability[@]}" --initial-yanked "$work/expected.json" \
+    bash "$script_dir/publish-registry-package.sh" --verify-only "${availability[@]}" --expected-publication "$work/expected.json" \
       "$registry" "$archive" "$package_id" "$version"
   dotnet msbuild "$source_directory/$project" -t:ImportSunderContractPublication \
     -p:Configuration=Release -p:BuildProjectReferences=false \

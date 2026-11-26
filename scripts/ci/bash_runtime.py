@@ -47,7 +47,15 @@ def executable():
 def command(*arguments):
     # Git Bash utilities (notably dirname "$BASH_SOURCE") need forward slashes.
     return [executable(), "--noprofile", "--norc",
-            *(arg.as_posix() if isinstance(arg, PurePath) else str(arg) for arg in arguments)]
+             *(arg.as_posix() if isinstance(arg, PurePath) else str(arg) for arg in arguments)]
+
+
+def audit_command(script, *arguments):
+    # Native Windows jq writes CRLF even inside Git Bash command substitutions.
+    # Set binary stdout for this script only; never normalize existing audit bytes.
+    if sys.platform == "win32":
+        return command("-c", 'jq() { command jq --binary "$@"; }; source "$@"', "sunder-output-audit", script, *arguments)
+    return command(script, *arguments)
 
 
 if __name__ == "__main__":

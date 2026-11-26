@@ -234,7 +234,7 @@ export SUNDER_REGISTRY_CLI_TOKEN=sunder_cli_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 expected_publication="$fixture_dir/expected-publication.json"
 jq -n '{
   package: {packageId:"fixture.package", version:"1.2.3", packageContentIdentity:("2" * 64)},
-  ownerPrincipalId:("1" * 32), publicInventorySha256:("3" * 64), initialAvailability:"Yanked"
+  ownerPrincipalId:("1" * 32), publicInventorySha256:("3" * 64), initialAvailability:"Listed"
 }' > "$expected_publication"
 
 write_details() {
@@ -397,13 +397,8 @@ if [[ "$method" == POST && "$url" == */api/v1/packages/publish ]]; then
     || { printf 'Publish request omitted the multipart package.\n' >&2; exit 2; }
   [[ "$set_latest_form" == setLatest=false ]] \
     || { printf 'Publish request omitted multipart setLatest=false.\n' >&2; exit 2; }
-  if [[ "${MOCK_EXPECT_INITIAL_YANKED:-false}" == true ]]; then
-    [[ "$initial_availability_form" == initialAvailability=Yanked ]] \
-      || { printf 'Initial-Yanked publication omitted its exact multipart availability.\n' >&2; exit 2; }
-  else
-    [[ -z "$initial_availability_form" ]] \
-      || { printf 'Legacy publication unexpectedly changed its availability mode.\n' >&2; exit 2; }
-  fi
+  [[ "$initial_availability_form" == initialAvailability=Listed ]] \
+    || { printf 'Expected an exact Listed upload without channel promotion.\n' >&2; exit 2; }
   case "${MOCK_UPLOAD_OUTCOME:-success}" in
     fail-before-commit) printf '000'; exit 28 ;;
     http-conflict|http-conflict-after-commit)
@@ -452,7 +447,7 @@ MOCK_CURL
 chmod +x "$mock_bin/curl"
 
 reset_fixture() {
-  unset MOCK_EXPECT_INITIAL_YANKED MOCK_UPLOAD_OUTCOME
+  unset MOCK_UPLOAD_OUTCOME
   printf '%s\n' "$1" > "$MOCK_REGISTRY_STATE"
   : > "$MOCK_REGISTRY_CALLS"
   export MOCK_SHARED_PROJECTION="$projection_shared"
@@ -477,21 +472,21 @@ run_verifier() {
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
-write_yanked_details() {
+write_listed_details() {
   write_details
-  jq --slurpfile expected "$expected_publication" '.isYanked = true | .publication = $expected[0]' \
+  jq --slurpfile expected "$expected_publication" '.isYanked = false | .publication = $expected[0]' \
     "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
   mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
 }
 
-run_yanked_publisher() {
-  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$expected_publication" "$@" \
+run_listed_publisher() {
+  PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$expected_publication" "$@" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
-run_yanked_verifier() {
+run_listed_verifier() {
   env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
-    --verify-only --initial-yanked "$expected_publication" \
+    --verify-only --expected-publication "$expected_publication" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION"
 }
 
@@ -668,23 +663,22 @@ fi
 grep -Fq 'valid scoped sunder_pub_v1' "$fixture_dir/invalid-token.log"
 
 reset_fixture absent
-write_yanked_details
-export MOCK_EXPECT_INITIAL_YANKED=true
-run_yanked_publisher > "$fixture_dir/initial-yanked.log"
+write_listed_details
+run_listed_publisher > "$fixture_dir/initial-listed.log"
 [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
 [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
 [[ "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
 
 reset_fixture published
-write_yanked_details
-run_yanked_verifier > "$fixture_dir/initial-yanked-verify.log"
+write_listed_details
+run_listed_verifier > "$fixture_dir/initial-listed-verify.log"
 assert_no_publication
 
 # Several admission rules share HTTP 409. Log only reviewed decision strings,
 # never reflected credentials, server text, parser diagnostics or workflow commands.
 for decision in reservation expired descriptor unknown malformed oversize; do
   reset_fixture absent
-  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME=http-conflict
+  export MOCK_UPLOAD_OUTCOME=http-conflict
   code=registry.v1.resource.conflict
   reason=unrecognized
   case "$decision" in
@@ -703,7 +697,7 @@ for decision in reservation expired descriptor unknown malformed oversize; do
   case "$decision" in malformed|oversize) code=unrecognized; reason=unrecognized ;; esac
   log="$fixture_dir/http-conflict-$decision.log"
   output="$fixture_dir/http-conflict-$decision.json"
-  if run_yanked_publisher --publication-output "$output" > "$log" 2>&1; then
+  if run_listed_publisher --publication-output "$output" > "$log" 2>&1; then
     printf 'A rejected POST and absent readback produced a publication.\n' >&2; exit 1
   fi
   grep -Fq 'HTTP 409' "$log"
@@ -718,24 +712,24 @@ done
 printf '%s\n' '{"errorCode":"registry.v1.package.version_exists","errors":["The immutable package version already exists."]}' > "$MOCK_PUBLISH_REJECTION"
 for outcome in fail-after-commit malformed-after-commit http-conflict-after-commit; do
   reset_fixture absent
-  write_yanked_details
-  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
-  run_yanked_publisher > "$fixture_dir/$outcome.log" 2>&1
-  grep -Fq 'Recovered exact initial-Yanked publication' "$fixture_dir/$outcome.log"
+  write_listed_details
+  export MOCK_UPLOAD_OUTCOME="$outcome"
+  run_listed_publisher > "$fixture_dir/$outcome.log" 2>&1
+  grep -Fq 'Recovered exact Listed publication' "$fixture_dir/$outcome.log"
   [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
   [[ "$(grep -c '^DETAILS$' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
   [[ "$(grep -c '^CANONICAL$' "$MOCK_REGISTRY_CALLS")" -eq 1 && "$(grep -c '^PROJECTION ' "$MOCK_REGISTRY_CALLS")" -eq 2 ]]
   : > "$MOCK_REGISTRY_CALLS"
-  run_yanked_publisher > "$fixture_dir/$outcome-retry.log"
+  run_listed_publisher > "$fixture_dir/$outcome-retry.log"
   assert_no_publication
 done
 
 for outcome in fail-before-commit conflict-after-commit; do
   reset_fixture absent
-  write_yanked_details
-  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
-  if run_yanked_publisher > "$fixture_dir/$outcome.log" 2>&1; then
-    printf 'Initial-Yanked recovery accepted %s.\n' "$outcome" >&2
+  write_listed_details
+  export MOCK_UPLOAD_OUTCOME="$outcome"
+  if run_listed_publisher > "$fixture_dir/$outcome.log" 2>&1; then
+    printf 'Listed recovery accepted %s.\n' "$outcome" >&2
     exit 1
   fi
   [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
@@ -744,32 +738,32 @@ done
 
 for mutation in missing-publication owner content inventory initial-state current-state extra-member; do
   reset_fixture published
-  write_yanked_details
+  write_listed_details
   case "$mutation" in
     missing-publication) filter='del(.publication)' ;;
     owner) filter='.publication.ownerPrincipalId = ("4" * 32)' ;;
     content) filter='.publication.package.packageContentIdentity = ("4" * 64)' ;;
     inventory) filter='.publication.publicInventorySha256 = ("4" * 64)' ;;
-    initial-state) filter='.publication.initialAvailability = "Listed"' ;;
-    current-state) filter='.isYanked = false' ;;
+    initial-state) filter='.publication.initialAvailability = "Yanked"' ;;
+    current-state) filter='.isYanked = true' ;;
     extra-member) filter='.publication.unreviewed = true' ;;
   esac
   jq "$filter" "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
   mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
-  if run_yanked_publisher > "$fixture_dir/yanked-$mutation.log" 2>&1; then
-    printf 'Initial-Yanked verification accepted mismatched %s.\n' "$mutation" >&2
+  if run_listed_publisher > "$fixture_dir/listed-$mutation.log" 2>&1; then
+    printf 'Listed verification accepted mismatched %s.\n' "$mutation" >&2
     exit 1
   fi
   grep -Fq 'publication owner/content/inventory/initial availability or current Yanked state differs' \
-    "$fixture_dir/yanked-$mutation.log"
+    "$fixture_dir/listed-$mutation.log"
   assert_no_publication
 done
 
 reset_fixture absent
 cp "$expected_publication" "$fixture_dir/expected-publication-valid.json"
 jq '.package.version = "1.2.4"' "$fixture_dir/expected-publication-valid.json" > "$expected_publication"
-if run_yanked_publisher > "$fixture_dir/invalid-expected-publication.log" 2>&1; then
-  printf 'Initial-Yanked publication accepted mismatched expected version.\n' >&2
+if run_listed_publisher > "$fixture_dir/invalid-expected-publication.log" 2>&1; then
+  printf 'Listed publication accepted mismatched expected version.\n' >&2
   exit 1
 fi
 [[ ! -s "$MOCK_REGISTRY_CALLS" ]]
@@ -781,45 +775,54 @@ path = Path(sys.argv[1])
 text = path.read_text()
 path.write_text('{"initialAvailability":"Listed",' + text.lstrip()[1:])
 PY
-if run_yanked_publisher > "$fixture_dir/duplicate-expected-publication.log" 2>&1; then
-  printf 'Initial-Yanked publication accepted duplicate evidence members.\n' >&2
+if run_listed_publisher > "$fixture_dir/duplicate-expected-publication.log" 2>&1; then
+  printf 'Listed publication accepted duplicate evidence members.\n' >&2
   exit 1
 fi
 [[ ! -s "$MOCK_REGISTRY_CALLS" ]]
 cp "$fixture_dir/expected-publication-valid.json" "$expected_publication"
 
 reset_fixture published
-write_yanked_details
-jq '.isYanked = false' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
+write_listed_details
+jq '.initialAvailability = "Yanked"' "$expected_publication" > "$fixture_dir/historical.json"
+jq '.publication.initialAvailability = "Yanked"' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
 mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
 PATH="$mock_bin:$PATH" env -u SUNDER_REGISTRY_API_KEY \
-  bash "$publisher" --verify-only --initial-yanked "$expected_publication" --current-availability Listed \
+  bash "$publisher" --verify-only --expected-publication "$fixture_dir/historical.json" --current-availability Listed \
+    --publication-output "$fixture_dir/historical-readback.json" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/listed-readback.log"
 assert_no_publication
+cmp <(jq -cS . "$fixture_dir/historical.json") "$fixture_dir/historical-readback.json"
+reset_fixture absent
+if PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$fixture_dir/historical.json" \
+    https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/historical-write.log" 2>&1; then
+  printf 'Historical initial availability must never authorize a new upload.\n' >&2; exit 1
+fi
+[[ ! -s "$MOCK_REGISTRY_CALLS" ]]
 
 reset_fixture published
-write_yanked_details
+write_listed_details
 python3 - "$MOCK_REGISTRY_DETAILS" <<'PY'
 from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 path.write_text('{"isYanked":false,' + path.read_text().lstrip()[1:])
 PY
-if run_yanked_verifier > "$fixture_dir/duplicate-readback.log" 2>&1; then
+if run_listed_verifier > "$fixture_dir/duplicate-readback.log" 2>&1; then
   printf 'Publication readback accepted duplicate state fields.\n' >&2
   exit 1
 fi
 assert_no_publication
 
 reset_fixture published
-write_yanked_details
+write_listed_details
 jq '.publishedAtUtc = "2026-10-05T00:00:00.1230000+00:00"' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
 mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
 env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
-  --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.123Z \
+  --verify-only --expected-publication "$expected_publication" --published-at-utc 2026-10-05T00:00:00.123Z \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-readback.log"
 if env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" \
-    --verify-only --initial-yanked "$expected_publication" --published-at-utc 2026-10-05T00:00:00.124Z \
+    --verify-only --expected-publication "$expected_publication" --published-at-utc 2026-10-05T00:00:00.124Z \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/time-mismatch.log" 2>&1; then
   printf 'Publication readback accepted a forged evidence-commit timestamp.\n' >&2
   exit 1
@@ -832,33 +835,33 @@ artifact_expectation="$fixture_dir/artifact-publication.json"
 jq 'del(.ownerPrincipalId)' "$expected_publication" > "$artifact_expectation"
 for outcome in success fail-after-commit; do
   reset_fixture absent
-  write_yanked_details
-  export MOCK_EXPECT_INITIAL_YANKED=true MOCK_UPLOAD_OUTCOME="$outcome"
+  write_listed_details
+  export MOCK_UPLOAD_OUTCOME="$outcome"
   observed="$fixture_dir/observed-$outcome.json"
-  PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+  PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$artifact_expectation" --publication-output "$observed" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/ownerless-$outcome.log" 2>&1
   jq -e --slurpfile expected "$expected_publication" '. == $expected[0]' "$observed" >/dev/null
   [[ "$(grep -c '^PUBLISH$' "$MOCK_REGISTRY_CALLS")" -eq 1 ]]
   : > "$MOCK_REGISTRY_CALLS"
-  env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+  env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --expected-publication "$observed" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/observed-$outcome-retry.log"
   assert_no_publication
 done
 
 # An existing package owner need not be the user behind the publishing key.
 reset_fixture published
-write_yanked_details
+write_listed_details
 jq '.publication.ownerPrincipalId = ("4" * 32)' "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
 mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
 observed="$fixture_dir/existing-owner.json"
-PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$artifact_expectation" --publication-output "$observed" \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/existing-owner.log"
 jq -e '.ownerPrincipalId == ("4" * 32)' "$observed" >/dev/null
 assert_no_publication
 
-write_yanked_details
+write_listed_details
 before="$(hash_file "$observed")"
-if env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --initial-yanked "$observed" \
+if env -u SUNDER_REGISTRY_API_KEY PATH="$mock_bin:$PATH" bash "$publisher" --verify-only --expected-publication "$observed" \
   --publication-output "$fixture_dir/changed-owner.json" https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" \
   > "$fixture_dir/changed-owner.log" 2>&1; then
   printf 'Readback accepted a different owner after retaining Registry publication evidence.\n' >&2
@@ -870,7 +873,7 @@ assert_no_publication
 
 for mutation in missing-owner invalid-owner zero-owner extra-member content inventory; do
   reset_fixture published
-  write_yanked_details
+  write_listed_details
   case "$mutation" in
     missing-owner) filter='del(.publication.ownerPrincipalId)' ;;
     invalid-owner) filter='.publication.ownerPrincipalId = null' ;;
@@ -882,7 +885,7 @@ for mutation in missing-owner invalid-owner zero-owner extra-member content inve
   jq "$filter" "$MOCK_REGISTRY_DETAILS" > "$MOCK_REGISTRY_DETAILS.next"
   mv "$MOCK_REGISTRY_DETAILS.next" "$MOCK_REGISTRY_DETAILS"
   output="$fixture_dir/rejected-$mutation.json"
-  if PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$output" \
+  if PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$artifact_expectation" --publication-output "$output" \
     https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/ownerless-$mutation.log" 2>&1; then
     printf 'Artifact-only expectation accepted invalid Registry publication evidence: %s.\n' "$mutation" >&2
     exit 1
@@ -892,8 +895,8 @@ for mutation in missing-owner invalid-owner zero-owner extra-member content inve
 done
 
 reset_fixture published
-write_yanked_details
-if PATH="$mock_bin:$PATH" bash "$publisher" --initial-yanked "$artifact_expectation" --publication-output "$observed" \
+write_listed_details
+if PATH="$mock_bin:$PATH" bash "$publisher" --expected-publication "$artifact_expectation" --publication-output "$observed" \
   https://registry.test "$archive" "$MOCK_EXPECTED_PACKAGE_ID" "$MOCK_EXPECTED_VERSION" > "$fixture_dir/overwrite-evidence.log" 2>&1; then
   printf 'Publication overwrote retained evidence.\n' >&2
   exit 1

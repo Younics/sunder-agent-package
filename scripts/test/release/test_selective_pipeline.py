@@ -114,8 +114,9 @@ class SelectivePipelineTests(unittest.TestCase):
         def run(command, **_):
             calls.append(command)
             index = next(index for index, record in enumerate(self.records) if record["packageId"] == command[-2])
-            expected = r.load(command[command.index("--initial-yanked") + 1])
-            self.assertEqual(self.publications[index] if retained else r.publication(self.records[index]), expected)
+            expected = r.load(command[command.index("--expected-publication") + 1])
+            historic_dependency = self.plan["schemaVersion"] == 3 and "--verify-only" in command
+            self.assertEqual(self.publications[index] if retained or historic_dependency else r.publication(self.records[index]), expected)
             if index == fail_at: raise subprocess.CalledProcessError(1, command)
             output = Path(command[command.index("--publication-output") + 1])
             output.write_bytes(r.canonical(self.publications[index]) + b"\n")
@@ -217,13 +218,16 @@ class SelectivePipelineTests(unittest.TestCase):
         with self.mocks():
             self.stage()
             calls = []
-            with patch.object(pipeline.subprocess, "run", side_effect=self.publisher(calls)):
+            self.publications[0]["initialAvailability"] = "Yanked"
+            with patch.object(pipeline, "dependency_publication", return_value=self.publications[0]), \
+                 patch.object(pipeline.subprocess, "run", side_effect=self.publisher(calls)):
                 pipeline.publish_versions(self.core, self.directory, self.plan)
                 pipeline.publish_versions(self.core, self.directory, self.plan)
-            self.assertEqual([owner["packageId"], subject["packageId"]], [call[-2] for call in calls])
+            self.assertEqual([owner["packageId"], subject["packageId"]]*2, [call[-2] for call in calls])
             self.assertIn("--verify-only", calls[0])
             self.assertIn("Listed", calls[0])
             self.assertNotIn("--verify-only", calls[1])
+            self.assertTrue(all("--verify-only" in call and "Listed" in call for call in calls[2:]))
             store = self.targets[0][1]
             self.assertEqual([selection.archive_name(subject)], [name for name in store.data if name.endswith(".sunderpkg")])
             value = r.decode(store.data["release-provenance.json"])

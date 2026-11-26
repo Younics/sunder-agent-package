@@ -245,7 +245,7 @@ The old 516-line publisher / 325-line fixture responsibilities map to existing
 | Restore previous tags/delete newly added tags | Existing `test_explicit_reverse_restores_old_tag_and_deletes_only_new_tag` plus `ReverseTests`; a separate reviewed atomic reverse replaces automatic per-package compensation. |
 
 Keep exact 15-archive inventory, all six native RIDs, immutable tested role bytes,
-no-rebuild fan-in, initially-Yanked publication, separate owner credentials,
+no-rebuild fan-in, Listed publication with post-install channel promotion, separate owner credentials,
 pre/post-visibility checks, retained result verification and approved reverse.
 No mock qualifies native execution, service approval or production release.
 
