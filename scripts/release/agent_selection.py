@@ -164,7 +164,7 @@ def new_version(row, remote):
     return not versions or authored > max(versions)
 
 
-def package_plan(source, source_sha, registry, subject, remote):
+def package_plan(source, source_sha, registry, subject, remote, *, staged_binding=None):
     """Select just this package. A sibling's draft or Registry status is irrelevant."""
     registry = r.origin(registry)
     rows = {row["packageId"]: row for row in r.inventory(source)["packages"]}
@@ -173,14 +173,18 @@ def package_plan(source, source_sha, registry, subject, remote):
     tag = row["key"] + "/v" + row["version"]
     existing = next((release for release in remote if release["tag_name"] == tag), None)
     if existing and existing["draft"]:
-        r.require(existing["target_commitish"] == source_sha, "Recover this package on its original source")
+        producer = r.digest(existing["target_commitish"], 40)
+        r.require(producer == source_sha or staged_binding is not None, "Recover this package on its original source")
         locator = asset_locator(existing, PLAN)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / PLAN
             inputs.download(locator, path)
-            value = load(path, source, source_sha)
+            value = load(path, source, producer)
         r.require(value.get("releasePackage") == subject and value["registryOrigin"] == registry,
                   "Draft belongs to another publication; use its original workflow")
+        if producer != source_sha:
+            import agent_staged_source
+            staged_binding.append(agent_staged_source.authenticate(source_sha, existing, value))
         return value, True
     if not new_version(row, remote):
         return None, False
@@ -400,7 +404,9 @@ def main():
         print("Versions pending: " + (", ".join(work) or "none"))
     elif args.action == "package":
         remote = releases()
-        value, resume = package_plan(source, os.environ["GITHUB_SHA"], os.environ["REGISTRY_API_URL"], args.package, remote)
+        binding = []
+        value, resume = package_plan(source, os.environ["GITHUB_SHA"], os.environ["REGISTRY_API_URL"], args.package, remote,
+                                     staged_binding=binding)
         r.require(value is not None, "Package is already published; do not stage another release")
         if not resume and args.cutover_selection:
             value["cutoverPlan"] = load(args.cutover_selection, source, os.environ["GITHUB_SHA"])
@@ -416,11 +422,15 @@ def main():
             r.require(original.get("releasePackage") == OWNER and original["artifactSourceCommit"] == owner["target_commitish"]
                       and original.get("cutoverPlan") is not None, "Published owner has no original cutover selection")
             value["cutoverPlan"] = original["cutoverPlan"]
-        validate(value, source, os.environ["GITHUB_SHA"])
+        producer = value["artifactSourceCommit"]
+        r.require((resume and len(binding) == 1) if producer != os.environ["GITHUB_SHA"] else not binding,
+                  "Missing or unexpected original staged-source admission")
+        validate(value, source, producer)
         args.plan.parent.mkdir(parents=True, exist_ok=True)
         with args.plan.open("xb") as stream: stream.write(r.canonical(value) + b"\n")
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
             output.write(f"plan_sha256={r.file_sha(args.plan)}\nresume={str(resume).lower()}\n")
+            output.write(f"producer={producer}\nstaged_inputs_sha256={binding[0] if binding else ''}\n")
     elif args.action == "plan":
         remote = releases()
         value = plan(source, os.environ["GITHUB_SHA"], os.environ["REGISTRY_API_URL"], remote)

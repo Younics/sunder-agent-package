@@ -90,6 +90,8 @@ and its `SUNDER_REGISTRY_API_KEY` with `package:publish` and `package:release`
 on the exact IDs. Hub checks the publishing identity and grants when the
 workflow uploads and lists each version. If Hub rejects a package, use its
 response to resolve that package's authorization or version conflict.
+Both calls to the reusable shipping workflow must explicitly pass that named
+secret. The staging job checks its presence and format before creating a tag.
 
 For an interrupted stage, rerun the original failed job with its original
 tested artifact. Once its draft is complete, recover that package's retained
@@ -99,3 +101,12 @@ reply. A conflicting tag, draft or Registry identity requires reconciliation
 for that package alone. A historical batch draft must use its original
 workflow at its original source. The [reverse workflow](../.github/workflows/sunder-agent-cohort-rollback.yml)
 prepares a reviewed reverse request and does not apply it.
+
+If only the release controller changed after a **complete single-package draft**
+was staged, the next protected-main Release can resume it. Selection authenticates
+the original main push, its successful six-RID qualification and staging step,
+and compares the draft bytes to that job's original qualified artifact. Writers
+pin the original asset IDs and hashes, verify the tag, and check out the original
+producer separately for verification and installed testing. Product, lock,
+test-harness or release-policy changes outside the reviewed controller files
+block this path. Missing evidence stops recovery.

@@ -6,6 +6,8 @@ on:
       registry: { type: string, required: true }
       platforms: { type: string, required: true }
       cutover: { type: string, default: '' }
+    secrets:
+      SUNDER_REGISTRY_API_KEY: { required: true }
 permissions:
   contents: read
 env:
@@ -25,9 +27,12 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write # Read existing drafts to distinguish recovery from a new release.
+      actions: read # Authenticate a complete draft against its original qualification job.
     outputs:
       plan: ${{ steps.plan.outputs.plan_sha256 }}
       resume: ${{ steps.plan.outputs.resume }}
+      producer: ${{ steps.plan.outputs.producer }}
+      staged: ${{ steps.plan.outputs.staged_inputs_sha256 }}
       deps: ${{ steps.inputs.outputs.inputs_sha256 }}
       context: ${{ steps.context.outputs.artifact-id }}
     steps:
@@ -255,9 +260,17 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
     steps:
       - *checkout
+      - &original
+        if: needs.prepare.outputs.staged != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.prepare.outputs.producer }}
+          path: sunder-agent-producer
+          persist-credentials: false
       - *dotnet
       - *context
       - if: needs.prepare.outputs.resume != 'true'
@@ -266,6 +279,9 @@ jobs:
           artifact-ids: ${{ needs.qualify.outputs.archive }}
           merge-multiple: true
           path: sunder-agent-package/artifacts/release
+      - name: Check the Hub publication credential before creating a tag or draft
+        env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
+        run: bash scripts/release/publish-registry-package.sh --check-credential
       - name: Stage or recover the original tested release
         env: { RESUME: '${{ needs.prepare.outputs.resume }}' }
         run: |
@@ -274,7 +290,9 @@ jobs:
           mkdir -p artifacts/release
           if [[ "$RESUME" == true ]]; then
             cp "$plan" artifacts/release/release-plan.json
-            python3 -B scripts/release/agent_pipeline.py recover --resume-staging --directory artifacts/release
+            recovery=()
+            if [[ -z "$SUNDER_STAGED_INPUTS_SHA256" ]]; then recovery+=(--resume-staging); fi
+            python3 -B scripts/release/agent_pipeline.py recover "${recovery[@]}" --directory artifacts/release
           else
             cmp "$plan" artifacts/release/release-plan.json
             python3 -B scripts/release/agent_selection.py retain --plan "$plan" --directory artifacts/release
@@ -295,8 +313,10 @@ jobs:
     env:
       RID: ${{ matrix.rid }}
       PLAN_SHA: ${{ needs.prepare.outputs.plan }}
+      SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
     steps:
       - *checkout
+      - *original
       - *dotnet
       - *context
       - &recover
@@ -335,9 +355,11 @@ jobs:
     env:
       PLAN_SHA: ${{ needs.prepare.outputs.plan }}
       GH_TOKEN: ${{ github.token }}
+      SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
       REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
     steps:
       - *checkout
+      - *original
       - *context
       - *recover
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4

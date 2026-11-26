@@ -10,6 +10,18 @@ usage() {
   printf 'Usage: publish-registry-package.sh [--verify-only] [--initial-yanked <expected-publication.json>] [--publication-output <new-evidence.json>] [--current-availability Yanked|Listed|Either] [--published-at-utc <retained-timestamp>] <registry-api-url> <archive> <package-id> <version>\n' >&2
 }
 
+check_credential() {
+  [[ -n "$registry_api_key" ]] \
+    || { printf 'SUNDER_REGISTRY_API_KEY is not configured for Registry publication.\n' >&2; return 1; }
+  [[ "$registry_api_key" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
+    || { printf 'SUNDER_REGISTRY_API_KEY must be a valid scoped sunder_pub_v1 API key.\n' >&2; return 1; }
+}
+
+if [[ $# == 1 && "$1" == --check-credential ]]; then
+  check_credential
+  exit 0
+fi
+
 verify_only=false
 expected_publication_input=''
 publication_output=''
@@ -78,10 +90,7 @@ version="$4"
   || { printf 'Registry API URL must be an absolute HTTPS origin without user info, path, query, or fragment.\n' >&2; exit 2; }
 [[ -f "$archive" ]] || { printf 'Registry package archive not found: %s\n' "$archive" >&2; exit 1; }
 if [[ "$verify_only" != true ]]; then
-  [[ -n "$registry_api_key" ]] \
-    || { printf 'SUNDER_REGISTRY_API_KEY is not configured for Registry publication.\n' >&2; exit 1; }
-  [[ "$registry_api_key" =~ ^sunder_pub_v1_[A-Za-z0-9_-]{43}$ ]] \
-    || { printf 'SUNDER_REGISTRY_API_KEY must be a valid scoped sunder_pub_v1 API key.\n' >&2; exit 1; }
+  check_credential
 fi
 
 for required_command in cat cmp curl cut grep jq mktemp sed sort tr unzip wc; do

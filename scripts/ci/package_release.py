@@ -26,7 +26,12 @@ def main(args):
     plan_path = context / selection.PLAN
     commit = ci.head(ROOT)
     inputs.require(inputs.file_sha(plan_path) == args.plan_sha256, "Package selection digest differs")
-    plan = selection.load(plan_path, ROOT, commit)
+    plan = selection.load(plan_path, ROOT)
+    producer = ROOT
+    if commit != plan["artifactSourceCommit"]:
+        import agent_pipeline
+        inputs.require(args.action == "installed", "Earlier drafts permit installed testing only; never build a tagged version")
+        producer = agent_pipeline.source_guard(None, plan)
     package = plan["releasePackage"]
     inputs.require(package == args.package, "Package selection belongs to another lane")
     packages = release.canonical([package]).decode()
@@ -37,7 +42,7 @@ def main(args):
     helper = [sys.executable, "-B", "scripts/ci/agent_ci.py"]
     native = [sys.executable, "-B", "scripts/release/native-family.py"]
     def run(command, **kwargs):
-        subprocess.run(list(map(str, command)), cwd=ROOT, check=True, **kwargs)
+        subprocess.run(list(map(str, command)), cwd=kwargs.pop("cwd", ROOT), check=True, **kwargs)
 
     if args.action == "inputs":
         selection.evaluated_packages(ROOT, [package])
@@ -127,7 +132,7 @@ def main(args):
         else:
             import bash_runtime
             metrics = ROOT / "artifacts/installed-metrics" / rid
-            run(bash_runtime.command(ROOT / "scripts/release/run-native-runtime-smoke.sh", family, metrics, "published", package),
+            run(bash_runtime.command(producer / "scripts/release/run-native-runtime-smoke.sh", family, metrics, "published", package), cwd=producer,
                 env=dict(os.environ, SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN=plan["registryOrigin"]))
             evidence.export_installed(metrics, destination / f"native-installed-{rid}.tar.gz")
 

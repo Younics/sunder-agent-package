@@ -17,6 +17,7 @@ import agent_cohort_receipt as receipts
 import agent_publication as publication
 import agent_release as r
 import agent_selection as selection
+import agent_staged_source as staged_source
 import native_runtime_evidence as native_execution
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,11 +34,13 @@ def source_guard(core, plan):
         and os.environ["GITHUB_WORKFLOW_SHA"] == source and os.environ["GITHUB_REF_PROTECTED"] == "true"
         and os.environ["GITHUB_WORKFLOW_REF"] == f"{selection.REPOSITORY}/{publication.WORKFLOW}@refs/heads/main",
         "Selective publication requires the exact protected-main workflow")
-    r.require(plan["artifactSourceCommit"] == source and plan["lockSetSha256"] == r.locks(ROOT)
+    producer = staged_source.checkout(ROOT, plan)
+    r.require(plan["lockSetSha256"] == r.locks(producer) == r.locks(ROOT)
         and plan["registryOrigin"] == r.origin(os.environ["REGISTRY_API_URL"]), "Release source/locks/destination differ")
     r.require(r.git(ROOT, "rev-parse", "HEAD").decode().strip() == source
         and not r.git(ROOT, "status", "--porcelain", "--untracked-files=no").strip(), "Release checkout is not the exact clean source")
-    selection.validate(plan, ROOT, source)
+    selection.validate(plan, producer, plan["artifactSourceCommit"])
+    return producer
 
 
 def stores(core, plan):
@@ -65,18 +68,18 @@ def persist(path, data):
 
 
 def verify_primary(core, directory, plan):
-    source_guard(core, plan)
+    producer = source_guard(core, plan)
     r.require(r.load(directory / "native-test-evidence.json").get("schemaVersion") == 6,
               "New release staging requires schema 6 development execution evidence; historical readers do not qualify new releases")
-    subprocess.run([sys.executable, "-B", str(ROOT / "scripts/release/native-family.py"), "verify",
-        str(directory / "native-test-evidence.json"), str(directory), str(ROOT / "packages.json"), str(directory / selection.PLAN),
-        plan["artifactSourceCommit"]], check=True)
+    subprocess.run([sys.executable, "-B", str(producer / "scripts/release/native-family.py"), "verify",
+        str(directory / "native-test-evidence.json"), str(directory), str(producer / "packages.json"), str(directory / selection.PLAN),
+        plan["artifactSourceCommit"]], check=True, env=selection.inputs.without_credentials())
     with tempfile.TemporaryDirectory() as temporary:
         audit = Path(temporary) / "audit.json"
-        subprocess.run(bash_runtime.command(ROOT / "scripts/release/generate-package-output-audit.sh", directory,
-            directory / "native-test-evidence.json", ROOT, audit), check=True)
+        subprocess.run(bash_runtime.command(producer / "scripts/release/generate-package-output-audit.sh", directory,
+            directory / "native-test-evidence.json", producer, audit), check=True, env=selection.inputs.without_credentials())
         r.require(audit.read_bytes() == (directory / "package-output-audit.json").read_bytes(), "Native output audit changed")
-    return r.verify_family(ROOT, directory, plan["registryOrigin"])
+    return r.verify_family(producer, directory, plan["registryOrigin"])
 
 
 def provenance(directory, plan, release_id, family):
@@ -90,7 +93,7 @@ def provenance(directory, plan, release_id, family):
             runId=os.environ["GITHUB_RUN_ID"], runAttempt=os.environ["GITHUB_RUN_ATTEMPT"], releaseId=int(release_id)),
         artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN),
         lockSetSha256=plan["lockSetSha256"], publication=destination,
-        materials=r.sdk_materials(ROOT, {row["packageId"] for row in selection.selected(plan)}),
+        materials=r.sdk_materials(staged_source.checkout(ROOT, plan), {row["packageId"] for row in selection.selected(plan)}),
         artifacts=family["artifacts"])
 
 
@@ -106,6 +109,8 @@ def verify_provenance(directory, plan, release_id, family):
     r.require(inv["event"] in ("push", "workflow_dispatch"), "Unexpected original release event")
     # Recovery may be a later run of the same protected source, never a new source.
     expected["invocation"].update({key: inv[key] for key in ("runId", "runAttempt", "event")})
+    # These describe the authenticated producer, not the job resuming its draft.
+    expected["invocation"]["workflowSha"] = plan["artifactSourceCommit"]
     r.require(value == expected and (directory / "release-provenance.json").read_bytes() == r.canonical(value) + b"\n",
               "Retained release source, invocation, materials or family bytes differ")
     return value
@@ -173,6 +178,7 @@ def require_installed_native(directory, plan, family):
 def stage(core, directory, plan, *, family=None):
     if family is None:
         family = verify_primary(core, directory, plan)
+    r.require(plan["artifactSourceCommit"] == os.environ.get("GITHUB_SHA"), "Only the original source can stage a tag/draft")
     targets = stores(core, plan)
     r.require(targets, "Nothing selected for publication")
     for index, (row, store) in enumerate(targets):
@@ -211,11 +217,15 @@ def stage(core, directory, plan, *, family=None):
 
 def recover(core, directory, plan, *, resume_staging=False):
     source_guard(core, plan)
+    historical_source = plan["artifactSourceCommit"] != os.environ["GITHUB_SHA"]
+    r.require(not historical_source or not resume_staging, "Only a complete original draft can cross a controller repair")
     selection.retain(plan, directory)
     row, store = stores(core, plan)[0]
     info = store.resolve()
     r.require(info is not None and info["target_commitish"] == plan["artifactSourceCommit"], "Missing original coordinator release")
     info = store.get(info["id"])
+    if historical_source:
+        require_staged_binding(info, plan)
     required = primary_names(plan, row, True) | PER_RELEASE
     r.require(required <= {asset["name"] for asset in info["assets"]},
         "Interrupted staging is incomplete; rerun the original failed job with its retained tested artifact, never rebuild it")
@@ -244,9 +254,17 @@ def verified(core, directory, plan, *, family=None):
         publication.remote_tag(store, plan["artifactSourceCommit"])
         r.require(info["target_commitish"] == plan["artifactSourceCommit"]
             and info["prerelease"] is (not r.version(row["version"])[1]), "Package release source/version changed")
-        infos.append(store.verify(info["id"], files_for(directory, plan, row, index == 0)))
+        current = store.verify(info["id"], files_for(directory, plan, row, index == 0))
+        if plan["artifactSourceCommit"] != os.environ["GITHUB_SHA"]:
+            require_staged_binding(current, plan)
+        infos.append(current)
     value = verify_provenance(directory, plan, infos[0]["id"], family)
     return targets, infos, value
+
+
+def require_staged_binding(info, plan):
+    actual = staged_source.fingerprint(info, plan, os.environ["GITHUB_SHA"])
+    r.require(actual == r.digest(os.environ.get("SUNDER_STAGED_INPUTS_SHA256", ""), 64), "Original staged assets changed")
 
 
 def registry_version(directory, plan, record, expected, availability=None):
@@ -264,7 +282,7 @@ def registry_version(directory, plan, record, expected, availability=None):
 
 def registry_versions(directory, plan, value, availability=None):
     selected_ids = {row["packageId"] for row in selection.selected(plan)}
-    order = r.verify_family(ROOT, directory, plan["registryOrigin"])["order"]
+    order = r.verify_family(staged_source.checkout(ROOT, plan), directory, plan["registryOrigin"])["order"]
     records = {item["packageId"]: item for item in value["artifacts"]}
     retained = r.read_publications(directory, value["artifacts"], required=plan["schemaVersion"] >= 2 and availability is not None)
     observed = []

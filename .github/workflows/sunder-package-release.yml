@@ -52,6 +52,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    secrets:
+      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
     with:
       package: younics.ai.agent
       registry: ${{ needs.select.outputs.registry }}
@@ -73,6 +75,8 @@ jobs:
     permissions:
       contents: write
       actions: read
+    secrets:
+      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
     with:
       package: ${{ matrix.package }}
       registry: ${{ needs.select.outputs.registry }}
