@@ -2,6 +2,7 @@
 import copy
 import os
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import sys
 import tempfile
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT / "scripts/release"))
 import agent_pipeline as pipeline
 import agent_release as r
 import agent_staged_source as staged
+import package_release
 
 
 class StagedSourceTests(unittest.TestCase):
@@ -80,6 +82,32 @@ class StagedSourceTests(unittest.TestCase):
             (current/"worker").write_text("new product");git(current,"add",".");git(current,"commit","-qm","worker")
             with patch.dict(os.environ,GITHUB_SHA=git(current,"rev-parse","HEAD")),self.assertRaises(r.Invalid):
                 staged.checkout(current,self.plan)
+
+    def test_recovered_install_uses_controller_after_authenticating_the_producer(self):
+        context = self.directory/"context"
+        context.mkdir()
+        (context/"release-plan.json").write_bytes(b"bound plan")
+        (self.directory/"artifacts/release").mkdir(parents=True)
+        package = self.plan["releasePackage"]
+        args = SimpleNamespace(action="installed", context=context, package=package, rid="linux-arm64",
+                               plan_sha256=r.file_sha(context/"release-plan.json"))
+        self.plan["registryOrigin"] = "https://registry.example"
+        producer = self.directory/"producer"
+        with patch.dict(os.environ), patch.object(package_release, "ROOT", self.directory), \
+             patch.object(package_release.ci, "head", return_value=self.controller), \
+             patch.object(package_release.selection, "load", return_value=self.plan), \
+             patch.object(pipeline, "source_guard", return_value=producer) as guard, \
+             patch.object(package_release.subprocess, "run") as run, \
+             patch.object(staged.native, "export_installed") as export:
+            package_release.main(args)
+        guard.assert_called_once_with(None, self.plan)
+        run.assert_called_once()
+        self.assertEqual(self.directory, run.call_args.kwargs["cwd"])
+        self.assertEqual([str(self.directory/"scripts/release/run-native-runtime-smoke.sh"),
+                          str(self.directory/"artifacts/release"), str(self.directory/"artifacts/installed-metrics/linux-arm64"),
+                          "published", package], run.call_args.args[0][-5:])
+        self.assertEqual(self.plan["registryOrigin"], run.call_args.kwargs["env"]["SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN"])
+        export.assert_called_once()
 
     def test_pre_tag_credential_check_never_prints_a_value_or_contacts_hub(self):
         script=ROOT/"scripts/release/publish-registry-package.sh"

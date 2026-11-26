@@ -5,6 +5,8 @@
                                         $([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/NativeAppSnapshotProbe.cs" />
     <Compile Include="$(SunderAgentNativeReleaseTestSource)"
               Link="AgentNativeReleaseSmokeTests.agent-release.cs" />
+    <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Hub.cs"
+             Link="AgentNativeReleaseSmokeTests.Hub.agent-release.cs" />
     <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Maker.cs"
              Link="AgentNativeReleaseSmokeTests.Maker.agent-release.cs" />
     <Compile Include="$([System.IO.Path]::GetDirectoryName('$(SunderAgentNativeReleaseTestSource)'))/AgentNativeReleaseSmokeTests.Development.cs"

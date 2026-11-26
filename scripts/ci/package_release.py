@@ -27,11 +27,12 @@ def main(args):
     commit = ci.head(ROOT)
     inputs.require(inputs.file_sha(plan_path) == args.plan_sha256, "Package selection digest differs")
     plan = selection.load(plan_path, ROOT)
-    producer = ROOT
     if commit != plan["artifactSourceCommit"]:
         import agent_pipeline
         inputs.require(args.action == "installed", "Earlier drafts permit installed testing only; never build a tagged version")
-        producer = agent_pipeline.source_guard(None, plan)
+        # Recovery verifies original qualification with the producer. Installed
+        # acceptance below is a new observation made by this controller.
+        agent_pipeline.source_guard(None, plan)
     package = plan["releasePackage"]
     inputs.require(package == args.package, "Package selection belongs to another lane")
     packages = release.canonical([package]).decode()
@@ -132,7 +133,7 @@ def main(args):
         else:
             import bash_runtime
             metrics = ROOT / "artifacts/installed-metrics" / rid
-            run(bash_runtime.command(producer / "scripts/release/run-native-runtime-smoke.sh", family, metrics, "published", package), cwd=producer,
+            run(bash_runtime.command(ROOT / "scripts/release/run-native-runtime-smoke.sh", family, metrics, "published", package),
                 env=dict(os.environ, SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN=plan["registryOrigin"]))
             evidence.export_installed(metrics, destination / f"native-installed-{rid}.tar.gz")
 

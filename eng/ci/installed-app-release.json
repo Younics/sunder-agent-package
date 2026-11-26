@@ -1,0 +1,30 @@
+{
+  "version": "1.1.2",
+  "producerCommit": "a4cd4ba6c9f5bb4e53e445362a228b4b6bf5c328",
+  "artifacts": {
+    "linux-arm64": {
+      "size": 101124616,
+      "sha256": "8c0f18a340ed833767e4f9870b3846e72a60a36b9c500e13446da5fcf469a449"
+    },
+    "linux-x64": {
+      "size": 105523704,
+      "sha256": "60150f44fff2972a2d3046f336ef344f6d055e20256c826de0be90231b7f258b"
+    },
+    "osx-arm64": {
+      "size": 184068155,
+      "sha256": "65a386694a3f92ccf83fcbf41a7d68e4071bd6c4eb76025bb91c9306d52133f9"
+    },
+    "osx-x64": {
+      "size": 194102564,
+      "sha256": "7212aad6ba327daf748eb77217dda616fcf11e9272e79c7ef8e983ac39560c7a"
+    },
+    "win-arm64": {
+      "size": 189632075,
+      "sha256": "b4528c02b5b55edfb6d5d8ee0d012830e39ad10c3c6bacc1dc5ba6e3b5bad26e"
+    },
+    "win-x64": {
+      "size": 197609156,
+      "sha256": "ebe2402992ef4d29e597513cbcd2a7084d2cb393adfc3776bb63268724e22fef"
+    }
+  }
+}

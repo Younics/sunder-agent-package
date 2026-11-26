@@ -10,7 +10,7 @@ import published_app
 import public_platform_catalog
 
 
-def prepare(output, *, host_only=False):
+def prepare(output, *, host_only=False, installed=False):
     output = Path(output).absolute()
     if output.exists() or output.is_symlink():
         raise ValueError("Maker input output must be new; retained candidates are never overwritten")
@@ -20,7 +20,7 @@ def prepare(output, *, host_only=False):
         feed.mkdir()
     packages = [] if host_only else maker_public_feed.prepare(output)
     catalog = public_platform_catalog.fetch(maker_public_feed.ROOT, output)
-    published_app.prepare(output / "distribution")
+    published_app.prepare(output / "distribution", installed=installed)
     app = json.loads((output / "distribution" / "app-input.json").read_text(encoding="utf-8"))
     (output / "inputs.json").write_text(json.dumps(dict(schemaVersion=3,
         packages=packages, platformCatalog=file_record(catalog, output), app=app), indent=2) + "\n", encoding="utf-8")
@@ -35,5 +35,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
     parser.add_argument("--host-only", action="store_true", help="Prepare the exact App/catalog without downloading Maker's authoring NuGets.")
+    parser.add_argument("--installed", action="store_true", help="Use the installed-acceptance App pin.")
     args = parser.parse_args()
-    print(prepare(args.output, host_only=args.host_only))
+    print(prepare(args.output, host_only=args.host_only, installed=args.installed))

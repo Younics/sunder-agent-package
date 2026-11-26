@@ -163,6 +163,9 @@ def retain_installed_native(core, directory, plan, receipts_directory):
     records = [dict(packageId=row["packageId"], archive=row["path"], size=row["size"], sha256=row["sha256"])
                for row in sorted(family["artifacts"], key=lambda row: row["packageId"])]
     value = native_execution.installed_set(receipts_directory, records, None, plan["registryOrigin"], package=plan.get("releasePackage"))
+    if plan.get("releasePackage") and not (directory / native_execution.INSTALLED).exists():
+        r.require(all(run["acceptanceSourceCommit"] == os.environ["GITHUB_SHA"] for run in value["nativeRuns"]),
+                  "Fresh installed acceptance must come from the current protected controller")
     value.update(artifactSourceCommit=plan["artifactSourceCommit"], planSha256=r.file_sha(directory / selection.PLAN))
     for record in value["bundles"]:
         persist(directory / record["path"], (Path(receipts_directory) / record["path"]).read_bytes())

@@ -262,10 +262,27 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  hub-install:
+    name: Install and reinstall Listed Agent from Hub
+    needs: prepare
+    if: needs.prepare.outputs.selected_count != '0'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions: { contents: read }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: sunder-agent-package
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with: { node: 'false' }
+      - run: python3 -B scripts/ci/hub_install_regression.py
+        working-directory: sunder-agent-package
+
   summary:
     name: Summary
     if: always()
-    needs: [prepare, checks, dependencies, bootstrap, admit-owner, behavior]
+    needs: [prepare, checks, dependencies, bootstrap, admit-owner, behavior, hub-install]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

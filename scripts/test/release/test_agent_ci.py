@@ -168,7 +168,8 @@ class AgentCiTests(unittest.TestCase):
                                         capture_output=True, text=True, timeout=10)
                 self.assertEqual(0, result.returncode, result.stderr)
                 expected = ["-B", "agent source/scripts/release/prepare_maker_inputs.py", "native metrics/maker-inputs"]
-                self.assertEqual(expected + ([] if requires_feed else ["--host-only"]), result.stdout.splitlines())
+                self.assertEqual(expected + ([] if requires_feed else ["--host-only"]) + (["--installed"] if mode == "published" else []),
+                                 result.stdout.splitlines())
 
     def test_publication_api_key_keeps_its_environment_secret_name_through_component_calls(self):
         workflows = SCRIPTS.parent / ".github/workflows"

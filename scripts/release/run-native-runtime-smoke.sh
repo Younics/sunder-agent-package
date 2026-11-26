@@ -68,6 +68,7 @@ fi
 # Keep the array nonempty under nounset on macOS system Bash (3.2).
 preparation_args=("$(native_path "$metrics_directory/maker-inputs")")
 if [[ "$mode" == published || ( -n "$subject" && "$subject" != younics.sunder.package.maker ) ]]; then preparation_args+=(--host-only); fi
+if [[ "$mode" == published ]]; then preparation_args+=(--installed); fi
 python3 -B "$script_dir/prepare_maker_inputs.py" "${preparation_args[@]}"
 distribution="$(native_path "$metrics_directory/maker-inputs/distribution")"
 distribution_property() {

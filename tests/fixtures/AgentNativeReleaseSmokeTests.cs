@@ -63,7 +63,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
             Guid.NewGuid().ToString("N"));
         var paths = new RuntimePackagePaths(Path.Combine(root, "runtime"));
         RuntimeLocalState.EnsureInitialized(paths.RootPath);
-        var runtimeHost = CreateNativeRuntimeHost(paths, out var launchResolver, out var appConnection);
+        var acknowledgements = new HubActivationObserver();
+        var runtimeHost = CreateNativeRuntimeHost(paths, out var launchResolver, out var appConnection, acknowledgements);
         var provider = runtimeHost.Services;
         var observedProcesses = new HashSet<ExecutionRuntimeProcessObservation>();
         var observedTemporaryPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -96,37 +97,36 @@ public sealed partial class AgentNativeReleaseSmokeTests
             var policies = provider.GetRequiredService<PackageLifecyclePolicyCache>();
             foreach (var subject in subjects) policies.RequireActivation(registryOrigin, subject);
 
-            var transfers = provider.GetRequiredService<RuntimeContentTransferStore>();
             var registry = provider.GetRequiredService<RegistryHttpClient>();
-            var installMutations = new List<PackageStoreMutationRequest>(archives.Count);
             var downloads = new List<object>();
             foreach (var (packageId, archivePath) in archives.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
             {
                 var subject = subjects.Single(subject => subject.PackageId == packageId);
                 var length = new FileInfo(archivePath).Length;
-                var hash = Convert.ToHexStringLower(SHA256.HashData(File.ReadAllBytes(archivePath)));
+                using var local = File.OpenRead(archivePath);
+                var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(local));
                 using var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get,
                     registryOrigin + RegistryApiRoutes.PackageVersionCanonical(packageId, subject.Version));
-                // Exact-version downloads, including Yanked versions, are public.
-                // Exercise that boundary without a human session or publication key.
+                // Independent identity check. A public canonical download is not
+                // evidence that this version is Listed or installable.
                 using var response = await registry.SendAsync(request, CancellationToken.None);
                 Assert.Null(request.Headers.Authorization);
                 Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
                 if (response.Content.Headers.ContentLength is { } advertised) Assert.Equal(length, advertised);
                 await using var archive = await response.Content.ReadAsStreamAsync();
-                var upload = await transfers.CreateUploadAsync(
-                    RuntimeUploadKind.Package,
-                    archive,
-                    length,
-                    expectedHash: hash,
-                    Path.GetFileName(archivePath),
-                    "application/vnd.sunder.package",
-                    sessionOwner.Generation,
-                    CancellationToken.None);
-                installMutations.Add(new PackageStoreMutationRequest(
-                    PackageStoreMutationKind.Install,
-                    UploadId: upload.UploadId,
-                    CapabilityConsent: ReadCapabilityConsent(archivePath)));
+                // Reading the extra byte also rejects a chunked response larger
+                // than the qualified file. The Registry stream owns its deadline.
+                using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var block = new byte[81920];
+                for (long remaining = length; remaining > 0;)
+                {
+                    var count = (int)Math.Min(remaining, block.Length);
+                    await archive.ReadExactlyAsync(block.AsMemory(0, count));
+                    digest.AppendData(block, 0, count);
+                    remaining -= count;
+                }
+                Assert.Equal(0, await archive.ReadAsync(block.AsMemory(0, 1)));
+                Assert.Equal(hash, Convert.ToHexStringLower(digest.GetHashAndReset()));
                 downloads.Add(new { packageId, version = subject.Version, archiveSha256 = hash, size = length });
             }
             // Downloads and all-family extraction can outlive the initial lease.
@@ -134,26 +134,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await provider.GetRequiredService<RegistryPackagePolicySynchronizer>().RefreshAsync(
                 [new(registryOrigin, subjects, platforms.ToArray())], CancellationToken.None);
             var policyEvidence = subjects.Select(subject => new { package = subject, lease = policies.PackageLease(registryOrigin, subject) }).ToArray();
-            var stage = await installedLifecycle.StageAsync(
-                new PackageStoreStageRequest(installMutations),
-                CancellationToken.None);
-            Assert.True(stage.Success, string.Join(Environment.NewLine, stage.Errors));
-            var stageId = Assert.IsType<string>(stage.StageId);
-            var stagedSession = Assert.IsType<ActivePackageSession>(
-                installedLifecycle.GetStagedSession(stageId));
-            var stagedWorkers = GetWorkers(stagedSession);
-            AssertSamePackageIds(archives.Keys, stagedWorkers.Keys);
-            var activationMeasurements = stagedWorkers.ToDictionary(
-                static pair => pair.Key,
-                static pair => CaptureActivationMeasurement(pair.Value),
-                StringComparer.Ordinal);
-
-            var install = await installedLifecycle.CommitStageAsync(stageId, CancellationToken.None);
-            Assert.True(
-                install.Success,
-                string.Join(Environment.NewLine, install.Errors.Concat(stagedWorkers.Select(worker =>
-                    $"{worker.Key}: {DescribeWorkerFault(worker.Value)}{Environment.NewLine}"
-                    + launchResolver.DescribeStandardError(worker.Key)))));
+            var install = await ApplyHubPlanAsync(provider, registryOrigin, rid, subjects, archives, reinstallId: null);
 
             var installed = await installedLifecycle.GetInstalledAsync();
             AssertSamePackageIds(archives.Keys, installed.Select(package => package.PackageId));
@@ -164,6 +145,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 runtimeReceipt));
             var initialWorkers = GetWorkers(sessionOwner);
             AssertSamePackageIds(archives.Keys, initialWorkers.Keys);
+            var activationMeasurements = sessionOwner.State.ActiveSession.LoadedPackageMap.ToDictionary(
+                pair => pair.Key, pair => acknowledgements.Measure(pair.Value), StringComparer.Ordinal);
             Assert.All(
                 sessionOwner.State.ActiveSession.LoadedPackageMap,
                 package => CurrentRidRuntimeHostTestSupport.AssertRuntimeLaunch(
@@ -199,12 +182,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await AssertWorkersStoppedAsync(beforeDisable);
 
             var reinstallId = ReleasePackage ?? ShellPackageId;
-            var reinstall = await installedLifecycle.UpgradeFromRuntimePathAsync(
-                reinstallId,
-                archives[reinstallId],
-                reinstall: true,
-                cancellationToken: CancellationToken.None);
-            Assert.True(reinstall.Success, string.Join(Environment.NewLine, reinstall.Errors));
+            var reinstall = await ApplyHubPlanAsync(provider, registryOrigin, rid, subjects, archives, reinstallId);
             Assert.Empty(sessionOwner.State.ActiveSession.LoadedPackageMap);
 
             var enable = await installedLifecycle.ExecutePreparedMutationsAsync(installed
@@ -233,8 +211,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await WriteNativeScopeAsync(metricsDirectory, rid, archives, "published-installed", registryOrigin);
             await File.WriteAllTextAsync(Path.Combine(metricsDirectory, "scope", "published-registry.json"), JsonSerializer.Serialize(new
             {
-                schemaVersion = 2, registryOrigin, archiveDownloadAuthentication = "anonymous",
-                downloads, policies = policyEvidence,
+                schemaVersion = 3, registryOrigin, archiveDownloadAuthentication = "anonymous",
+                downloads, policies = policyEvidence, install, reinstall,
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }, async () =>
         {
@@ -258,11 +236,13 @@ public sealed partial class AgentNativeReleaseSmokeTests
     }
 
     private static IHost CreateNativeRuntimeHost(RuntimePackagePaths paths,
-        out CapturingExecutionRuntimeLaunchResolver launchResolver, out RuntimeConnectionInfo appConnection)
+        out CapturingExecutionRuntimeLaunchResolver launchResolver, out RuntimeConnectionInfo appConnection,
+        HubActivationObserver? acknowledgements = null)
     {
         // Use the real Generic Host composition, including its application
         // lifetime; a bare ServiceCollection cannot run the update scheduler.
         var builder = WebApplication.CreateSlimBuilder();
+        if (acknowledgements is not null) acknowledgements.Attach(builder.Logging);
         var endpoint = new RuntimeIpcEndpoint(OperatingSystem.IsWindows() ? RuntimeIpcTransportKind.NamedPipe : RuntimeIpcTransportKind.UnixSocket,
             OperatingSystem.IsWindows() ? "sunder-native-" + Guid.NewGuid().ToString("N") : Path.Combine(ResolvePhysicalDirectory(Path.GetTempPath()), "sn-" + Guid.NewGuid().ToString("N")[..12] + ".sock"));
         RuntimeSupervisedTransport.Configure(builder.WebHost, endpoint);
@@ -388,12 +368,13 @@ public sealed partial class AgentNativeReleaseSmokeTests
     private static void AssertSamePackageIds(IEnumerable<string> expected, IEnumerable<string> observed)
         => Assert.Equal(expected.Order(StringComparer.Ordinal), observed.Order(StringComparer.Ordinal));
 
-    private static PackageCapabilityConsent? ReadCapabilityConsent(string archivePath)
+    private static PackageCapabilityConsent? ReadCapabilityConsent(string archivePath, string rid)
     {
         using var archive = ZipFile.OpenRead(archivePath);
         using var manifestStream = archive.GetEntry("manifest/sunder-package.json")!.Open();
         using var manifest = JsonDocument.Parse(manifestStream);
         var capabilities = manifest.RootElement.GetProperty("targets").EnumerateArray()
+            .Where(target => target.GetProperty("rid").GetString() == rid)
             .SelectMany(static target => target.GetProperty("requiredHostCapabilities").EnumerateArray())
             .Select(static capability => capability.GetString())
             .Where(static capability => capability is not null && PackageSensitiveCapabilityPolicy.IsSensitive(capability))

@@ -109,6 +109,13 @@ was staged, the next protected-main Release can resume it. Selection authenticat
 the original main push, its successful six-RID qualification and staging step,
 and compares the draft bytes to that job's original qualified artifact. Writers
 pin the original asset IDs and hashes, verify the tag, and check out the original
-producer separately for verification and installed testing. Product, lock,
-test-harness or release-policy changes outside the reviewed controller files
-block this path. Missing evidence stops recovery.
+producer separately to verify its original qualification. Fresh installed tests
+run from the protected controller, using `eng/ci/installed-app-release.json`;
+their receipts identify both the acceptance commit and the App image actually
+run. Product inputs, locks and the producer's App pin stay fenced. Changes to
+shared native harness files require reviewed exact blob pairs before recovery.
+Missing evidence stops recovery.
+
+PR validation also runs the installed harness read-only against an immutable
+Listed Agent reference. Its result is required for executable changes; only
+the six release jobs can supply receipts for promotion of a staged archive.

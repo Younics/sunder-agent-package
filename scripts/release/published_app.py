@@ -23,8 +23,8 @@ def current_rid():
     return f"{os_name}-{architecture}"
 
 
-def selection(rid, root=ROOT):
-    policy = inputs.load(Path(root) / "eng/ci/app-release.json")
+def selection(rid, root=ROOT, *, installed=False):
+    policy = inputs.load(Path(root) / "eng/ci" / ("installed-app-release.json" if installed else "app-release.json"))
     inputs.closed(policy, "version producerCommit artifacts")
     version = policy["version"]
     channel = "stable" if inputs.version(version)[1] else "preview"
@@ -84,10 +84,10 @@ def extract_macos(archive, destination):
         subprocess.run(["hdiutil", "detach", str(mount)], check=True, timeout=60)
 
 
-def prepare(destination, rid=None):
+def prepare(destination, rid=None, *, installed=False):
     rid = rid or current_rid()
     inputs.require(rid == current_rid(), "App integration must use the runner's own native ABI")
-    selected = selection(rid)
+    selected = selection(rid, installed=installed)
     destination = Path(destination).absolute()
     destination.mkdir(parents=True)
     archive = destination / selected["name"]

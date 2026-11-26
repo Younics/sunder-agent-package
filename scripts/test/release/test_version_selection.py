@@ -137,7 +137,7 @@ class VersionSelectionTests(unittest.TestCase):
         for count, pending in ((0, False), (1, False), (family_size, True), (1, True)):
             active = count > 0
             required = {"prepare": True, "checks": active, "bootstrap": pending, "dependencies": active,
-                        "admit-owner": pending, "behavior": active}
+                        "admit-owner": pending, "behavior": active, "hub-install": active}
             jobs = {name: dict(result="success" if value else "skipped", outputs={}) for name, value in required.items()}
             jobs["prepare"]["outputs"] = dict(selected_count=str(count))
             jobs["dependencies"]["outputs"]["pending"] = json.dumps(["younics.ai.agent"] if pending else [])

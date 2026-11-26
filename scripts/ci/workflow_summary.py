@@ -31,7 +31,7 @@ def verify(jobs, mode):
     if mode == "validate":
         pending = json.loads(jobs["dependencies"]["outputs"]["pending"]) if active else []
         expected = {"checks": active, "dependencies": active, "bootstrap": active and bool(pending),
-                    "admit-owner": active and bool(pending), "behavior": active}
+                    "admit-owner": active and bool(pending), "behavior": active, "hub-install": active}
     else:
         raise ValueError("Unknown workflow summary")
     outcomes(jobs, dict(prepare=True, **expected))

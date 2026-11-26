@@ -13,12 +13,13 @@ import published_app
 
 class NativeInputsTests(unittest.TestCase):
     def test_public_app_provenance_and_catalog_are_recorded_for_both_modes(self):
-        for host_only in (False, True):
-            with self.subTest(host_only=host_only), tempfile.TemporaryDirectory() as temporary:
+        for host_only, installed in ((False, False), (True, False), (True, True)):
+            with self.subTest(host_only=host_only, installed=installed), tempfile.TemporaryDirectory() as temporary:
                 output = Path(temporary) / "inputs"
-                artifact = published_app.selection("osx-arm64")
+                artifact = published_app.selection("osx-arm64", installed=installed)
 
-                def app(directory):
+                def app(directory, **kwargs):
+                    self.assertEqual(dict(installed=installed), kwargs)
                     directory.mkdir()
                     (directory / "app-input.json").write_text(json.dumps(dict(rid="osx-arm64", artifact=artifact)))
 
@@ -31,7 +32,7 @@ class NativeInputsTests(unittest.TestCase):
                 with patch.object(prepare.published_app, "prepare", side_effect=app), \
                      patch.object(prepare.public_platform_catalog, "fetch", side_effect=catalog), \
                      patch.object(prepare.maker_public_feed, "prepare", return_value=packages) as maker:
-                    prepare.prepare(output, host_only=host_only)
+                    prepare.prepare(output, host_only=host_only, installed=installed)
                     self.assertEqual(not host_only, maker.called)
                     with self.assertRaisesRegex(ValueError, "must be new"):
                         prepare.prepare(output, host_only=host_only)

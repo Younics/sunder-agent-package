@@ -31,7 +31,7 @@ def native_documents(records, rid, core, mode="development", registry="https://r
     from native_release_inputs import digest
     encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
     catalog = b"synthetic catalog transport bytes"
-    app = published_app.selection(rid) if core is None else None
+    app = published_app.selection(rid, installed=mode == "published") if core is None else None
     material = dict(schemaVersion=3, app=dict(rid=rid, artifact=app)) if app else dict(schemaVersion=2, coreCommit=core, workingTreeClean=True)
     inputs = dict(material, packages=[dict(name=f"package-{index}.nupkg", sha256=str(index) * 64) for index in range(6)],
                   platformCatalog=dict(path="sunder-platform-contracts.v1.json", size=len(catalog), sha256=digest(catalog)))
@@ -51,13 +51,28 @@ def native_documents(records, rid, core, mode="development", registry="https://r
         documents["maker/journey.json"] = encode(journey)
         documents.update({"maker/" + operation + ".json": encode(dict(state="succeeded")) for operation in ("create", "build", "archive")})
     elif mode == "published":
-        documents["scope/published-registry.json"] = encode(dict(schemaVersion=2, registryOrigin=scope["registryOrigin"],
+        proof = dict(schemaVersion=2, registryOrigin=scope["registryOrigin"],
             archiveDownloadAuthentication="anonymous",
             downloads=[dict(packageId=row["packageId"], version="2.0.0", archiveSha256=row["sha256"], size=row["size"]) for row in records],
             policies=[dict(package=dict(packageId=row["packageId"], version="2.0.0", packageContentIdentity="c" * 64),
                 lease=dict(state="valid", errorCode=None, responseNonce="a" * 32, responseSha256="b" * 64,
                     watermark=dict(registryOrigin=registry, packagePolicyRevision=1, packagePolicyFingerprint="d" * 64),
-                    observedAtUtc="2026-11-14T00:00:00Z", validUntilUtc="2026-11-15T00:00:00Z", clock={})) for row in records]))
+                    observedAtUtc="2026-11-14T00:00:00Z", validUntilUtc="2026-11-15T00:00:00Z", clock={})) for row in records])
+        if package:
+            proof["schemaVersion"] = 3
+            for phase, number, action in (("install", 1, "package-install"), ("reinstall", 3, "package-update")):
+                rows = [dict(packageId=key, version="2.0.0", sourcePackageContentIdentity="c" * 64, actionKind=action,
+                        provenance=dict(source="Registry", policy="ExplicitVersion", registryOrigin=registry + "/", sourcePackageId=key,
+                                        requestedVersion="2.0.0", sourceIdentity="c" * 64),
+                        targets=[dict(role="runtime", rid=rid)],
+                        projections=[dict(kind=kind, rid=rid if kind == "runtime" else None, sha256="b"*64, size=2,
+                             manifestSha256="e"*64, projectionContentIdentity="a"*64, sourceArchiveSha256=row["sha256"])
+                             for kind in ("shared", "runtime")])
+                        for row in records for key in [row["packageId"]] if phase == "install" or key == package]
+                proof[phase] = dict(resolutionFingerprint="d"*64, expectedResolutionFingerprint="d"*64, sourceFingerprint="e"*64,
+                        rid=rid, runtimeSessionApplied=True, committedStamp=dict(runtimeInstanceId="f"*32, sessionGeneration=number),
+                        consents=[], packages=rows)
+        documents["scope/published-registry.json"] = encode(proof)
         documents.update({package_id + "." + rid + ".json": encode(dict(syntheticTransportFixture=True)) for package_id in evidence.execution_ids(package)})
         for row in records:
             documents[row["packageId"] + "." + rid + ".json"] = encode(dict(measurement=dict(formatVersion=1, profile="dotnetWorker", rid=rid,
@@ -66,6 +81,7 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                 maximumArchiveBytes=row["size"], maximumCurrentRidInstalledBytes=1, maximumStartupMilliseconds=2.0, maximumWorkerRssBytes=1)))
     identity = dict(schemaVersion=2, appArtifact=app) if app else dict(schemaVersion=1, coreCommit=core)
     if package is not None: identity.update(schemaVersion=3, releasePackage=package)
+    if package is not None and mode == "published": identity.update(schemaVersion=4, acceptanceSourceCommit="b"*40)
     receipt = dict(identity, rid=rid, profile=scope["profile"], installedAcceptance=scope["installedAcceptance"],
                    registryOrigin=scope["registryOrigin"], archives=records, tests=evidence.tests(mode, package),
                    reports=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(documents.items())])
@@ -79,7 +95,7 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
                    for key in sorted(evidence.execution_ids(package))]
         rid = "linux-arm64"
         value, documents = native_documents(records, rid, None, "published", package=package)
-        app = published_app.selection(rid)
+        app = published_app.selection(rid, installed=True)
         evidence.validate_receipt(value, "published", records, app, rid, package=package)
         evidence.verify_reports(value, documents.__getitem__)
         for subject, inputs in ((None, records), ("younics.ai.agent.skills", records), (package, records[:1])):
@@ -89,6 +105,27 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
         self.assertNotIn(evidence.CLASS + "." + evidence.MAKER, evidence.tests("development", evidence.OWNER))
         with self.assertRaisesRegex(ValueError, "Installed-size budget"):
             evidence.check_installed_size(evidence.OWNER, 360003313)
+
+    def test_scoped_install_rejects_download_only_and_unfenced_or_substituted_reinstall(self):
+        from native_release_inputs import digest
+        key = evidence.OWNER
+        records = [dict(packageId=key, archive=key + ".2.0.0.sunderpkg", size=7, sha256="b"*64)]
+        value, docs = native_documents(records, "osx-arm64", None, "published", package=key)
+        name = "scope/published-registry.json"
+        for change in (
+            lambda p: (p.pop("reinstall"), p.pop("install"), p.update(schemaVersion=2)),
+            lambda p: p["reinstall"].update(expectedResolutionFingerprint="b"*64),
+            lambda p: p["reinstall"]["committedStamp"].update(sessionGeneration=1),
+            lambda p: p["install"]["packages"][0]["provenance"].update(source="LocalArchive"),
+            lambda p: p["reinstall"]["packages"][0]["projections"][0].update(sha256="e"*64),
+            lambda p: p["install"]["packages"][0]["projections"].pop(),
+        ):
+            proof = json.loads(docs[name]); change(proof)
+            data = json.dumps(proof).encode()
+            edited = copy.deepcopy(value)
+            next(row for row in edited["reports"] if row["path"] == name).update(size=len(data), sha256=digest(data))
+            with self.assertRaises(ValueError):
+                evidence.verify_reports(edited, {**docs, name: data}.__getitem__)
 
     def test_published_proof_rejects_rehashed_wrong_nonce_authority_versions_and_metrics(self):
         from native_release_inputs import digest

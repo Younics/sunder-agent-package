@@ -77,12 +77,17 @@ def report_names(mode, rid=None, *, published_app=False, package=None):
 def validate_receipt(value, mode, records, material, rid, *, package=None):
     historical = isinstance(material, str)
     field = "coreCommit" if historical else "appArtifact"
-    keys(value, f"schemaVersion {field} rid profile installedAcceptance registryOrigin archives tests reports" + (" releasePackage" if package else ""))
+    installed_lane = bool(package) and mode == "published"
+    keys(value, f"schemaVersion {field} rid profile installedAcceptance registryOrigin archives tests reports" + (" releasePackage" if package else "")
+         + (" acceptanceSourceCommit" if installed_lane else ""))
+    if installed_lane:
+        require(isinstance(value["acceptanceSourceCommit"], str) and re.fullmatch("[0-9a-f]{40}", value["acceptanceSourceCommit"]),
+                "Missing installed acceptance source")
     if package is not None:
         require(not historical and value["releasePackage"] == package
                 and sorted(row["packageId"] for row in records) == sorted(execution_ids(package)),
                 "Package smoke must cover exactly its subject and Agent dependency")
-    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == (3 if package else 1 if historical else 2) and value[field] == material
+    require(type(value["schemaVersion"]) is int and value["schemaVersion"] == (4 if installed_lane else 3 if package else 1 if historical else 2) and value[field] == material
         and value["rid"] == rid and value["profile"] == PROFILES[mode] and value["installedAcceptance"] is (mode == "published")
         and value["archives"] == records and value["tests"] == tests(mode, package), "Native execution receipt differs from its exact source, archives or phase")
     require(type(value["reports"]) is list and [row["path"] for row in value["reports"]] == report_names(mode, rid, published_app=not historical, package=package),
@@ -103,7 +108,9 @@ def verify_reports(value, loader):
         documents[row["path"]] = data
     package = value.get("releasePackage")
     validate_trx(documents["native-family.trx"], mode, package)
-    validate_scope(parse(documents["scope/qualification.json"]), mode, value["archives"], value["rid"])
+    scope = parse(documents["scope/qualification.json"])
+    validate_scope(scope, mode, value["archives"], value["rid"])
+    require(scope["registryOrigin"] == value["registryOrigin"], "Scope and receipt disagree on Registry origin")
     inputs = parse(documents["maker-inputs/inputs.json"])
     if value["schemaVersion"] == 1:
         require(inputs["schemaVersion"] == 2 and inputs["coreCommit"] == value["coreCommit"] and inputs["workingTreeClean"] is True,
@@ -125,8 +132,9 @@ def verify_reports(value, loader):
                 require(parse(documents["maker/" + operation + ".json"])["state"] == "succeeded", "Maker job did not complete")
     else:
         proof = parse(documents["scope/published-registry.json"])
-        keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies")
-        require(type(proof["schemaVersion"]) is int and proof["schemaVersion"] == 2 and proof["registryOrigin"] == value["registryOrigin"]
+        plans = proof.get("schemaVersion") == 3
+        keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies" + (" install reinstall" if plans else ""))
+        require((not package or plans) and type(proof["schemaVersion"]) is int and proof["schemaVersion"] in (2, 3) and proof["registryOrigin"] == value["registryOrigin"]
             and proof["archiveDownloadAuthentication"] == "anonymous",
             "Published native execution lacks anonymous Registry download evidence")
         require(sorted((row["packageId"], row["archiveSha256"], row["size"]) for row in proof["downloads"])
@@ -155,6 +163,9 @@ def verify_reports(value, loader):
             require(watermark["registryOrigin"] == value["registryOrigin"] and type(watermark["packagePolicyRevision"]) is int
                     and watermark["packagePolicyRevision"] > 0 and lease["clock"] is not None
                     and lease["observedAtUtc"] and lease["validUntilUtc"], "Invalid published policy lease authority")
+        if plans:
+            import hub_install_evidence
+            hub_install_evidence.verify(proof, value["rid"], package or "younics.ai.agent.tools.shell")
         for archive in value["archives"]:
             metric = parse(documents[archive["packageId"] + "." + value["rid"] + ".json"])
             validate_metrics(dict(metrics=metric, testedArchive=dict(path=archive["archive"], size=archive["size"])), value["rid"])
@@ -245,7 +256,7 @@ def record(metrics, archives, mode, package=None):
     input_root = metrics / "maker-inputs"
     inputs = json_file(input_root / "inputs.json")
     from published_app import selection
-    app = selection(rid)
+    app = selection(rid, installed=mode == "published")
     require(inputs["schemaVersion"] == 3 and inputs["app"]["rid"] == rid
             and inputs["app"]["artifact"] == app, "Native test input must be the declared published App/Host")
     archive = input_root / "distribution" / app["name"]
@@ -265,6 +276,9 @@ def record(metrics, archives, mode, package=None):
         installedAcceptance=mode == "published", registryOrigin=scope["registryOrigin"], archives=records,
         tests=tests(mode, package), reports=[file_record(metrics / name, name) for name in sorted(reports)])
     if package is not None: value.update(schemaVersion=3, releasePackage=package)
+    if package is not None and mode == "published":
+        from agent_release import git
+        value.update(schemaVersion=4, acceptanceSourceCommit=git(Path(__file__).resolve().parents[2], "rev-parse", "HEAD").decode().strip())
     validate_receipt(value, mode, records, app, rid, package=package)
     verify_reports(value, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
     destination.write_bytes(compact(value))
@@ -275,7 +289,7 @@ def export_installed(metrics, destination):
     metrics, destination = Path(metrics).resolve(strict=True), Path(destination).absolute()
     value = json_file(metrics / RECEIPT)
     from published_app import selection
-    validate_receipt(value, "published", value["archives"], selection(value["rid"]), value["rid"], package=value.get("releasePackage"))
+    validate_receipt(value, "published", value["archives"], selection(value["rid"], installed=True), value["rid"], package=value.get("releasePackage"))
     verify_reports(value, lambda name: read_bytes(metrics / name, 32 * 1024 * 1024))
     require(not destination.exists() and destination.name == "native-installed-" + value["rid"] + ".tar.gz", "Installed native handoff must be new and exact-RID")
     sidecar = destination.with_name("native-installed-" + value["rid"] + ".json")
@@ -311,7 +325,9 @@ def installed_set(directory, records, core, registry, *, exact_directory=True, p
     require(observed == names, "Installed acceptance requires exactly six native RID handoffs")
     from published_app import selection
     runs = [read_installed_bundle(directory / ("native-installed-" + rid + ".tar.gz"), records,
-                                   core if core is not None else selection(rid), rid, registry, package=package) for rid in RIDS]
+                                   core if core is not None else selection(rid, installed=True), rid, registry, package=package) for rid in RIDS]
+    if package:
+        require(len({v["acceptanceSourceCommit"] for v in runs}) == 1, "Mixed installed acceptance sources")
     release = dict(schemaVersion=1, coreCommit=core) if core is not None else dict(schemaVersion=2)
     return dict(release, registryOrigin=registry, archives=records, nativeRuns=runs,
                 bundles=[file_record(directory / name) for name in sorted(names)])

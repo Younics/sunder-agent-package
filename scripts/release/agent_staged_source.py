@@ -15,8 +15,8 @@ import release_inputs as inputs
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "ci"))
 import hosted_evidence as hosted
 
-# A controller repair cannot change *any* product, App/Host pin, lock, native
-# test, acceptance policy, or build input relative to the staged producer.
+# Controller-only inputs. The installed App pin is distinct from the producer
+# App, which was and remains an input to original development qualification.
 CONTROL_FILES = frozenset({
     ".github/workflows/sunder-package-release.yml", ".github/workflows/sunder-package-ship.yml",
     "scripts/ci/package_release.py", "scripts/release/agent_selection.py",
@@ -26,13 +26,26 @@ CONTROL_FILES = frozenset({
     "scripts/release/agent_channel.py", "scripts/release/agent_cohort.py",
     "scripts/release/import-agent-publication-evidence.sh", "scripts/test/release/test_selective_pipeline.py",
     "scripts/test/release/test_agent_channel.py", "scripts/test/release/agent-release.fixture.py", "scripts/README.md",
+    "eng/ci/installed-app-release.json", "scripts/ci/hub_install_regression.py", "docs/native-release-inputs.md",
+    "scripts/test/release/test_native_runtime_evidence.py", "scripts/test/release/test_prepare_maker_inputs.py",
+    "scripts/test/release/test_version_selection.py", "scripts/test/release/test_agent_ci.py",
 })
 
-# These shared files also take part in producer qualification. Admit only the
-# reviewed publication-parser / Windows stdout fixes, not arbitrary validator changes.
+# Shared inputs still require exact reviewed old/new blobs (including the
+# two installed-only additions compiled/imported by the shared harness).
 REVIEWED_BLOBS = {
     "scripts/release/agent_release.py": ("5bc5b159ceee802c99d87f2802798d586318bab5", "85852c635789a28e383bb6425343eeb6efce6224"),
     "scripts/ci/bash_runtime.py": ("d029f6a53ce254e4ccf4ab61197cc3f9f6c93009", "7a97eb0160f3e524ca7dbda44d4acdbff7f35e92"),
+    ".github/workflows/sunder-package-smoke.yml": ("5a672a6223c7207270f49924e07d1a77694b80eb", "ed1367add50cb59e74431121ddb62740598f05e1"),
+    "scripts/ci/workflow_summary.py": ("6e3aec1b8af1177dfccd0824adbe586caae30cae", "27e42a226254abfe14a2629e1ce996eb81e526c8"),
+    "scripts/release/Sunder.Agent.NativeReleaseTests.targets": ("e67e53d54c4862e990a8889f858df8d8cf81ee9d", "cbd262b82ee23167afeabeb132c04ab7ef9130c6"),
+    "scripts/release/native_runtime_evidence.py": ("2bfb601ff398f14dcf73ca4057cf9757eca831e0", "c05c8361faf59f94fd0fe047699d6cc09647b7bd"),
+    "scripts/release/prepare_maker_inputs.py": ("9e62de05eed793a1ccdb4191fb7c9439c559bbe8", "9e2a365c2dee4cc14e45b445c114ffcd378325d8"),
+    "scripts/release/published_app.py": ("76f020db857e8b18b272b0025680e477814222da", "6f4da11f27b3c4419a24f89af3a3d196d1ae77f3"),
+    "scripts/release/run-native-runtime-smoke.sh": ("fbf8d805a202d12159d91fd0393dc4258f42a5c6", "aee580a51abfae77c962d6a8a003f8481c543ff4"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "51c719d6dd55b6be2255b56804dd3abab1c572a8"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.Hub.cs": (None, "78259be19599a8c39810d1d38be06b9d413be08b"),
+    "scripts/release/hub_install_evidence.py": (None, "5e806a61eba6cd978046fff6862c674a0ac2be0d"),
 }
 
 
@@ -129,7 +142,10 @@ def source_tree(root):
             for obj, path in [line.split(b"\t", 1)] if os.fsdecode(path) not in CONTROL_FILES}
     for path, (old, new) in REVIEWED_BLOBS.items():
         if tree.get(path) == b"100644 blob " + new.encode("ascii"):
-            tree[path] = b"100644 blob " + old.encode("ascii")
+            if old is None:
+                del tree[path]
+            else:
+                tree[path] = b"100644 blob " + old.encode("ascii")
     return tree
 
 
