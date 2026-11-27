@@ -34,13 +34,17 @@ public sealed partial class AgentNativeReleaseSmokeTests
         Assert.Equal(rid, prerequisites.Rid);
         Assert.Matches("^[0-9a-f]{64}$", prerequisites.SourceFingerprint);
         var modified = preview.Items.Where(i => i.ActionKind != RegistryPackageActionKinds.Keep).ToArray();
-        AssertSamePackageIds(selected.Select(s => s.PackageId), modified.Select(i => i.PackageId));
+        // The request names the extension alone. Hub reinstalls its resolved closure,
+        // including the exact Agent already installed for this integration.
+        var expectedChanges = subjects.Where(s => reinstallId is null || s.PackageId == reinstallId || s.PackageId == AgentPackageId);
+        AssertSamePackageIds(expectedChanges.Select(s => s.PackageId), modified.Select(i => i.PackageId));
         foreach (var item in preview.Items)
         {
             var subject = Assert.Single(subjects, s => s.PackageId == item.PackageId);
             Assert.Equal(subject.Version, item.Version);
             Assert.Equal(subject.PackageContentIdentity, item.PackageContentIdentity);
             if (item.ActionKind == RegistryPackageActionKinds.Keep) continue;
+            Assert.Equal(reinstallId is null ? null : subject.Version, item.CurrentVersion);
             Assert.Equal(reinstallId is null ? RegistryPackageActionKinds.PackageInstall : RegistryPackageActionKinds.PackageUpdate, item.ActionKind);
             var path = archives[item.PackageId];
             using var input = File.OpenRead(path);
@@ -120,7 +124,8 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 targets = record.AcquiredTargets,
                 projections = item.Artifacts.Select(a => new { a.Kind, a.Rid, a.Sha256, a.Size, a.ManifestSha256, a.SourceArchiveSha256, a.ProjectionContentIdentity }) });
         }
-        return new { preview.ResolutionFingerprint, confirmed.ExpectedResolutionFingerprint, prerequisites.SourceFingerprint,
+        var requestedPackages = request.Packages.Select(p => new { p.PackageId, p.Version });
+        return new { requestedPackages, preview.ResolutionFingerprint, confirmed.ExpectedResolutionFingerprint, prerequisites.SourceFingerprint,
             prerequisites.Rid, result.RuntimeSessionApplied, result.CommittedStamp, consents, packages };
     }
 

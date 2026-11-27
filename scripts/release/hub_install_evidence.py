@@ -4,15 +4,22 @@ from uuid import UUID
 from native_release_inputs import integer, keys, require, sha
 
 
-def verify(proof, rid, reinstall_id):
+def verify(proof, rid, reinstall_id, owner_id):
     subjects = {row["package"]["packageId"]: row["package"] for row in proof["policies"]}
     archives = {row["packageId"]: row["archiveSha256"] for row in proof["downloads"]}
     origin = proof["registryOrigin"]
     previous = None
     installations = {}
-    for phase, ids, action in (("install", set(subjects), "package-install"), ("reinstall", {reinstall_id}, "package-update")):
+    records_roots = proof["schemaVersion"] == 4
+    reinstall_ids = {reinstall_id, owner_id} if records_roots else {reinstall_id}
+    for phase, ids, action in (("install", set(subjects), "package-install"), ("reinstall", reinstall_ids, "package-update")):
         operation = proof[phase]
-        keys(operation, "resolutionFingerprint expectedResolutionFingerprint sourceFingerprint rid runtimeSessionApplied committedStamp consents packages")
+        keys(operation, "resolutionFingerprint expectedResolutionFingerprint sourceFingerprint rid runtimeSessionApplied committedStamp consents packages"
+             + (" requestedPackages" if records_roots else ""))
+        if records_roots:
+            requested = sorted(subjects) if phase == "install" else [reinstall_id]
+            require(operation["requestedPackages"] == [dict(packageId=k, version=subjects[k]["version"]) for k in requested],
+                    "Hub operation requested different package roots or versions")
         sha(operation["resolutionFingerprint"]); sha(operation["sourceFingerprint"])
         require(operation["resolutionFingerprint"] == operation["expectedResolutionFingerprint"] and operation["rid"] == rid
                 and operation["runtimeSessionApplied"] is True, "Hub apply does not confirm its exact preview and RID")

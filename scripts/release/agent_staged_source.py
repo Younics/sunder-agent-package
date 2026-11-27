@@ -31,8 +31,8 @@ CONTROL_FILES = frozenset({
     "scripts/test/release/test_version_selection.py", "scripts/test/release/test_agent_ci.py",
 })
 
-# Shared inputs still require exact reviewed old/new blobs (including the
-# two installed-only additions compiled/imported by the shared harness).
+# The first entry is the original blob (or absent). Only the listed exact
+# revisions of a shared harness file may be normalized to that original.
 REVIEWED_BLOBS = {
     "scripts/release/agent_publication.py": ("b8b9bf3535a6e7599881c1f4ee72c207161459f6", "e6c246b648885e9ddcd8582c54f1f883fc3cca0a"),
     "scripts/test/release/test_agent_pipeline.py": ("deac657a1afefc708599e060a0725e0e8806a6f9", "25a1f5d4e3e60d6a71beeae38eed7f80cdfb9832"),
@@ -41,15 +41,15 @@ REVIEWED_BLOBS = {
     ".github/workflows/sunder-package-smoke.yml": ("5a672a6223c7207270f49924e07d1a77694b80eb", "ed1367add50cb59e74431121ddb62740598f05e1"),
     "scripts/ci/workflow_summary.py": ("6e3aec1b8af1177dfccd0824adbe586caae30cae", "27e42a226254abfe14a2629e1ce996eb81e526c8"),
     "scripts/release/Sunder.Agent.NativeReleaseTests.targets": ("e67e53d54c4862e990a8889f858df8d8cf81ee9d", "cbd262b82ee23167afeabeb132c04ab7ef9130c6"),
-    "scripts/release/native_runtime_evidence.py": ("2bfb601ff398f14dcf73ca4057cf9757eca831e0", "21fdd0b581701f1953fa10698efe70c5c7c9ec93"),
+    "scripts/release/native_runtime_evidence.py": ("2bfb601ff398f14dcf73ca4057cf9757eca831e0", "21fdd0b581701f1953fa10698efe70c5c7c9ec93", "558a5e75e0afab7b4b4cfaaf9a42ebd269a166ed"),
     "scripts/release/prepare_maker_inputs.py": ("9e62de05eed793a1ccdb4191fb7c9439c559bbe8", "9e2a365c2dee4cc14e45b445c114ffcd378325d8"),
     "scripts/release/published_app.py": ("76f020db857e8b18b272b0025680e477814222da", "6f4da11f27b3c4419a24f89af3a3d196d1ae77f3"),
     "scripts/release/run-native-runtime-smoke.sh": ("fbf8d805a202d12159d91fd0393dc4258f42a5c6", "aee580a51abfae77c962d6a8a003f8481c543ff4"),
-    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "f9a2109e7d2b59e847c6867ec1e500fa1651d66d"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "f9a2109e7d2b59e847c6867ec1e500fa1651d66d", "0ebb7129543797414db67a1b33ee9944e2ba552b"),
     "tests/fixtures/AgentNativeReleaseSmokeTests.Development.cs": ("9a13ce2eded4ff84ee4d8993b81eec9fda3ebf57", "cdd4c321d98a192d4db019f630e6a499fbc5b9c9"),
     "tests/fixtures/NativeAppSnapshotProbe.cs": ("9ead5daab3f8efade26c1a1f4ab2575540f3596e", "e203a3c0264ae254e6a0e1c0325ece89612a9b16"),
-    "tests/fixtures/AgentNativeReleaseSmokeTests.Hub.cs": (None, "78259be19599a8c39810d1d38be06b9d413be08b"),
-    "scripts/release/hub_install_evidence.py": (None, "5e806a61eba6cd978046fff6862c674a0ac2be0d"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.Hub.cs": (None, "78259be19599a8c39810d1d38be06b9d413be08b", "d19224f03daed983ec9548e211faca93a982aa95"),
+    "scripts/release/hub_install_evidence.py": (None, "5e806a61eba6cd978046fff6862c674a0ac2be0d", "ada9c99e0d361af8e06dc293332c840920db61a2"),
 }
 
 
@@ -145,8 +145,8 @@ def authenticate(controller, info, plan):
 def source_tree(root):
     tree = {os.fsdecode(path): obj for line in r.git(root, "ls-tree", "-rz", "HEAD").split(b"\0") if line
             for obj, path in [line.split(b"\t", 1)] if os.fsdecode(path) not in CONTROL_FILES}
-    for path, (old, new) in REVIEWED_BLOBS.items():
-        if tree.get(path) == b"100644 blob " + new.encode("ascii"):
+    for path, (old, *reviewed) in REVIEWED_BLOBS.items():
+        if tree.get(path) in {b"100644 blob " + blob.encode("ascii") for blob in reviewed}:
             if old is None:
                 del tree[path]
             else:

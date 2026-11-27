@@ -109,6 +109,19 @@ class StagedSourceTests(unittest.TestCase):
         self.assertEqual(self.plan["registryOrigin"], run.call_args.kwargs["env"]["SUNDER_AGENT_NATIVE_REGISTRY_ORIGIN"])
         export.assert_called_once()
 
+    def test_intermediate_producer_and_controller_require_exact_reviewed_shared_blobs(self):
+        path = "tests/fixtures/shared.cs"
+        old, intermediate, current, other = [c * 40 for c in "abcd"]
+        def source_tree(blob, mode="100644"):
+            entry = f"{mode} blob {blob}\t{path}\0".encode()
+            with patch.object(r, "git", return_value=entry):
+                return staged.source_tree(self.directory)
+        with patch.dict(staged.REVIEWED_BLOBS, {path: (old, intermediate, current)}, clear=True):
+            self.assertEqual(source_tree(old), source_tree(intermediate))
+            self.assertEqual(source_tree(intermediate), source_tree(current))
+            self.assertNotEqual(source_tree(old), source_tree(other))
+            self.assertNotEqual(source_tree(old), source_tree(current, "100755"))
+
     def test_publication_credential_check_never_prints_a_value_or_contacts_hub(self):
         script=ROOT/"scripts/release/publish-registry-package.sh"
         import bash_runtime

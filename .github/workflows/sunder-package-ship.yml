@@ -298,7 +298,7 @@ jobs:
     needs: [prepare, stage]
     if: ${{ !cancelled() && needs.stage.result == 'success' }}
     environment: sunder-agent-release-promotion
-    concurrency: &writer
+    concurrency: &hub
       group: sunder-agent-hub-writer
       queue: max
     permissions: { contents: write } # Read the draft and retain the Hub publication receipt.
@@ -336,6 +336,9 @@ jobs:
     if: ${{ !cancelled() && needs.publish.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 240
+    # A Hub write can stale a live preview. Queue these transactions with the
+    # writers so concurrent family installs also respect the shared Hub limits.
+    concurrency: *hub
     permissions: { contents: write } # GitHub's draft-read permission.
     strategy: *six
     env:
@@ -371,7 +374,7 @@ jobs:
     timeout-minutes: 120
     environment: sunder-agent-release-promotion
     permissions: { contents: write }
-    concurrency: *writer
+    concurrency: *hub
     env:
       PLAN_SHA: ${{ needs.prepare.outputs.plan }}
       GH_TOKEN: ${{ github.token }}

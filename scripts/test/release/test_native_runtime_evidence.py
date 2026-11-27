@@ -26,7 +26,7 @@ def trx(mode, package=None):
     return root
 
 
-def native_documents(records, rid, core, mode="development", registry="https://registry.example", package=None):
+def native_documents(records, rid, core, mode="development", registry="https://registry.example", package=None, proof_version=4):
     """Synthetic transport documents only, never an execution/preparation claim."""
     from native_release_inputs import digest
     encode = lambda value: json.dumps(value, separators=(",", ":")).encode()
@@ -62,7 +62,7 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                     watermark=dict(registryOrigin=registry, packagePolicyRevision=1, packagePolicyFingerprint="d" * 64),
                     observedAtUtc="2026-11-14T00:00:00Z", validUntilUtc="2026-11-15T00:00:00Z", clock={})) for row in records])
         if package:
-            proof["schemaVersion"] = 3
+            proof["schemaVersion"] = proof_version
             for phase, number, action in (("install", 1, "package-install"), ("reinstall", 3, "package-update")):
                 rows = [dict(packageId=key, version="2.0.0", sourcePackageContentIdentity="c" * 64, actionKind=action,
                         provenance=dict(source="Registry", policy="ExplicitVersion", registryOrigin=registry + "/", sourcePackageId=key,
@@ -71,10 +71,14 @@ def native_documents(records, rid, core, mode="development", registry="https://r
                         projections=[dict(kind=kind, rid=rid if kind == "runtime" else None, sha256="b"*64, size=2,
                              manifestSha256="e"*64, projectionContentIdentity="a"*64, sourceArchiveSha256=row["sha256"])
                              for kind in ("shared", "runtime")])
-                        for row in records for key in [row["packageId"]] if phase == "install" or key == package]
+                         for row in records for key in [row["packageId"]]
+                         if phase == "install" or key == package or (proof_version == 4 and key == evidence.OWNER)]
                 proof[phase] = dict(resolutionFingerprint="d"*64, expectedResolutionFingerprint="d"*64, sourceFingerprint="e"*64,
                         rid=rid, runtimeSessionApplied=True, committedStamp=dict(runtimeInstanceId="f"*32, sessionGeneration=number),
                         consents=[], packages=rows)
+                if proof_version == 4:
+                    requested = sorted(row["packageId"] for row in records) if phase == "install" else [package]
+                    proof[phase]["requestedPackages"] = [dict(packageId=key, version="2.0.0") for key in requested]
         documents["scope/published-registry.json"] = encode(proof)
         documents.update({package_id + "." + rid + ".json": encode(dict(syntheticTransportFixture=True)) for package_id in evidence.execution_ids(package)})
         for row in records:
@@ -136,6 +140,32 @@ class NativeRuntimeEvidenceTests(unittest.TestCase):
             next(row for row in edited["reports"] if row["path"] == name).update(size=len(data), sha256=digest(data))
             with self.assertRaises(ValueError):
                 evidence.verify_reports(edited, {**docs, name: data}.__getitem__)
+
+    def test_extension_reinstall_names_one_root_and_reapplies_only_its_tested_closure(self):
+        import hub_install_evidence
+        extension, rid = "younics.ai.agent.subagents", "linux-arm64"
+        records = [dict(packageId=key, archive=key + ".2.0.0.sunderpkg", size=7, sha256=digit * 64)
+                   for key, digit in ((evidence.OWNER, "a"), (extension, "b"))]
+        def report(version):
+            receipt, docs = native_documents(records, rid, None, "published", package=extension, proof_version=version)
+            evidence.verify_reports(receipt, docs.__getitem__)
+            return json.loads(docs["scope/published-registry.json"])
+        legacy, current = report(3), report(4)
+        self.assertEqual([extension], [row["packageId"] for row in legacy["reinstall"]["packages"]])
+        for change in (
+            lambda op: op["packages"].pop(0),
+            lambda op: op["packages"].append(op["packages"][0]),
+            lambda op: op["packages"][0].update(packageId="younics.ai.agent.tools.shell"),
+            lambda op: op["packages"][0]["provenance"].update(policy="TransitiveDependency"),
+            lambda op: op["packages"][0]["projections"][0].update(sha256="c"*64),
+            lambda op: op["requestedPackages"].append(dict(packageId=evidence.OWNER, version="2.0.0")),
+            lambda op: op["requestedPackages"][0].update(version="2.0.1"),
+        ):
+            with self.subTest(change=change):
+                edited = copy.deepcopy(current)
+                change(edited["reinstall"])
+                with self.assertRaises(ValueError):
+                    hub_install_evidence.verify(edited, rid, extension, evidence.OWNER)
 
     def test_published_proof_rejects_rehashed_wrong_nonce_authority_versions_and_metrics(self):
         from native_release_inputs import digest

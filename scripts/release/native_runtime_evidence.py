@@ -139,9 +139,9 @@ def verify_reports(value, loader):
                         (b"materialized-and-activated", b"uninstall-applied", b"retired")),
                     "Standalone Agent lacks live App uninstall evidence")
         proof = parse(documents["scope/published-registry.json"])
-        plans = proof.get("schemaVersion") == 3
+        plans = proof.get("schemaVersion") in (3, 4)
         keys(proof, "schemaVersion registryOrigin archiveDownloadAuthentication downloads policies" + (" install reinstall" if plans else ""))
-        require((not package or plans) and type(proof["schemaVersion"]) is int and proof["schemaVersion"] in (2, 3) and proof["registryOrigin"] == value["registryOrigin"]
+        require((not package or plans) and type(proof["schemaVersion"]) is int and proof["schemaVersion"] in (2, 3, 4) and proof["registryOrigin"] == value["registryOrigin"]
             and proof["archiveDownloadAuthentication"] == "anonymous",
             "Published native execution lacks anonymous Registry download evidence")
         require(sorted((row["packageId"], row["archiveSha256"], row["size"]) for row in proof["downloads"])
@@ -172,7 +172,7 @@ def verify_reports(value, loader):
                     and lease["observedAtUtc"] and lease["validUntilUtc"], "Invalid published policy lease authority")
         if plans:
             import hub_install_evidence
-            hub_install_evidence.verify(proof, value["rid"], package or "younics.ai.agent.tools.shell")
+            hub_install_evidence.verify(proof, value["rid"], package or "younics.ai.agent.tools.shell", OWNER)
         for archive in value["archives"]:
             metric = parse(documents[archive["packageId"] + "." + value["rid"] + ".json"])
             validate_metrics(dict(metrics=metric, testedArchive=dict(path=archive["archive"], size=archive["size"])), value["rid"])

@@ -180,7 +180,11 @@ provenance and nonce-bound policy observations, then tests
 installed lifecycle/RPC/SQLite/recovery/cleanup. It uses `--host-only` preparation and
 never rebuilds the selected family archives. It does not run Maker's development job
 journey as a substitute for installed acceptance.
-Schema-3 `scope/published-registry.json` records
+Schema-4 `scope/published-registry.json` records the explicitly requested roots
+separately from the packages actually reinstalled. An extension-only reinstall
+also checks the exact installed Agent dependency's version, provenance and
+projection bytes. The earlier schema-3 reader preserves its root-only receipts.
+Both record
 `archiveDownloadAuthentication: "anonymous"`, both committed operations, their
 projection identities, exact downloads and policy leases. Download-only
 historical reports cannot satisfy a scoped release. New and

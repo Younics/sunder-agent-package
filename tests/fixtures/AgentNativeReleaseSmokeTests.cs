@@ -218,7 +218,7 @@ public sealed partial class AgentNativeReleaseSmokeTests
             await WriteNativeScopeAsync(metricsDirectory, rid, archives, "published-installed", registryOrigin);
             await File.WriteAllTextAsync(Path.Combine(metricsDirectory, "scope", "published-registry.json"), JsonSerializer.Serialize(new
             {
-                schemaVersion = 3, registryOrigin, archiveDownloadAuthentication = "anonymous",
+                schemaVersion = 4, registryOrigin, archiveDownloadAuthentication = "anonymous",
                 downloads, policies = policyEvidence, install, reinstall,
             }, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         }, async () =>
