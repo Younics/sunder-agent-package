@@ -45,7 +45,7 @@ REVIEWED_BLOBS = {
     "scripts/release/prepare_maker_inputs.py": ("9e62de05eed793a1ccdb4191fb7c9439c559bbe8", "9e2a365c2dee4cc14e45b445c114ffcd378325d8"),
     "scripts/release/published_app.py": ("76f020db857e8b18b272b0025680e477814222da", "6f4da11f27b3c4419a24f89af3a3d196d1ae77f3"),
     "scripts/release/run-native-runtime-smoke.sh": ("fbf8d805a202d12159d91fd0393dc4258f42a5c6", "aee580a51abfae77c962d6a8a003f8481c543ff4"),
-    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "f9a2109e7d2b59e847c6867ec1e500fa1651d66d", "0ebb7129543797414db67a1b33ee9944e2ba552b"),
+    "tests/fixtures/AgentNativeReleaseSmokeTests.cs": ("3f25b9dc65e738b44ab7e92f7b69a184b53433ae", "f9a2109e7d2b59e847c6867ec1e500fa1651d66d", "0ebb7129543797414db67a1b33ee9944e2ba552b", "36689f0d1e26a0de1a0aa7015630bb147d21f0f4"),
     "tests/fixtures/AgentNativeReleaseSmokeTests.Development.cs": ("9a13ce2eded4ff84ee4d8993b81eec9fda3ebf57", "cdd4c321d98a192d4db019f630e6a499fbc5b9c9"),
     "tests/fixtures/NativeAppSnapshotProbe.cs": ("9ead5daab3f8efade26c1a1f4ab2575540f3596e", "e203a3c0264ae254e6a0e1c0325ece89612a9b16"),
     "tests/fixtures/AgentNativeReleaseSmokeTests.Hub.cs": (None, "78259be19599a8c39810d1d38be06b9d413be08b", "d19224f03daed983ec9548e211faca93a982aa95"),

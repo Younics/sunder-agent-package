@@ -674,7 +674,9 @@ public sealed partial class AgentNativeReleaseSmokeTests
             startInfo.ArgumentList.Add("-NonInteractive");
             startInfo.ArgumentList.Add("-Command");
             startInfo.ArgumentList.Add(
-                "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1}' -f $_.ProcessId, $_.ParentProcessId }");
+                "Get-CimInstance Win32_Process | ForEach-Object { " +
+                "$created = if ($_.CreationDate) { $_.CreationDate.ToUniversalTime().Ticks } else { 0 }; " +
+                "'{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $created }");
         }
         else
         {
@@ -694,8 +696,14 @@ public sealed partial class AgentNativeReleaseSmokeTests
             snapshot.ExitCode == 0,
             $"Process-tree snapshot failed with exit code {snapshot.ExitCode}: {standardError}");
 
+        return ParseProcessParents(standardOutput);
+    }
+
+    private static IReadOnlyDictionary<int, int> ParseProcessParents(string snapshot)
+    {
         var parentByProcess = new Dictionary<int, int>();
-        foreach (var line in standardOutput.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        var creationTimes = new Dictionary<int, long>();
+        foreach (var line in snapshot.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             var fields = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
             if (fields.Length >= 2
@@ -703,9 +711,39 @@ public sealed partial class AgentNativeReleaseSmokeTests
                 && int.TryParse(fields[1], out var parentProcessId))
             {
                 parentByProcess[processId] = parentProcessId;
+                if (fields.Length == 3 && long.TryParse(fields[2], out var created) && created > 0)
+                    creationTimes[processId] = created;
             }
         }
+
+        // Windows retains the creator PID after it exits. Break only edges where
+        // the same snapshot shows the current owner of that PID is younger than the child.
+        foreach (var (child, created) in creationTimes)
+        {
+            if (creationTimes.TryGetValue(parentByProcess[child], out var parentCreated) && parentCreated > created)
+                parentByProcess[child] = -1;
+        }
         return parentByProcess;
+    }
+
+    [Fact]
+    [Trait("Category", "Release")]
+    [Trait("Capability", "Native")]
+    [Trait("Size", "Small")]
+    public void WorkerProcessCensus_RejectsReusedCreatorPidAndKeepsPossibleChildren()
+    {
+        var parents = ParseProcessParents("""
+            640 3236 500
+            748 640 100
+            868 748 110
+            900 640 500
+            901 900 510
+            902 640 0
+            903 902 520
+            904 640
+            """);
+        Assert.Equal(new[] { 640, 900, 901, 902, 903, 904 }, GetWorkerProcessTree(640, parents));
+        Assert.Equal(new[] { 748, 868 }, GetWorkerProcessTree(748, parents));
     }
 
     private static IReadOnlyList<int> GetWorkerProcessTree(
