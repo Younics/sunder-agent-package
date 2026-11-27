@@ -1,30 +1,30 @@
 {
-  "version": "1.1.4",
-  "producerCommit": "13d28ad3dd3906d3fed7ac3f6fc58fbac3ac9746",
+  "version": "1.1.5",
+  "producerCommit": "aa7290b8b57b2d447ce50649869df99cfc45e212",
   "artifacts": {
     "linux-arm64": {
       "size": 101128712,
-      "sha256": "cfc84668788a93a334427e8cb30195ce85f1b1b55be05a57b0b95dbbfcee76e6"
+      "sha256": "d7c94229df6c5e6874eec3874aabcc29bbd43db4da09a8efbf3f873bac34ae98"
     },
     "linux-x64": {
       "size": 105523704,
-      "sha256": "34ab6c45598f6966bcbafffed15fc50e84a89e7d97fddbf57ff563fb955fde86"
+      "sha256": "636d006c89b54f24dd5b90609750d8621a494d614cfba307147081e1ed306405"
     },
     "osx-arm64": {
-      "size": 184063777,
-      "sha256": "cbf7474f282b178f1d1b622e9757982f47ced3680c560b188ec1be61cbd25445"
+      "size": 184063241,
+      "sha256": "a2a4446e1ecd1d4ba3ed8e18aab29ea63987030511f23afaa7a1103b594aeddf"
     },
     "osx-x64": {
-      "size": 194106593,
-      "sha256": "f92d29f9279dbfc3cb152dcc7f67ab7efb3cd2c6601a58065b82910735810996"
+      "size": 194099268,
+      "sha256": "6ef79e1b0e1c8e73b81bd1b4afd3d960f0887eb8fbc92643674c81a0203387c4"
     },
     "win-arm64": {
-      "size": 189633150,
-      "sha256": "a7d918d547be6ed626cf9312e687eb8eb6e545a92b511e16c54ac2c6067568d0"
+      "size": 189633134,
+      "sha256": "f28a73824439622262747be1cec8e6fa1b9eb38f66c5dee9fa83a312c49989e6"
     },
     "win-x64": {
-      "size": 197610110,
-      "sha256": "819093858ace7e23272959fa1c72bb0a7b066aad2203c5e224d7599ab6dc2635"
+      "size": 197610282,
+      "sha256": "cd5f522ac42fb967a9291711e2f37beafc5f35e11f1ce264a8e5798e256bcbba"
     }
   }
 }
