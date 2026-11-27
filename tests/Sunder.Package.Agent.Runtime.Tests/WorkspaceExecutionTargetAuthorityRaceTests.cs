@@ -98,6 +98,31 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
     private static AgentExecutionTargetDescriptor Target(string id)
         => new("test", id, id, null, SupportsShell: false, SupportsFiles: false);
 
+    [Fact]
+    public async Task Reconnect_UsesDisplayedWorkspaceBindingsWhileDashboardIsReloading()
+    {
+        var workspace = new AgentWorkspaceRecord("ws", "Workspace", null, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        var binding = new AgentWorkspaceBindingRecord("b", "ws", "targets", "alpha",
+            AgentWorkspaceBindingRoles.PrimaryExecutionTarget, true, 0, DateTimeOffset.UnixEpoch, DateTimeOffset.UnixEpoch);
+        var gateway = new SnapshotWorkspaceGateway(new(1, [], [workspace], [binding]));
+        var execution = new DeferredExecutionGateway(Target("alpha"), Target("beta"));
+        await using var editors = new FakeServiceCatalog<AppServices.IWorkspaceEditorService>(
+            CurrentPublicRpcDescriptors.Get(RegressionTestAppBindings.WorkspaceEditors));
+        using var view = new AgentWorkspacesViewModel(gateway, execution, editors, null, new InlineWorkspaceDispatcher());
+        await view.InitializeAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        view.ActivateWorkspace(workspace);
+        Assert.Equal("alpha", view.SelectedExecutionTarget?.TargetId);
+
+        gateway.RaiseConnected();
+        await execution.FirstRefresh.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        execution.FirstRefresh.Complete([Target("alpha"), Target("beta")]);
+        await view.CurrentExecutionTargetRefresh.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("alpha", view.SelectedExecutionTarget?.TargetId);
+        gateway.Reload.SetResult(new(2, [], [workspace], [binding with { ContributionId = "beta" }]));
+        await view.CurrentRuntimeRefresh.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("beta", view.SelectedExecutionTarget?.TargetId);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -219,7 +244,18 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
                     : [Target("catalog-replay")]);
     }
 
-    private sealed class RuntimeWorkspaceGateway : EmptyWorkspaceGateway, IAgentRuntimeAvailability
+    private sealed class SnapshotWorkspaceGateway(AgentDashboardProjection initial) : RuntimeWorkspaceGateway, IAgentDashboardLoader
+    {
+        private int _loads;
+        public TaskCompletionSource<AgentDashboardProjection> Reload { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public event Action? DashboardInvalidated { add { } remove { } }
+        public Task<AgentDashboardProjection> LoadDashboardAsync(CancellationToken cancellationToken = default)
+            => Interlocked.Increment(ref _loads) == 1 ? Task.FromResult(initial) : Reload.Task.WaitAsync(cancellationToken);
+        public override IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId)
+            => throw new InvalidOperationException("The invalidatable gateway cache cannot be read synchronously.");
+    }
+
+    private class RuntimeWorkspaceGateway : EmptyWorkspaceGateway, IAgentRuntimeAvailability
     {
         public event Action<AgentRuntimeConnectionState>? ConnectionStateChanged;
 
@@ -277,7 +313,7 @@ public sealed class WorkspaceExecutionTargetAuthorityRaceTests
 
         public Task DeleteWorkspaceAsync(string workspaceId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
-        public IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
+        public virtual IReadOnlyList<AgentWorkspaceBindingRecord> ListBindings(string workspaceId) => [];
 
         public AgentWorkspaceBindingRecord SavePrimaryExecutionBinding(
             string workspaceId,
