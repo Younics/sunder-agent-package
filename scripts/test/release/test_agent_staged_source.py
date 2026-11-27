@@ -55,6 +55,26 @@ class StagedSourceTests(unittest.TestCase):
             else:
                 with self.assertRaises(r.Invalid): staged.compare_qualified(archive, self.info, self.plan)
 
+    def test_staging_retry_uses_the_artifact_from_the_job_that_really_qualified(self):
+        repository = dict(id=4, full_name=staged.selection.REPOSITORY)
+        run = dict(id=12, run_attempt=2, run_started_at="2026-11-27T12:00:00Z", head_sha=self.producer,
+                   head_branch="main", repository=repository, head_repository=repository,
+                   event="push", status="completed", path=staged.publication.WORKFLOW)
+        carried = dict(id=33, name="Maker / Verify six native receipts", run_attempt=2, run_id=12, head_sha=self.producer,
+                       status="completed", conclusion="success", started_at="2026-11-27T10:30:00Z",
+                       completed_at="2026-11-27T10:31:00Z", labels=["ubuntu-24.04"], steps=[{"number": 1}],
+                       runner_id=20, runner_name="producer")
+        first = dict(run, run_attempt=1, run_started_at="2026-11-27T10:00:00Z")
+        original = dict(carried, run_attempt=1, id=22)
+        self.assertEqual(1, staged.qualification_attempt(first, original))
+        with patch.object(staged.hosted, "api_json", return_value=first):
+            with patch.object(staged.hosted, "attempt_jobs", return_value=[original]):
+                self.assertEqual(1, staged.qualification_attempt(run, carried))
+            for jobs in ([], [original, original], [dict(original, head_sha=self.controller)],
+                         [dict(original, steps=[])], [dict(original, runner_id=21)]):
+                with patch.object(staged.hosted, "attempt_jobs", return_value=jobs), self.assertRaises(r.Invalid):
+                    staged.qualification_attempt(run, carried)
+
     def test_only_a_complete_draft_can_cross_a_controller_and_it_cannot_restage(self):
         with patch.dict(os.environ, GITHUB_SHA=self.controller), patch.object(pipeline, "source_guard"), \
              patch.object(pipeline.selection, "retain") as retain, patch.object(pipeline, "stores") as stores:

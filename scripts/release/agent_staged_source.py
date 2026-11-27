@@ -89,6 +89,29 @@ def compare_qualified(archive, info, plan):
                 r.require(hashlib.file_digest(stream, "sha256").hexdigest() == sha, "Draft differs from the qualified bytes: " + name)
 
 
+def qualification_attempt(run, job):
+    """A staging retry can carry forward a successful qualification and its original artifact ID."""
+    r.require(job["conclusion"] == "success" and job["status"] == "completed"
+              and (job["run_id"], job["head_sha"], job["run_attempt"]) == (run["id"], run["head_sha"], run["run_attempt"]),
+              "Wrong staged qualification job")
+    if run["run_started_at"] <= job["started_at"]:
+        return run["run_attempt"]
+    fields = ("name", "status", "conclusion", "started_at", "completed_at", "steps", "labels", "runner_id", "runner_name")
+    for attempt in range(run["run_attempt"] - 1, 0, -1):
+        previous = hosted.api_json(f"runs/{run['id']}/attempts/{attempt}")
+        r.require(hosted.run_origin(previous, Path(publication.WORKFLOW).name, "push")
+                  and all(previous[k] == run[k] for k in ("id", "head_sha", "head_branch"))
+                  and previous["repository"]["id"] == run["repository"]["id"] and previous["run_attempt"] == attempt,
+                  "Wrong earlier qualification run")
+        if previous["run_started_at"] <= job["started_at"]:
+            matches = [j for j in hosted.attempt_jobs(run["id"], attempt)
+                       if (j["run_id"], j["head_sha"], j["run_attempt"]) == (run["id"], run["head_sha"], attempt)
+                       and all(j[k] == job[k] for k in fields)]
+            r.require(len(matches) == 1, "Missing or ambiguous original qualification job")
+            return attempt
+    raise r.Invalid("No original qualification attempt")
+
+
 def authenticate(controller, info, plan):
     """Read-only planner; authenticate the original main push, job, artifact and draft before routing recovery."""
     row, = selection.selected(plan)
@@ -132,7 +155,9 @@ def authenticate(controller, info, plan):
             jobs[prefix + phase + rid]["conclusion"] == "success" for phase in ("Owned tests · ", "Exercise composed archive · ")
             for rid in native.RIDS) and any(s["name"] == "Stage or recover the original tested release" and s["conclusion"] == "success"
                                            for s in staging["steps"]), "Original package qualification/staging did not finish")
-        name = f"qualified-{row['packageId']}-{attempt}"
+        r.require(run["run_started_at"] <= staging["started_at"] and qualified["completed_at"] <= staging["started_at"],
+                  "Staging does not follow the original qualification")
+        name = f"qualified-{row['packageId']}-{qualification_attempt(run, qualified)}"
         item, = hosted.entries(f"runs/{run_id}/artifacts?name={name}", "artifacts")
         receipt = hosted.artifact_receipt(run, item, name, 896 * 1024**2)
         r.require(qualified["started_at"] <= item["created_at"] <= qualified["completed_at"], "Wrong qualified artifact producer job")
