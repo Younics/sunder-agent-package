@@ -208,6 +208,13 @@ def install_plans(directory, provenance, *, package=None):
         r.require(value["success"] is True and not value["errors"] and not value["conflicts"] and len(value["items"]) == len(manifests)
             and {(item["packageId"], item["version"], item["packageContentIdentity"]) for item in value["items"]} == identities, "Install plan does not select the exact Listed family")
         for item in value["items"]:
-            expected = {(target["role"], rid) for target in targets[item["packageId"]]}
-            r.require({(target["role"], target["rid"]) for target in item["targets"]} == expected
-                and {(artifact["kind"], artifact["rid"]) for artifact in item["artifacts"]} == expected | {("shared", None)}, "Install plan omitted a role or selected another RID")
+            package_id = item["packageId"]
+            # Hub describes every target the version declares; only its downloadable artifacts are RID-specific.
+            declared = {(t["role"], t["rid"]) for t in manifests[package_id]["targets"]}
+            inventory = [(t["role"], t["rid"]) for t in item["targets"]]
+            r.require(len(inventory) == len(declared) and set(inventory) == declared,
+                      "Install plan target inventory differs from the archive: " + package_id)
+            expected = {("shared", None)} | {(t["role"], t["rid"]) for t in targets[package_id]}
+            projections = [(a["kind"], a["rid"]) for a in item["artifacts"]]
+            r.require(len(projections) == len(expected) and set(projections) == expected,
+                      f"Install plan projections differ for {package_id} on {rid}")

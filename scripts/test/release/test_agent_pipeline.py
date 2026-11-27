@@ -163,17 +163,23 @@ class AgentPipelineTests(unittest.TestCase):
             self.assertEqual(["core.v1", "worker-protocol.v1"], worker["hostCapabilities"])
             self.assertEqual([], worker["targetFrameworks"])
             items = [{**{key: item[key] for key in ("packageId", "version", "packageContentIdentity")},
-                      "targets": [dict(role=role, rid=rid) for role in ("runtime", "app")],
+                      "targets": [dict(role=t["role"], rid=t["rid"]) for t in manifest["targets"]],
                       "artifacts": [dict(kind=role, rid=rid) for role in ("runtime", "app")] + [dict(kind="shared", rid=None)]} for item in provenance["artifacts"]]
             if mutation == "identity": items[0]["packageContentIdentity"] = "f" * 64
             if mutation == "missing": items.pop()
             if mutation == "rid": items[0]["artifacts"][0]["rid"] = "foreign-rid"
             if mutation == "role": items[0]["targets"].pop()
+            if mutation == "foreign-target": items[0]["targets"][0]["rid"] = "foreign-rid"
+            if mutation == "duplicate-target": items[0]["targets"].append(items[0]["targets"][0])
+            if mutation == "missing-app": items[0]["artifacts"].pop(1)
+            if mutation == "duplicate-projection": items[0]["artifacts"].append(items[0]["artifacts"][0])
+            if mutation == "foreign-projection": items[0]["artifacts"].append(dict(kind="app", rid="osx-arm64"))
             return 200, json.dumps(dict(success=True, errors=[], conflicts=[], items=items)).encode(), False
         with patch.object(pipeline.r, "archive_metadata", return_value=(manifest, {}, "")), patch.object(pipeline.cohort, "http", side_effect=http):
             pipeline.install_plans("/candidate", provenance)
             self.assertEqual(list(rids), [item["compatibility"]["rid"] for item in calls])
-            for mutation in ("identity", "missing", "rid", "role"):
+            for mutation in ("identity", "missing", "rid", "role", "foreign-target", "duplicate-target", "missing-app",
+                             "duplicate-projection", "foreign-projection"):
                 with self.subTest(mutation=mutation), self.assertRaises(ValueError): pipeline.install_plans("/candidate", provenance)
 
 

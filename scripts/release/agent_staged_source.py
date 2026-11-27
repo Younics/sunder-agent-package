@@ -34,6 +34,8 @@ CONTROL_FILES = frozenset({
 # Shared inputs still require exact reviewed old/new blobs (including the
 # two installed-only additions compiled/imported by the shared harness).
 REVIEWED_BLOBS = {
+    "scripts/release/agent_publication.py": ("b8b9bf3535a6e7599881c1f4ee72c207161459f6", "e6c246b648885e9ddcd8582c54f1f883fc3cca0a"),
+    "scripts/test/release/test_agent_pipeline.py": ("deac657a1afefc708599e060a0725e0e8806a6f9", "25a1f5d4e3e60d6a71beeae38eed7f80cdfb9832"),
     "scripts/release/agent_release.py": ("5bc5b159ceee802c99d87f2802798d586318bab5", "85852c635789a28e383bb6425343eeb6efce6224"),
     "scripts/ci/bash_runtime.py": ("d029f6a53ce254e4ccf4ab61197cc3f9f6c93009", "7a97eb0160f3e524ca7dbda44d4acdbff7f35e92"),
     ".github/workflows/sunder-package-smoke.yml": ("5a672a6223c7207270f49924e07d1a77694b80eb", "ed1367add50cb59e74431121ddb62740598f05e1"),
