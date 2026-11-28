@@ -1,18 +1,18 @@
-name: Test, release and publish one package
+name: Qualify and upload one package
 on:
   workflow_call:
     inputs:
       package: { type: string, required: true }
-      registry: { type: string, required: true }
+      approval: { type: string, required: true }
       platforms: { type: string, required: true }
       cutover: { type: string, default: '' }
-    secrets:
-      SUNDER_REGISTRY_API_KEY: { required: true }
+      cutover_artifact: { type: string, default: '' }
 permissions:
   contents: read
 env:
   PACKAGE: ${{ inputs.package }}
-  REGISTRY_API_URL: ${{ inputs.registry }}
+  SUNDER_AGENT_APPROVED_PLAN: ${{ inputs.approval }}
+  REGISTRY_API_URL: ${{ fromJSON(inputs.approval).registryOrigin }}
   MSBUILDDISABLENODEREUSE: '1'
   SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
   SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
@@ -41,7 +41,7 @@ jobs:
         with: { path: sunder-agent-package, persist-credentials: false }
       - if: inputs.cutover != ''
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with: { name: initial-200-selection, path: '${{ runner.temp }}/initial' }
+        with: { artifact-ids: '${{ inputs.cutover_artifact }}', merge-multiple: true, path: '${{ runner.temp }}/initial' }
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,7 +105,7 @@ jobs:
           if-no-files-found: ignore
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: tested-leaf-${{ inputs.package }}-${{ matrix.rid }}
+          name: tested-leaf-${{ needs.prepare.outputs.context }}-${{ matrix.rid }}
           path: sunder-agent-package/artifacts/leaf
           if-no-files-found: error
           compression-level: 0
@@ -131,7 +131,7 @@ jobs:
       - *context
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: tested-leaf-${{ inputs.package }}-*
+          pattern: tested-leaf-${{ needs.prepare.outputs.context }}-*
           path: sunder-agent-package/artifacts/leaves
           merge-multiple: true
       - id: compose
@@ -183,12 +183,12 @@ jobs:
           path: sunder-agent-package/artifacts/release
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: tested-leaf-${{ inputs.package }}-${{ matrix.rid }}
+          name: tested-leaf-${{ needs.prepare.outputs.context }}-${{ matrix.rid }}
           path: sunder-agent-package/artifacts/leaves
       - run: python3 -B scripts/ci/package_release.py development
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: runtime-${{ inputs.package }}-${{ matrix.rid }}
+          name: runtime-${{ needs.compose.outputs.archive }}-${{ matrix.rid }}
           path: sunder-agent-package/artifacts/native
           if-no-files-found: error
           compression-level: 0
@@ -223,7 +223,7 @@ jobs:
           path: sunder-agent-package/artifacts/package-test-binaries
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: runtime-${{ inputs.package }}-*
+          pattern: runtime-${{ needs.compose.outputs.archive }}-*
           path: sunder-agent-package/artifacts/native
           merge-multiple: true
       - run: python3 -B scripts/ci/package_release.py assemble
@@ -250,7 +250,6 @@ jobs:
     if: >-
       !cancelled() && needs.prepare.result == 'success' &&
       (needs.qualify.result == 'success' || (needs.prepare.outputs.resume == 'true' && needs.qualify.result == 'skipped'))
-    environment: sunder-agent-release-promotion
     permissions: { contents: write }
     runs-on: ubuntu-24.04
     timeout-minutes: 120
@@ -258,7 +257,6 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       PLAN_SHA: ${{ needs.prepare.outputs.plan }}
       SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
     steps:
       - *checkout
       - &original
@@ -297,8 +295,8 @@ jobs:
     name: Upload the GitHub release archive to Hub
     needs: [prepare, stage]
     if: ${{ !cancelled() && needs.stage.result == 'success' }}
-    environment: sunder-agent-release-promotion
-    concurrency: &hub
+    environment: sunder-agent-hub-writer
+    concurrency:
       group: sunder-agent-hub-writer
       queue: max
     permissions: { contents: write } # Read the draft and retain the Hub publication receipt.
@@ -317,8 +315,7 @@ jobs:
       - name: Check the Hub publication credential
         env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
         run: bash scripts/release/publish-registry-package.sh --check-credential
-      - &recover
-        name: Recover the exact staged bytes (read only)
+      - name: Recover the exact staged bytes (read only)
         env: { GH_TOKEN: '${{ github.token }}' }
         run: |
           plan="$RUNNER_TEMP/context/release-plan.json"
@@ -329,67 +326,14 @@ jobs:
       - name: Publish this exact version as Listed without moving a channel
         env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
         run: python3 -B scripts/release/agent_pipeline.py publish --directory artifacts/release
-
-  installed:
-    name: Install from Hub · ${{ matrix.rid }}
-    needs: [prepare, publish]
-    if: ${{ !cancelled() && needs.publish.result == 'success' }}
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 240
-    # A Hub write can stale a live preview. Queue these transactions with the
-    # writers so concurrent family installs also respect the shared Hub limits.
-    concurrency: *hub
-    permissions: { contents: write } # GitHub's draft-read permission.
-    strategy: *six
-    env:
-      RID: ${{ matrix.rid }}
-      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
-      SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
-    steps:
-      - *checkout
-      - *original
-      - *dotnet
-      - *context
-      - *recover
-      - run: python3 -B scripts/ci/package_release.py installed
+      - name: Hand off the exact plan and original draft binding
+        run: |
+          mkdir "$RUNNER_TEMP/hub-ready"
+          cp "$RUNNER_TEMP/context/release-plan.json" "$RUNNER_TEMP/hub-ready/"
+          printf '%s\n' "$SUNDER_STAGED_INPUTS_SHA256" > "$RUNNER_TEMP/hub-ready/staged.sha256"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: installed-${{ inputs.package }}-${{ matrix.rid }}
-          path: sunder-agent-package/artifacts/installed-native
+          name: hub-ready-${{ inputs.package }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/hub-ready
           if-no-files-found: error
           retention-days: 90
-      - if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: installed-diagnostics-${{ inputs.package }}-${{ matrix.rid }}-${{ github.run_attempt }}
-          path: |
-            sunder-agent-package/artifacts/installed-metrics
-            !**/maker-inputs/distribution/**
-
-  release:
-    name: Promote Hub channel and announce
-    needs: [prepare, installed]
-    if: ${{ !cancelled() && needs.installed.result == 'success' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 120
-    environment: sunder-agent-release-promotion
-    permissions: { contents: write }
-    concurrency: *hub
-    env:
-      PLAN_SHA: ${{ needs.prepare.outputs.plan }}
-      GH_TOKEN: ${{ github.token }}
-      SUNDER_STAGED_INPUTS_SHA256: ${{ needs.prepare.outputs.staged }}
-      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
-    steps:
-      - *checkout
-      - *original
-      - *context
-      - *recover
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: installed-${{ inputs.package }}-*
-          path: sunder-agent-package/artifacts/installed-native
-          merge-multiple: true
-      - run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --directory artifacts/release --receipts artifacts/installed-native
-      - env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
-        run: python3 -B scripts/release/agent_pipeline.py finalize --directory artifacts/release

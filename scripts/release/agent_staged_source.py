@@ -19,6 +19,8 @@ import hosted_evidence as hosted
 # App, which was and remains an input to original development qualification.
 CONTROL_FILES = frozenset({
     ".github/workflows/sunder-package-release.yml", ".github/workflows/sunder-package-ship.yml",
+    ".github/workflows/sunder-package-accept.yml", "scripts/test/release/test_agent_release_wave.py",
+    "scripts/release/agent_release_wave.py",
     "scripts/ci/package_release.py", "scripts/release/agent_selection.py",
     "scripts/release/agent_pipeline.py", "scripts/release/agent_staged_source.py",
     "scripts/release/publish-registry-package.sh", "scripts/test/release/test_agent_staged_source.py",

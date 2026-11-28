@@ -1,0 +1,150 @@
+name: Verify Hub installs and promote passing packages
+on:
+  workflow_call:
+    inputs:
+      wave: { type: string, required: true }
+      approval: { type: string, required: true }
+      platforms: { type: string, required: true }
+permissions: {}
+env:
+  WAVE: ${{ inputs.wave }}
+  SUNDER_AGENT_APPROVED_PLAN: ${{ inputs.approval }}
+  REGISTRY_API_URL: ${{ fromJSON(inputs.approval).registryOrigin }}
+  SUNDER_REGISTRY_COHORT_CREDENTIAL_SOURCE: api-key
+  SUNDER_AGENT_RETAINED_ARCHIVE_DIR: ${{ github.workspace }}/sunder-agent-package/artifacts/release
+  MSBUILDDISABLENODEREUSE: '1'
+defaults:
+  run:
+    shell: bash
+    working-directory: sunder-agent-package
+
+jobs:
+  uploaded:
+    name: Select successful Hub uploads
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, actions: read }
+    outputs:
+      packages: ${{ steps.selection.outputs.packages }}
+    steps:
+      - &checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with: { path: sunder-agent-package, persist-credentials: false }
+      - id: selection
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: python3 -B scripts/release/agent_release_wave.py uploads
+      - &require-all
+        name: Report incomplete packages
+        if: steps.selection.outputs.incomplete == 'true'
+        run: exit 1
+
+  installed:
+    name: Install from Hub · ${{ matrix.subject.package }} · ${{ matrix.target.rid }}
+    needs: uploaded
+    if: ${{ !cancelled() && needs.uploaded.outputs.packages != '' && needs.uploaded.outputs.packages != '[]' }}
+    runs-on: ${{ matrix.target.runner }}
+    permissions: { contents: write } # Required to read unpublished GitHub drafts.
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 3 # Across all packages and platforms in this wave.
+      matrix:
+        subject: ${{ fromJSON(needs.uploaded.outputs.packages) }}
+        target: ${{ fromJSON(inputs.platforms).include }}
+    env:
+      PACKAGE: ${{ matrix.subject.package }}
+      RID: ${{ matrix.target.rid }}
+    steps:
+      - *checkout
+      - &handoff
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ matrix.subject.handoff }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/context
+      - &bind
+        id: bind
+        run: python3 -B scripts/release/agent_release_wave.py bind
+      - &original
+        if: steps.bind.outputs.original != ''
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.bind.outputs.original }}
+          path: sunder-agent-producer
+          persist-credentials: false
+      - uses: ./sunder-agent-package/.github/actions/setup
+        with: { node: 'false' }
+      - &recover
+        name: Recover the exact staged bytes (read only)
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          plan="$RUNNER_TEMP/context/release-plan.json"
+          test "$(python3 -B scripts/release/agent_release.py file-sha "$plan")" = "$PLAN_SHA"
+          mkdir -p artifacts/release
+          cp "$plan" artifacts/release/
+          python3 -B scripts/release/agent_pipeline.py recover --directory artifacts/release
+      - run: python3 -B scripts/ci/package_release.py installed
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-${{ matrix.subject.package }}-${{ matrix.target.rid }}-${{ github.run_attempt }}
+          path: sunder-agent-package/artifacts/installed-native
+          if-no-files-found: error
+          retention-days: 90
+      - if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: installed-diagnostics-${{ matrix.subject.package }}-${{ matrix.target.rid }}-${{ github.run_attempt }}
+          path: |
+            sunder-agent-package/artifacts/installed-metrics
+            !**/maker-inputs/distribution/**
+            !**/maker-inputs/nuget/**
+
+  tested:
+    name: Select packages with six successful installs
+    needs: [uploaded, installed]
+    if: ${{ !cancelled() && (needs.installed.result == 'success' || needs.installed.result == 'failure') }}
+    runs-on: ubuntu-24.04
+    permissions: { contents: read, actions: read }
+    outputs:
+      packages: ${{ steps.selection.outputs.packages }}
+    steps:
+      - *checkout
+      - id: selection
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PUBLISHED: ${{ needs.uploaded.outputs.packages }}
+        run: python3 -B scripts/release/agent_release_wave.py installs
+      - *require-all
+
+  release:
+    name: Promote Hub channel and announce · ${{ matrix.subject.package }}
+    needs: tested
+    if: ${{ !cancelled() && needs.tested.outputs.packages != '' && needs.tested.outputs.packages != '[]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        subject: ${{ fromJSON(needs.tested.outputs.packages) }}
+    environment: sunder-agent-hub-writer
+    permissions: { contents: write }
+    concurrency:
+      group: sunder-agent-hub-writer
+      queue: max
+    env:
+      PACKAGE: ${{ matrix.subject.package }}
+      GH_TOKEN: ${{ github.token }}
+      REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+    steps:
+      - *checkout
+      - *handoff
+      - *bind
+      - *original
+      - *recover
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          artifact-ids: ${{ join(matrix.subject.receipts, ',') }}
+          path: sunder-agent-package/artifacts/installed-native
+          merge-multiple: true
+      - run: python3 -B scripts/release/agent_pipeline.py retain-installed-native --directory artifacts/release --receipts artifacts/installed-native
+      - env: { SUNDER_REGISTRY_API_KEY: '${{ secrets.SUNDER_REGISTRY_API_KEY }}' }
+        run: python3 -B scripts/release/agent_pipeline.py finalize --directory artifacts/release

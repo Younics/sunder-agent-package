@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -140,6 +141,54 @@ def archive_name(row):
 
 def selected(plan):
     return [row for row in plan["packages"] if row["selected"]]
+
+
+def run_destination():
+    return dict(repository=REPOSITORY, runId=r.positive(int(os.environ["GITHUB_RUN_ID"])),
+                source=r.digest(os.environ["GITHUB_SHA"], 40), registryOrigin=r.origin(os.environ["REGISTRY_API_URL"]))
+
+
+def release_scope(rows, remote):
+    destination = run_destination()
+    drafts = {item["tag_name"]: item for item in remote if item["draft"]}
+    packages = {}
+    for row in rows:
+        draft = drafts.get(row["key"] + "/v" + row["version"])
+        try:
+            if not draft and not new_version(row, remote):
+                continue
+        except ValueError:
+            # The owning lane will report malformed release history without blocking siblings.
+            pass
+        producer = draft.get("target_commitish") if draft else destination["source"]
+        if not isinstance(producer, str) or not re.fullmatch(r"[0-9a-f]{40}", producer):
+            producer = None  # The owning lane cannot publish a draft without an exact source.
+        packages[row["packageId"]] = dict(version=row["version"], source=producer)
+    return dict(destination, packages=packages)
+
+
+def approved_scope(source):
+    reviewed = os.environ.get("SUNDER_AGENT_APPROVED_PLAN")
+    r.require(reviewed, "Missing this run's approved release plan")
+    scope = r.decode(reviewed.encode())
+    r.closed(scope, "repository runId source registryOrigin packages")
+    r.require(all(scope[key] == value for key, value in run_destination().items()), "Approved run, source or Hub differs")
+    versions = {row["packageId"]: row["version"] for row in r.inventory(source)["packages"]}
+    r.require(type(scope["packages"]) is dict and scope["packages"], "Empty release approval")
+    for package, entry in scope["packages"].items():
+        r.closed(entry, "version source")
+        r.require(package in versions and versions[package] == entry["version"], "Approved package or version differs")
+    return scope
+
+
+def authorize_package(source, plan):
+    scope = approved_scope(source)
+    rows = selected(plan)
+    subject = plan.get("releasePackage")
+    r.require(plan["schemaVersion"] == 3 and subject == os.environ["PACKAGE"] and plan["registryOrigin"] == scope["registryOrigin"]
+              and len(rows) == 1 and rows[0]["packageId"] == subject
+              and scope["packages"].get(subject) == dict(version=rows[0]["version"], source=plan["artifactSourceCommit"]),
+              "Package, version or producer is outside the approved release plan")
 
 
 def locked_dependencies(source, row):
@@ -373,16 +422,8 @@ def main():
         import agent_cutover_200 as cutover
         remote = releases()
         rows = r.inventory(source)["packages"]
-        work = []
-        for row in rows:
-            # Reconciliation errors belong to the owning package job, not to
-            # unrelated packages. A listed older major is not a completed bump.
-            try:
-                needed = new_version(row, remote) or any(
-                    item["tag_name"] == row["key"] + "/v" + row["version"] and item["draft"] for item in remote)
-            except ValueError:
-                needed = True
-            if needed: work.append(row["packageId"])
+        scope = release_scope(rows, remote)
+        work = scope["packages"]
         initial = ""
         if set(work) == set(r.FAMILY_PACKAGE_IDS) and all(row["version"] == "2.0.0" for row in rows) and not any(
                 item["tag_name"] in {row["key"] + "/v2.0.0" for row in rows} for item in remote):
@@ -399,9 +440,18 @@ def main():
                 initial = r.file_sha(args.plan)
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
             output.write(f"owner={str(OWNER in work).lower()}\ncutover_sha={initial}\n")
-            output.write("registry_origin=" + r.origin(os.environ["REGISTRY_API_URL"]) + "\n")
+            output.write("plan=" + r.canonical(scope).decode() + "\n")
+            output.write("plan_sha=" + r.sha(r.canonical(scope)) + "\n")
             output.write("extensions=" + r.canonical(sorted(set(work) - {OWNER})).decode() + "\n")
-        print("Versions pending: " + (", ".join(work) or "none"))
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+            summary.write(f"## Release plan\n\nCommit `{scope['source']}` → `{scope['registryOrigin']}`\n\n")
+            for package, entry in sorted(work.items()):
+                summary.write(f"- `{package}@{entry['version']}`")
+                if entry["source"] != scope["source"]:
+                    summary.write(f" — draft source `{entry['source'] or 'unresolved; cannot publish'}`")
+                summary.write("\n")
+            if not work:
+                summary.write("No new versions or pending drafts. No approval or publication needed.\n")
     elif args.action == "package":
         remote = releases()
         binding = []
@@ -426,6 +476,7 @@ def main():
         r.require((resume and len(binding) == 1) if producer != os.environ["GITHUB_SHA"] else not binding,
                   "Missing or unexpected original staged-source admission")
         validate(value, source, producer)
+        authorize_package(source, value)
         args.plan.parent.mkdir(parents=True, exist_ok=True)
         with args.plan.open("xb") as stream: stream.write(r.canonical(value) + b"\n")
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
