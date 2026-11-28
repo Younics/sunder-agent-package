@@ -171,13 +171,17 @@ class AgentCiTests(unittest.TestCase):
                 self.assertEqual(expected + ([] if requires_feed else ["--host-only"]) + (["--installed"] if mode == "published" else []),
                                  result.stdout.splitlines())
 
-    def test_publication_api_key_keeps_its_environment_secret_name_through_component_calls(self):
+    def test_only_upload_and_promotion_jobs_use_the_hub_writer_environment_and_secret(self):
         workflows = SCRIPTS.parent / ".github/workflows"
         workflow = (workflows / "sunder-package-ship.yml").read_text()
-        publish = workflow.split("\n  publish:\n", 1)[1].split("\n  installed:", 1)[0]
-        self.assertIn("environment: sunder-agent-release-promotion", publish)
-        self.assertIn("secrets.SUNDER_REGISTRY_API_KEY", publish)
-        self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY", workflow.split("\n  publish:\n")[0])
+        acceptance = (workflows / "sunder-package-accept.yml").read_text()
+        for text, job in ((workflow, "publish"), (acceptance, "release")):
+            other, writer = text.split(f"\n  {job}:\n")
+            self.assertNotIn("SUNDER_REGISTRY_API_KEY", other)
+            self.assertNotIn("environment:", other)
+            self.assertIn("environment: sunder-agent-hub-writer", writer)
+            self.assertIn("secrets.SUNDER_REGISTRY_API_KEY", writer)
+            self.assertIn("group: sunder-agent-hub-writer", writer)
         self.assertNotIn("SUNDER_REGISTRY_API_KEY", (workflows / "sunder-package-component.yml").read_text())
         for path in workflows.glob("*.yml"):
             text = path.read_text()
@@ -188,13 +192,19 @@ class AgentCiTests(unittest.TestCase):
         self.assertNotIn("reverse_agent_cohort.py apply", rollback)
 
     def test_installed_acceptance_has_no_publication_credentials(self):
-        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-ship.yml").read_text()
-        installed = workflow.split("  installed:\n")[1].split("\n  release:")[0]
+        workflow = (SCRIPTS.parent / ".github/workflows/sunder-package-accept.yml").read_text()
+        installed = workflow.split("  installed:\n")[1].split("\n  tested:")[0]
         release = workflow.split("  release:\n")[1]
-        self.assertIn("needs: [prepare, publish]", installed)
+        self.assertIn("needs: uploaded", installed)
+        self.assertIn("max-parallel: 3", installed)
+        self.assertIn("fail-fast: false", installed)
+        self.assertNotIn("concurrency:", installed)
+        self.assertIn("scripts/ci/package_release.py installed", installed)
         self.assertNotIn("secrets.", installed)
         self.assertNotIn("--resume-staging", installed)
-        self.assertIn("needs: [prepare, installed]", release)
+        self.assertIn("needs: [uploaded, installed]", workflow.split("  tested:\n")[1].split("\n  release:")[0])
+        self.assertIn("needs: tested", release)
+        self.assertIn("artifact-ids: ${{ join(matrix.subject.receipts, ',') }}", release)
         self.assertLess(release.index("retain-installed-native"), release.index("agent_pipeline.py finalize"))
         self.assertNotIn("agent_pipeline.py visibility", release)
         launcher = (SCRIPTS / "release/run-native-runtime-smoke.sh").read_text()

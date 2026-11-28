@@ -155,20 +155,18 @@ class StagedSourceTests(unittest.TestCase):
         workflows=ROOT/".github/workflows"
         caller=(workflows/"sunder-package-release.yml").read_text()
         callee=(workflows/"sunder-package-ship.yml").read_text()
-        for section in (caller.split("\n  owner:\n",1)[1].split("\n  extensions:\n",1)[0],
-                        caller.split("\n  extensions:\n",1)[1]):
-            self.assertIn("uses: ./.github/workflows/sunder-package-ship.yml",section)
-            self.assertIn("    secrets:\n      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}",section)
-            self.assertNotIn("secrets: inherit",section)
-        self.assertIn("    secrets:\n      SUNDER_REGISTRY_API_KEY: { required: true }",callee.split("permissions:",1)[0])
+        self.assertEqual(2, caller.count("uses: ./.github/workflows/sunder-package-ship.yml"))
+        self.assertNotIn("secrets:", caller)
+        self.assertNotIn("SUNDER_REGISTRY_API_KEY", caller)
+        self.assertNotIn("secrets:", callee.split("permissions:",1)[0])
         stage=callee.split("\n  stage:\n",1)[1].split("\n  publish:\n",1)[0]
         self.assertIn("agent_pipeline.py stage",stage)
-        publish=callee.split("\n  publish:\n",1)[1].split("\n  installed:\n",1)[0]
+        publish=callee.split("\n  publish:\n",1)[1]
         self.assertIn("needs: [prepare, stage]",publish)
         self.assertLess(publish.index("--check-credential"),publish.index("agent_pipeline.py publish"))
         self.assertLess(publish.index("agent_pipeline.py recover"),publish.index("agent_pipeline.py publish"))
         self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY",callee.split("\n  publish:\n",1)[0])
-        self.assertNotIn("secrets.SUNDER_REGISTRY_API_KEY",callee.split("\n  installed:\n",1)[1].split("\n  release:\n",1)[0])
+        self.assertLess(publish.index("agent_pipeline.py publish"),publish.index("name: hub-ready-"))
 
 
 if __name__ == "__main__": unittest.main()

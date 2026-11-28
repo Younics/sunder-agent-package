@@ -480,6 +480,10 @@ def main():
     r.require(not args.resume_staging or args.action == "recover", "Staging recovery requires an explicit recover invocation")
     directory, core = args.directory.resolve(), None
     plan = selection.load(directory / selection.PLAN, ROOT)
+    # The historical batch guard only verifies a retained request. All writers
+    # and every independent package invocation require this run's reviewed scope.
+    if args.action != "guard" or plan["schemaVersion"] == 3:
+        selection.authorize_package(ROOT, plan)
     if args.action == "stage": stage(core, directory, plan)
     elif args.action == "recover": recover(core, directory, plan, resume_staging=args.resume_staging)
     elif args.action == "publish": publish_versions(core, directory, plan)

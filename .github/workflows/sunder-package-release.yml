@@ -13,14 +13,17 @@ jobs:
     name: Select versions
     if: github.repository == 'Younics/sunder-agent-package' && github.ref == 'refs/heads/main' && github.ref_protected
     runs-on: ubuntu-24.04
-    environment: sunder-agent-release-promotion
     permissions:
       contents: write # GitHub requires push access to see drafts. Selection only reads.
+      actions: read # Read back the review environment before requesting an approval.
     outputs:
       owner: ${{ steps.work.outputs.owner }}
       extensions: ${{ steps.work.outputs.extensions }}
       cutover: ${{ steps.work.outputs.cutover_sha }}
-      registry: ${{ steps.work.outputs.registry_origin }}
+      cutover_artifact: ${{ steps.initial.outputs.artifact-id }}
+      plan: ${{ steps.work.outputs.plan }}
+      plan_sha: ${{ steps.work.outputs.plan_sha }}
+      reused: ${{ steps.prior.outputs.reused }}
       platforms: ${{ steps.platforms.outputs.native }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -33,40 +36,106 @@ jobs:
       - id: work
         env:
           GH_TOKEN: ${{ github.token }}
-          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL }}
+          REGISTRY_API_URL: ${{ vars.SUNDER_REGISTRY_API_URL || 'https://hub.sunderapp.io' }}
         run: |
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
           python3 -B scripts/release/agent_selection.py dispatch --plan artifacts/cutover/release-plan.json
-      - if: steps.work.outputs.cutover_sha != ''
+      - name: Verify the review gate and main-only writer are configured
+        if: steps.work.outputs.owner == 'true' || steps.work.outputs.extensions != '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          environments="repos/$GITHUB_REPOSITORY/environments"
+          gh api "$environments/sunder-agent-release-approval" |
+            jq -e 'any(.protection_rules[]; .type == "required_reviewers" and (.reviewers | length) > 0)'
+          gh api "$environments/sunder-agent-hub-writer" |
+            jq -e '.deployment_branch_policy.custom_branch_policies and all(.protection_rules[]; .type == "branch_policy")'
+          gh api "$environments/sunder-agent-hub-writer/deployment-branch-policies" |
+            jq -e '.total_count == 1 and (.branch_policies[0] | .type == "branch" and .name == "main")'
+      - id: prior
+        if: github.run_attempt != '1' && (steps.work.outputs.owner == 'true' || steps.work.outputs.extensions != '[]')
+        env: { GH_TOKEN: '${{ github.token }}', PLAN: '${{ steps.work.outputs.plan }}' }
+        run: python3 -B scripts/release/agent_release_wave.py previous-approval
+      - id: initial
+        if: steps.work.outputs.cutover_sha != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: initial-200-selection
+          name: initial-200-selection-${{ github.run_attempt }}
           path: artifacts/cutover/release-plan.json
           if-no-files-found: error
 
+  review:
+    name: Approve release plan · ${{ needs.select.outputs.plan_sha }}
+    needs: select
+    if: needs.select.outputs.reused != 'true' && (needs.select.outputs.owner == 'true' || needs.select.outputs.extensions != '[]')
+    runs-on: ubuntu-24.04
+    environment:
+      name: sunder-agent-release-approval
+      url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    permissions: { actions: read }
+    steps:
+      - name: Record the reviewed scope
+        env: { GH_TOKEN: '${{ github.token }}', PLAN: '${{ needs.select.outputs.plan }}' }
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/approvals" |
+            jq -e 'any(.[]; .state == "approved" and any(.environments[]; .name == "sunder-agent-release-approval"))'
+          jq -cn --argjson plan "$PLAN" --argjson attempt "$GITHUB_RUN_ATTEMPT" '{plan:$plan, attempt:$attempt}' > "$RUNNER_TEMP/review.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: reviewed-release-plan
+          path: ${{ runner.temp }}/review.json
+          if-no-files-found: error
+          retention-days: 90
+
+  approve:
+    name: Use the reviewed release plan
+    needs: [select, review]
+    if: ${{ !cancelled() && needs.select.result == 'success' && (needs.review.result == 'success' || needs.select.outputs.reused == 'true') }}
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      plan: ${{ steps.reviewed.outputs.plan }}
+    steps:
+      - id: reviewed
+        env:
+          PLAN: ${{ needs.select.outputs.plan }}
+        run: printf 'plan=%s\n' "$PLAN" >> "$GITHUB_OUTPUT"
+
   owner:
     name: Main Agent
-    needs: select
-    if: needs.select.outputs.owner == 'true'
+    needs: [select, approve]
+    if: ${{ !cancelled() && needs.approve.result == 'success' && needs.select.outputs.owner == 'true' }}
     uses: ./.github/workflows/sunder-package-ship.yml
     permissions:
       contents: write
       actions: read
-    secrets:
-      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
     with:
       package: younics.ai.agent
-      registry: ${{ needs.select.outputs.registry }}
+      approval: ${{ needs.approve.outputs.plan }}
       platforms: ${{ needs.select.outputs.platforms }}
       cutover: ${{ needs.select.outputs.cutover }}
+      cutover_artifact: ${{ needs.select.outputs.cutover_artifact }}
+
+  owner-accept:
+    name: Accept main Agent
+    needs: [select, approve, owner]
+    if: ${{ !cancelled() && needs.owner.result == 'success' }}
+    uses: ./.github/workflows/sunder-package-accept.yml
+    permissions: { contents: write, actions: read }
+    with:
+      wave: owner
+      platforms: ${{ needs.select.outputs.platforms }}
+      approval: ${{ needs.approve.outputs.plan }}
 
   extensions:
     name: ${{ matrix.package }}
-    needs: [select, owner]
+    needs: [select, approve, owner-accept]
     # A failed new Agent stops only extensions that actually need that version.
     # Each lane resolves its own exact published owner before building.
     if: >-
-      !cancelled() && needs.select.result == 'success' && needs.select.outputs.extensions != '[]'
+      !cancelled() && needs.approve.result == 'success' && needs.select.outputs.extensions != '[]'
     strategy:
       fail-fast: false
       matrix:
@@ -75,10 +144,20 @@ jobs:
     permissions:
       contents: write
       actions: read
-    secrets:
-      SUNDER_REGISTRY_API_KEY: ${{ secrets.SUNDER_REGISTRY_API_KEY }}
     with:
       package: ${{ matrix.package }}
-      registry: ${{ needs.select.outputs.registry }}
+      approval: ${{ needs.approve.outputs.plan }}
       platforms: ${{ needs.select.outputs.platforms }}
       cutover: ${{ needs.select.outputs.cutover }}
+      cutover_artifact: ${{ needs.select.outputs.cutover_artifact }}
+
+  extensions-accept:
+    name: Accept extensions
+    needs: [select, approve, extensions]
+    if: ${{ !cancelled() && needs.approve.result == 'success' && (needs.extensions.result == 'success' || needs.extensions.result == 'failure') }}
+    uses: ./.github/workflows/sunder-package-accept.yml
+    permissions: { contents: write, actions: read }
+    with:
+      wave: extensions
+      platforms: ${{ needs.select.outputs.platforms }}
+      approval: ${{ needs.approve.outputs.plan }}
