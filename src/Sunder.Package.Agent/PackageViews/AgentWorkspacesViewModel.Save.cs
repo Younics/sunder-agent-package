@@ -86,10 +86,10 @@ public sealed partial class AgentWorkspacesViewModel
             {
                 _suppressWorkspaceRefresh = false;
             }
-            var refreshedWorkspaces = await LoadWorkspacesAsync(_lifetimeCancellation.Token);
+            var refreshed = await LoadWorkspaceSnapshotAsync(_lifetimeCancellation.Token);
             if (snapshot.ExecutionTargetId is not null)
             {
-                var warmupWorkspace = refreshedWorkspaces.FirstOrDefault(workspace => string.Equals(
+                var warmupWorkspace = refreshed.Workspaces.FirstOrDefault(workspace => string.Equals(
                         workspace.WorkspaceId,
                         snapshot.Workspace.WorkspaceId,
                         StringComparison.OrdinalIgnoreCase))
@@ -124,7 +124,7 @@ public sealed partial class AgentWorkspacesViewModel
                 ClearStatus();
             }
             var currentSelection = SelectedWorkspace;
-            var workspaces = refreshedWorkspaces
+            var workspaces = refreshed.Workspaces
                 .Select(workspace => currentSelection is not null
                     && (!intentIsCurrent || editedDuringSave)
                     && string.Equals(
@@ -134,7 +134,7 @@ public sealed partial class AgentWorkspacesViewModel
                         ? currentSelection
                         : workspace)
                 .ToArray();
-            _listDetail.Reconcile(workspaces);
+            ApplyWorkspaceSnapshot(refreshed with { Workspaces = workspaces });
             if (intentIsCurrent && _listDetail.IsExistingDetail)
             {
                 var statusText = editedDuringSave

@@ -41,6 +41,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     private readonly SerializedRefreshLoop _extensionRefresh;
     private readonly Dictionary<string, AgentWorkspaceDraftState> _workspaceDrafts =
         new(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<AgentWorkspaceBindingRecord> _workspaceBindings = [];
     private bool _suppressDraftTracking;
     private bool _suppressWorkspaceRefresh;
     private bool _initializationRefreshPending;
@@ -360,7 +361,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                 _suppressWorkspaceRefresh = false;
             }
             var intentRevision = _listDetail.ShowNewDetail();
-            _listDetail.Reconcile(await LoadWorkspacesAsync(_lifetimeCancellation.Token));
+            ApplyWorkspaceSnapshot(await LoadWorkspaceSnapshotAsync(_lifetimeCancellation.Token));
             _listDetail.TryShowCreatedDetail(workspace.WorkspaceId, intentRevision);
             DiscardPendingWorkspaceRefresh();
             ClearStatus();
@@ -408,7 +409,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             {
                 _listDetail.ShowList();
             }
-            _listDetail.Reconcile(await LoadWorkspacesAsync(_lifetimeCancellation.Token));
+            ApplyWorkspaceSnapshot(await LoadWorkspaceSnapshotAsync(_lifetimeCancellation.Token));
             if (shouldClearSelection)
             {
                 ClearStatus();
@@ -515,7 +516,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                     .WaitAsync(request.CancellationToken)
                     .ConfigureAwait(false);
                 var targets = await targetsTask.WaitAsync(request.CancellationToken).ConfigureAwait(false);
-                var workspaces = await LoadWorkspacesAsync(request.CancellationToken).ConfigureAwait(false);
+                var snapshot = await LoadWorkspaceSnapshotAsync(request.CancellationToken).ConfigureAwait(false);
                 request.CancellationToken.ThrowIfCancellationRequested();
                 await _uiDispatcher.InvokeAsync(() =>
                 {
@@ -525,7 +526,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
                     }
 
                     ReloadTargets(targets);
-                    _listDetail.Reconcile(workspaces);
+                    ApplyWorkspaceSnapshot(snapshot);
                     _isInitialized = true;
                     replayPendingRefresh = _initializationRefreshPending;
                     _initializationRefreshPending = false;
@@ -577,11 +578,7 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
             return;
         }
 
-        var binding = workspace is null
-            ? null
-            : _workspaceService.ListBindings(workspace.WorkspaceId)
-                .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase));
-        var target = ResolveTargetOption(binding?.ContributionId);
+        var target = ResolveTargetOption(workspace is null ? null : ResolveWorkspaceTargetId(workspace.WorkspaceId));
         _suppressDraftTracking = true;
         try
         {
@@ -675,8 +672,9 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
     }
 
     private string? ResolveWorkspaceTargetId(string workspaceId)
-        => _workspaceService.ListBindings(workspaceId)
-            .FirstOrDefault(item => string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
+        => _workspaceBindings.FirstOrDefault(item =>
+                string.Equals(item.WorkspaceId, workspaceId, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(item.Role, AgentWorkspaceBindingRoles.PrimaryExecutionTarget, StringComparison.OrdinalIgnoreCase))
             ?.ContributionId;
 
     private static StringComparison GetPathStringComparison()
@@ -723,14 +721,14 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         var request = _requests.Begin(ListRefreshChannel, cancellationToken);
         try
         {
-            var workspaces = await LoadWorkspacesAsync(request.CancellationToken).ConfigureAwait(false);
+            var snapshot = await LoadWorkspaceSnapshotAsync(request.CancellationToken).ConfigureAwait(false);
             await _uiDispatcher.InvokeAsync(() =>
             {
                 if (_requests.IsCurrent(request))
                 {
                     var previousWorkspaceId = SelectedWorkspace?.WorkspaceId;
                     var previousTargetId = SelectedExecutionTarget?.TargetId;
-                    _listDetail.Reconcile(workspaces);
+                    ApplyWorkspaceSnapshot(snapshot);
                     // Execution bindings are a separate projection. An unchanged
                     // workspace record must not hide an authoritative target change.
                     if (SelectedWorkspace is { } selected
@@ -757,11 +755,23 @@ public sealed partial class AgentWorkspacesViewModel : ObservableObject, IDispos
         _requests.Invalidate(ListRefreshChannel);
     }
 
-    private async Task<IReadOnlyList<AgentWorkspaceRecord>> LoadWorkspacesAsync(
-        CancellationToken cancellationToken)
-        => _dashboardLoader is null
-            ? _workspaceService.ListWorkspaces()
-            : (await _dashboardLoader.LoadDashboardAsync(cancellationToken).ConfigureAwait(false)).Workspaces;
+    private Task<AgentDashboardProjection> LoadWorkspaceSnapshotAsync(CancellationToken cancellationToken)
+    {
+        if (_dashboardLoader is not null)
+            return _dashboardLoader.LoadDashboardAsync(cancellationToken);
+
+        var workspaces = _workspaceService.ListWorkspaces();
+        var bindings = workspaces.SelectMany(workspace => _workspaceService.ListBindings(workspace.WorkspaceId)).ToArray();
+        return Task.FromResult(new AgentDashboardProjection(0, [], workspaces, bindings));
+    }
+
+    private void ApplyWorkspaceSnapshot(AgentDashboardProjection snapshot)
+    {
+        // Reconciliation can synchronously select a workspace. Its bindings must
+        // come from the same snapshot, even if the gateway has already invalidated it.
+        _workspaceBindings = snapshot.WorkspaceBindings;
+        _listDetail.Reconcile(snapshot.Workspaces);
+    }
 }
 
 internal enum AgentWorkspaceOperation
